@@ -10,11 +10,17 @@ import json
 import os
 import platform
 import re
+import selectors
 import shutil
+import signal
+import stat
 import subprocess
 import sys
+import threading
+import time
 import tomllib
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -82,6 +88,16 @@ _HEADER_FAILURE_IDS = {
     "wrong-mcp-name-tools-call",
 }
 _ADDRESS = re.compile(r"^127\.0\.0\.1:([1-9][0-9]{0,4})$")
+_MAX_CAPTURE = 2 * 1024 * 1024
+_PROBE_SCHEMA_VERSION = 1
+_PROBE_MARKER = "HIERONYMUS_QUALIFICATION_OWNED_PROBE"
+
+
+@dataclass(frozen=True, slots=True)
+class _ProbeObservations:
+    checks: Mapping[str, tuple[bool, Mapping[str, object]]]
+    environment: Mapping[str, str]
+    dependencies: tuple[LockedDependency, ...]
 
 
 def _read_object(path: Path) -> dict[str, object]:
@@ -106,7 +122,12 @@ def _mcp_projection(repo_root: Path) -> tuple[str, ...]:
     for contract in contracts:
         if type(contract) is not dict or type(contract.get("id")) is not str:
             raise ValueError("MCP compatibility projection contract is invalid")
-        ids.append(cast(str, contract["id"]))
+        contract_id = cast(str, contract["id"])
+        ids.append(contract_id)
+        if contract_id.startswith("mcp.tool."):
+            name = contract_id.removeprefix("mcp.tool.")
+            if contract.get("fixture") != (f"compatibility/fixtures/mcp/{name}/success.input.json"):
+                raise ValueError("MCP compatibility projection fixture is invalid")
     expected = {
         *MCP_EXACT_CONTRACT_IDS,
         *(f"mcp.tool.{name}" for name in _MCP_TOOL_NAMES),
@@ -125,17 +146,15 @@ def _validate_policy_inventory(repo_root: Path) -> None:
     if direct_directories != expected_names:
         raise ValueError("MCP fixture directory inventory is invalid")
     expected_leaves = set(_MCP_TOOL_FIXTURE_LEAVES)
+    unsupported_output_leaves = {"error.output.json", "success.output.json"}
     for name in _MCP_TOOL_NAMES:
         directory = root / name
-        policy_leaves = {
-            item.name
-            for item in directory.iterdir()
-            if item.is_file() and item.name in expected_leaves and not item.is_symlink()
-        }
-        if policy_leaves != expected_leaves:
-            raise ValueError("MCP fixture policy leaf inventory is invalid")
-        if any(item.is_dir() for item in directory.iterdir()):
-            raise ValueError("MCP fixture policy has an intermediate grouping directory")
+        entries = tuple(directory.iterdir())
+        policy_leaves = {item.name for item in entries if item.is_file() and not item.is_symlink()}
+        if policy_leaves != expected_leaves | unsupported_output_leaves or len(entries) != 6:
+            raise ValueError(
+                "MCP fixture policy must contain exactly four policy leaves and two unsupported outputs"
+            )
         for leaf in expected_leaves:
             _read_object(directory / leaf)
 
@@ -148,11 +167,202 @@ def _validate_envelope(repo_root: Path, envelope: object) -> None:
         raise ValueError("MCP response violates the official schema")
 
 
+def _flat_leaves(
+    value: object, prefix: tuple[object, ...] = ()
+) -> dict[tuple[object, ...], object]:
+    if type(value) is dict:
+        result: dict[tuple[object, ...], object] = {}
+        for key, child in cast(dict[str, object], value).items():
+            result.update(_flat_leaves(child, (*prefix, key)))
+        return result
+    if type(value) is list:
+        result = {}
+        for index, child in enumerate(cast(list[object], value)):
+            result.update(_flat_leaves(child, (*prefix, index)))
+        return result
+    return {prefix: value}
+
+
+def _leaf_changes(left: object, right: object) -> set[tuple[object, ...]]:
+    before = _flat_leaves(left)
+    after = _flat_leaves(right)
+    return set(before) ^ set(after) | {
+        path for path in set(before) & set(after) if before[path] != after[path]
+    }
+
+
+def _validate_tool_wire_oracles(repo_root: Path) -> None:
+    for name in _MCP_TOOL_NAMES:
+        root = repo_root / "compatibility/fixtures/mcp" / name
+        success_input = _read_object(root / "success.input.json")
+        error_input = _read_object(root / "error.input.json")
+        success_wire = _read_object(root / "wire.success.json")
+        error_wire = _read_object(root / "wire.error.json")
+        for wire, expected_id, is_error in (
+            (success_wire, 1, False),
+            (error_wire, 2, True),
+        ):
+            request = wire.get("request")
+            result = wire.get("result")
+            official_result = dict(cast(dict[str, object], result)) if type(result) is dict else {}
+            official_result["resultType"] = "complete"
+            envelope = {"jsonrpc": "2.0", "id": expected_id, "result": official_result}
+            if (
+                set(wire) != {"request", "result"}
+                or type(request) is not dict
+                or request.get("jsonrpc") != "2.0"
+                or request.get("id") != expected_id
+                or request.get("method") != "tools/call"
+                or request.get("params", {}).get("name") != name  # type: ignore[union-attr]
+                or type(result) is not dict
+                or result.get("isError") is not is_error
+                or definition_issues(repo_root, "CallToolResultResponse", envelope)
+            ):
+                raise ValueError("MCP tool wire result violates the official schema")
+        success_params = cast(dict[str, object], success_wire["request"])["params"]
+        error_params = cast(dict[str, object], error_wire["request"])["params"]
+        if (
+            cast(dict[str, object], success_params).get("arguments") != success_input
+            or error_input.get("params") != error_params
+            or error_input.get("setup") not in ({"validation": "invalid"}, {"data_root": "file"})
+        ):
+            raise ValueError("MCP tool input/wire identity is invalid")
+
+
+_ROUTE_FAILURES: Mapping[str, tuple[int, object]] = {
+    "invalid-host": (400, {"error": "invalid_host"}),
+    "missing-bearer": (401, {"error": "unauthorized"}),
+    "invalid-bearer": (401, {"error": "unauthorized"}),
+    "missing-version": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: required MCP-Protocol-Version header is missing",
+            },
+        },
+    ),
+    "protocol-version-header-mismatch": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: MCP-Protocol-Version header value '2025-06-18' does not match body value '2026-07-28'",
+            },
+        },
+    ),
+    "unsupported-version": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32022,
+                "message": "Unsupported protocol version: 2025-06-18",
+                "data": {"requested": "2025-06-18", "supported": ["2026-07-28"]},
+            },
+        },
+    ),
+    "missing-mcp-method": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: required Mcp-Method header is missing",
+            },
+        },
+    ),
+    "wrong-mcp-method": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: Mcp-Method header value 'tools/call' does not match body value 'tools/list'",
+            },
+        },
+    ),
+    "unexpected-mcp-name-tools-list": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: Mcp-Name header must be omitted for tools/list",
+            },
+        },
+    ),
+    "missing-mcp-name-tools-call": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: required Mcp-Name header is missing for tools/call",
+            },
+        },
+    ),
+    "wrong-mcp-name-tools-call": (
+        400,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "error": {
+                "code": -32020,
+                "message": "Header mismatch: Mcp-Name header value 'hieronymus_recall' does not match body value 'hieronymus_status'",
+            },
+        },
+    ),
+}
+
+
+def _expected_failure_request(failure_id: str, baseline: Mapping[str, object]) -> object:
+    expected = json.loads(json.dumps(baseline))
+    headers = expected["headers"]
+    metadata = expected["body"]["params"]["_meta"]
+    if failure_id == "invalid-host":
+        headers["Host"] = "attacker.invalid"
+    elif failure_id == "missing-bearer":
+        del headers["Authorization"]
+    elif failure_id == "invalid-bearer":
+        headers["Authorization"] = "Bearer <INVALID_BEARER_TOKEN>"
+    elif failure_id == "missing-version":
+        del headers["MCP-Protocol-Version"]
+    elif failure_id == "protocol-version-header-mismatch":
+        headers["MCP-Protocol-Version"] = "2025-06-18"
+    elif failure_id == "unsupported-version":
+        headers["MCP-Protocol-Version"] = "2025-06-18"
+        metadata["io.modelcontextprotocol/protocolVersion"] = "2025-06-18"
+    elif failure_id == "missing-mcp-method":
+        del headers["Mcp-Method"]
+    elif failure_id == "wrong-mcp-method":
+        headers["Mcp-Method"] = "tools/call"
+    elif failure_id == "unexpected-mcp-name-tools-list":
+        headers["Mcp-Name"] = "hieronymus_status"
+    elif failure_id == "missing-mcp-name-tools-call":
+        del headers["Mcp-Name"]
+    elif failure_id == "wrong-mcp-name-tools-call":
+        headers["Mcp-Name"] = "hieronymus_recall"
+    else:
+        raise ValueError("unknown MCP route failure")
+    return expected
+
+
 def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
     if authority_issues(repo_root):
         raise ValueError("official MCP schema authority is invalid")
     contract_ids = _mcp_projection(repo_root)
     _validate_policy_inventory(repo_root)
+    _validate_tool_wire_oracles(repo_root)
 
     snapshot = _read_object(repo_root / "compatibility/snapshots/mcp.json")
     tools = snapshot.get("tools")
@@ -172,8 +382,42 @@ def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
 
     protocol = _read_object(repo_root / "compatibility/fixtures/mcp/protocol.json")
     target = protocol.get("target")
-    if type(target) is not dict:
+    if type(target) is not dict or set(target) != {
+        "adr",
+        "basis",
+        "metadata_rules",
+        "requests",
+        "response_metadata_rules",
+        "stdio",
+        "streamable_http",
+        "tools_call",
+        "tools_list",
+    }:
         raise ValueError("MCP protocol target is invalid")
+    if (
+        target.get("adr") != "docs/adr/0015-mcp-protocol-and-transport.md"
+        or target.get("basis") != "adr-backed-target"
+        or target.get("metadata_rules")
+        != {
+            "required": [
+                "io.modelcontextprotocol/protocolVersion",
+                "io.modelcontextprotocol/clientCapabilities",
+            ],
+            "should": ["io.modelcontextprotocol/clientInfo"],
+        }
+        or target.get("response_metadata_rules")
+        != {
+            "io.modelcontextprotocol/serverInfo": {
+                "configured": "omit",
+                "rationale": (
+                    "The compatibility oracle is implementation-neutral; freezing "
+                    "self-reported package identity would create a volatile version "
+                    "contract unrelated to protocol behavior."
+                ),
+            }
+        }
+    ):
+        raise ValueError("MCP protocol metadata rules are invalid")
     compact = json.dumps(target, sort_keys=True, separators=(",", ":"))
     if any(
         token in compact
@@ -191,7 +435,13 @@ def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
         "ttlMs": 0,
     }:
         raise ValueError("MCP list result does not match the frozen registry")
-    for request in target.get("requests", []):
+    requests = target.get("requests")
+    if requests != [
+        target.get("tools_list", {}).get("request"),
+        target.get("tools_call", {}).get("request"),
+    ]:  # type: ignore[union-attr]
+        raise ValueError("MCP protocol request inventory is invalid")
+    for request in cast(list[object], requests):
         if type(request) is not dict:
             raise ValueError("MCP protocol request is invalid")
         meta = request.get("params", {}).get("_meta")  # type: ignore[union-attr]
@@ -204,32 +454,59 @@ def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
     stdio = target.get("stdio")
     if type(stdio) is not dict or stdio.get("framing") != "newline-delimited-json-rpc":
         raise ValueError("MCP stdio framing is invalid")
-    for exchange in stdio.get("exchanges", []):
+    stdio_exchanges = stdio.get("exchanges")
+    if type(stdio_exchanges) is not list or len(stdio_exchanges) != 2:
+        raise ValueError("MCP stdio exchanges are invalid")
+    for index, exchange in enumerate(stdio_exchanges):
         if type(exchange) is not dict or type(exchange.get("response_line")) is not str:
             raise ValueError("MCP stdio exchange is invalid")
         response_line = cast(str, exchange["response_line"])
         if not response_line.endswith("\n") or response_line.count("\n") != 1:
             raise ValueError("MCP stdio exchange framing is invalid")
-        _validate_envelope(repo_root, json.loads(response_line))
+        expected_request = cast(list[object], requests)[index]
+        expected_response = (list_response, call_response)[index]
+        if (
+            exchange.get("request_line")
+            != json.dumps(expected_request, sort_keys=True, separators=(",", ":")) + "\n"
+        ):
+            raise ValueError("MCP stdio request line differs from target")
+        parsed_response = json.loads(response_line)
+        _validate_envelope(repo_root, parsed_response)
+        if parsed_response != expected_response:
+            raise ValueError("MCP stdio response line differs from target")
     streamable = target.get("streamable_http")
     if type(streamable) is not dict or len(streamable.get("exchanges", [])) != 2:
         raise ValueError("MCP Streamable HTTP oracle is invalid")
-    for exchange in streamable["exchanges"]:
+    for index, exchange in enumerate(streamable["exchanges"]):
         if type(exchange) is not dict or type(exchange.get("responses")) is not list:
             raise ValueError("MCP Streamable HTTP exchange is invalid")
+        stream_request = exchange.get("request")
+        if (
+            type(stream_request) is not dict
+            or stream_request.get("body") != cast(list[object], requests)[index]
+            or stream_request.get("method") != "POST"
+            or stream_request.get("path") != "/mcp"
+            or set(stream_request) != {"body", "headers", "method", "path"}
+        ):
+            raise ValueError("MCP Streamable HTTP request differs from target")
         content_types = set()
         for response in exchange["responses"]:
             if type(response) is not dict:
                 raise ValueError("MCP Streamable HTTP response is invalid")
             content_types.add(response.get("content_type"))
             body = response.get("body")
+            expected_response = (list_response, call_response)[index]
             if type(body) is dict:
                 _validate_envelope(repo_root, body)
+                if body != expected_response:
+                    raise ValueError("MCP JSON response differs from target")
             elif type(response.get("events")) is list:
                 events = cast(list[object], response["events"])
                 if len(events) != 1 or type(events[0]) is not dict:
                     raise ValueError("MCP SSE event is invalid")
                 _validate_envelope(repo_root, cast(dict[str, object], events[0]).get("data"))
+                if events != [{"event": "message", "data": expected_response}]:
+                    raise ValueError("MCP SSE response differs from target")
         if content_types != {"application/json", "text/event-stream"}:
             raise ValueError("MCP Streamable HTTP variants are incomplete")
 
@@ -272,13 +549,69 @@ def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
     for success in successes:
         if type(success) is not dict:
             raise ValueError("MCP HTTP success is invalid")
-        _validate_envelope(repo_root, success.get("response", {}).get("body"))  # type: ignore[union-attr]
+        response = success.get("response")
+        request = success.get("request")
+        success_id = success.get("id")
+        expected_envelope = list_response if success_id == "tools-list" else call_response
+        request_key = "tools_list" if success_id == "tools-list" else "tools_call"
+        expected_request = cast(dict[str, object], target[request_key])["request"]
+        stream_request = json.loads(
+            json.dumps(
+                cast(list[dict[str, object]], streamable["exchanges"])[
+                    0 if success_id == "tools-list" else 1
+                ]["request"]
+            )
+        )
+        stream_request["query"] = {}
+        expected_route_result = (
+            {"cacheScope": "private", "resultType": "complete", "tools": [], "ttlMs": 0}
+            if success_id == "tools-list"
+            else {"content": [], "isError": False, "resultType": "complete"}
+        )
+        if (
+            type(response) is not dict
+            or type(request) is not dict
+            or response.get("status") != 200
+            or response.get("headers") != {"Content-Type": "application/json; charset=utf-8"}
+            or request.get("method") != "POST"
+            or request.get("path") != "/mcp"
+            or request.get("query") != {}
+            or request.get("body") != expected_request
+            or request != stream_request
+        ):
+            raise ValueError("MCP HTTP success route is invalid")
+        _validate_envelope(repo_root, response.get("body"))
+        route_body = cast(dict[str, object], response["body"])
+        if (
+            route_body.get("id") != cast(dict[str, object], expected_envelope).get("id")
+            or route_body.get("jsonrpc") != "2.0"
+            or type(route_body.get("result")) is not dict
+            or route_body.get("result") != expected_route_result
+            or "io.modelcontextprotocol/serverInfo" in cast(dict[str, object], route_body["result"])
+        ):
+            raise ValueError("MCP HTTP success response is invalid")
     for failure in failures:
         if type(failure) is not dict or type(failure.get("response")) is not dict:
             raise ValueError("MCP HTTP failure is invalid")
         response = cast(dict[str, object], failure["response"])
         body = response.get("body")
         failure_id = failure.get("id")
+        expected_failure = _ROUTE_FAILURES.get(cast(str, failure_id))
+        if (
+            expected_failure is None
+            or response.get("status") != expected_failure[0]
+            or response.get("headers") != {"Content-Type": "application/json; charset=utf-8"}
+            or body != expected_failure[1]
+        ):
+            raise ValueError("MCP HTTP failure response differs from the frozen contract")
+        request = failure.get("request")
+        if (
+            type(request) is not dict
+            or request.get("method") != "POST"
+            or request.get("path") != "/mcp"
+            or request.get("query") != {}
+        ):
+            raise ValueError("MCP HTTP failure route is invalid")
         if failure_id in _HEADER_FAILURE_IDS:
             if response.get("status") != 400 or definition_issues(
                 repo_root, "HeaderMismatchError", body
@@ -289,6 +622,25 @@ def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
                 repo_root, "UnsupportedProtocolVersionError", body
             ):
                 raise ValueError("MCP unsupported-version error is invalid")
+    successes_by_method = {
+        cast(dict[str, object], item["request"])["body"]["method"]: item  # type: ignore[index]
+        for item in cast(list[dict[str, object]], successes)
+    }
+    for failure in cast(list[dict[str, object]], failures):
+        request = cast(dict[str, object], failure["request"])
+        method = cast(dict[str, object], request["body"])["method"]
+        baseline = cast(dict[str, object], successes_by_method[method]["request"])
+        if request != _expected_failure_request(cast(str, failure["id"]), baseline):
+            raise ValueError("MCP HTTP failure request differs from the frozen contract")
+        changes = _leaf_changes(baseline, request)
+        expected_count = 2 if failure["id"] == "unsupported-version" else 1
+        if len(changes) != expected_count:
+            raise ValueError("MCP HTTP raw request mutation invariant is invalid")
+        if failure["id"] == "unsupported-version" and changes != {
+            ("headers", "MCP-Protocol-Version"),
+            ("body", "params", "_meta", "io.modelcontextprotocol/protocolVersion"),
+        }:
+            raise ValueError("MCP HTTP unsupported-version mutation is invalid")
     if any(
         type(item) is dict
         and type(item.get("request")) is dict
@@ -299,96 +651,184 @@ def _validate_oracles(repo_root: Path) -> tuple[str, ...]:
     return contract_ids
 
 
-def _read_fake_failures(executable: Path, repo_root: Path) -> tuple[str, ...]:
-    try:
-        completed = subprocess.run(
-            (str(executable),),
-            cwd=repo_root,
-            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC"},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ValueError("MCP qualification executable failed") from error
-    if completed.returncode != 0 or len(completed.stdout) > 1024 * 1024:
-        raise ValueError("MCP qualification executable failed")
-    try:
-        payload = json.loads(completed.stdout)
-        failures = payload["failed_criteria"]
-    except (UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
-        raise ValueError("MCP qualification executable report is invalid") from error
-    if type(failures) is not list or any(type(item) is not str for item in failures):
-        raise ValueError("MCP qualification executable report is invalid")
-    result = tuple(cast(list[str], failures))
-    if len(result) != len(set(result)) or set(result) - set(REQUIRED_CRITERIA[_RISK]):
-        raise ValueError("MCP qualification executable criteria are invalid")
-    return result
+def _safe_observed_string(value: object, *, label: str) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > 512
+        or "\x00" in value
+        or "/home/" in value
+        or "/Users/" in value
+        or "\\" in value
+    ):
+        raise ValueError(f"MCP probe artifact {label} is invalid")
+    return value
 
 
-def _dependencies(repo_root: Path) -> tuple[LockedDependency, ...]:
-    lock = tomllib.loads(
-        (repo_root / "qualification/harnesses/mcp-transport/Cargo.lock").read_text(encoding="utf-8")
-    )
-    result = []
-    for package in lock.get("package", []):
-        if (
-            type(package) is not dict
-            or package.get("name") == "hieronymus-mcp-transport-qualification"
-        ):
-            continue
-        source = package.get("source")
-        result.append(
+def _probe_observations(payload: object) -> _ProbeObservations:
+    if (
+        type(payload) is not dict
+        or set(payload)
+        != {
+            "schemaVersion",
+            "checks",
+            "environment",
+            "dependencies",
+        }
+        or payload.get("schemaVersion") != _PROBE_SCHEMA_VERSION
+    ):
+        raise ValueError("MCP typed probe artifact is invalid")
+    raw_checks = payload.get("checks")
+    if type(raw_checks) is not dict or set(raw_checks) != set(REQUIRED_CRITERIA[_RISK]):
+        raise ValueError("MCP probe artifact checks are invalid")
+    checks: dict[str, tuple[bool, Mapping[str, object]]] = {}
+    for criterion in REQUIRED_CRITERIA[_RISK]:
+        check = raw_checks[criterion]
+        if type(check) is not dict or set(check) != {"passed", "measurements"}:
+            raise ValueError("MCP probe artifact check is invalid")
+        passed = check.get("passed")
+        measurements = check.get("measurements")
+        if type(passed) is not bool or type(measurements) is not dict or not measurements:
+            raise ValueError("MCP probe artifact check is invalid")
+        # Measurements validates the exact scalar-only JSON shape and finiteness.
+        checked_measurements = Measurements(cast(dict[str, object], measurements))
+        checks[criterion] = (passed, dict(checked_measurements))
+    raw_environment = payload.get("environment")
+    environment_keys = {"rustc", "cargo", "target", "os", "kernel", "architecture"}
+    if type(raw_environment) is not dict or set(raw_environment) != environment_keys:
+        raise ValueError("MCP probe artifact environment is invalid")
+    environment = {
+        key: _safe_observed_string(raw_environment[key], label=key) for key in environment_keys
+    }
+    raw_dependencies = payload.get("dependencies")
+    if type(raw_dependencies) is not list or not raw_dependencies:
+        raise ValueError("MCP probe artifact dependencies are invalid")
+    dependencies: list[LockedDependency] = []
+    for item in raw_dependencies:
+        if type(item) is not dict or set(item) != {
+            "name",
+            "version",
+            "source",
+            "checksum",
+            "features",
+        }:
+            raise ValueError("MCP probe artifact dependency is invalid")
+        features = item.get("features")
+        if type(features) is not list or any(type(feature) is not str for feature in features):
+            raise ValueError("MCP probe artifact dependency features are invalid")
+        dependencies.append(
             LockedDependency(
-                name=cast(str, package["name"]),
-                version=cast(str, package["version"]),
-                source=source if type(source) is str else "locked-local",
-                checksum=package.get("checksum") if type(package.get("checksum")) is str else None,
-                features=(),
+                name=_safe_observed_string(item.get("name"), label="dependency name"),
+                version=_safe_observed_string(item.get("version"), label="dependency version"),
+                source=_safe_observed_string(item.get("source"), label="dependency source"),
+                checksum=(
+                    None
+                    if item.get("checksum") is None
+                    else _safe_observed_string(item.get("checksum"), label="dependency checksum")
+                ),
+                features=tuple(sorted(cast(list[str], features))),
             )
         )
-    return tuple(sorted(result, key=lambda item: (item.name, item.version, item.source)))
+    return _ProbeObservations(
+        checks=checks,
+        environment=environment,
+        dependencies=tuple(sorted(dependencies, key=lambda item: (item.name, item.version))),
+    )
+
+
+def _read_probe_artifact(path: Path) -> _ProbeObservations:
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_CAPTURE:
+            raise ValueError
+        payload = json.loads(path.read_bytes())
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("MCP typed probe artifact is invalid") from error
+    return _probe_observations(payload)
+
+
+def _run_bounded(
+    argv: tuple[str, ...],
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+    stdin: bytes | None = None,
+    timeout_seconds: int = 20,
+) -> tuple[int, bytes, bytes]:
+    process: subprocess.Popen[bytes] | None = None
+    selector = selectors.DefaultSelector()
+    stdout = bytearray()
+    stderr = bytearray()
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=None if env is None else dict(env),
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            close_fds=True,
+        )
+        if stdin is not None:
+            assert process.stdin is not None
+            process.stdin.write(stdin)
+            process.stdin.close()
+        assert process.stdout is not None and process.stderr is not None
+        for pipe, target in ((process.stdout, stdout), (process.stderr, stderr)):
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, target)
+        deadline = time.monotonic() + timeout_seconds
+        while selector.get_map() or process.poll() is None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("bounded MCP child timed out")
+            for key, _mask in selector.select(timeout=0.05):
+                try:
+                    chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                key.data.extend(chunk)
+                if len(key.data) > _MAX_CAPTURE:
+                    raise ValueError("bounded MCP child output exceeds limit")
+        return process.wait(timeout=1), bytes(stdout), bytes(stderr)
+    except (OSError, TimeoutError, subprocess.TimeoutExpired, ValueError) as error:
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=2)
+        raise ValueError("bounded MCP child failed") from error
+    finally:
+        selector.close()
+        if process is not None:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None and not pipe.closed:
+                    pipe.close()
 
 
 def _record(
     repo_root: Path,
     *,
     contract_ids: tuple[str, ...],
-    failed: tuple[str, ...],
+    observations: _ProbeObservations,
     core_dumps_disabled: bool = True,
     process_groups_reaped: bool = True,
 ) -> QualificationRecord:
-    measurements: dict[str, Mapping[str, object]] = {
-        "locked-native-build": {"locked_commands": 3},
-        "protocol-2026-07-28": {"protocol_revision": "2026-07-28"},
-        "no-handshake-or-session": {"stateful_fields": 0},
-        "per-request-required-metadata": {"requests": 2},
-        "unsupported-version-rejected": {"cases": 1},
-        "stdio-newline-jsonrpc": {"exchanges": 2},
-        "streamable-http-json": {"exchanges": 2},
-        "streamable-http-sse": {"exchanges": 2},
-        "http-method-name-headers": {"failure_cases": 5},
-        "http-host-auth-version-cases": {"route_cases": 11},
-        "official-schema-envelopes": {"definitions": 4},
-        "header-mismatch-errors": {"cases": 7},
-        "registry-identity": {"tools": 39},
-        "result-error-identity": {"call_outcomes": 2},
-        "result-type-required": {"transport_variants": 6},
-        "required-auth-metadata": {"reserved_fields": 3},
-        "private-bridge-absent": {"expected_status": 404},
-    }
     evidence = tuple(
         Evidence(
             criterion=criterion,
-            status="fail" if criterion in failed else "pass",
+            status="pass" if observations.checks[criterion][0] else "fail",
             summary=(
-                f"{criterion} failed in the bounded offline replay"
-                if criterion in failed
-                else f"{criterion} passed the bounded offline replay"
+                f"{criterion} passed the bounded offline replay"
+                if observations.checks[criterion][0]
+                else f"{criterion} failed in the bounded offline replay"
             ),
-            measurements=Measurements(measurements[criterion]),
+            measurements=Measurements(observations.checks[criterion][1]),
         )
         for criterion in REQUIRED_CRITERIA[_RISK]
     )
@@ -407,16 +847,16 @@ def _record(
         input_digest=fingerprint_inputs(repo_root, input_paths),
         commands=_COMMANDS,
         environment=Environment(
-            rustc="rustc 1.96.0 (ac68faa20 2026-05-25)",
-            cargo="cargo 1.96.0",
-            target=_TARGET,
-            os="linux",
-            kernel=platform.release(),
-            architecture="x86_64",
+            rustc=observations.environment["rustc"],
+            cargo=observations.environment["cargo"],
+            target=observations.environment["target"],
+            os=observations.environment["os"],
+            kernel=observations.environment["kernel"],
+            architecture=observations.environment["architecture"],
             bun=None,
             native_libraries=(),
         ),
-        dependencies=_dependencies(repo_root),
+        dependencies=observations.dependencies,
         evidence=evidence,
         consequence=expected_consequence(_RISK, status),
         cleanup=CleanupEvidence(
@@ -443,14 +883,22 @@ def run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationR
     before = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     bounded_work = work_root / "mcp-transport-run"
     bounded_work.mkdir(mode=0o700, parents=True, exist_ok=False)
+    artifact = bounded_work / "probe-result.json"
     try:
-        failed = _read_fake_failures(executable, repo_root)
+        code, _stdout, _stderr = _run_bounded(
+            (str(executable), "--probe-artifact", str(artifact)),
+            cwd=repo_root,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC"},
+        )
+        if code != 0:
+            raise ValueError("MCP qualification executable failed")
+        observations = _read_probe_artifact(artifact)
     finally:
         shutil.rmtree(bounded_work)
     after = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     if after != before:
         raise ValueError("immutable MCP qualification inputs changed during replay")
-    return _record(repo_root, contract_ids=contract_ids, failed=failed)
+    return _record(repo_root, contract_ids=contract_ids, observations=observations)
 
 
 def _live_process_context(
@@ -470,6 +918,22 @@ def _live_process_context(
     return tool_roots, cargo_target_dir, child_env
 
 
+def _prepare_private_work(work_root: Path) -> None:
+    lexical = work_root.absolute()
+    if os.path.lexists(lexical):
+        raise ValueError("MCP private work root already exists or is a symlink")
+    try:
+        parent = lexical.parent.resolve(strict=True)
+    except OSError as error:
+        raise ValueError("MCP private work parent is invalid") from error
+    if parent != lexical.parent or not parent.is_dir():
+        raise ValueError("MCP private work parent is a symlink")
+    lexical.mkdir(mode=0o700)
+    info = lexical.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("MCP private work root is invalid")
+
+
 def _successful(receipt: ProcessReceipt) -> bool:
     return (
         receipt.exit_code == 0
@@ -479,7 +943,12 @@ def _successful(receipt: ProcessReceipt) -> bool:
     )
 
 
-def _stdio_probe(executable: Path, repo_root: Path, target: dict[str, object]) -> None:
+def _stdio_probe(
+    executable: Path,
+    repo_root: Path,
+    target: dict[str, object],
+    protocol_path: Path,
+) -> None:
     for key in ("tools_list", "tools_call"):
         exchange = target.get(key)
         if type(exchange) is not dict:
@@ -487,27 +956,22 @@ def _stdio_probe(executable: Path, repo_root: Path, target: dict[str, object]) -
         request = exchange.get("request")
         expected = exchange.get("response")
         payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode() + b"\n"
-        try:
-            completed = subprocess.run(
-                (
-                    str(executable),
-                    "stdio",
-                    "--registry",
-                    str(repo_root / "compatibility/snapshots/mcp.json"),
-                    "--protocol",
-                    str(repo_root / "compatibility/fixtures/mcp/protocol.json"),
-                ),
-                input=payload,
-                capture_output=True,
-                timeout=20,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise ValueError("bounded MCP stdio replay failed") from error
-        if completed.returncode != 0 or completed.stdout.count(b"\n") != 1:
+        code, stdout, _stderr = _run_bounded(
+            (
+                str(executable),
+                "stdio",
+                "--registry",
+                str(repo_root / "compatibility/snapshots/mcp.json"),
+                "--protocol",
+                str(protocol_path),
+            ),
+            cwd=repo_root,
+            stdin=payload,
+        )
+        if code != 0 or stdout.count(b"\n") != 1:
             raise ValueError("bounded MCP stdio replay failed")
         try:
-            actual = json.loads(completed.stdout)
+            actual = json.loads(stdout)
         except (UnicodeError, json.JSONDecodeError) as error:
             raise ValueError("bounded MCP stdio response is invalid") from error
         if actual != expected:
@@ -558,11 +1022,35 @@ def _http_exchange(
     return response.status, content_type, payload
 
 
+def _http_negotiations(
+    target: Mapping[str, object], exchange_index: int
+) -> tuple[tuple[str, str], ...]:
+    try:
+        exchange = cast(
+            dict[str, object],
+            cast(dict[str, object], target["streamable_http"])["exchanges"][exchange_index],
+        )  # type: ignore[index]
+        responses = cast(list[dict[str, object]], exchange["responses"])
+        content_types = tuple(cast(str, item["content_type"]) for item in responses)
+    except (KeyError, IndexError, TypeError) as error:
+        raise ValueError("MCP HTTP negotiation oracle is invalid") from error
+    if content_types != ("application/json", "text/event-stream"):
+        raise ValueError("MCP HTTP negotiation oracle is invalid")
+    return (
+        (content_types[0], "application/json; charset=utf-8"),
+        (content_types[1], "text/event-stream"),
+    )
+
+
 def _http_probe(
     executable: Path,
     repo_root: Path,
     work_root: Path,
     target: dict[str, object],
+    protocol_path: Path,
+    *,
+    replay_routes: bool = True,
+    extra_call: tuple[Mapping[str, object], object] | None = None,
 ) -> None:
     routes = _read_object(repo_root / "compatibility/fixtures/http/route-cases.json")
     route = next(
@@ -572,32 +1060,49 @@ def _http_probe(
     )
     route_target = cast(dict[str, object], cast(dict[str, object], route)["target"])
     ready = work_root / "http-ready.json"
-    raw_log = work_root / "http-report.log"
-    for path in (ready, raw_log):
+    for path in (ready,):
         try:
             path.unlink()
         except FileNotFoundError:
             pass
-    with raw_log.open("wb") as log:
-        server = subprocess.Popen(
-            (
-                str(executable),
-                "http",
-                "--registry",
-                str(repo_root / "compatibility/snapshots/mcp.json"),
-                "--protocol",
-                str(repo_root / "compatibility/fixtures/mcp/protocol.json"),
-                "--route-cases",
-                str(repo_root / "compatibility/fixtures/http/route-cases.json"),
-                "--bind",
-                "127.0.0.1:0",
-                "--ready-file",
-                str(ready),
-            ),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=log,
-        )
+    server = subprocess.Popen(
+        (
+            str(executable),
+            "http",
+            "--registry",
+            str(repo_root / "compatibility/snapshots/mcp.json"),
+            "--protocol",
+            str(protocol_path),
+            "--route-cases",
+            str(repo_root / "compatibility/fixtures/http/route-cases.json"),
+            "--bind",
+            "127.0.0.1:0",
+            "--ready-file",
+            str(ready),
+        ),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        close_fds=True,
+    )
+    reports = bytearray()
+    overflow = threading.Event()
+
+    def drain_reports() -> None:
+        assert server.stderr is not None
+        while True:
+            chunk = server.stderr.read(64 * 1024)
+            if not chunk:
+                return
+            reports.extend(chunk)
+            if len(reports) > _MAX_CAPTURE:
+                overflow.set()
+                server.stderr.close()
+                return
+
+    report_thread = threading.Thread(target=drain_reports, daemon=True)
+    report_thread.start()
     try:
         import time
 
@@ -617,13 +1122,10 @@ def _http_probe(
             "tools-list": cast(dict[str, object], target["tools_list"])["response"],
             "tools-call": cast(dict[str, object], target["tools_call"])["response"],
         }
-        for success in successes:
+        for success_index, success in enumerate(successes if replay_routes else ()):
             case = cast(dict[str, object], success)
             request = cast(dict[str, object], case["request"])
-            for accept, expected_content_type in (
-                ("application/json", "application/json; charset=utf-8"),
-                ("text/event-stream", "text/event-stream"),
-            ):
+            for accept, expected_content_type in _http_negotiations(target, success_index):
                 status, content_type, body = _http_exchange(port, request, accept=accept)
                 if (
                     status != 200
@@ -631,7 +1133,7 @@ def _http_probe(
                     or body != expected_by_id[cast(str, case["id"])]
                 ):
                     raise ValueError("MCP HTTP success differs from the oracle")
-        for failure in cast(list[object], route_target["failures"]):
+        for failure in cast(list[object], route_target["failures"]) if replay_routes else ():
             case = cast(dict[str, object], failure)
             expected = cast(dict[str, object], case["response"])
             status, content_type, body = _http_exchange(
@@ -644,36 +1146,314 @@ def _http_probe(
                 or body != expected["body"]
             ):
                 raise ValueError("MCP HTTP failure differs from the oracle")
-        bridge_request = cast(dict[str, object], cast(dict[str, object], successes[0])["request"])
-        bridge_request = dict(bridge_request)
-        bridge_request["path"] = "/api/mcp/fixture"
-        status, _, body = _http_exchange(port, bridge_request)
-        if status != 404 or body != {"error": "not_found"}:
-            raise ValueError("private MCP bridge remains present")
+        if replay_routes:
+            bridge_request = cast(
+                dict[str, object], cast(dict[str, object], successes[0])["request"]
+            )
+            bridge_request = dict(bridge_request)
+            bridge_request["path"] = "/api/mcp/fixture"
+            status, _, body = _http_exchange(port, bridge_request)
+            if status != 404 or body != {"error": "not_found"}:
+                raise ValueError("private MCP bridge remains present")
+        if extra_call is not None:
+            for accept, expected_content_type in _http_negotiations(target, 1):
+                status, content_type, body = _http_exchange(port, extra_call[0], accept=accept)
+                if status != 200 or content_type != expected_content_type or body != extra_call[1]:
+                    raise ValueError("MCP HTTP error result differs from the frozen oracle")
+        if overflow.is_set():
+            raise ValueError("MCP HTTP report output exceeds the bound")
     finally:
         if server.poll() is None:
-            server.terminate()
+            try:
+                os.killpg(server.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         try:
-            server.wait(timeout=20)
+            server.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait(timeout=20)
+            try:
+                os.killpg(server.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            server.wait(timeout=2)
+        report_thread.join(timeout=2)
+        if report_thread.is_alive():
+            raise ValueError("MCP HTTP report reader did not terminate")
 
 
-def _transport_probe(executable: Path, repo_root: Path, work_root: Path) -> None:
+def _write_private_json(path: Path, value: object) -> None:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    if len(payload) > _MAX_CAPTURE:
+        raise ValueError("MCP probe artifact exceeds the bound")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+
+
+def _derived_error_oracle(
+    repo_root: Path, work_root: Path
+) -> tuple[Path, dict[str, object], object]:
+    protocol = _read_object(repo_root / "compatibility/fixtures/mcp/protocol.json")
+    derived = json.loads(json.dumps(protocol))
+    target = cast(dict[str, object], derived["target"])
+    wire = _read_object(
+        repo_root / "compatibility/fixtures/mcp" / _MCP_TOOL_NAMES[0] / "wire.error.json"
+    )
+    request = cast(dict[str, object], wire["request"])
+    request = json.loads(json.dumps(request))
+    canonical_call = cast(dict[str, object], target["tools_call"])
+    metadata = cast(
+        dict[str, object], cast(dict[str, object], canonical_call["request"])["params"]
+    )["_meta"]
+    cast(dict[str, object], request["params"])["_meta"] = metadata
+    result = dict(cast(dict[str, object], wire["result"]))
+    result["resultType"] = "complete"
+    response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
+    target["tools_call"] = {"request": request, "response": response}
+    target["requests"] = [cast(dict[str, object], target["tools_list"])["request"], request]
+    stdio = cast(dict[str, object], target["stdio"])
+    exchanges = cast(list[dict[str, object]], stdio["exchanges"])
+    exchanges[1] = {
+        "request_line": json.dumps(request, sort_keys=True, separators=(",", ":")) + "\n",
+        "response_line": json.dumps(response, sort_keys=True, separators=(",", ":")) + "\n",
+    }
+    streamable = cast(dict[str, object], target["streamable_http"])
+    stream_exchange = cast(list[dict[str, object]], streamable["exchanges"])[1]
+    cast(dict[str, object], stream_exchange["request"])["body"] = request
+    stream_exchange["responses"] = [
+        {"content_type": "application/json", "body": response},
+        {"content_type": "text/event-stream", "events": [{"event": "message", "data": response}]},
+    ]
+    path = work_root / "derived-error-protocol.json"
+    _write_private_json(path, derived)
+
+    routes = _read_object(repo_root / "compatibility/fixtures/http/route-cases.json")
+    route = next(
+        item
+        for item in cast(list[object], routes["routes"])
+        if type(item) is dict and item.get("contract_id") == "http.route.post.mcp"
+    )
+    success = cast(dict[str, object], cast(dict[str, object], route)["target"])["successes"]  # type: ignore[index]
+    call_route = json.loads(json.dumps(cast(list[object], success)[1]["request"]))  # type: ignore[index]
+    call_route["body"] = request
+    call_route["headers"]["Mcp-Name"] = cast(dict[str, object], request["params"])["name"]
+    return path, call_route, response
+
+
+def _toolchain_observations(
+    repo_root: Path, cargo: Path, rustup: Path
+) -> tuple[dict[str, str], tuple[LockedDependency, ...], int]:
+    cargo_argv = (str(cargo), "+1.96.0")
+    code, cargo_version_raw, _ = _run_bounded((*cargo_argv, "--version"), cwd=repo_root)
+    if code != 0:
+        raise ValueError("Cargo version measurement failed")
+    code, rustc_raw, _ = _run_bounded(
+        (str(rustup), "run", "1.96.0", "rustc", "--version", "--verbose"), cwd=repo_root
+    )
+    if code != 0:
+        raise ValueError("Rust version measurement failed")
+    metadata_argv = (
+        *cargo_argv,
+        "metadata",
+        "--manifest-path",
+        _MANIFEST,
+        "--locked",
+        "--format-version",
+        "1",
+    )
+    tree_argv = (*cargo_argv, "tree", "--manifest-path", _MANIFEST, "--locked", "-e", "features")
+    code, metadata_raw, _ = _run_bounded(metadata_argv, cwd=repo_root)
+    if code != 0:
+        raise ValueError("Cargo metadata measurement failed")
+    code, tree_raw, _ = _run_bounded(tree_argv, cwd=repo_root)
+    if code != 0 or not tree_raw.strip():
+        raise ValueError("Cargo feature-tree measurement failed")
+    try:
+        metadata = json.loads(metadata_raw)
+        packages = metadata["packages"]
+        nodes = metadata["resolve"]["nodes"]
+    except (UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ValueError("Cargo metadata output is invalid") from error
+    features_by_id = {node["id"]: tuple(sorted(node.get("features", []))) for node in nodes}
+    lock = tomllib.loads(
+        (repo_root / "qualification/harnesses/mcp-transport/Cargo.lock").read_text(encoding="utf-8")
+    )
+    checksums = {
+        (item.get("name"), item.get("version"), item.get("source")): item.get("checksum")
+        for item in lock.get("package", [])
+        if type(item) is dict
+    }
+    dependencies: list[LockedDependency] = []
+    for package in packages:
+        if package["name"] == "hieronymus-mcp-transport-qualification":
+            continue
+        source = package.get("source") or "locked-local"
+        dependencies.append(
+            LockedDependency(
+                name=package["name"],
+                version=package["version"],
+                source=source,
+                checksum=package.get("checksum")
+                or checksums.get((package["name"], package["version"], package.get("source"))),
+                features=features_by_id.get(package["id"], ()),
+            )
+        )
+    rmcp = next((item for item in dependencies if item.name == "rmcp"), None)
+    required_features = {"server", "transport-io", "transport-streamable-http-server"}
+    if rmcp is None or not required_features.issubset(rmcp.features):
+        raise ValueError("active rmcp feature graph is incomplete")
+    rustc_text = rustc_raw.decode("utf-8", errors="strict").strip()
+    cargo_text = cargo_version_raw.decode("utf-8", errors="strict").strip()
+    host = next(
+        (
+            line.split(":", 1)[1].strip()
+            for line in rustc_text.splitlines()
+            if line.startswith("host:")
+        ),
+        None,
+    )
+    if host != _TARGET:
+        raise ValueError("measured Rust target differs from qualification target")
+    environment = {
+        "rustc": rustc_text.splitlines()[0],
+        "cargo": cargo_text,
+        "target": host,
+        "os": platform.system().lower(),
+        "kernel": platform.release(),
+        "architecture": platform.machine(),
+    }
+    return (
+        environment,
+        tuple(sorted(dependencies, key=lambda item: (item.name, item.version))),
+        len(tree_raw),
+    )
+
+
+def _require_owned_probe_environment(repo_root: Path, work_root: Path) -> None:
+    expected_keys = {
+        _PROBE_MARKER,
+        "HOME",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "CARGO_TARGET_DIR",
+        "CARGO_NET_OFFLINE",
+        "RUSTUP_AUTO_INSTALL",
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+    }
+    expected_paths = {
+        "HOME": work_root / "home",
+        "TMPDIR": work_root / "tmp",
+        "XDG_CACHE_HOME": work_root / "xdg/cache",
+        "XDG_CONFIG_HOME": work_root / "xdg/config",
+        "XDG_DATA_HOME": work_root / "xdg/data",
+        "CARGO_TARGET_DIR": repo_root / _CARGO_TARGET,
+    }
+    if (
+        os.getpid() != 2
+        or os.getppid() != 1
+        or set(os.environ) != expected_keys
+        or os.environ.get(_PROBE_MARKER) != "1"
+        or os.environ.get("CARGO_NET_OFFLINE") != "true"
+        or os.environ.get("RUSTUP_AUTO_INSTALL") != "0"
+        or os.environ.get("LANG") != "C.UTF-8"
+        or os.environ.get("LC_ALL") != "C.UTF-8"
+        or os.environ.get("TZ") != "UTC"
+        or any(os.environ.get(name) != str(path) for name, path in expected_paths.items())
+    ):
+        raise ValueError("MCP hidden mode requires the owned probe environment")
+
+
+def _transport_probe(
+    executable: Path,
+    repo_root: Path,
+    work_root: Path,
+    artifact: Path,
+    cargo: Path,
+    rustup: Path,
+) -> None:
     """Replay both transports as descendants of one owned PID namespace."""
     expected_executable = repo_root / _CARGO_TARGET / _TARGET / "debug/mcp-transport"
     expected_work = repo_root / _LIVE_WORK
+    _require_owned_probe_environment(repo_root, work_root)
     if executable != expected_executable or executable.is_symlink() or not executable.is_file():
         raise ValueError("MCP transport executable is outside the qualification target")
     if work_root != expected_work or work_root.is_symlink() or not work_root.is_dir():
         raise ValueError("MCP transport work root is outside the qualification boundary")
+    if artifact != work_root / "probe-result.json" or artifact.exists() or artifact.is_symlink():
+        raise ValueError("MCP probe artifact is outside the qualification boundary")
     target = cast(
         dict[str, object],
         _read_object(repo_root / "compatibility/fixtures/mcp/protocol.json")["target"],
     )
-    _stdio_probe(executable, repo_root, target)
-    _http_probe(executable, repo_root, work_root, target)
+    protocol_path = repo_root / "compatibility/fixtures/mcp/protocol.json"
+    _stdio_probe(executable, repo_root, target, protocol_path)
+    _http_probe(executable, repo_root, work_root, target, protocol_path)
+    derived_path, error_request, error_response = _derived_error_oracle(repo_root, work_root)
+    derived_target = cast(dict[str, object], _read_object(derived_path)["target"])
+    _stdio_probe(executable, repo_root, derived_target, derived_path)
+    _http_probe(
+        executable,
+        repo_root,
+        work_root,
+        derived_target,
+        derived_path,
+        replay_routes=False,
+        extra_call=(error_request, error_response),
+    )
+    environment, dependencies, tree_bytes = _toolchain_observations(repo_root, cargo, rustup)
+    measurements: dict[str, Mapping[str, object]] = {
+        "locked-native-build": {"locked_commands": 3, "feature_tree_bytes": tree_bytes},
+        "protocol-2026-07-28": {"protocol_revision": "2026-07-28"},
+        "no-handshake-or-session": {"stateful_fields": 0},
+        "per-request-required-metadata": {"requests": 2},
+        "unsupported-version-rejected": {"cases": 1},
+        "stdio-newline-jsonrpc": {"exchanges": 4},
+        "streamable-http-json": {"exchanges": 3},
+        "streamable-http-sse": {"exchanges": 3},
+        "http-method-name-headers": {"failure_cases": 5},
+        "http-host-auth-version-cases": {"route_cases": 11},
+        "official-schema-envelopes": {"tool_wire_results": 78},
+        "header-mismatch-errors": {"cases": 7},
+        "registry-identity": {"tools": 39},
+        "result-error-identity": {"call_outcomes_per_transport": 2},
+        "result-type-required": {"transport_variants": 6},
+        "required-auth-metadata": {"reserved_fields": 3},
+        "private-bridge-absent": {"expected_status": 404},
+    }
+    payload = {
+        "schemaVersion": _PROBE_SCHEMA_VERSION,
+        "checks": {
+            criterion: {"passed": True, "measurements": measurements[criterion]}
+            for criterion in REQUIRED_CRITERIA[_RISK]
+        },
+        "environment": environment,
+        "dependencies": [
+            {
+                "name": item.name,
+                "version": item.version,
+                "source": item.source,
+                "checksum": item.checksum,
+                "features": list(item.features),
+            }
+            for item in dependencies
+        ],
+    }
+    _probe_observations(payload)
+    _write_private_json(artifact, payload)
 
 
 def run_live(
@@ -688,14 +1468,15 @@ def run_live(
         raise ValueError("HIERONYMUS_QUALIFICATION_LIVE=1 is required")
     contract_ids = _validate_oracles(repo_root)
     before = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
-    work_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    work_root.chmod(0o700)
+    _prepare_private_work(work_root)
     receipts: list[ProcessReceipt] = []
+    observations: _ProbeObservations | None = None
     try:
         tool_roots, cargo_target_dir, child_env = _live_process_context(
             repo_root, work_root, caller_env
         )
         cargo = str(tool_roots.cargo_invocation)
+        child_env[_PROBE_MARKER] = "1"
         shared = {
             "cwd": repo_root,
             "env": child_env,
@@ -736,6 +1517,7 @@ def run_live(
         ):
             receipts.append(run_owned_process(argv, **shared))
         executable = cargo_target_dir / _TARGET / "debug/mcp-transport"
+        artifact = work_root / "probe-result.json"
         receipts.append(
             run_owned_process(
                 (
@@ -746,6 +1528,9 @@ def run_live(
                     "--transport-probe",
                     str(executable),
                     str(work_root),
+                    str(artifact),
+                    str(tool_roots.cargo_invocation),
+                    str(tool_roots.rustup_invocation),
                 ),
                 cwd=repo_root,
                 env=child_env,
@@ -753,19 +1538,28 @@ def run_live(
                 no_progress_seconds=60,
             )
         )
+        if _successful(receipts[-1]):
+            observations = _read_probe_artifact(artifact)
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
         shutil.rmtree(repo_root / _CARGO_TARGET, ignore_errors=True)
     after = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     if after != before:
         raise ValueError("immutable MCP qualification inputs changed during replay")
-    failed: tuple[str, ...] = ()
-    if len(receipts) != 4 or not all(_successful(receipt) for receipt in receipts):
-        failed = REQUIRED_CRITERIA[_RISK]
+    if observations is None:
+        raise ValueError("MCP typed probe artifact was not produced by the owned probe")
+    if len(receipts) != 4 or not all(_successful(receipt) for receipt in receipts[:3]):
+        checks = dict(observations.checks)
+        checks["locked-native-build"] = (False, {"locked_commands": 3})
+        observations = _ProbeObservations(
+            checks=checks,
+            environment=observations.environment,
+            dependencies=observations.dependencies,
+        )
     return _record(
         repo_root,
         contract_ids=contract_ids,
-        failed=failed,
+        observations=observations,
         core_dumps_disabled=bool(receipts) and all(item.core_dumps_disabled for item in receipts),
         process_groups_reaped=bool(receipts)
         and all(item.process_group_reaped for item in receipts),
@@ -785,13 +1579,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the offline MCP transport qualification")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--write", action="store_true")
-    mode.add_argument("--transport-probe", nargs=2, metavar=("EXECUTABLE", "WORK_ROOT"))
+    mode.add_argument(
+        "--transport-probe",
+        nargs=5,
+        metavar=("EXECUTABLE", "WORK_ROOT", "ARTIFACT", "CARGO", "RUSTUP"),
+    )
     arguments = parser.parse_args(argv)
     repo_root = Path.cwd()
     if arguments.transport_probe is not None:
         try:
-            executable, work_root = (Path(item) for item in arguments.transport_probe)
-            _transport_probe(executable, repo_root, work_root)
+            executable, work_root, artifact, cargo, rustup = (
+                Path(item) for item in arguments.transport_probe
+            )
+            _transport_probe(executable, repo_root, work_root, artifact, cargo, rustup)
         except (OSError, TypeError, ValueError, RuntimeError):
             print("MCP transport probe failed", file=sys.stderr)
             return 2
