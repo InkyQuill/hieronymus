@@ -5,6 +5,12 @@ edition = "2024"
 rust-version = "1.96"
 publish = false
 
+# The CLI grammar mandates the binary name `semantic-native`; the auto-detected
+# target would be named after the package instead.
+[[bin]]
+name = "semantic-native"
+path = "src/main.rs"
+
 [features]
 default = ["semantic-native"]
 semantic-native = [

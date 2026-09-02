@@ -130,6 +130,18 @@ impl CorpusSpec {
     }
 }
 
+/// Loads the pinned corpus recipe from the repository fixture path, resolved
+/// at compile time from this crate's manifest directory (never `$HOME`). The
+/// path is built from manifest ancestors so it stays free of `..` components,
+/// which `CorpusSpec::load` relies on to recover the repository root.
+pub fn load_default_spec() -> anyhow::Result<CorpusSpec> {
+    let qualification_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .context("the harness lives two levels below the qualification root")?;
+    CorpusSpec::load(qualification_root.join("fixtures/semantic-corpus.json"))
+}
+
 fn load_query_seed(path: &Path) -> anyhow::Result<String> {
     let bytes =
         fs::read(path).with_context(|| format!("could not read query seed {}", path.display()))?;

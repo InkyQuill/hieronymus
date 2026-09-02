@@ -6,8 +6,9 @@ use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use futures::TryStreamExt;
 use lancedb::{
     DistanceType, Table, connect,
+    database::CreateTableMode,
     index::{Index, vector::IvfPqIndexBuilder},
-    query::{ExecutableQuery, QueryBase},
+    query::{ExecutableQuery, QueryBase, Select},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -95,18 +96,32 @@ pub struct IndexRow {
     pub vector: Vec<f32>,
 }
 
+/// Vector-free fingerprint of one stored row. Recovery flows reconcile these
+/// against SQLite counters; the embedding never leaves the index.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RowFingerprint {
+    pub chunk_id: i64,
+    pub series_slug: String,
+    pub checksum: String,
+    pub generation_id: String,
+}
+
 impl IndexRow {
-    /// Maps a deterministic corpus chunk onto an index row. The corpus uses
-    /// string chunk ids; the index requires a numeric id, which is derived as
-    /// the first eight bytes of the SHA-256 of the string id with the sign bit
-    /// masked off, so the derivation can never produce a non-positive id. The
-    /// derivation is pure, so the same corpus always produces the same rows.
+    /// The numeric id derived for a corpus chunk id. The corpus uses string
+    /// chunk ids; the index requires a numeric id, which is the first eight
+    /// bytes of the SHA-256 of the string id with the sign bit masked off, so
+    /// the derivation can never produce a non-positive id. The derivation is
+    /// pure, so the same corpus always produces the same rows.
+    pub fn numeric_chunk_id(chunk_id: &str) -> i64 {
+        let digest = Sha256::digest(chunk_id.as_bytes());
+        (u64::from_be_bytes(digest[..8].try_into().expect("eight digest bytes"))
+            & (i64::MAX as u64)) as i64
+    }
+
+    /// Maps a deterministic corpus chunk onto an index row.
     pub fn from_corpus_chunk(chunk: &Chunk) -> Self {
-        let digest = Sha256::digest(chunk.id.as_bytes());
-        let chunk_id = (u64::from_be_bytes(digest[..8].try_into().expect("eight digest bytes"))
-            & (i64::MAX as u64)) as i64;
         Self {
-            chunk_id,
+            chunk_id: Self::numeric_chunk_id(&chunk.id),
             series_slug: chunk.series_slug.clone(),
             checksum: chunk.checksum.clone(),
             generation_id: chunk.generation_id.clone(),
@@ -228,6 +243,10 @@ impl GenerationIndex {
         let schema = row_schema();
         let table = connection
             .create_empty_table(table_name.clone(), schema)
+            // Reopen an existing generation table (e.g. a partially built one
+            // claimed again by a recovery run) instead of failing; the schema
+            // is still verified against the stored table.
+            .mode(CreateTableMode::exist_ok(|request| request))
             .execute()
             .await
             .with_context(|| format!("could not create table {table_name}"))?;
@@ -325,6 +344,62 @@ impl GenerationIndex {
             );
             tokio::time::sleep(ANN_INDEX_WAIT_TICK).await;
         }
+    }
+
+    /// Reads back vector-free fingerprints of every stored row (bounded by
+    /// `limit`) so recovery flows can reconcile LanceDB contents against the
+    /// SQLite counters. The embedding column is never read.
+    pub async fn snapshot_rows(&self, limit: usize) -> anyhow::Result<Vec<RowFingerprint>> {
+        let stream = self
+            .table
+            .query()
+            .select(Select::Columns(vec![
+                "chunk_id".to_string(),
+                "series_slug".to_string(),
+                "checksum".to_string(),
+                "generation_id".to_string(),
+            ]))
+            .limit(limit)
+            .execute()
+            .await
+            .context("could not snapshot generation rows")?;
+        let batches = stream.try_collect::<Vec<RecordBatch>>().await?;
+        let mut rows = Vec::new();
+        for batch in batches {
+            let chunk_ids = batch
+                .column_by_name("chunk_id")
+                .context("snapshot batch is missing chunk_id")?
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .context("chunk_id column has the wrong type")?;
+            let series = batch
+                .column_by_name("series_slug")
+                .context("snapshot batch is missing series_slug")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("series_slug column has the wrong type")?;
+            let checksums = batch
+                .column_by_name("checksum")
+                .context("snapshot batch is missing checksum")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("checksum column has the wrong type")?;
+            let generations = batch
+                .column_by_name("generation_id")
+                .context("snapshot batch is missing generation_id")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("generation_id column has the wrong type")?;
+            for index in 0..batch.num_rows() {
+                rows.push(RowFingerprint {
+                    chunk_id: chunk_ids.value(index),
+                    series_slug: series.value(index).to_string(),
+                    checksum: checksums.value(index).to_string(),
+                    generation_id: generations.value(index).to_string(),
+                });
+            }
+        }
+        Ok(rows)
     }
 
     /// Reports normalized index statistics; rejects inconsistent coverage.
@@ -695,7 +770,7 @@ fn metric_of_line(line: &str, metric: &str) -> Option<usize> {
     rest[..end].parse().ok()
 }
 
-fn validate_series_slug(slug: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_series_slug(slug: &str) -> anyhow::Result<()> {
     ensure!(!slug.is_empty(), "series slug must not be empty");
     ensure!(
         slug.chars().all(|character| character.is_ascii_lowercase()
