@@ -208,7 +208,7 @@ def test_prerequisites_and_toolchain_are_exact() -> None:
             "version": "1.96.0",
             "commit": "ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96",
         },
-        "bun": {"version": "1.3.14", "authority": "frontend/package.json"},
+        "bun": {"version": "1.4.0", "authority": "frontend/package.json"},
         "semantic_model": {
             "provider": "onnx-runtime",
             "repository": "sentence-transformers/all-MiniLM-L6-v2",

@@ -110,7 +110,7 @@
 
 | Criterion | Status | Summary | Measurements | Not-run reason |
 | --- | --- | --- | --- | --- |
-| bun-version-and-frozen-build | pass | bun matched the pinned prerequisite, the network-isolated frozen-lockfile bundle build, locked release build, and clippy gate all succeeded | {"build_output_sha256":"07789def5c6f44eaab13846774e3282aef52fdd78bcd0c03c7f7677c8ab9768f","bun_version":"1.4.0","bundle_bytes":309723,"bundle_files":6,"bundle_sha256":"c323573dd067b069b88c7984320dac811593c15e1727c3e051c8a71607a9717c","clippy_output_sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","lock_sha256":"b9a58a6e17accb67a50c5f2cca53e79ce7d36e3cd0d3b14a3c501aa4eb878471"} | &#40;none&#41; |
+| bun-version-and-frozen-build | pass | bun matched the pinned prerequisite, the network-isolated frozen-lockfile bundle build, locked release build, and clippy gate all succeeded | {"build_output_sha256":"786d1fb82c7252c17852ce0302190fa250eb8e90cc771b2e91f41e02d70af70e","bun_version":"1.4.0","bundle_bytes":309723,"bundle_files":6,"bundle_sha256":"c323573dd067b069b88c7984320dac811593c15e1727c3e051c8a71607a9717c","clippy_output_sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","lock_sha256":"b9a58a6e17accb67a50c5f2cca53e79ce7d36e3cd0d3b14a3c501aa4eb878471"} | &#40;none&#41; |
 | missing-bundle-rejected | pass | with the canonical bundle renamed away, a fresh bounded cargo target failed to compile at the build-script guard and was removed | {"missing_target_removed":1,"rejected_builds":1,"rejected_exit_code":101} | &#40;none&#41; |
 | release-assets-embedded | pass | the embedded manifest's relative files, byte lengths, and SHA-256 values equal the copied Vite output exactly | {"byte_identity":1,"embedded_files":6,"manifest_files":6} | &#40;none&#41; |
 | index-and-spa-fallback | pass | the embedded root served the real index document and every admin/config route fell back to it with the fixture HTML type | {"fallback_routes":4,"index_status":200,"replayed_routes":5} | &#40;none&#41; |
@@ -132,7 +132,7 @@
 
 ## Input Fingerprint
 
-SHA-256: `3924e2e79f2d3358b6119a86abe10f8f147ce5fd5e70b7d566ff11d5307e5306`
+SHA-256: `2115e36ea24177fb05846b1be21dce5a11a12c6479c5e35a2c4ededf1251e666`
 
 Input paths:
 
