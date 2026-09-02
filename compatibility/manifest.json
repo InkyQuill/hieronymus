@@ -3910,6 +3910,16 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_bypasses_private_stale_archive_after_interrupted_run",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_bypasses_private_stale_extraction_after_interrupted_run",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_cleanup_stays_on_held_parent_after_ancestor_swap",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3930,12 +3940,7 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_reclaims_private_stale_archive_after_interrupted_run",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_reclaims_private_stale_extraction_after_interrupted_run",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_never_extracts_mutated_then_restored_archive_inode",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3946,6 +3951,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_checksum_mismatch_before_extraction",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_extraction_mount_identity_change_without_promotion",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4011,6 +4021,16 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_reuses_valid_runtime_after_fresh_archive_verification",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_stale_archive_replacement_is_never_unlinked",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_stale_subtree_relocation_is_never_emptied",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
