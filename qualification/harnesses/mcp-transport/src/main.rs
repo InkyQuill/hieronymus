@@ -373,11 +373,11 @@ fn handle_http(
     {
         return protocol_error(400, id, -32602, "Invalid request metadata", None);
     }
-    if validated_request(&body, true).is_err() {
-        return protocol_error(400, id, -32602, "Invalid request metadata", None);
-    }
     if let Some(error) = mirrored_header_error(request, &body, registry) {
         return protocol_error(400, id, -32020, &error, None);
+    }
+    if validated_request(&body, true).is_err() {
+        return protocol_error(400, id, -32602, "Invalid request metadata", None);
     }
     let requested_version = body
         .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")
@@ -417,13 +417,17 @@ fn mirrored_header_error(
         }
     };
     if protocol_header != body_version {
-        return Some(if protocol_version_label_safe(protocol_header) {
-            format!(
-                "Header mismatch: MCP-Protocol-Version header value '{protocol_header}' does not match body value '{body_version}'"
-            )
-        } else {
-            "Header mismatch: MCP-Protocol-Version header does not match body value".to_owned()
-        });
+        return Some(
+            if protocol_version_label_safe(protocol_header)
+                && protocol_version_label_safe(body_version)
+            {
+                format!(
+                    "Header mismatch: MCP-Protocol-Version header value '{protocol_header}' does not match body value '{body_version}'"
+                )
+            } else {
+                generic_mirror_mismatch()
+            },
+        );
     }
     let method = body.get("method").and_then(Value::as_str)?;
     let method_header = match header(&request.headers, "mcp-method") {
@@ -433,13 +437,15 @@ fn mirrored_header_error(
         }
     };
     if method_header != method {
-        return Some(if mcp_method_label_safe(method_header) {
-            format!(
-                "Header mismatch: Mcp-Method header value '{method_header}' does not match body value '{method}'"
-            )
-        } else {
-            "Header mismatch: Mcp-Method header does not match body value".to_owned()
-        });
+        return Some(
+            if mcp_method_label_safe(method_header) && mcp_method_label_safe(method) {
+                format!(
+                    "Header mismatch: Mcp-Method header value '{method_header}' does not match body value '{method}'"
+                )
+            } else {
+                generic_mirror_mismatch()
+            },
+        );
     }
     let name_header = header(&request.headers, "mcp-name");
     let requires_name = matches!(method, "tools/call" | "resources/read" | "prompts/get");
@@ -460,16 +466,22 @@ fn mirrored_header_error(
                         "Header mismatch: Mcp-Name header value '{actual}' does not match body value '{name}'"
                     )
                 } else {
-                    "Header mismatch: Mcp-Name header does not match body value".to_owned()
+                    generic_mirror_mismatch()
                 },
             );
         }
     } else if name_header.is_some() {
-        return Some(format!(
-            "Header mismatch: Mcp-Name header must be omitted for {method}"
-        ));
+        return Some(if mcp_method_label_safe(method) {
+            format!("Header mismatch: Mcp-Name header must be omitted for {method}")
+        } else {
+            generic_mirror_mismatch()
+        });
     }
     None
+}
+
+fn generic_mirror_mismatch() -> String {
+    "Header mismatch: mirrored request metadata does not match".to_owned()
 }
 
 fn protocol_version_label_safe(value: &str) -> bool {

@@ -647,6 +647,91 @@ fn http_mismatch_errors_never_reflect_arbitrary_header_values() {
 }
 
 #[test]
+fn http_checks_method_header_before_full_request_metadata() {
+    let route = route_target();
+    let mut request = route["successes"][0]["request"].clone();
+    request["headers"]
+        .as_object_mut()
+        .expect("headers object")
+        .remove("Mcp-Method");
+    request["body"]["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"] = json!([]);
+
+    let response = HttpServer::start().exchange(&request, None);
+    assert_eq!(response.status, 400);
+    assert_eq!(
+        response.json()["error"],
+        json!({
+            "code": -32020,
+            "message": "Header mismatch: required Mcp-Method header is missing"
+        })
+    );
+}
+
+#[test]
+fn http_checks_method_aware_name_headers_before_rejecting_unsupported_methods() {
+    let route = route_target();
+    let canonical = route["successes"][0]["request"].clone();
+    let server = HttpServer::start();
+
+    for method in ["resources/read", "prompts/get"] {
+        let mut request = canonical.clone();
+        request["body"]["method"] = json!(method);
+        request["body"]["params"]["name"] = json!("hieronymus_status");
+        request["headers"]["Mcp-Method"] = json!(method);
+
+        let missing_name = server.exchange(&request, None);
+        assert_eq!(missing_name.status, 400);
+        assert_eq!(missing_name.json()["error"]["code"], -32020);
+        assert_eq!(
+            missing_name.json()["error"]["message"],
+            format!("Header mismatch: required Mcp-Name header is missing for {method}")
+        );
+
+        request["headers"]["Mcp-Name"] = json!("hieronymus_status");
+        let mirrored_but_unsupported = server.exchange(&request, None);
+        assert_eq!(mirrored_but_unsupported.status, 400);
+        assert_eq!(
+            mirrored_but_unsupported.json(),
+            json!({
+                "jsonrpc": "2.0",
+                "id": request["body"]["id"],
+                "error": {"code": -32602, "message": "Invalid request metadata"}
+            })
+        );
+    }
+}
+
+#[test]
+fn http_early_mirror_errors_never_reflect_arbitrary_body_values() {
+    let route = route_target();
+    let list = route["successes"][0]["request"].clone();
+    let call = route["successes"][1]["request"].clone();
+    let server = HttpServer::start();
+    let secret = "compat-secret-do-not-log";
+
+    let mut hostile_version = list.clone();
+    hostile_version["body"]["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] =
+        json!(secret);
+
+    let mut hostile_method = list;
+    hostile_method["body"]["method"] = json!(secret);
+
+    let mut hostile_name = call;
+    hostile_name["body"]["params"]["name"] = json!(secret);
+
+    for request in [hostile_version, hostile_method, hostile_name] {
+        let response = server.exchange(&request, None);
+        assert_eq!(response.status, 400);
+        assert_eq!(response.json()["error"]["code"], -32020);
+        assert_eq!(
+            response.json()["error"]["message"],
+            "Header mismatch: mirrored request metadata does not match"
+        );
+        assert!(!String::from_utf8_lossy(&response.body).contains(secret));
+    }
+}
+
+#[test]
 fn http_reports_classify_content_type_without_reflecting_request_headers() {
     let route = route_target();
     let canonical = route["successes"][0]["request"].clone();
