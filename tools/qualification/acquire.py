@@ -9,7 +9,6 @@ import fcntl
 import hashlib
 import json
 import os
-import shutil
 import socket
 import stat
 import sys
@@ -68,6 +67,7 @@ _RUNTIME_TOP_DIRECTORY: Final = "onnxruntime-linux-x64-1.28.0"
 _RUNTIME_ARCHIVE_PART_NAME: Final = f"{_RUNTIME_TOP_DIRECTORY}.tgz.part"
 _RUNTIME_DIRECTORY_PART_NAME: Final = f"{_RUNTIME_TOP_DIRECTORY}.part"
 _RUNTIME_LIBRARY: Final = Path("lib/libonnxruntime.so")
+_RUNTIME_PROVENANCE_NAME: Final = ".hieronymus-acquisition.json"
 _monotonic = time.monotonic
 _sleep = time.sleep
 
@@ -995,20 +995,106 @@ def _validate_runtime_parent(
             os.close(current_fd)
 
 
-def _remove_runtime_entry(path: Path) -> None:
+def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _unlink_owned_runtime_file(
+    parent_fd: int,
+    name: str,
+    owned: os.stat_result,
+) -> None:
     try:
-        metadata = path.lstat()
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
         return
     except OSError:
-        raise AcquisitionError("could not inspect ONNX Runtime temporary state") from None
+        raise AcquisitionError("could not inspect ONNX Runtime temporary file") from None
+    if not stat.S_ISREG(named.st_mode) or not _same_inode(named, owned):
+        return
     try:
-        if stat.S_ISDIR(metadata.st_mode):
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+        os.unlink(name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
     except OSError:
-        raise AcquisitionError("could not remove ONNX Runtime temporary state") from None
+        raise AcquisitionError("could not remove ONNX Runtime temporary file") from None
+
+
+def _remove_runtime_tree_contents(directory_fd: int, root_device: int) -> None:
+    try:
+        names = os.listdir(directory_fd)
+    except OSError:
+        raise AcquisitionError("could not inspect ONNX Runtime temporary directory") from None
+    for name in names:
+        try:
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except OSError:
+            raise AcquisitionError("could not inspect ONNX Runtime temporary entry") from None
+        if stat.S_ISDIR(metadata.st_mode):
+            if metadata.st_dev != root_device:
+                raise AcquisitionError("ONNX Runtime cleanup crossed a mount boundary")
+            try:
+                child_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=directory_fd)
+            except OSError:
+                raise AcquisitionError("could not open ONNX Runtime temporary directory") from None
+            try:
+                held = os.fstat(child_fd)
+                if not _same_inode(metadata, held):
+                    raise AcquisitionError("ONNX Runtime temporary directory identity changed")
+                _remove_runtime_tree_contents(child_fd, root_device)
+                current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if not _same_inode(held, current):
+                    raise AcquisitionError("ONNX Runtime temporary directory identity changed")
+                os.rmdir(name, dir_fd=directory_fd)
+            finally:
+                os.close(child_fd)
+        else:
+            try:
+                os.unlink(name, dir_fd=directory_fd)
+            except OSError:
+                raise AcquisitionError("could not remove ONNX Runtime temporary entry") from None
+    try:
+        os.fsync(directory_fd)
+    except OSError:
+        raise AcquisitionError("could not persist ONNX Runtime cleanup") from None
+
+
+def _remove_owned_runtime_directory(
+    parent_fd: int,
+    name: str,
+    owned: os.stat_result,
+) -> None:
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise AcquisitionError("could not inspect ONNX Runtime temporary directory") from None
+    if not stat.S_ISDIR(named.st_mode) or not _same_inode(named, owned):
+        return
+    if named.st_dev != os.fstat(parent_fd).st_dev:
+        raise AcquisitionError("ONNX Runtime cleanup crossed a mount boundary")
+    try:
+        directory_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+    except OSError:
+        raise AcquisitionError("could not open ONNX Runtime temporary directory") from None
+    try:
+        held = os.fstat(directory_fd)
+        if not _same_inode(owned, held):
+            return
+        _remove_runtime_tree_contents(directory_fd, held.st_dev)
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not _same_inode(held, current):
+            return
+        os.rmdir(name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except FileNotFoundError:
+        return
+    except AcquisitionError:
+        raise
+    except OSError:
+        raise AcquisitionError("could not remove ONNX Runtime temporary directory") from None
+    finally:
+        os.close(directory_fd)
 
 
 def _stream_runtime_archive(
@@ -1016,7 +1102,7 @@ def _stream_runtime_archive(
     parent_fd: int,
     expected_sha256: str,
     deadline: _Deadline,
-) -> None:
+) -> int:
     current_url = initial_url
     redirects = 0
     while True:
@@ -1046,7 +1132,7 @@ def _stream_runtime_archive(
             try:
                 archive_fd = os.open(
                     _RUNTIME_ARCHIVE_PART_NAME,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
                     0o600,
                     dir_fd=parent_fd,
                 )
@@ -1077,28 +1163,40 @@ def _stream_runtime_archive(
                 raise AcquisitionError("ONNX Runtime response length did not match its declaration")
             if digest.hexdigest() != expected_sha256:
                 raise AcquisitionError("ONNX Runtime archive checksum mismatch")
-            os.close(archive_fd)
-            archive_fd = None
+            held = os.fstat(archive_fd)
+            named = os.stat(
+                _RUNTIME_ARCHIVE_PART_NAME,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            _require_private_regular(held, "ONNX Runtime archive")
+            _require_private_regular(named, "ONNX Runtime archive")
+            if not _same_inode(held, named):
+                raise AcquisitionError("ONNX Runtime archive identity changed")
+            os.lseek(archive_fd, 0, os.SEEK_SET)
             os.fsync(parent_fd)
-            return
+            return archive_fd
         except Exception:
             if archive_fd is not None:
+                owned = os.fstat(archive_fd)
+                _unlink_owned_runtime_file(parent_fd, _RUNTIME_ARCHIVE_PART_NAME, owned)
                 os.close(archive_fd)
-            try:
-                os.unlink(_RUNTIME_ARCHIVE_PART_NAME, dir_fd=parent_fd)
-                os.fsync(parent_fd)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                pass
             raise
         finally:
             try:
                 response.close()
             except Exception:
                 try:
-                    os.unlink(_RUNTIME_ARCHIVE_PART_NAME, dir_fd=parent_fd)
-                except OSError:
+                    if archive_fd is not None:
+                        owned = os.fstat(archive_fd)
+                        _unlink_owned_runtime_file(
+                            parent_fd,
+                            _RUNTIME_ARCHIVE_PART_NAME,
+                            owned,
+                        )
+                        os.close(archive_fd)
+                        archive_fd = None
+                except (OSError, AcquisitionError):
                     pass
                 raise AcquisitionError("could not close ONNX Runtime response") from None
 
@@ -1135,11 +1233,14 @@ def _resolve_archive_link(
     link_path: PurePosixPath,
     links: dict[PurePosixPath, str],
     kinds: dict[PurePosixPath, str],
+    deadline: _Deadline,
 ) -> PurePosixPath:
+    deadline.check()
     pending = list(_relative_link_target(link_path, links[link_path]).parts)
     resolved: list[str] = []
     visited: set[PurePosixPath] = {link_path}
     while pending:
+        deadline.check()
         candidate = PurePosixPath(*resolved, pending.pop(0))
         if candidate in links:
             if candidate in visited:
@@ -1161,6 +1262,7 @@ def _resolve_archive_link(
 
 def _archive_members(
     bundle: tarfile.TarFile,
+    deadline: _Deadline,
 ) -> tuple[
     dict[PurePosixPath, tarfile.TarInfo],
     dict[PurePosixPath, str],
@@ -1170,7 +1272,8 @@ def _archive_members(
     kinds: dict[PurePosixPath, str] = {}
     links: dict[PurePosixPath, str] = {}
     total_size = 0
-    for member in bundle.getmembers():
+    for member in bundle:
+        deadline.check()
         path = _stripped_archive_path(member.name)
         if not path.parts:
             if not member.isdir():
@@ -1196,6 +1299,7 @@ def _archive_members(
         kinds[path] = kind
 
     for path in tuple(kinds):
+        deadline.check()
         for parent in path.parents:
             if not parent.parts:
                 continue
@@ -1203,55 +1307,326 @@ def _archive_members(
             if parent_kind != "directory":
                 raise AcquisitionError("ONNX Runtime archive member has a non-directory parent")
     for link_path in links:
-        _resolve_archive_link(link_path, links, kinds)
+        _resolve_archive_link(link_path, links, kinds, deadline)
+    deadline.check()
     return members, kinds, links
 
 
-def _extract_runtime_archive(archive_path: Path, extraction_root: Path) -> None:
+def _extract_runtime_archive(
+    archive_fd: int,
+    extraction_fd: int,
+    deadline: _Deadline,
+) -> None:
+    extraction_root = Path(f"/proc/self/fd/{extraction_fd}")
     try:
-        with tarfile.open(archive_path, mode="r:gz") as bundle:
-            members, kinds, links = _archive_members(bundle)
-            for path, kind in sorted(kinds.items(), key=lambda item: len(item[0].parts)):
-                destination = extraction_root.joinpath(*path.parts)
-                if kind == "directory":
-                    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
-            for path, member in members.items():
-                if kinds[path] != "file":
-                    continue
-                source = bundle.extractfile(member)
-                if source is None:
-                    raise AcquisitionError("could not read ONNX Runtime archive member")
-                destination = extraction_root.joinpath(*path.parts)
-                with source, destination.open("xb") as output:
-                    shutil.copyfileobj(source, output, _CHUNK_SIZE)
-                destination.chmod(0o700 if member.mode & 0o111 else 0o600)
-            for path, target in links.items():
-                extraction_root.joinpath(*path.parts).symlink_to(target)
+        deadline.check()
+        os.lseek(archive_fd, 0, os.SEEK_SET)
+        with os.fdopen(os.dup(archive_fd), "rb") as archive_stream:
+            with tarfile.open(fileobj=archive_stream, mode="r:gz") as bundle:
+                deadline.check()
+                members, kinds, links = _archive_members(bundle, deadline)
+                for path, kind in sorted(kinds.items(), key=lambda item: len(item[0].parts)):
+                    deadline.check()
+                    destination = extraction_root.joinpath(*path.parts)
+                    if kind == "directory":
+                        destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+                for path, member in members.items():
+                    deadline.check()
+                    if kinds[path] != "file":
+                        continue
+                    source = bundle.extractfile(member)
+                    if source is None:
+                        raise AcquisitionError("could not read ONNX Runtime archive member")
+                    destination = extraction_root.joinpath(*path.parts)
+                    with source, destination.open("xb") as output:
+                        while True:
+                            deadline.check()
+                            chunk = source.read(_CHUNK_SIZE)
+                            deadline.check()
+                            if not chunk:
+                                break
+                            output.write(chunk)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    deadline.check()
+                    destination.chmod(0o700 if member.mode & 0o111 else 0o600)
+                for path, target in links.items():
+                    deadline.check()
+                    extraction_root.joinpath(*path.parts).symlink_to(target)
+        deadline.check()
+        os.fsync(extraction_fd)
     except AcquisitionError:
         raise
     except (OSError, tarfile.TarError, EOFError):
         raise AcquisitionError("invalid ONNX Runtime archive") from None
 
 
-def _validate_runtime_directory(destination: Path, library: Path) -> Path:
+def _validate_runtime_archive_identity(parent_fd: int, archive_fd: int) -> os.stat_result:
     try:
-        metadata = destination.lstat()
-        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-            raise AcquisitionError("ONNX Runtime destination is not a directory")
-        resolved_root = destination.resolve(strict=True)
-        resolved_library = (destination / library).resolve(strict=True)
-        resolved_library.relative_to(resolved_root)
-        if not resolved_library.is_file():
-            raise AcquisitionError("ONNX Runtime library is not a regular file")
+        held = os.fstat(archive_fd)
+        named = os.stat(
+            _RUNTIME_ARCHIVE_PART_NAME,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        raise AcquisitionError("ONNX Runtime archive identity changed") from None
+    _require_private_regular(held, "ONNX Runtime archive")
+    _require_private_regular(named, "ONNX Runtime archive")
+    if not _same_inode(held, named):
+        raise AcquisitionError("ONNX Runtime archive identity changed")
+    return held
+
+
+def _runtime_tree_digest(directory_fd: int, deadline: _Deadline) -> str:
+    root = os.fstat(directory_fd)
+    _require_trusted_directory(root)
+    digest = hashlib.sha256(b"hieronymus-onnx-runtime-tree-v1\0")
+
+    def visit(current_fd: int, prefix: tuple[str, ...]) -> None:
+        deadline.check()
+        try:
+            names = sorted(os.listdir(current_fd))
+        except OSError:
+            raise AcquisitionError("could not inspect ONNX Runtime provenance") from None
+        for name in names:
+            deadline.check()
+            if not prefix and name == _RUNTIME_PROVENANCE_NAME:
+                continue
+            try:
+                metadata = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+            except OSError:
+                raise AcquisitionError("could not inspect ONNX Runtime provenance") from None
+            if metadata.st_uid != os.geteuid() or metadata.st_dev != root.st_dev:
+                raise AcquisitionError("ONNX Runtime provenance contains an untrusted entry")
+            relative = "/".join((*prefix, name)).encode("utf-8", errors="surrogateescape")
+            mode = stat.S_IMODE(metadata.st_mode)
+            if stat.S_ISDIR(metadata.st_mode):
+                if mode & 0o022:
+                    raise AcquisitionError("ONNX Runtime provenance contains a writable entry")
+                digest.update(b"D\0" + relative + b"\0" + str(mode).encode() + b"\0")
+                try:
+                    child_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=current_fd)
+                except OSError:
+                    raise AcquisitionError("could not inspect ONNX Runtime provenance") from None
+                try:
+                    held = os.fstat(child_fd)
+                    if not _same_inode(metadata, held):
+                        raise AcquisitionError("ONNX Runtime provenance identity changed")
+                    visit(child_fd, (*prefix, name))
+                finally:
+                    os.close(child_fd)
+            elif stat.S_ISREG(metadata.st_mode):
+                if mode & 0o022:
+                    raise AcquisitionError("ONNX Runtime provenance contains a writable entry")
+                if metadata.st_nlink != 1:
+                    raise AcquisitionError("ONNX Runtime provenance contains a hard link")
+                try:
+                    file_fd = os.open(
+                        name,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                        dir_fd=current_fd,
+                    )
+                except OSError:
+                    raise AcquisitionError("could not inspect ONNX Runtime provenance") from None
+                try:
+                    held = os.fstat(file_fd)
+                    if not _same_file_version(metadata, held):
+                        raise AcquisitionError("ONNX Runtime provenance identity changed")
+                    file_digest = hashlib.sha256()
+                    offset = 0
+                    while True:
+                        deadline.check()
+                        chunk = os.pread(file_fd, _CHUNK_SIZE, offset)
+                        deadline.check()
+                        if not chunk:
+                            break
+                        offset += len(chunk)
+                        file_digest.update(chunk)
+                    current = os.fstat(file_fd)
+                    if not _same_file_version(held, current):
+                        raise AcquisitionError("ONNX Runtime provenance identity changed")
+                finally:
+                    os.close(file_fd)
+                digest.update(
+                    b"F\0"
+                    + relative
+                    + b"\0"
+                    + str(mode).encode()
+                    + b"\0"
+                    + str(metadata.st_size).encode()
+                    + b"\0"
+                    + file_digest.digest()
+                )
+            elif stat.S_ISLNK(metadata.st_mode):
+                try:
+                    target = os.readlink(name, dir_fd=current_fd)
+                    link_path = Path(f"/proc/self/fd/{directory_fd}").joinpath(*prefix, name)
+                    resolved_root = Path(f"/proc/self/fd/{directory_fd}").resolve(strict=True)
+                    resolved_target = link_path.resolve(strict=True)
+                    resolved_target.relative_to(resolved_root)
+                except (OSError, RuntimeError, ValueError):
+                    raise AcquisitionError(
+                        "ONNX Runtime provenance contains an unsafe link"
+                    ) from None
+                digest.update(b"L\0" + relative + b"\0" + os.fsencode(target) + b"\0")
+            else:
+                raise AcquisitionError("ONNX Runtime provenance contains a special entry")
+        deadline.check()
+
+    visit(directory_fd, ())
+    return digest.hexdigest()
+
+
+def _write_runtime_provenance(
+    directory_fd: int,
+    expected_archive_sha256: str,
+    deadline: _Deadline,
+) -> None:
+    tree_sha256 = _runtime_tree_digest(directory_fd, deadline)
+    payload = (
+        json.dumps(
+            {
+                "archive_sha256": expected_archive_sha256,
+                "schema_version": 1,
+                "tree_sha256": tree_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+    deadline.check()
+    try:
+        provenance_fd = os.open(
+            _RUNTIME_PROVENANCE_NAME,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_fd,
+        )
+    except OSError:
+        raise AcquisitionError("could not create ONNX Runtime provenance") from None
+    try:
+        offset = 0
+        while offset < len(payload):
+            deadline.check()
+            offset += os.write(provenance_fd, payload[offset:])
+        os.fsync(provenance_fd)
+    except OSError:
+        raise AcquisitionError("could not persist ONNX Runtime provenance") from None
+    finally:
+        os.close(provenance_fd)
+    os.fsync(directory_fd)
+    deadline.check()
+
+
+def _validate_runtime_provenance(
+    directory_fd: int,
+    expected_archive_sha256: str,
+    deadline: _Deadline,
+) -> None:
+    try:
+        provenance_fd = os.open(
+            _RUNTIME_PROVENANCE_NAME,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=directory_fd,
+        )
+    except OSError:
+        raise AcquisitionError("ONNX Runtime provenance is missing") from None
+    try:
+        _require_private_regular(os.fstat(provenance_fd), "ONNX Runtime provenance")
+        encoded = os.read(provenance_fd, 4097)
+        if len(encoded) > 4096 or os.read(provenance_fd, 1):
+            raise AcquisitionError("ONNX Runtime provenance is invalid")
+        payload = json.loads(encoded)
     except AcquisitionError:
         raise
-    except (FileNotFoundError, OSError, RuntimeError, ValueError):
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+        raise AcquisitionError("ONNX Runtime provenance is invalid") from None
+    finally:
+        os.close(provenance_fd)
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or payload.get("archive_sha256") != expected_archive_sha256
+        or set(payload) != {"archive_sha256", "schema_version", "tree_sha256"}
+        or not isinstance(payload.get("tree_sha256"), str)
+    ):
+        raise AcquisitionError("ONNX Runtime provenance is invalid")
+    if _runtime_tree_digest(directory_fd, deadline) != payload["tree_sha256"]:
+        raise AcquisitionError("ONNX Runtime provenance does not match runtime contents")
+
+
+def _validate_runtime_library(
+    directory_fd: int,
+    library: Path,
+    deadline: _Deadline,
+) -> None:
+    deadline.check()
+    try:
+        resolved_root = Path(f"/proc/self/fd/{directory_fd}").resolve(strict=True)
+        resolved_library = (
+            Path(f"/proc/self/fd/{directory_fd}").joinpath(library).resolve(strict=True)
+        )
+        resolved_library.relative_to(resolved_root)
+        metadata = resolved_library.stat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise AcquisitionError("ONNX Runtime library is not a private regular file")
+    except AcquisitionError:
+        raise
+    except (OSError, RuntimeError, ValueError):
         raise AcquisitionError("ONNX Runtime library chain is invalid") from None
-    return destination
+    deadline.check()
 
 
-def _validated_runtime_destination(root: Path, library: Path) -> Path:
-    return _validate_runtime_directory(root / _RUNTIME_TOP_DIRECTORY, library)
+def _open_runtime_directory(parent_fd: int, name: str) -> int:
+    try:
+        directory_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+    except OSError:
+        raise AcquisitionError("ONNX Runtime destination is not a trusted directory") from None
+    try:
+        metadata = os.fstat(directory_fd)
+        _require_trusted_directory(metadata)
+        if metadata.st_dev != os.fstat(parent_fd).st_dev:
+            raise AcquisitionError("ONNX Runtime destination crossed a mount boundary")
+    except Exception:
+        os.close(directory_fd)
+        raise
+    return directory_fd
+
+
+def _validated_runtime_destination(
+    canonical_root: Path,
+    directory_fds: tuple[int, ...],
+    library: Path,
+    expected_archive_sha256: str,
+    deadline: _Deadline,
+) -> Path:
+    _validate_runtime_parent(canonical_root, directory_fds)
+    parent_fd = directory_fds[-1]
+    directory_fd = _open_runtime_directory(parent_fd, _RUNTIME_TOP_DIRECTORY)
+    try:
+        held = os.fstat(directory_fd)
+        _validate_runtime_library(directory_fd, library, deadline)
+        _validate_runtime_provenance(directory_fd, expected_archive_sha256, deadline)
+        named = os.stat(
+            _RUNTIME_TOP_DIRECTORY,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if not _same_inode(held, named):
+            raise AcquisitionError("ONNX Runtime destination identity changed")
+        _validate_runtime_parent(canonical_root, directory_fds)
+        destination = canonical_root.joinpath(
+            *_RUNTIME_PARENT_COMPONENTS,
+            _RUNTIME_TOP_DIRECTORY,
+        )
+        if destination.resolve(strict=True) != destination:
+            raise AcquisitionError("ONNX Runtime destination escaped the repository")
+        deadline.check()
+        return destination
+    finally:
+        os.close(directory_fd)
 
 
 def acquire_onnx_runtime(repo_root: Path) -> Path:
@@ -1261,41 +1636,113 @@ def acquire_onnx_runtime(repo_root: Path) -> Path:
     try:
         with _open_runtime_parent(repo_root) as (canonical_root, directory_fds):
             parent_fd = directory_fds[-1]
-            parent = canonical_root.joinpath(*_RUNTIME_PARENT_COMPONENTS)
             initial_url, expected_sha256, library = _load_runtime_spec(canonical_root)
-            destination = parent / _RUNTIME_TOP_DIRECTORY
-            if destination.exists() or destination.is_symlink():
-                return _validated_runtime_destination(parent, library)
+            with _kernel_mutex(canonical_root, deadline):
+                try:
+                    os.stat(
+                        _RUNTIME_TOP_DIRECTORY,
+                        dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    raise AcquisitionError("could not inspect ONNX Runtime destination") from None
+                else:
+                    return _validated_runtime_destination(
+                        canonical_root,
+                        directory_fds,
+                        library,
+                        expected_sha256,
+                        deadline,
+                    )
 
-            archive_path = parent / _RUNTIME_ARCHIVE_PART_NAME
-            extraction_root = parent / _RUNTIME_DIRECTORY_PART_NAME
-            _remove_runtime_entry(archive_path)
-            _remove_runtime_entry(extraction_root)
-            try:
-                _stream_runtime_archive(
-                    initial_url,
-                    parent_fd,
-                    expected_sha256,
-                    deadline,
-                )
-                _validate_runtime_parent(canonical_root, directory_fds)
-                extraction_root.mkdir(mode=0o700)
-                _extract_runtime_archive(archive_path, extraction_root)
-                validated = _validate_runtime_directory(extraction_root, library)
-                if validated != extraction_root:
-                    raise AcquisitionError("ONNX Runtime extraction root is invalid")
-                _validate_runtime_parent(canonical_root, directory_fds)
-                os.rename(
-                    _RUNTIME_DIRECTORY_PART_NAME,
-                    _RUNTIME_TOP_DIRECTORY,
-                    src_dir_fd=parent_fd,
-                    dst_dir_fd=parent_fd,
-                )
-                os.fsync(parent_fd)
-            finally:
-                _remove_runtime_entry(archive_path)
-                _remove_runtime_entry(extraction_root)
-            return _validated_runtime_destination(parent, library)
+                archive_fd: int | None = None
+                extraction_fd: int | None = None
+                archive_owned: os.stat_result | None = None
+                extraction_owned: os.stat_result | None = None
+                promoted = False
+                try:
+                    archive_fd = _stream_runtime_archive(
+                        initial_url,
+                        parent_fd,
+                        expected_sha256,
+                        deadline,
+                    )
+                    archive_owned = _validate_runtime_archive_identity(
+                        parent_fd,
+                        archive_fd,
+                    )
+                    deadline.check()
+                    try:
+                        os.mkdir(_RUNTIME_DIRECTORY_PART_NAME, mode=0o700, dir_fd=parent_fd)
+                        extraction_fd = os.open(
+                            _RUNTIME_DIRECTORY_PART_NAME,
+                            _DIRECTORY_FLAGS,
+                            dir_fd=parent_fd,
+                        )
+                    except OSError:
+                        raise AcquisitionError(
+                            "could not create ONNX Runtime temporary directory"
+                        ) from None
+                    extraction_owned = os.fstat(extraction_fd)
+                    _require_trusted_directory(extraction_owned)
+                    if extraction_owned.st_dev != os.fstat(parent_fd).st_dev:
+                        raise AcquisitionError(
+                            "ONNX Runtime temporary directory crossed a mount boundary"
+                        )
+                    os.fsync(parent_fd)
+                    _extract_runtime_archive(archive_fd, extraction_fd, deadline)
+                    deadline.check()
+                    _validate_runtime_archive_identity(parent_fd, archive_fd)
+                    _validate_runtime_parent(canonical_root, directory_fds)
+                    _validate_runtime_library(extraction_fd, library, deadline)
+                    _write_runtime_provenance(
+                        extraction_fd,
+                        expected_sha256,
+                        deadline,
+                    )
+                    _validate_runtime_provenance(
+                        extraction_fd,
+                        expected_sha256,
+                        deadline,
+                    )
+                    deadline.check()
+                    _validate_runtime_archive_identity(parent_fd, archive_fd)
+                    _validate_runtime_parent(canonical_root, directory_fds)
+                    os.rename(
+                        _RUNTIME_DIRECTORY_PART_NAME,
+                        _RUNTIME_TOP_DIRECTORY,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                    )
+                    promoted = True
+                    os.fsync(parent_fd)
+                    deadline.check()
+                    return _validated_runtime_destination(
+                        canonical_root,
+                        directory_fds,
+                        library,
+                        expected_sha256,
+                        deadline,
+                    )
+                finally:
+                    if extraction_fd is not None:
+                        os.close(extraction_fd)
+                    if not promoted and extraction_owned is not None:
+                        _remove_owned_runtime_directory(
+                            parent_fd,
+                            _RUNTIME_DIRECTORY_PART_NAME,
+                            extraction_owned,
+                        )
+                    if archive_fd is not None:
+                        os.close(archive_fd)
+                    if archive_owned is not None:
+                        _unlink_owned_runtime_file(
+                            parent_fd,
+                            _RUNTIME_ARCHIVE_PART_NAME,
+                            archive_owned,
+                        )
     except AcquisitionError:
         raise
     except Exception:
