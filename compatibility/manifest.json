@@ -4320,6 +4320,61 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_all_pass_enables_semantic",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_non_semantic_failure_blocks_without_changing_specs[frontend-embedding-rust-frontend]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_non_semantic_failure_blocks_without_changing_specs[legacy-database-import-rust-database-upgrade]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_non_semantic_failure_blocks_without_changing_specs[mcp-transport-rust-daemon-mcp-security]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_pending_review_is_blocking",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_records_only_check_never_invokes_live_runners",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_relevant_projection_mutation_blocks_without_rewriting_anything[database-state-legacy-database-import]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_relevant_projection_mutation_blocks_without_rewriting_anything[mcp-contract-mcp-transport]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_semantic_failure_selects_fts_only_and_still_qualifies",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_stale_input_is_blocking",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_gate.py::test_unrelated_global_inventory_regeneration_keeps_measured_records_current",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_blocking_failure_cannot_change_the_contract",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -11931,6 +11986,21 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_render.py::test_validate_cli_has_stable_success_validation_and_load_exit_codes",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run.py::test_dispatcher_passes_original_environment_to_runner",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run.py::test_dispatcher_requires_live_opt_in",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run.py::test_run_all_writes_complete_records_and_blocked_aggregate",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
