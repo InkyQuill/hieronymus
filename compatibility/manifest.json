@@ -11935,6 +11935,41 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_failure_does_not_select_serve_dir",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_fake_runner_requires_exact_criterion_set",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_live_build_failure_writes_complete_blocked_record",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_live_children_reuse_safe_environment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_live_context_discovers_before_sanitizing",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_live_rejects_missing_opt_in_before_discovery",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_frontend.py::test_frontend_runner_owns_embedded_path_contracts_only",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_candidate_group_does_not_convert_infrastructure_errors_to_evidence[error0]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
