@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/hieronymus", "crates/hiero"]
+exclude = ["qualification", "tests/qualification/fixtures/process-smoke"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+version = "0.7.0"
+license = "MIT"
+
+[workspace.dependencies]
+home = "0.5"
+tempfile = "3"
+thiserror = "2"
+toml = { version = "0.8", features = ["preserve_order"] }

@@ -1,0 +1,10 @@
+[package]
+name = "hiero"
+description = "Hieronymus command-line binary."
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
