@@ -11,5 +11,6 @@ pub mod db;
 pub mod dream_config;
 pub mod ingest_config;
 pub mod provider_config;
+pub mod registry;
 pub mod release_config;
 pub mod secret;

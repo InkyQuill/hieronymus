@@ -2,6 +2,12 @@ use std::path::Path;
 
 use rusqlite::OpenFlags;
 
+/// The ported global schema (Python `migrations/global.sql`, verbatim). The
+/// Rust line creates fresh databases at this schema plus its own
+/// `hieronymus_meta` version marker; the compatibility import boundary
+/// (ADR 0010) owns converting Python databases to it.
+const GLOBAL_MIGRATION_SQL: &str = include_str!("../migrations/global.sql");
+
 /// Supported Rust schema version created by this line. Bumped only by an
 /// accepted schema-upgrade decision; a database written by a newer binary
 /// fails closed.
@@ -57,6 +63,53 @@ impl DatabaseState {
             _ => None,
         }
     }
+}
+
+/// Open the database with the Python-compatible pragmas and apply the Rust
+/// schema when it is not yet marked as migrated. Fresh databases are created
+/// directly at the current Rust schema version (ADR 0010). An existing Python
+/// or unsupported database is never auto-migrated here: the caller must run
+/// the explicit upgrade path from the database-upgrade spec.
+pub fn open_migrated(path: &Path) -> Result<rusqlite::Connection, OpenMigratedError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(OpenMigratedError::Io)?;
+    }
+    let connection = rusqlite::Connection::open(path)?;
+    connection.execute_batch(
+        "pragma foreign_keys = on;
+         pragma journal_mode = wal;",
+    )?;
+    let state = classify_database(path);
+    match state {
+        DatabaseState::Empty => {
+            connection.execute_batch(GLOBAL_MIGRATION_SQL)?;
+            connection.execute_batch(&format!(
+                "create table if not exists {RUST_META_TABLE} (
+                     schema_version integer not null unique
+                 );
+                 insert or ignore into {RUST_META_TABLE} (schema_version)
+                 values ({SUPPORTED_RUST_SCHEMA_VERSION});"
+            ))?;
+            connection.pragma_update(None, "user_version", SUPPORTED_RUST_SCHEMA_VERSION)?;
+            Ok(connection)
+        }
+        DatabaseState::RustSchema { version } if version == SUPPORTED_RUST_SCHEMA_VERSION => {
+            Ok(connection)
+        }
+        other => Err(OpenMigratedError::UnsupportedState(other)),
+    }
+}
+
+/// Errors from [`open_migrated`]: filesystem, SQLite, or an unsupported
+/// database state that must not be opened for writes.
+#[derive(Debug, thiserror::Error)]
+pub enum OpenMigratedError {
+    #[error("database could not be opened: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("database error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("database requires an explicit upgrade path; refusing to open for writes: {0:?}")]
+    UnsupportedState(DatabaseState),
 }
 
 /// Classify the database at `path` without writing to it.

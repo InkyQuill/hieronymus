@@ -15,6 +15,7 @@ toml.workspace = true
 serde = { version = "1", features = ["derive"] }
 indexmap.workspace = true
 rusqlite.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 serde_json = "1"
