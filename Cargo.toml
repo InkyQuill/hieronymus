@@ -11,6 +11,7 @@ license = "MIT"
 
 [workspace.dependencies]
 indexmap = "2"
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 home = "0.5"
 tempfile = "3"
 thiserror = "2"

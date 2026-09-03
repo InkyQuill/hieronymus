@@ -8,3 +8,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+hieronymus = { path = "../hieronymus" }
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true
