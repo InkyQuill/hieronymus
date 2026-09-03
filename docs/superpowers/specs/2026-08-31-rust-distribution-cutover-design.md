@@ -2,6 +2,14 @@
 
 **Status:** Accepted on 2026-08-31.
 
+> **Amendment (2026-09-03, owner):** initial-release certification is trimmed.
+> Waived for the first Rust release line: Sigstore keyless signing, software
+> bill of materials, and build provenance attestations. The initial release
+> ships with SHA-256 checksums and a protected release workflow requiring the
+> owner's approval; signing/SBOM/provenance may be introduced later by a small
+> ADR before a public distribution. The release rehearsal matrix is a manual
+> checklist run by the owner, not a recorded CI matrix.
+
 ## Goal
 
 Build, install, upgrade, and recover a self-contained Rust release without

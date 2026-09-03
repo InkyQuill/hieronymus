@@ -2,6 +2,16 @@
 
 **Status:** Accepted on 2026-08-31.
 
+> **Amendment (2026-09-03, owner):** certification-light process. Program
+> Sequence step 2 is satisfied (qualification records for MCP transport,
+> semantic native, frontend embedding, and legacy database import are merged;
+> aggregate decision `qualified`, release mode `semantic-enabled`) and is no
+> longer a gate for writing dependent implementation plans. Acceptance of
+> implementation work is: ported tests green plus owner review of the diff.
+> No recorded attestations, per-surface owner registry, or evidence gates are
+> required. The `tools/qualification` records remain one-time archived
+> evidence; nothing going forward builds on them.
+
 ## Purpose
 
 Replace the Python backend with a Rust application without losing user data,
@@ -89,18 +99,23 @@ acceptance owner and one of these technical owners.
 
 ## Program Sequence
 
-1. Freeze behavior in a machine-readable compatibility manifest and fixtures.
-2. Produce qualification records for MCP transport, semantic native
+1. ~~Freeze behavior in a machine-readable compatibility manifest and
+   fixtures.~~ Done (2026-09-03): `compatibility/manifest.json`,
+   `compatibility/snapshots/state.json`, frozen fixtures under
+   `compatibility/`.
+2. ~~Produce qualification records for MCP transport, semantic native
    dependencies, frontend embedding, and legacy database import before writing
-   the dependent implementation plan.
+   the dependent implementation plan.~~ Done (2026-09-03):
+   `qualification/records/*` accepted, gate `qualified`. No longer a gate.
 3. Build the Rust workspace and contract harness.
 4. Implement upgrade tooling before any destructive cutover path.
 5. Implement vertical product slices: configuration/series, terminology,
    memory/recall, RAG/semantic, dreaming, daemon/transports, frontend.
 6. Produce native release artifacts and install them in clean environments.
 7. Rehearse upgrade, normal use, pre-commit failure recovery, and Rust-only
-   backup recovery.
-8. Cut over managed installation only after all gates in ADR 0008 pass.
+   backup recovery (a manual checklist is sufficient; no recorded matrix).
+8. Cut over managed installation when the owner is satisfied the port is
+   correct.
 
 ## Global Invariants
 
@@ -119,8 +134,8 @@ acceptance owner and one of these technical owners.
 
 ## Acceptance
 
-The program design is accepted when the ADRs and child specifications have
-been reviewed together, contradictions with current accepted ADRs are resolved,
-and each compatibility surface has its named acceptance owner, technical owner,
-and test strategy recorded. Detailed implementation plans are written only
-after that review.
+Accepted 2026-08-31 (ADRs and child specifications reviewed together;
+contradictions resolved). Amendment 2026-09-03: the "recorded owner and test
+strategy per surface" requirement is waived; each child spec's Acceptance
+Criteria section is read as the checklist of behaviors the ported Rust tests
+must demonstrate, not as a recorded attestation.

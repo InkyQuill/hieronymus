@@ -2,6 +2,17 @@
 
 **Status:** Accepted on 2026-08-31.
 
+> **Amendment (2026-09-03, owner):** the manifest and frozen fixtures exist
+> (`compatibility/`) and are kept as a review inventory and as reusable test
+> inputs for the Rust port. Waived as ongoing process obligations: per-test
+> manifest dispositions for every Python/frontend test; named acceptance and
+> technical owners per manifest entry; a CI parity report; a standing
+> differential Python-vs-Rust harness as a mandated mechanism (running old and
+> new tests against the same fixture remains an ordinary testing technique
+> where useful). The working specification of parity during the rewrite is the
+> ported Rust test suite plus these fixtures; contract changes still require
+> an explicit decision (ADR or owner note), never a silent fixture edit.
+
 ## Goal
 
 Make “parity” a finite, reviewable inventory rather than a promise to port an

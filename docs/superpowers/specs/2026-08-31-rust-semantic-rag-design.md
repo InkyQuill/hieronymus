@@ -74,6 +74,10 @@ post-retrieval contract check defined by the terminology spec.
 
 ## Dependency Spike
 
+> Satisfied 2026-09-03: `qualification/records/semantic-native.json` (decision
+> `semantic-enabled`, exact versions/features locked in the harness
+> `Cargo.lock`; adopted pins: LanceDB 0.37.1, ort 2.0.0-rc.13, Arrow 58.3.0).
+
 Before the semantic implementation plan, compile and run the chosen LanceDB and
 ONNX stack on `x86_64-unknown-linux-gnu`. The qualification record must include
 exact crate versions/features, binary size, model checksum and load result,
