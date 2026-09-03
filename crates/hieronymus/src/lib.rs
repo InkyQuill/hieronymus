@@ -7,6 +7,8 @@
 
 pub mod atomic;
 pub mod data_root;
+pub mod dream_config;
 pub mod ingest_config;
+pub mod provider_config;
 pub mod release_config;
 pub mod secret;

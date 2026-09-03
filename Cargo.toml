@@ -10,7 +10,9 @@ version = "0.7.0"
 license = "MIT"
 
 [workspace.dependencies]
+indexmap = "2"
 home = "0.5"
 tempfile = "3"
 thiserror = "2"
 toml = { version = "0.8", features = ["preserve_order"] }
+

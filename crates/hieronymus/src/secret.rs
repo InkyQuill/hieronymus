@@ -21,6 +21,14 @@ impl<T> Secret<T> {
     }
 }
 
+/// Compared on the exposed value: two `Secret`s holding the same secret are
+/// equal (the Python dataclass profile equality ports through).
+impl<T: PartialEq> PartialEq for Secret<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
 impl<T> fmt::Debug for Secret<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("Secret([redacted])")

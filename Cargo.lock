@@ -62,6 +62,7 @@ name = "hieronymus"
 version = "0.7.0"
 dependencies = [
  "home",
+ "indexmap",
  "serde",
  "serde_json",
  "tempfile",
