@@ -6,6 +6,8 @@
 //! print, log, or touch the network.
 
 pub mod atomic;
+pub mod concept_models;
+pub mod concepts;
 pub mod data_root;
 pub mod db;
 pub mod dream_config;
