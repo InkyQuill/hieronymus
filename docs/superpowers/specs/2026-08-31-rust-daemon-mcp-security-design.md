@@ -2,6 +2,18 @@
 
 **Status:** Accepted on 2026-08-31.
 
+> **Amendment (2026-09-03, owner):** local-first light authentication per the
+> ADR 0012 amendment. One static per-installation bearer token guards every
+> non-static endpoint; `Host`/`Origin` validation is required; token rotation
+> is a 401-and-reconnect rewrite (no `credentials_rotated` ceremony, no
+> idempotency-key retry policy tied to auth); browser console uses a one-time
+> launch grant exchanged for a SameSite=Strict HttpOnly session cookie with
+> `Origin`/`Host`-checked mutations instead of a separate CSRF token layer;
+> WebSocket auth is the session cookie at upgrade. `Secret<T>` redaction and
+> sentinel-secret tests are unchanged. The auth-policy matrix below is
+> therefore one rule: token for API/MCP/shutdown, session cookie for browser
+> surfaces, unauthenticated minimal `/health`.
+
 ## Goal
 
 Provide a discoverable local daemon whose CLI, MCP, WebSocket, and browser

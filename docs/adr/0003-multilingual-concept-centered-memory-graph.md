@@ -1,5 +1,13 @@
 # Transition to Multilingual, Concept-Centered Memory Graph
 
+> **Status note (2026-09-03):** this ADR describes the Python-era data-model
+> migration. It remains the historical definition of the concept/facet/crystal
+> data model the Rust database upgrade must preserve, but normative schema
+> ownership now sits with [ADR 0010](0010-data-locations-schema-ownership-and-upgrade.md)
+> (import/upgrade boundary) and [ADR 0011](0011-deterministic-terminology-and-graded-memory.md)
+> (structured `term_rules`/`term_rule_forms` authority). Decision 4
+> (rule-crystal-only terminology storage) is superseded by ADR 0011.
+
 ## Context
 The initial Hieronymus memory design carried rigid translation-direction boundaries (source-target language pairs), had no first-class representation of concepts, and treated deterministic terminology validation as a separate strict termbase system. Additionally, dreaming was restricted to a single crystallization pass.
 

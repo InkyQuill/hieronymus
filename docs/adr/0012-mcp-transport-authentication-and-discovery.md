@@ -7,6 +7,22 @@ authorization, TLS, or remote-deployment security layer” non-goal in
 `docs/superpowers/specs/2026-07-18-remediation-and-semantic-rag-design.md` for
 the local daemon. Remote deployment and TLS remain non-goals.
 
+> **Amendment (2026-09-03, owner):** local-first light authentication. The
+> threat model for a local single-user tool is drive-by browser traffic against
+> loopback (DNS rebinding) and accidental cross-process access — not
+> authenticated adversaries. Kept: loopback-only bind; one static
+> per-installation bearer token (CSPRNG, 0600) required by every non-static
+> endpoint (`/mcp`, REST, WebSocket upgrade, shutdown) except a minimal
+> unauthenticated `/health`; `Host`/`Origin` validation; `Secret<T>` redaction;
+> the atomic non-secret discovery record. Simplified: token rotation rewrites
+> the token and returns 401 to existing clients (reconnect and reread); no
+> `credentials_rotated` ceremony and no idempotency-key retry policy attached
+> to authentication. Browser console: one-time launch grant exchanged for a
+> SameSite=Strict HttpOnly session cookie; mutating browser requests require a
+> valid `Origin`/`Host` — the separate CSRF token layer is waived. WebSocket
+> authentication is the session cookie checked at upgrade. `hiero mcp` reads
+> the local token file directly; no credential-negotiation protocol.
+
 ## Context
 
 Loopback binding reduces exposure but does not authenticate local processes or

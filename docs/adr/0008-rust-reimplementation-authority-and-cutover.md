@@ -52,6 +52,12 @@ mutate the same database.
 
 ## Cutover Gates
 
+> **Note (2026-09-03, owner):** this checklist is reviewed by the owner as a
+> plain list of questions before approving cutover; it produces no recorded
+> attestations, evidence records, or gate tooling. "Every manifest entry"
+> is read as "the public surfaces the ported tests cover", per the
+> certification-light amendment of the program design.
+
 Cutover requires all of the following:
 
 - every compatibility-manifest entry is implemented, intentionally changed by
