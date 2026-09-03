@@ -180,3 +180,31 @@ pub struct ShortTermMemoryRecord {
     pub rule_intent: String,
     pub soft_origin: String,
 }
+
+/// Long-term crystal: the advisory memory projection (ADR 0011). A rule
+/// crystal's deterministic authority lives in `term_rules`, not here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrystalRecord {
+    pub id: i64,
+    pub crystal_type: String,
+    pub text: String,
+    pub title: String,
+    pub scope_type: String,
+    pub scope_key: String,
+    pub series_slug: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub strength: f64,
+    pub confidence: f64,
+    pub status: String,
+    pub source_credibility: String,
+    pub rule_intent: String,
+    pub malformed_penalty: f64,
+    pub supersedes_crystal_id: Option<i64>,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+    pub soft_origin: String,
+    pub is_inferred: bool,
+    pub concept_ids: Vec<i64>,
+}
