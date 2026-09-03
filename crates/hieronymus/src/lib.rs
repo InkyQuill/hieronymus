@@ -19,4 +19,5 @@ pub mod registry;
 pub mod release_config;
 pub mod secret;
 pub mod short_memory;
+pub mod terminology;
 pub mod workspace;

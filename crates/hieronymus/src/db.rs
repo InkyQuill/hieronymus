@@ -7,6 +7,7 @@ use rusqlite::OpenFlags;
 /// `hieronymus_meta` version marker; the compatibility import boundary
 /// (ADR 0010) owns converting Python databases to it.
 const GLOBAL_MIGRATION_SQL: &str = include_str!("../migrations/global.sql");
+const TERMINOLOGY_MIGRATION_SQL: &str = include_str!("../migrations/terminology.sql");
 
 /// Supported Rust schema version created by this line. Bumped only by an
 /// accepted schema-upgrade decision; a database written by a newer binary
@@ -83,6 +84,7 @@ pub fn open_migrated(path: &Path) -> Result<rusqlite::Connection, OpenMigratedEr
     match state {
         DatabaseState::Empty => {
             connection.execute_batch(GLOBAL_MIGRATION_SQL)?;
+            connection.execute_batch(TERMINOLOGY_MIGRATION_SQL)?;
             connection.execute_batch(&format!(
                 "create table if not exists {RUST_META_TABLE} (
                      schema_version integer not null unique
