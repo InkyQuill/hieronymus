@@ -17,5 +17,7 @@ indexmap.workspace = true
 rusqlite.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
+serde_json.workspace = true
+
 [dev-dependencies]
 serde_json = "1"

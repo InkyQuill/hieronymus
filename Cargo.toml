@@ -15,6 +15,7 @@ rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled
 home = "0.5"
 tempfile = "3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde_json = "1"
 thiserror = "2"
 toml = { version = "0.8", features = ["preserve_order"] }
 
