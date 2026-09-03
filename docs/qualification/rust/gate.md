@@ -5,24 +5,17 @@
 | Field | Value |
 | --- | --- |
 | Target | x86_64-unknown-linux-gnu |
-| Status | blocked |
-| Release mode | &#40;none&#41; |
+| Status | qualified |
+| Release mode | semantic-enabled |
 | Acceptance owner | Pavel Obruchnikov &lt;me@inkyquill.net&gt; |
 
 ## Blocked Plans
 
-- rust-daemon-mcp-security
-- rust-database-upgrade
-- rust-distribution-cutover
-- rust-frontend
-- rust-workspace-and-contract-harness
+- (none)
 
 ## Gate Issues
 
-- frontend-embedding: review is not accepted
-- legacy-database-import: review is not accepted
-- mcp-transport: review is not accepted
-- semantic-native: review is not accepted
+- (none)
 
 ## Record Digests
 

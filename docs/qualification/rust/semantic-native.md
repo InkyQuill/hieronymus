@@ -650,9 +650,9 @@ Input paths:
 | Field | Value |
 | --- | --- |
 | Owner | Pavel Obruchnikov &lt;me@inkyquill.net&gt; |
-| Status | pending |
-| Objective evidence reviewed | false |
-| Normative constraints preserved | false |
+| Status | accepted |
+| Objective evidence reviewed | true |
+| Normative constraints preserved | true |
 
 ## Immutable Consequence
 
