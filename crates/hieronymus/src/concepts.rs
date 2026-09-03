@@ -967,3 +967,456 @@ fn concept_record_from_row(
 
 /// Re-exported for tests that exercise scoped stores against temp tables.
 pub fn concept_row_guard(_: &Table) {}
+
+impl ConceptStore {
+    /// Rename an active concept: the old label stays searchable as a
+    /// `former_label` facet (created only when not already present) and the
+    /// rename is recorded in `concept_renames`.
+    pub fn rename_concept(
+        &self,
+        concept_id: i64,
+        new_label: &str,
+        source_crystal_id: Option<i64>,
+    ) -> Result<ConceptRecord, ConceptError> {
+        let clean_label = new_label.trim();
+        if clean_label.is_empty() {
+            return Err(ConceptError::Invalid(
+                "concept canonical_name must not be empty".to_string(),
+            ));
+        }
+        let now = now_iso8601();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let active = require_active_concept(&transaction, concept_id)?;
+        let old_label = active.canonical_name.clone();
+        if old_label == clean_label {
+            transaction.commit()?;
+            return self.get(concept_id);
+        }
+
+        if !facet_value_exists(&transaction, concept_id, &old_label)? {
+            transaction.execute(
+                "insert into concept_facets(
+                   concept_id, language, facet_type, value, source_crystal_id,
+                   confidence, created_at, updated_at
+                 )
+                 values (?1, '', 'former_label', ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    concept_id,
+                    old_label,
+                    source_crystal_id,
+                    active.confidence,
+                    now,
+                    now,
+                ],
+            )?;
+        }
+        transaction.execute(
+            "insert into concept_renames(concept_id, old_name, new_name, created_at)
+             values (?1, ?2, ?3, ?4)",
+            rusqlite::params![concept_id, old_label, clean_label, now],
+        )?;
+        transaction.execute(
+            "update concepts set canonical_name = ?1, updated_at = ?2 where id = ?3",
+            rusqlite::params![clean_label, now, concept_id],
+        )?;
+        transaction.commit()?;
+        self.get(concept_id)
+    }
+
+    /// One-way merge: source facets, crystal links, and semantic tags move to
+    /// the active target; the source becomes `merged` and fails closed on
+    /// further mutation.
+    pub fn merge_concepts(
+        &self,
+        source_concept_id: i64,
+        target_concept_id: i64,
+        _reason: &str,
+    ) -> Result<(), ConceptError> {
+        if source_concept_id == target_concept_id {
+            return Err(ConceptError::Invalid(
+                "source and target concepts must differ".to_string(),
+            ));
+        }
+        let now = now_iso8601();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let source = require_active_concept(&transaction, source_concept_id)?;
+        let target = require_concept_fields(&transaction, target_concept_id)?;
+        if is_inactive_status(&target.status) {
+            return Err(ConceptError::Invalid(
+                "merge target concept must be active".to_string(),
+            ));
+        }
+
+        if !facet_value_exists(&transaction, source_concept_id, &source.canonical_name)? {
+            ensure_facet(
+                &transaction,
+                target_concept_id,
+                &source.canonical_name,
+                "former_label",
+                source.confidence,
+                &now,
+            )?;
+        }
+
+        let links: Vec<(i64, String, f64, String)> = {
+            let mut statement = transaction.prepare(
+                "select crystal_id, link_type, confidence, created_at
+                 from crystal_concepts where concept_id = ?1",
+            )?;
+            let rows = statement.query_map([source_concept_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (crystal_id, link_type, confidence, created_at) in links {
+            transaction.execute(
+                "insert into crystal_concepts(
+                   crystal_id, concept_id, link_type, confidence, created_at
+                 )
+                 values (?1, ?2, ?3, ?4, ?5)
+                 on conflict(crystal_id, concept_id, link_type) do update set
+                   confidence = max(crystal_concepts.confidence, excluded.confidence)",
+                rusqlite::params![
+                    crystal_id,
+                    target_concept_id,
+                    link_type,
+                    confidence,
+                    created_at
+                ],
+            )?;
+        }
+        transaction.execute(
+            "delete from crystal_concepts where concept_id = ?1",
+            [source_concept_id],
+        )?;
+        move_facets_to_target(&transaction, source_concept_id, target_concept_id, &now)?;
+
+        let tags: Vec<(String, f64, String)> = {
+            let mut statement = transaction.prepare(
+                "select tag, confidence, created_at
+                 from concept_semantic_tags where concept_id = ?1",
+            )?;
+            let rows = statement.query_map([source_concept_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (tag, confidence, created_at) in tags {
+            transaction.execute(
+                "insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                 values (?1, ?2, ?3, ?4)
+                 on conflict(concept_id, tag) do update set
+                   confidence = max(concept_semantic_tags.confidence, excluded.confidence)",
+                rusqlite::params![target_concept_id, tag, confidence, created_at],
+            )?;
+        }
+        transaction.execute(
+            "delete from concept_semantic_tags where concept_id = ?1",
+            [source_concept_id],
+        )?;
+        transaction.execute(
+            "update concepts
+             set status = ?1, merged_into_concept_id = ?2, updated_at = ?3
+             where id = ?4",
+            rusqlite::params![CONCEPT_MERGED, target_concept_id, now, source_concept_id],
+        )?;
+        refresh_concept_status(&transaction, target_concept_id, &now)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Attach a crystal as linked evidence of an active concept; relinking
+    /// with higher confidence keeps the maximum. Re-evaluates the concept's
+    /// established status.
+    pub fn link_crystal(
+        &self,
+        crystal_id: i64,
+        concept_id: i64,
+        link_type: &str,
+        confidence: f64,
+    ) -> Result<(), ConceptError> {
+        let now = now_iso8601();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let concept = require_concept_fields(&transaction, concept_id)?;
+        if is_inactive_status(&concept.status) {
+            return Err(ConceptError::Invalid(
+                "cannot link crystal to inactive concept".to_string(),
+            ));
+        }
+        transaction.execute(
+            "insert into crystal_concepts(
+               crystal_id, concept_id, link_type, confidence, created_at
+             )
+             values (?1, ?2, ?3, ?4, ?5)
+             on conflict(crystal_id, concept_id, link_type) do update set
+               confidence = max(crystal_concepts.confidence, excluded.confidence)",
+            rusqlite::params![
+                crystal_id,
+                concept_id,
+                link_type,
+                clamp_confidence(confidence),
+                now
+            ],
+        )?;
+        refresh_concept_status(&transaction, concept_id, &now)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn concept_ids_for_crystal(&self, crystal_id: i64) -> Result<Vec<i64>, ConceptError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "select distinct concept_id from crystal_concepts
+             where crystal_id = ?1 order by concept_id",
+        )?;
+        let rows = statement.query_map([crystal_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+}
+
+/// Established status requires both the confidence threshold and the linked
+/// evidence count; an explicit terminal/established status is preserved.
+fn concept_status(
+    confidence: f64,
+    linked_evidence_count: i64,
+    current_status: Option<&str>,
+) -> String {
+    if let Some(current) = current_status {
+        let public = public_status(current);
+        if public == CONCEPT_ESTABLISHED || public == CONCEPT_ARCHIVED || public == CONCEPT_MERGED {
+            return public.to_string();
+        }
+    }
+    if confidence >= ESTABLISHED_CONFIDENCE && linked_evidence_count >= ESTABLISHED_EVIDENCE_COUNT {
+        CONCEPT_ESTABLISHED.to_string()
+    } else {
+        CONCEPT_CANDIDATE.to_string()
+    }
+}
+
+fn linked_evidence_count(connection: &Connection, concept_id: i64) -> Result<i64, ConceptError> {
+    let count: i64 = connection.query_row(
+        "select count(distinct crystal_id) from crystal_concepts where concept_id = ?1",
+        [concept_id],
+        |row| row.get(0),
+    )?;
+    Ok(count)
+}
+
+fn refresh_concept_status(
+    connection: &Connection,
+    concept_id: i64,
+    now: &str,
+) -> Result<(), ConceptError> {
+    let row = require_concept_fields(connection, concept_id)?;
+    let evidence = linked_evidence_count(connection, concept_id)?;
+    let status = concept_status(row.confidence, evidence, Some(&row.status));
+    if status != row.status {
+        connection.execute(
+            "update concepts set status = ?1, updated_at = ?2 where id = ?3",
+            rusqlite::params![status, now, concept_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn facet_value_exists(
+    connection: &Connection,
+    concept_id: i64,
+    value: &str,
+) -> Result<bool, ConceptError> {
+    let found: Option<i64> = connection
+        .query_row(
+            "select 1 from concept_facets
+             where concept_id = ?1 and value = ?2 and superseded_at is null
+             limit 1",
+            rusqlite::params![concept_id, value],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    Ok(found.is_some())
+}
+
+fn facet_by_identity(
+    connection: &Connection,
+    concept_id: i64,
+    value: &str,
+    facet_type: &str,
+    language: &str,
+) -> Result<Option<i64>, ConceptError> {
+    let found: Option<i64> = connection
+        .query_row(
+            "select id from concept_facets
+             where concept_id = ?1 and value = ?2 and facet_type = ?3
+               and language = ?4 and superseded_at is null
+             order by id limit 1",
+            rusqlite::params![concept_id, value, facet_type, language],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    Ok(found)
+}
+
+/// Idempotently ensure a facet with the given value/type exists (matching by
+/// identity, then by value) and return its id.
+fn ensure_facet(
+    connection: &Connection,
+    concept_id: i64,
+    value: &str,
+    facet_type: &str,
+    confidence: f64,
+    now: &str,
+) -> Result<i64, ConceptError> {
+    let clean_value = value.trim();
+    if clean_value.is_empty() {
+        return Err(ConceptError::Invalid(
+            "concept facet value must not be empty".to_string(),
+        ));
+    }
+    if let Some(existing) = facet_by_identity(connection, concept_id, clean_value, facet_type, "")?
+    {
+        return Ok(existing);
+    }
+    if let Some(existing) = facet_by_value_first_id(connection, concept_id, clean_value)? {
+        return Ok(existing);
+    }
+    connection.execute(
+        "insert into concept_facets(
+           concept_id, language, facet_type, value, source_crystal_id,
+           confidence, created_at, updated_at
+         )
+         values (?1, '', ?2, ?3, NULL, ?4, ?5, ?6)",
+        rusqlite::params![
+            concept_id,
+            facet_type,
+            clean_value,
+            clamp_confidence(confidence),
+            now,
+            now,
+        ],
+    )?;
+    Ok(connection.last_insert_rowid())
+}
+
+fn facet_by_value_first_id(
+    connection: &Connection,
+    concept_id: i64,
+    value: &str,
+) -> Result<Option<i64>, ConceptError> {
+    let found: Option<i64> = connection
+        .query_row(
+            "select id from concept_facets
+             where concept_id = ?1 and value = ?2 and superseded_at is null
+             order by id limit 1",
+            rusqlite::params![concept_id, value],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    Ok(found)
+}
+
+/// Move the source concept's live facets onto the target: identical facets
+/// (value/type/language) merge their side-table metadata, others are
+/// re-parented and lose their canonical flag.
+fn move_facets_to_target(
+    connection: &Connection,
+    source_concept_id: i64,
+    target_concept_id: i64,
+    now: &str,
+) -> Result<(), ConceptError> {
+    let source_facet_ids: Vec<i64> = {
+        let mut statement = connection.prepare(
+            "select id from concept_facets
+             where concept_id = ?1 and superseded_at is null order by id",
+        )?;
+        let rows = statement.query_map([source_concept_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for source_facet_id in source_facet_ids {
+        let facet = get_facet_row(connection, source_facet_id)?;
+        let existing = facet_by_identity(
+            connection,
+            target_concept_id,
+            &facet.value,
+            &facet.facet_type,
+            &facet.language,
+        )?;
+        match existing {
+            None => {
+                connection.execute(
+                    "update concept_facets
+                     set concept_id = ?1, is_canonical = 0, updated_at = ?2
+                     where id = ?3",
+                    rusqlite::params![target_concept_id, now, source_facet_id],
+                )?;
+            }
+            Some(target_facet_id) => {
+                copy_facet_metadata(connection, source_facet_id, target_facet_id)?;
+                connection.execute(
+                    "delete from concept_facets where id = ?1",
+                    [source_facet_id],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn get_facet_row(connection: &Connection, facet_id: i64) -> Result<FacetRow, ConceptError> {
+    connection
+        .query_row(
+            "select id, concept_id, language, facet_type, value, confidence,
+                    source_crystal_id, is_canonical
+             from concept_facets where id = ?1",
+            [facet_id],
+            facet_row,
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => ConceptError::UnknownFacet(facet_id),
+            other => other.into(),
+        })
+}
+
+fn copy_facet_metadata(
+    connection: &Connection,
+    source_facet_id: i64,
+    target_facet_id: i64,
+) -> Result<(), ConceptError> {
+    for (table, column) in [
+        ("concept_facet_language_tags", "language_tag"),
+        ("concept_facet_story_scopes", "story_scope"),
+        ("concept_facet_semantic_tags", "semantic_tag"),
+    ] {
+        let sql = format!(
+            "insert or ignore into {table}(facet_id, {column})
+             select ?1, {column}
+             from {table} where facet_id = ?2"
+        );
+        connection.execute(&sql, rusqlite::params![target_facet_id, source_facet_id])?;
+    }
+    Ok(())
+}
