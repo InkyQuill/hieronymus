@@ -1378,7 +1378,7 @@ fn normalize_rag_source(path: &Path, managed_root: &Path) -> Result<NormalizedRa
         return write_managed_source(path, managed_root, &text, "text");
     }
     Err(RagError::InvalidSource(format!(
-        "unsupported RAG source extension: {suffix}"
+        "unsupported RAG source extension: .{suffix}"
     )))
 }
 
@@ -1421,6 +1421,10 @@ fn managed_extension(format: &str) -> &'static str {
 /// `word/document.xml` member is read from the zip container, paragraphs
 /// become blank-line-separated blocks, `Heading1`–`Heading6` paragraph styles
 /// become ATX headings, and run text is concatenated as plain text.
+/// Decompressed-size cap for the DOCX main document, so a zip bomb disguised
+/// as a chapter file is rejected before being read into memory.
+const MAX_DOCX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+
 fn docx_to_markdown(path: &Path) -> Result<String, RagError> {
     use std::io::Read as _;
 
@@ -1430,6 +1434,13 @@ fn docx_to_markdown(path: &Path) -> Result<String, RagError> {
     let mut entry = archive
         .by_name("word/document.xml")
         .map_err(|error| RagError::InvalidSource(format!("invalid DOCX source: {error}")))?;
+    let uncompressed_size = entry.size();
+    if uncompressed_size > MAX_DOCX_DOCUMENT_BYTES {
+        return Err(RagError::InvalidSource(format!(
+            "invalid DOCX source: word/document.xml uncompressed size {uncompressed_size} \
+             exceeds limit {MAX_DOCX_DOCUMENT_BYTES}"
+        )));
+    }
     let mut document = String::new();
     entry
         .read_to_string(&mut document)
@@ -1547,9 +1558,23 @@ fn docx_heading_level(style: &str) -> Option<usize> {
 }
 
 /// PDF text extraction (Python used `pypdf`); the output is treated as plain
-/// text and lands as managed `.txt`.
+/// text and lands as managed `.txt`. pdf-extract (via lopdf) panics on some
+/// malformed inputs instead of returning an error, and `extract_text` only
+/// touches the file at `path` (no shared state to poison), so the panic is
+/// contained here. This requires unwinding panics; the workspace Cargo
+/// profiles never set `panic = "abort"`.
 fn pdf_to_text(path: &Path) -> Result<String, RagError> {
-    pdf_extract::extract_text(path)
+    std::panic::catch_unwind(|| pdf_extract::extract_text(path))
+        .map_err(|payload| {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            RagError::InvalidSource(format!(
+                "invalid PDF source: pdf-extract panicked: {message}"
+            ))
+        })?
         .map_err(|error| RagError::InvalidSource(format!("invalid PDF source: {error}")))
 }
 

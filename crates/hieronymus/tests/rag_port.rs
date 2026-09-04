@@ -506,6 +506,16 @@ fn docx_paragraph(style: Option<&str>, text: &str) -> String {
 /// Hand-craft a single-page PDF with correct xref offsets: an empty page when
 /// `text` is `None`, otherwise one text run in base-14 Helvetica.
 fn write_pdf(path: &Path, text: Option<&str>) {
+    write_pdf_with_font(
+        path,
+        text,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    );
+}
+
+/// Variant of [`write_pdf`] with a caller-supplied font dictionary, used to
+/// craft malformed-but-PDF-shaped inputs for pdf-extract.
+fn write_pdf_with_font(path: &Path, text: Option<&str>, font_dictionary: &str) {
     let content = text
         .map(|text| format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET"))
         .unwrap_or_default();
@@ -520,7 +530,7 @@ fn write_pdf(path: &Path, text: Option<&str>) {
             "<< /Length {} >>\nstream\n{content}\nendstream",
             content.len()
         ),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        font_dictionary.to_string(),
     ];
 
     let mut pdf = String::from("%PDF-1.4\n");
@@ -669,6 +679,98 @@ fn import_pdf_without_extractable_text_is_rejected() {
         error
             .to_string()
             .starts_with("invalid RAG source: source produced no extractable text"),
+        "unexpected error: {error}"
+    );
+}
+
+/// PDF-shaped garbage: an unknown `/Encoding` name hits a `panic!` inside
+/// pdf-extract, so the import must come back as `InvalidSource` (mentioning
+/// the panic) instead of aborting the process. This only works because the
+/// workspace Cargo profiles never set `panic = "abort"`.
+#[test]
+fn import_malformed_pdf_panicking_parser_is_invalid_source() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("malformed.pdf");
+    write_pdf_with_font(
+        &path,
+        Some("Sense"),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica \
+         /Encoding /BogusEncoding >>",
+    );
+
+    let error = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(&fixture.series_slug, &path, &RagImport::new())
+        .unwrap_err();
+
+    assert!(
+        matches!(error, RagError::InvalidSource(_)),
+        "unexpected error: {error}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.starts_with("invalid RAG source: invalid PDF source"),
+        "unexpected error: {message}"
+    );
+    assert!(message.contains("panic"), "unexpected error: {message}");
+}
+
+/// A DOCX whose `word/document.xml` decompresses past the 64 MiB cap must be
+/// rejected up front instead of being read into memory.
+#[test]
+fn import_docx_oversized_document_xml_is_invalid_source() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("bomb.docx");
+    let file = std::fs::File::create(&path).unwrap();
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    archive.start_file("word/document.xml", options).unwrap();
+    let megabyte = vec![b'A'; 1024 * 1024];
+    for _ in 0..65 {
+        use std::io::Write as _;
+        archive.write_all(&megabyte).unwrap();
+    }
+    archive.finish().unwrap();
+
+    let error = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(&fixture.series_slug, &path, &RagImport::new())
+        .unwrap_err();
+
+    assert!(
+        matches!(error, RagError::InvalidSource(_)),
+        "unexpected error: {error}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.starts_with("invalid RAG source: invalid DOCX source"),
+        "unexpected error: {message}"
+    );
+    assert!(message.contains("exceeds"), "unexpected error: {message}");
+}
+
+/// Pin: `.rtf` is not a supported RAG extension and must name the suffix with
+/// its leading dot.
+#[test]
+fn import_rtf_is_unsupported_source_extension() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("chapter.rtf");
+    write(&path, r"{\rtf1\ansi Sense menu note.}");
+
+    let error = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(&fixture.series_slug, &path, &RagImport::new())
+        .unwrap_err();
+
+    assert!(
+        matches!(error, RagError::InvalidSource(_)),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported RAG source extension: .rtf"),
         "unexpected error: {error}"
     );
 }
