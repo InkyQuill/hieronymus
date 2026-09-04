@@ -1,6 +1,6 @@
 [package]
 name = "hiero"
-description = "Hieronymus command-line binary."
+description = "Hieronymus command-line binary and local daemon."
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -9,6 +9,13 @@ publish = false
 
 [dependencies]
 hieronymus = { path = "../hieronymus" }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+ctrlc.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true

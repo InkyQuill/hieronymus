@@ -53,6 +53,17 @@ impl HieronymusConfig {
     pub fn agent_plugins_root(&self) -> PathBuf {
         self.config_root().join("agent-plugins")
     }
+
+    /// Non-secret discovery record published by `hiero daemon` (ADR 0009,
+    /// ADR 0012 as amended 2026-09-03). Kept separate from the bearer token.
+    pub fn daemon_discovery_path(&self) -> PathBuf {
+        self.config_root().join("daemon.json")
+    }
+
+    /// Per-installation bearer token backing store; user-only permissions.
+    pub fn daemon_token_path(&self) -> PathBuf {
+        self.config_root().join("daemon.token")
+    }
 }
 
 /// Resolve the data root: explicit argument wins, then
@@ -89,6 +100,19 @@ fn expand_user(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daemon_paths_live_under_the_single_root() {
+        let root = HieronymusConfig::new("/tmp/data");
+        assert_eq!(
+            root.daemon_discovery_path(),
+            PathBuf::from("/tmp/data/daemon.json")
+        );
+        assert_eq!(
+            root.daemon_token_path(),
+            PathBuf::from("/tmp/data/daemon.token")
+        );
+    }
 
     #[test]
     fn expand_user_handles_bare_tilde() {
