@@ -40,3 +40,19 @@ create table if not exists term_rule_revisions (
 
 create index if not exists term_rules_status_idx on term_rules(status);
 create index if not exists term_rule_forms_rule_idx on term_rule_forms(rule_id);
+
+create table if not exists term_rule_semantic_tags (
+  rule_id integer not null references term_rules(id) on delete cascade,
+  tag text not null,
+  primary key (rule_id, tag)
+);
+create table if not exists term_rule_story_scopes (
+  rule_id integer not null references term_rules(id) on delete cascade,
+  story_scope text not null,
+  primary key (rule_id, story_scope)
+);
+create table if not exists term_rule_language_tags (
+  rule_id integer not null references term_rules(id) on delete cascade,
+  language_tag text not null,
+  primary key (rule_id, language_tag)
+);

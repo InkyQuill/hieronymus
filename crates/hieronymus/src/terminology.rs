@@ -72,6 +72,9 @@ pub struct TermRule {
     pub provenance: String,
     pub revision: i64,
     pub rule_crystal_id: Option<i64>,
+    pub semantic_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub language_tags: Vec<String>,
 }
 
 /// The deterministic termbase over one translation context.
@@ -179,6 +182,60 @@ struct ResolvedRule {
     source_surface: String,
 }
 
+/// Score one candidate against the translation context: +1 per intersecting
+/// semantic tags, story scopes, and non-default language tags.
+fn score_context_overlap<'a>(
+    candidates: &[&'a TermRule],
+    context: &crate::memory_models::TranslationContext,
+) -> Vec<(i64, &'a TermRule)> {
+    let context_semantic: std::collections::HashSet<&str> =
+        context.semantic_tags.iter().map(String::as_str).collect();
+    let context_scopes: std::collections::HashSet<&str> =
+        context.story_scopes.iter().map(String::as_str).collect();
+    let defaults: std::collections::HashSet<&str> = [
+        context.source_language.as_str(),
+        context.target_language.as_str(),
+    ]
+    .into_iter()
+    .collect();
+    let context_languages: std::collections::HashSet<&str> = context
+        .language_tags
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| !defaults.contains(tag))
+        .collect();
+
+    candidates
+        .iter()
+        .map(|candidate| {
+            let mut score = 0;
+            if candidate
+                .semantic_tags
+                .iter()
+                .any(|tag| context_semantic.contains(tag.as_str()))
+            {
+                score += 1;
+            }
+            if candidate
+                .story_scopes
+                .iter()
+                .any(|scope| context_scopes.contains(scope.as_str()))
+            {
+                score += 1;
+            }
+            if candidate
+                .language_tags
+                .iter()
+                .map(String::as_str)
+                .any(|tag| !defaults.contains(tag) && context_languages.contains(tag))
+            {
+                score += 1;
+            }
+            (score, *candidate)
+        })
+        .collect()
+}
+
 /// Projection of a `term_rules` row for active-rule resolution.
 struct TermRuleRow {
     id: i64,
@@ -215,12 +272,13 @@ impl Termbase {
     /// Register a candidate rule after deterministic shape validation.
     pub fn propose(
         &self,
-        concept_id: Option<i64>,
         source_text: &str,
         canonical_translation: &str,
-        approved_variants: &[String],
-        forbidden_variants: &[String],
+        fields: &ProposeFields,
     ) -> Result<TermRule, TermbaseError> {
+        let concept_id = fields.concept_id;
+        let approved_variants = &fields.approved_variants;
+        let forbidden_variants = &fields.forbidden_variants;
         validate_rule_shape(
             source_text,
             canonical_translation,
@@ -299,6 +357,27 @@ impl Termbase {
                 &self.context.target_language,
             )?;
         }
+        insert_side_values(
+            &transaction,
+            "term_rule_semantic_tags",
+            "tag",
+            rule_id,
+            &fields.semantic_tags,
+        )?;
+        insert_side_values(
+            &transaction,
+            "term_rule_story_scopes",
+            "story_scope",
+            rule_id,
+            &fields.story_scopes,
+        )?;
+        insert_side_values(
+            &transaction,
+            "term_rule_language_tags",
+            "language_tag",
+            rule_id,
+            &fields.language_tags,
+        )?;
         transaction.commit()?;
         self.get_rule(rule_id)
     }
@@ -446,6 +525,24 @@ impl Termbase {
                     provenance: row.provenance,
                     revision: row.revision,
                     rule_crystal_id: row.rule_crystal_id,
+                    semantic_tags: rule_side_values(
+                        &connection,
+                        "term_rule_semantic_tags",
+                        "tag",
+                        row.id,
+                    )?,
+                    story_scopes: rule_side_values(
+                        &connection,
+                        "term_rule_story_scopes",
+                        "story_scope",
+                        row.id,
+                    )?,
+                    language_tags: rule_side_values(
+                        &connection,
+                        "term_rule_language_tags",
+                        "language_tag",
+                        row.id,
+                    )?,
                 })
             })
             .collect::<Result<Vec<_>, TermbaseError>>()?;
@@ -503,7 +600,42 @@ impl Termbase {
                 }
                 continue;
             }
-            warnings.push(finding_ambiguous(&surface, &candidates));
+            // Different concepts: best context overlap disambiguates; zero or
+            // tied overlap stays ambiguous.
+            let scored = score_context_overlap(&candidates, &self.context);
+            let best = scored.iter().map(|(score, _)| *score).max().unwrap_or(0);
+            let _ = &candidates;
+            if best <= 0 {
+                warnings.push(finding_ambiguous(&surface, &candidates));
+                continue;
+            }
+            let scored_pairs = score_context_overlap(&candidates, &self.context);
+            let mut winners: Vec<&TermRule> = scored_pairs
+                .iter()
+                .filter(|(score, _)| *score == best)
+                .map(|(_, candidate)| *candidate)
+                .collect();
+            winners.sort_by_key(|candidate| candidate.id);
+            let winner_sets: std::collections::HashSet<Option<i64>> = winners
+                .iter()
+                .map(|candidate| candidate.concept_id)
+                .collect();
+            let mut renderings: Vec<&str> = winners
+                .iter()
+                .map(|candidate| candidate.canonical_translation.as_str())
+                .collect();
+            renderings.sort();
+            renderings.dedup();
+            if winner_sets.len() == 1 && renderings.len() == 1 {
+                for candidate in winners {
+                    resolved.push(ResolvedRule {
+                        rule: candidate.clone(),
+                        source_surface: surface.clone(),
+                    });
+                }
+            } else {
+                warnings.push(finding_ambiguous(&surface, &candidates));
+            }
         }
         Ok((resolved, warnings))
     }
@@ -520,6 +652,19 @@ impl Termbase {
 pub enum Source {
     Raw(String),
     SourceText(String),
+}
+
+/// Optional context metadata attached to a proposed rule; used to resolve
+/// ambiguous source surfaces (best context overlap wins, zero overlap stays
+/// ambiguous).
+#[derive(Debug, Clone, Default)]
+pub struct ProposeFields {
+    pub concept_id: Option<i64>,
+    pub approved_variants: Vec<String>,
+    pub forbidden_variants: Vec<String>,
+    pub semantic_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub language_tags: Vec<String>,
 }
 
 fn finding_ambiguous(surface: &str, candidates: &[&TermRule]) -> ValidationFinding {
@@ -627,7 +772,7 @@ fn hydrate_rule(connection: &Connection, rule_id: i64) -> Result<TermRule, Termb
         })?;
     let forbidden_variants: Vec<String> = serde_json::from_str(&forbidden_json)
         .map_err(|error| TermbaseError::Json(error.to_string()))?;
-    Ok(TermRule {
+    let rule = TermRule {
         id: rule_id,
         concept_id,
         source_language,
@@ -639,7 +784,50 @@ fn hydrate_rule(connection: &Connection, rule_id: i64) -> Result<TermRule, Termb
         provenance: provenance.unwrap_or_default(),
         revision,
         rule_crystal_id,
-    })
+        semantic_tags: rule_side_values(connection, "term_rule_semantic_tags", "tag", rule_id)?,
+        story_scopes: rule_side_values(
+            connection,
+            "term_rule_story_scopes",
+            "story_scope",
+            rule_id,
+        )?,
+        language_tags: rule_side_values(
+            connection,
+            "term_rule_language_tags",
+            "language_tag",
+            rule_id,
+        )?,
+    };
+    Ok(rule)
+}
+
+fn rule_side_values(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    rule_id: i64,
+) -> Result<Vec<String>, TermbaseError> {
+    let mut statement = connection.prepare(&format!(
+        "select {column} from {table} where rule_id = ?1 order by {column}"
+    ))?;
+    let rows = statement.query_map([rule_id], |row| row.get::<_, String>(0))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn insert_side_values(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+    column: &str,
+    rule_id: i64,
+    values: &[String],
+) -> Result<(), rusqlite::Error> {
+    for value in values {
+        transaction.execute(
+            &format!("insert or ignore into {table}(rule_id, {column}) values (?1, ?2)"),
+            rusqlite::params![rule_id, value],
+        )?;
+    }
+    Ok(())
 }
 
 fn insert_form(
