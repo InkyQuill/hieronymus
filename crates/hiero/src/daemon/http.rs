@@ -24,6 +24,8 @@ pub(crate) struct Response {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+    /// Extra response headers (e.g. `Set-Cookie`); sent after the fixed ones.
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl Response {
@@ -32,7 +34,15 @@ impl Response {
             status,
             content_type: JSON_CONTENT_TYPE,
             body: serde_json::to_vec(body).unwrap_or_default(),
+            extra_headers: Vec::new(),
         }
+    }
+
+    /// Attach an extra header (name, value); values never contain secrets
+    /// that are not already meant for this response's recipient.
+    pub fn with_header(mut self, name: &str, value: String) -> Response {
+        self.extra_headers.push((name.to_string(), value));
+        self
     }
 
     pub fn sse(body: &serde_json::Value) -> Response {
@@ -41,6 +51,7 @@ impl Response {
             status: 200,
             content_type: SSE_CONTENT_TYPE,
             body: format!("event: message\ndata: {data}\n\n").into_bytes(),
+            extra_headers: Vec::new(),
         }
     }
 }
@@ -155,16 +166,24 @@ pub(crate) fn write_response(stream: &mut TcpStream, response: &Response) -> std
         200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         _ => "Error",
     };
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n",
         response.status,
         reason,
         response.content_type,
         response.body.len()
     );
+    for (name, value) in &response.extra_headers {
+        head.push_str(name);
+        head.push_str(": ");
+        head.push_str(value);
+        head.push_str("\r\n");
+    }
+    head.push_str("Connection: close\r\n\r\n");
     stream.write_all(head.as_bytes())?;
     stream.write_all(&response.body)?;
     stream.flush()

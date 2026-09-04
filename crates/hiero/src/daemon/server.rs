@@ -1,11 +1,13 @@
-//! Route handling for the daemon's skeleton HTTP surface:
+//! Route handling for the daemon's HTTP surface:
 //! - `GET /health` — minimal unauthenticated liveness (no data);
 //! - `POST /mcp` — bearer-token authenticated stateless MCP (JSON or
 //!   request-scoped SSE);
-//! - `POST /shutdown` — authenticated graceful shutdown.
+//! - `POST /shutdown` — authenticated graceful shutdown;
+//! - `/status`, `/auth/*`, `/api/*` — the REST surface with launch-grant
+//!   session auth (see `rest`).
 //!
 //! Check order on authenticated routes mirrors the frozen route cases:
-//! method/path → Host → bearer → protocol rules.
+//! method/path → Host → credential → protocol rules.
 
 use serde_json::{Value, json};
 
@@ -13,13 +15,28 @@ use super::DaemonRuntime;
 use super::http::{Request, Response, header};
 use super::protocol;
 use super::registry::PROTOCOL_REVISION;
+use super::rest;
 
 pub(crate) fn handle(request: &Request, runtime: &DaemonRuntime) -> Response {
-    match (request.method.as_str(), request.target.as_str()) {
+    let (path, query) = split_target(&request.target);
+    match (request.method.as_str(), path.as_str()) {
         ("GET", "/health") => handle_health(request, runtime),
         ("POST", "/mcp") => handle_mcp(request, runtime),
         ("POST", "/shutdown") => handle_shutdown(request, runtime),
-        _ => Response::json(404, &json!({"error": "not_found"})),
+        // The native routes are single-method; anything else is not a route.
+        (_, "/health") | (_, "/mcp") | (_, "/shutdown") => {
+            Response::json(404, &json!({"error": "not_found"}))
+        }
+        (_, other) => rest::handle(request, other, &query, runtime),
+    }
+}
+
+/// Split the request target into path and query (`/api/x?a=b`); no percent
+/// decoding, matching the Python route dispatch.
+fn split_target(target: &str) -> (String, String) {
+    match target.split_once('?') {
+        Some((path, query)) => (path.to_string(), query.to_string()),
+        None => (target.to_string(), String::new()),
     }
 }
 

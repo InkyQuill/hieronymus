@@ -14,7 +14,7 @@ pub const DREAM_WORKFLOW_NAMES: [&str; 7] = [
     "coverage_audit",
 ];
 
-const DREAMING_FIELDS: [&str; 14] = [
+pub const DREAMING_FIELDS: [&str; 14] = [
     "enabled",
     "schedule_interval_minutes",
     "min_pending_short_term_memories",

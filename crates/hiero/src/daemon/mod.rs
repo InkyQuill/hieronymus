@@ -8,7 +8,9 @@ pub mod discovery;
 pub mod http;
 pub mod protocol;
 pub mod registry;
+mod rest;
 mod server;
+mod sessions;
 
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -23,6 +25,25 @@ use hieronymus::secret::Secret;
 
 pub use discovery::DiscoveryRecord;
 pub use registry::{McpRegistry, PROTOCOL_REVISION};
+
+use rest::providers::{FixtureProviderClient, ProviderClientSeam};
+use sessions::SessionStore;
+
+/// The daemon crate version, served by `GET /status`.
+pub(crate) fn daemon_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// The display form the admin console header serves (Python
+/// `display_version`: pre-1.0 versions carry the alpha mark).
+pub(crate) fn daemon_display_version() -> String {
+    let version = daemon_version();
+    if version.starts_with("0.") {
+        format!("v{version}\u{03B1}")
+    } else {
+        format!("v{version}")
+    }
+}
 
 /// The default loopback port (ADR 0012); overrides land in discovery so
 /// plugins never hard-code this value.
@@ -80,6 +101,12 @@ pub(crate) struct DaemonRuntime {
     pub bearer: Secret<String>,
     pub bound_address: SocketAddr,
     pub stop: AtomicBool,
+    /// One-time launch grants and browser sessions (in-memory, daemon
+    /// lifetime).
+    pub sessions: SessionStore,
+    /// The provider-client seam for the providers `check`/`models` routes
+    /// (fixture-backed until the real provider slice).
+    pub provider_client: Box<dyn ProviderClientSeam>,
     /// The record this daemon published at startup; kept in memory so
     /// diagnostics never depend on the file still existing.
     pub record: DiscoveryRecord,
@@ -153,6 +180,8 @@ impl Daemon {
             bearer,
             bound_address,
             stop: AtomicBool::new(false),
+            sessions: SessionStore::default(),
+            provider_client: Box::new(FixtureProviderClient),
             record,
             database: Mutex::new(connection),
         });

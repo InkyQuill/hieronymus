@@ -1,0 +1,235 @@
+//! The REST surface of the daemon (ADR 0012 as amended 2026-09-03, ADR 0015):
+//!
+//! - `GET /status` — native, bearer + Host;
+//! - `POST /auth/launch-grant` — native, bearer + Host: mints a one-time
+//!   launch grant for local `hiero config`/`hiero admin` commands;
+//! - `POST /auth/launch-grant/exchange` — browser: swaps the grant for a
+//!   `hieronymus_session` cookie (the separate CSRF layer is waived);
+//! - `/api/*` — browser routes: valid session cookie, valid `Host`, valid
+//!   `Origin` on every request (reads included).
+//!
+//! Check order on every surface: method/path → Host → credential → Origin
+//! (the frozen route cases pin `invalid_host` before `unauthorized` before
+//! `forbidden_origin`). `POST /api/mcp/{operation}` is removed per ADR 0015
+//! and always reports `404 {"error":"not_found"}`.
+
+pub(crate) mod admin;
+pub(crate) mod providers;
+pub(crate) mod settings;
+pub(crate) mod status;
+
+use serde_json::{Value, json};
+
+use super::DaemonRuntime;
+use super::http::{Request, Response, header};
+use super::sessions::{ExchangeOutcome, session_cookie_header, session_from_cookie_header};
+
+/// Entry point from the daemon route table: `path` is the target without the
+/// query string.
+pub(crate) fn handle(
+    request: &Request,
+    path: &str,
+    query: &str,
+    runtime: &DaemonRuntime,
+) -> Response {
+    match path {
+        "/status" => status::handle(request, runtime),
+        "/auth/launch-grant" => handle_grant_mint(request, runtime),
+        "/auth/launch-grant/exchange" => handle_grant_exchange(request, runtime),
+        "/api/providers" => match request.method.as_str() {
+            "GET" => guard_api(request, runtime, providers::list),
+            "POST" => guard_api(request, runtime, providers::save),
+            _ => not_found(),
+        },
+        "/api/settings/dream" => settings_route(request, runtime, settings::Kind::Dream),
+        "/api/settings/ingest" => settings_route(request, runtime, settings::Kind::Ingest),
+        "/api/settings/release" => settings_route(request, runtime, settings::Kind::Release),
+        "/api/admin/dashboard" => match request.method.as_str() {
+            "GET" => guard_api(request, runtime, admin::dashboard),
+            _ => not_found(),
+        },
+        "/api/admin/snapshot" => match request.method.as_str() {
+            "GET" => guard_api(request, runtime, |request, runtime| {
+                admin::snapshot(request, runtime, query)
+            }),
+            _ => not_found(),
+        },
+        "/api/admin/actions/run_manual_dreaming" => match request.method.as_str() {
+            "POST" => guard_api(request, runtime, admin::run_manual_dreaming),
+            _ => not_found(),
+        },
+        path if path.starts_with("/api/admin/actions/") => match request.method.as_str() {
+            "POST" => {
+                let action = path.trim_start_matches("/api/admin/actions/");
+                guard_api(request, runtime, |request, runtime| {
+                    admin::action(request, runtime, action)
+                })
+            }
+            _ => not_found(),
+        },
+        path if path.starts_with("/api/providers/") => providers::subroute(request, runtime, path),
+        // The private operation bridge is removed (ADR 0015).
+        path if path.starts_with("/api/mcp/") || path == "/api/mcp" => not_found(),
+        _ => not_found(),
+    }
+}
+
+fn settings_route(request: &Request, runtime: &DaemonRuntime, kind: settings::Kind) -> Response {
+    match request.method.as_str() {
+        "GET" => guard_api(request, runtime, |request, runtime| {
+            settings::get(request, runtime, kind)
+        }),
+        "POST" => guard_api(request, runtime, |request, runtime| {
+            settings::save(request, runtime, kind)
+        }),
+        _ => not_found(),
+    }
+}
+
+fn not_found() -> Response {
+    Response::json(404, &json!({"error": "not_found"}))
+}
+
+pub(super) fn invalid_host() -> Response {
+    Response::json(400, &json!({"error": "invalid_host"}))
+}
+
+pub(super) fn unauthorized() -> Response {
+    Response::json(401, &json!({"error": "unauthorized"}))
+}
+
+pub(super) fn forbidden_origin() -> Response {
+    Response::json(403, &json!({"error": "forbidden_origin"}))
+}
+
+pub(super) fn host_is_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
+    header(&request.headers, "host") == Some(runtime.bound_address.to_string().as_str())
+}
+
+pub(super) fn bearer_matches(request: &Request, runtime: &DaemonRuntime) -> bool {
+    let expected = format!("Bearer {}", runtime.bearer.expose_secret());
+    header(&request.headers, "authorization") == Some(expected.as_str())
+}
+
+/// The browser context check: the `Origin` header must name this daemon
+/// exactly. Absent origins fail closed (the CSRF layer is waived, so this is
+/// the only cross-site guard).
+fn origin_is_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
+    let origin = header(&request.headers, "origin");
+    Some(format!("http://{}", runtime.bound_address).as_str()) == origin
+}
+
+/// The presented `hieronymus_session` cookie value, if any.
+fn presented_session(request: &Request) -> Option<String> {
+    header(&request.headers, "cookie")
+        .and_then(session_from_cookie_header)
+        .map(str::to_string)
+}
+
+/// Browser-route guard: Host → session cookie → Origin, then the handler.
+fn guard_api(
+    request: &Request,
+    runtime: &DaemonRuntime,
+    handler: impl Fn(&Request, &DaemonRuntime) -> Response,
+) -> Response {
+    if !host_is_valid(request, runtime) {
+        return invalid_host();
+    }
+    let authorized = presented_session(request)
+        .is_some_and(|session| runtime.sessions.session_is_valid(&session));
+    if !authorized {
+        return unauthorized();
+    }
+    if !origin_is_valid(request, runtime) {
+        return forbidden_origin();
+    }
+    handler(request, runtime)
+}
+
+/// Mint a launch grant: the minimal native (bearer + Host) path future
+/// `hiero config`/`hiero admin` commands call. Grants never appear in URLs or
+/// logs, only in this response body.
+fn handle_grant_mint(request: &Request, runtime: &DaemonRuntime) -> Response {
+    if !host_is_valid(request, runtime) {
+        return invalid_host();
+    }
+    if !bearer_matches(request, runtime) {
+        return unauthorized();
+    }
+    match runtime.sessions.mint_grant() {
+        Ok(grant) => Response::json(200, &json!({"launch_grant": grant.expose_secret()})),
+        Err(_) => Response::json(500, &json!({"error": "launch_grant_unavailable"})),
+    }
+}
+
+/// Exchange a one-time launch grant for the browser session cookie.
+/// Order: Host → grant → Origin; a consumed grant reports reuse, an unknown
+/// or expired one fails closed with a clear error body. A cross-site request
+/// burns the grant but never receives the session.
+fn handle_grant_exchange(request: &Request, runtime: &DaemonRuntime) -> Response {
+    if !host_is_valid(request, runtime) {
+        return invalid_host();
+    }
+    let presented = request_body(request)
+        .and_then(|body| body.get("launch_grant").cloned())
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let outcome = match runtime.sessions.exchange_grant(&presented) {
+        Ok(outcome) => outcome,
+        Err(_) => return Response::json(500, &json!({"error": "launch_grant_unavailable"})),
+    };
+    let session = match outcome {
+        ExchangeOutcome::Exchanged(session) => session,
+        ExchangeOutcome::AlreadyUsed => {
+            return Response::json(401, &json!({"error": "launch_grant_already_used"}));
+        }
+        ExchangeOutcome::Unknown => {
+            return Response::json(401, &json!({"error": "launch_grant_invalid"}));
+        }
+    };
+    if !origin_is_valid(request, runtime) {
+        return forbidden_origin();
+    }
+    Response::json(200, &json!({ "ok": true }))
+        .with_header("Set-Cookie", session_cookie_header(&session))
+}
+
+/// Parse the request body as a JSON object; `None` when absent or not an
+/// object (mirrors the Python bridge treating non-object bodies as empty).
+pub(super) fn request_body(request: &Request) -> Option<Value> {
+    if request.body.is_empty() {
+        return None;
+    }
+    serde_json::from_slice(&request.body)
+        .ok()
+        .filter(Value::is_object)
+}
+
+/// Parse `a=b&c=d` (no percent-decoding; the daemon's query values are plain).
+pub(super) fn parse_query(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| match pair.split_once('=') {
+            Some((key, value)) => (key.to_string(), value.to_string()),
+            None => (pair.to_string(), String::new()),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_pairs_are_split_without_decoding() {
+        assert_eq!(
+            parse_query("view=Crystals&selected_id=1"),
+            vec![
+                ("view".to_string(), "Crystals".to_string()),
+                ("selected_id".to_string(), "1".to_string())
+            ]
+        );
+        assert_eq!(parse_query(""), Vec::new());
+    }
+}

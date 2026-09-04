@@ -68,9 +68,60 @@ pub fn substitute_placeholders(value: &Value, port: u16) -> Value {
     }
 }
 
+/// Live values the REST route fixtures are normalized against: the browser
+/// session and launch grant are obtained through the mint/exchange flow, the
+/// rest identify the running daemon and its data root.
+pub struct RouteFixture {
+    pub port: u16,
+    pub session: String,
+    pub grant: String,
+    pub pid: u32,
+    pub started_at: String,
+    pub data_root: std::path::PathBuf,
+    /// The daemon's per-installation bearer; the oracle headers use a fixed
+    /// placeholder credential that the harness swaps in.
+    pub bearer: String,
+}
+
+/// Replace every fixture placeholder, including the REST-only ones. The
+/// synthetic root in the Python oracle was `<root>/data`; the Rust tests root
+/// the daemon directly at the temp directory.
+pub fn substitute_route_placeholders(value: &Value, fixture: &RouteFixture) -> Value {
+    let port = fixture.port.to_string();
+    match value {
+        Value::String(text) => {
+            let text = text
+                .replace("<PORT>", &port)
+                .replace("<INVALID_BEARER_TOKEN>", INVALID_BEARER)
+                .replace("<SESSION>", &fixture.session)
+                .replace("<SINGLE_USE_LAUNCH_GRANT>", &fixture.grant)
+                .replace("<PID>", &fixture.pid.to_string())
+                .replace("<TIMESTAMP>", &fixture.started_at)
+                .replace(
+                    "<SYNTHETIC_ROOT>/data",
+                    &fixture.data_root.to_string_lossy(),
+                );
+            Value::String(text)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| substitute_route_placeholders(item, fixture))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), substitute_route_placeholders(value, fixture)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 pub struct RawResponse {
     pub status: u16,
     pub content_type: String,
+    pub headers: BTreeMap<String, String>,
     pub raw_body: Vec<u8>,
 }
 
@@ -138,14 +189,19 @@ fn parse_response(raw: &[u8]) -> RawResponse {
         }
     }
     let content_type = headers.get("content-type").cloned().unwrap_or_default();
+    let header_map = headers;
     let full_body = &raw[separator + 4..];
-    let body = match headers.get("content-length").and_then(|v| v.parse().ok()) {
+    let body = match header_map
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+    {
         Some(length) => &full_body[..length],
         None => full_body,
     };
     RawResponse {
         status,
         content_type,
+        headers: header_map,
         raw_body: body.to_vec(),
     }
 }
@@ -189,4 +245,113 @@ pub fn mcp_headers(
         headers.push(((*name).to_string(), (*value).to_string()));
     }
     headers
+}
+
+/// A browser session obtained through the real flow: bearer-authenticated
+/// grant mint, then the one-time exchange for the session cookie value.
+pub fn browser_session(daemon: &hiero::daemon::Daemon) -> (String, String) {
+    let port = daemon.local_addr().port();
+    let mint = send_request(
+        port,
+        "POST",
+        "/auth/launch-grant",
+        &[(
+            "Authorization".to_string(),
+            format!("Bearer {}", daemon.bearer().expose_secret()),
+        )],
+        b"",
+    );
+    assert_eq!(
+        mint.status, 200,
+        "grant mint must succeed: {:?}",
+        mint.raw_body
+    );
+    let grant = mint.body()["launch_grant"]
+        .as_str()
+        .unwrap_or_else(|| panic!("grant mint must return launch_grant: {:?}", mint.raw_body))
+        .to_string();
+
+    let exchange = send_request(
+        port,
+        "POST",
+        "/auth/launch-grant/exchange",
+        &[
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Origin".to_string(), format!("http://127.0.0.1:{port}")),
+        ],
+        format!(r#"{{"launch_grant": "{grant}"}}"#).as_bytes(),
+    );
+    assert_eq!(
+        exchange.status, 200,
+        "grant exchange must succeed: {:?}",
+        exchange.raw_body
+    );
+    let cookie = exchange
+        .headers
+        .get("set-cookie")
+        .unwrap_or_else(|| panic!("exchange must set the session cookie"));
+    let session = cookie
+        .strip_prefix("hieronymus_session=")
+        .and_then(|rest| rest.split(';').next())
+        .unwrap_or_else(|| panic!("unexpected Set-Cookie: {cookie}"))
+        .to_string();
+    (grant, session)
+}
+
+/// Daemon plus a live browser session, ready for the REST route cases.
+pub fn start_daemon_with_browser_session()
+-> (RouteFixture, tempfile::TempDir, hiero::daemon::Daemon) {
+    let (root, daemon) = start_daemon_on_ephemeral_port();
+    let (grant, session) = browser_session(&daemon);
+    let fixture = RouteFixture {
+        port: daemon.local_addr().port(),
+        session,
+        grant,
+        pid: std::process::id(),
+        started_at: daemon.discovery_record().started_at,
+        data_root: root.path().to_path_buf(),
+        bearer: daemon.bearer().expose_secret().clone(),
+    };
+    (fixture, root, daemon)
+}
+
+pub fn browser_headers(fixture: &RouteFixture, extra: &[(&str, String)]) -> Vec<(String, String)> {
+    let mut headers = vec![(
+        "Cookie".to_string(),
+        format!("hieronymus_session={}", fixture.session),
+    )];
+    for (name, value) in extra {
+        headers.push(((*name).to_string(), value.clone()));
+    }
+    headers
+}
+
+/// The same-origin Origin header for the running daemon.
+pub fn same_origin(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Seed the admin domain data exactly like the frozen fixture oracle did:
+/// one synthetic series with one active rule crystal (strength 0.8 /
+/// confidence 0.9).
+pub fn seed_synthetic_admin_data(root: &Path) -> i64 {
+    let config = hieronymus::data_root::HieronymusConfig::new(root);
+    let registry = hieronymus::registry::Registry::open(&config).unwrap();
+    let series = registry
+        .create_series("synthetic-series", "Synthetic Series", "ja", "en", None)
+        .unwrap();
+    let context = hieronymus::memory_models::TranslationContext::new(
+        series.slug.clone(),
+        series.source_language.clone(),
+        series.target_language.clone(),
+        "translation",
+    );
+    let crystal = hieronymus::crystals::NewCrystal {
+        title: "Synthetic Rule".to_string(),
+        ..hieronymus::crystals::NewCrystal::new("rule", "Use Sense, not Feeling.")
+            .strength(0.8)
+            .confidence(0.9)
+    };
+    let store = hieronymus::crystals::CrystalStore::open(&config).unwrap();
+    store.add_crystal(&context, "rule", &crystal).unwrap()
 }
