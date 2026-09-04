@@ -1,6 +1,8 @@
 //! The REST surface of the daemon (ADR 0012 as amended 2026-09-03, ADR 0015):
 //!
 //! - `GET /status` — native, bearer + Host;
+//! - `POST /recall/feedback` — native, bearer + Host: recall-feedback store
+//!   surface (ADR 0011; one new route, outside the frozen registry);
 //! - `POST /auth/launch-grant` — native, bearer + Host: mints a one-time
 //!   launch grant for local `hiero config`/`hiero admin` commands;
 //! - `POST /auth/launch-grant/exchange` — browser: swaps the grant for a
@@ -14,6 +16,7 @@
 //! and always reports `404 {"error":"not_found"}`.
 
 pub(crate) mod admin;
+pub(crate) mod feedback;
 pub(crate) mod providers;
 pub(crate) mod settings;
 pub(crate) mod status;
@@ -34,6 +37,7 @@ pub(crate) fn handle(
 ) -> Response {
     match path {
         "/status" => status::handle(request, runtime),
+        "/recall/feedback" => feedback::handle(request, runtime),
         "/auth/launch-grant" => handle_grant_mint(request, runtime),
         "/auth/launch-grant/exchange" => handle_grant_exchange(request, runtime),
         "/api/providers" => match request.method.as_str() {

@@ -14,7 +14,7 @@ pub const DREAM_WORKFLOW_NAMES: [&str; 7] = [
     "coverage_audit",
 ];
 
-pub const DREAMING_FIELDS: [&str; 14] = [
+pub const DREAMING_FIELDS: [&str; 15] = [
     "enabled",
     "schedule_interval_minutes",
     "min_pending_short_term_memories",
@@ -28,6 +28,7 @@ pub const DREAMING_FIELDS: [&str; 14] = [
     "max_short_term_memories_per_run",
     "max_long_term_records_affected_per_run",
     "max_relation_records_per_pass",
+    "reconsolidation_diff_threshold",
     "general_prompt",
 ];
 
@@ -96,6 +97,9 @@ pub struct DreamConfig {
     pub max_short_term_memories_per_run: i64,
     pub max_long_term_records_affected_per_run: i64,
     pub max_relation_records_per_pass: i64,
+    /// Token-level diff ratio at or above which the reconsolidator supersedes
+    /// the source crystal instead of reinforcing it in place.
+    pub reconsolidation_diff_threshold: f64,
     pub general_prompt: String,
     pub workflows: IndexMap<String, WorkflowProfile>,
 }
@@ -120,6 +124,7 @@ pub fn default_dream_config() -> DreamConfig {
         max_short_term_memories_per_run: 500,
         max_long_term_records_affected_per_run: 1000,
         max_relation_records_per_pass: 1000,
+        reconsolidation_diff_threshold: 0.20,
         general_prompt:
             "Use English as the primary searchable memory language. Preserve Japanese, \
              Russian, and other languages only as terms, names, renderings, quoted \
@@ -219,11 +224,23 @@ pub fn save_dream_config(
     Ok(())
 }
 
-/// DTO projection; the dream payload never contains providers or secrets.
+/// DTO projection for daemon surfaces; the dream payload never contains
+/// providers or secrets. The REST settings DTO is frozen at its compatibility
+/// contract, so the newer `reconsolidation_diff_threshold` field is projected
+/// out here: it round-trips through `dream.conf` and stays untouched by
+/// settings drafts, which never carry it.
 pub fn redacted_dream_config_payload(dream_config: &DreamConfig) -> Table {
-    dream_payload(dream_config)
+    let mut payload = dream_payload(dream_config);
+    if let Some(dreaming) = payload
+        .get_mut("dreaming")
+        .and_then(|value| value.as_table_mut())
+    {
+        dreaming.remove("reconsolidation_diff_threshold");
+    }
+    payload
 }
 
+/// Full file payload; `save_dream_config` writes every validated field.
 fn dream_payload(dream_config: &DreamConfig) -> Table {
     let mut dreaming = Table::new();
     dreaming.insert("enabled".into(), dream_config.enabled.into());
@@ -274,6 +291,10 @@ fn dream_payload(dream_config: &DreamConfig) -> Table {
     dreaming.insert(
         "max_relation_records_per_pass".into(),
         dream_config.max_relation_records_per_pass.into(),
+    );
+    dreaming.insert(
+        "reconsolidation_diff_threshold".into(),
+        dream_config.reconsolidation_diff_threshold.into(),
     );
     dreaming.insert(
         "general_prompt".into(),
@@ -368,6 +389,13 @@ pub fn validate_dream_config(dream_config: &DreamConfig) -> Result<DreamConfig, 
              max_pending_short_term_memories",
         ));
     }
+    if !(0.0 < dream_config.reconsolidation_diff_threshold
+        && dream_config.reconsolidation_diff_threshold <= 1.0)
+    {
+        return Err(DreamConfigError::new(
+            "reconsolidation_diff_threshold must be greater than 0 and at most 1",
+        ));
+    }
     for (name, workflow) in &dream_config.workflows {
         let prefix = format!("workflows.{name}");
         require_positive_int(
@@ -396,6 +424,10 @@ fn dream_config_from_payload(payload: &Table) -> Result<DreamConfig, DreamConfig
                 "enabled" => dream_config.enabled = require_exact_bool(&prefix, value)?,
                 "general_prompt" => {
                     dream_config.general_prompt = require_exact_str(&prefix, value)?;
+                }
+                "reconsolidation_diff_threshold" => {
+                    dream_config.reconsolidation_diff_threshold =
+                        require_exact_float(&prefix, value)?;
                 }
                 "workflows" => unreachable!("dreaming.workflows is not an allowed field"),
                 field_name => {
@@ -538,6 +570,15 @@ fn require_exact_bool(field_name: &str, value: &toml::Value) -> Result<bool, Dre
         toml::Value::Boolean(parsed) => Ok(*parsed),
         _ => Err(DreamConfigError::new(format!(
             "{field_name} must be a boolean"
+        ))),
+    }
+}
+
+fn require_exact_float(field_name: &str, value: &toml::Value) -> Result<f64, DreamConfigError> {
+    match value {
+        toml::Value::Float(parsed) => Ok(*parsed),
+        _ => Err(DreamConfigError::new(format!(
+            "{field_name} must be a float"
         ))),
     }
 }

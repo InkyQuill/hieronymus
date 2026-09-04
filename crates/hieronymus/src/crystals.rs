@@ -127,6 +127,16 @@ impl NewCrystal {
         self.confidence = confidence;
         self
     }
+
+    pub fn source_credibility(mut self, source_credibility: impl Into<String>) -> Self {
+        self.source_credibility = source_credibility.into();
+        self
+    }
+
+    pub fn rule_intent(mut self, rule_intent: impl Into<String>) -> Self {
+        self.rule_intent = rule_intent.into();
+        self
+    }
 }
 
 /// Crystal store: long-term advisory memory over the data-root database.

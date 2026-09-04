@@ -59,6 +59,7 @@ create table if not exists short_term_memories (
   source_credibility text,
   rule_intent text,
   soft_origin text,
+  source_crystal_id integer references crystals(id) on delete set null,
   created_at text not null,
   archived_at text
 );
@@ -137,6 +138,7 @@ create table if not exists crystal_links (
   source_crystal_id integer not null references crystals(id) on delete cascade,
   target_crystal_id integer not null references crystals(id) on delete cascade,
   link_type text not null,
+  weight real not null default 0.5,
   primary key(source_crystal_id, target_crystal_id, link_type)
 );
 
@@ -148,6 +150,8 @@ create table if not exists crystal_activations (
   rank integer not null,
   score real not null,
   reason text not null default '',
+  recall_id text,
+  outcome text check (outcome in ('useful', 'miss')),
   cycle_id integer,
   created_at text not null
 );
@@ -511,3 +515,12 @@ begin
   insert into rag_chunks_fts(rowid, text, display_text, location)
   values (new.id, new.text, new.display_text, new.location);
 end;
+
+create index if not exists crystal_activations_recall_id_idx
+  on crystal_activations(recall_id);
+create index if not exists crystal_activations_outcome_idx
+  on crystal_activations(outcome);
+create index if not exists short_term_memories_working_copy_idx
+  on short_term_memories(source_crystal_id);
+create index if not exists memory_events_pending_idx
+  on memory_events(event_type, applied);

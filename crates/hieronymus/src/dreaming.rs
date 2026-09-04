@@ -30,6 +30,7 @@ use crate::db::open_migrated;
 use crate::dream_audit::DreamAuditStore;
 use crate::dream_config::{DREAM_WORKFLOW_NAMES, DreamConfig, load_dream_config};
 use crate::dream_locks::{DreamCycleState, DreamLockError, dream_cycle_lock};
+use crate::feedback::apply_score_delta;
 use crate::memory_models::{ShortTermMemoryRecord, TranslationContext};
 use crate::provider_config::{ProviderCatalog, load_provider_catalog};
 
@@ -47,8 +48,30 @@ pub const MALFORMED_CONFIDENCE_PENALTY: f64 = 0.2;
 
 const MIN_NORMALIZED_CONFIDENCE: f64 = 0.05;
 
-/// Python `SOURCE_CREDIBILITY_CONFIDENCE` with the `observation` fallback.
-fn source_credibility_confidence(source_credibility: &str) -> f64 {
+/// Token-set Jaccard similarity at or above which two co-activated `useful`
+/// crystals are near-duplicates and combine pairwise (July design
+/// §Dream-Time Integration, LinkReinforcer).
+pub const COMBINATION_SIMILARITY_THRESHOLD: f64 = 0.7;
+
+/// Weight of a `crystal_links` row created by hebbian co-activation.
+const LINK_INITIAL_WEIGHT: f64 = 0.5;
+
+/// Additive weight gain per co-activation cycle, capped at [`LINK_WEIGHT_MAX`].
+const HEBBIAN_STRENGTH_DELTA: f64 = 0.1;
+
+const LINK_WEIGHT_MAX: f64 = 1.0;
+
+/// `crystal_links.link_type` for hebbian co-activation links.
+const CO_ACTIVATION_LINK_TYPE: &str = "co_activation";
+
+/// In-place reinforcement the reconsolidator applies when a working copy
+/// stays below the diff threshold: strength-only, one notch.
+const RECONSOLIDATION_REINFORCE_DELTAS: (f64, f64) = (0.02, 0.0);
+
+/// Python `SOURCE_CREDIBILITY_CONFIDENCE` with the `observation` fallback
+/// (`0.35` = `observation`'s weight as the schema default). Shared by recall
+/// scoring and dream-time survivor selection.
+pub fn source_credibility_confidence(source_credibility: &str) -> f64 {
     match source_credibility {
         "rumor" => 0.15,
         "source_text" => 0.7,
@@ -255,6 +278,27 @@ struct SelectionGroup {
     memories: Vec<ShortTermMemoryRecord>,
 }
 
+/// Aggregated output of the deterministic phases: ids for the audit payload
+/// and the run record's crystal count.
+#[derive(Debug, Default)]
+struct DeterministicSummary {
+    created_crystal_ids: Vec<i64>,
+    changed_crystal_ids: Vec<i64>,
+    archived_memory_ids: Vec<i64>,
+    dreamed_session_ids: Vec<i64>,
+    actions: Vec<Value>,
+}
+
+impl DeterministicSummary {
+    fn merge(&mut self, other: DeterministicSummary) {
+        self.created_crystal_ids.extend(other.created_crystal_ids);
+        self.changed_crystal_ids.extend(other.changed_crystal_ids);
+        self.archived_memory_ids.extend(other.archived_memory_ids);
+        self.dreamed_session_ids.extend(other.dreamed_session_ids);
+        self.actions.extend(other.actions);
+    }
+}
+
 struct ApplySummary {
     created_crystal_ids: Vec<i64>,
     archived_memory_ids: Vec<i64>,
@@ -416,7 +460,17 @@ impl<P: DreamProvider> DreamService<P> {
         let pending_count = self.pending_short_term_memory_count()?;
         let threshold_state = self.threshold_state(pending_count, ignore_minimum, trigger_type);
         if !ignore_minimum && pending_count < self.dream_config.min_pending_short_term_memories {
-            return self.complete_run(run_id, cycle_id, 0, 0, 0);
+            // Deterministic phases run on every cycle with pending work, even
+            // below the provider crystallization threshold.
+            let deterministic =
+                self.run_deterministic_phases(run_id, cycle_id, trigger_type, &threshold_state, 0)?;
+            return self.complete_run(
+                run_id,
+                cycle_id,
+                0,
+                deterministic.created_crystal_ids.len() as i64,
+                0,
+            );
         }
 
         // Selection: the bounded affected-memory set. One snapshot feeds
@@ -425,7 +479,15 @@ impl<P: DreamProvider> DreamService<P> {
             self.dream_config.max_short_term_memories_per_run as usize,
         )?;
         if groups.is_empty() {
-            return self.complete_run(run_id, cycle_id, 0, 0, 0);
+            let deterministic =
+                self.run_deterministic_phases(run_id, cycle_id, trigger_type, &threshold_state, 0)?;
+            return self.complete_run(
+                run_id,
+                cycle_id,
+                0,
+                deterministic.created_crystal_ids.len() as i64,
+                0,
+            );
         }
         let selected_memory_ids: Vec<i64> = groups
             .iter()
@@ -556,11 +618,23 @@ impl<P: DreamProvider> DreamService<P> {
             &summary,
         )?;
 
+        // Deterministic phases (spec §Phase Boundaries steps 5-7): they run
+        // after the provider batch so a failed run never leaves domain
+        // mutations, and their own budget starts from what the provider
+        // batch already spent.
+        let deterministic = self.run_deterministic_phases(
+            run_id,
+            cycle_id,
+            trigger_type,
+            &threshold_state,
+            summary.created_crystal_ids.len(),
+        )?;
+
         self.complete_run(
             run_id,
             cycle_id,
             selected_memory_ids.len() as i64,
-            summary.created_crystal_ids.len() as i64,
+            (summary.created_crystal_ids.len() + deterministic.created_crystal_ids.len()) as i64,
             0,
         )
     }
@@ -576,7 +650,8 @@ impl<P: DreamProvider> DreamService<P> {
              from short_term_memories
              join task_sessions on task_sessions.id = short_term_memories.session_id
              where task_sessions.status = 'completed'
-               and short_term_memories.archived_at is null",
+               and short_term_memories.archived_at is null
+               and short_term_memories.source_crystal_id is null",
             [],
             |row| row.get::<_, i64>(0),
         )?;
@@ -585,7 +660,9 @@ impl<P: DreamProvider> DreamService<P> {
 
     /// Port of `_load_pending_completed_groups`: at most `limit` pending
     /// memories from completed sessions, grouped by session, ordered by
-    /// session then memory id.
+    /// session then memory id. Session-scoped working copies
+    /// (`source_crystal_id` set) are the reconsolidator's input, never
+    /// crystallization input.
     fn select_pending_completed_groups(
         &self,
         limit: usize,
@@ -600,6 +677,7 @@ impl<P: DreamProvider> DreamService<P> {
              join task_sessions on task_sessions.id = short_term_memories.session_id
              where task_sessions.status = 'completed'
                and short_term_memories.archived_at is null
+               and short_term_memories.source_crystal_id is null
              order by task_sessions.id, short_term_memories.id
              limit ?1",
         )?;
@@ -825,6 +903,526 @@ impl<P: DreamProvider> DreamService<P> {
                 "max_total_affected_crystals": self.dream_config.max_total_affected_crystals,
             },
         })
+    }
+
+    // ------------------------------------------------------------------
+    // Deterministic phases (spec §Phase Boundaries steps 5-7)
+    // ------------------------------------------------------------------
+
+    /// Run the algorithmic, provider-free phases over their own bounded
+    /// selections, each as one audited phase record and one transaction:
+    /// reconsolidation evaluates advisory working copies, reinforcement
+    /// consumes unprocessed `recalled_again` memory events, and the link
+    /// reinforcer consumes `useful` activation rows (hebbian links plus
+    /// pairwise combination). Bounded mutation: every phase reads with an
+    /// absolute limit from the validated caps and mutates only its recorded
+    /// selection plus ids created in the same run.
+    fn run_deterministic_phases(
+        &self,
+        run_id: i64,
+        cycle_id: i64,
+        trigger_type: &str,
+        threshold_state: &Value,
+        provider_created_crystals: usize,
+    ) -> Result<DeterministicSummary, DreamError> {
+        let mut total = DeterministicSummary::default();
+
+        let crystal_budget = (self
+            .dream_config
+            .max_long_term_records_affected_per_run
+            .max(0) as usize)
+            .saturating_sub(provider_created_crystals);
+        let reconsolidation = self.run_reconsolidation(
+            run_id,
+            cycle_id,
+            trigger_type,
+            threshold_state,
+            crystal_budget,
+        )?;
+        total.merge(reconsolidation);
+
+        let reinforcement =
+            self.run_feedback_reinforcement(run_id, cycle_id, trigger_type, threshold_state)?;
+        total.merge(reinforcement);
+
+        let links = self.run_link_reinforcement(run_id, cycle_id, trigger_type, threshold_state)?;
+        total.merge(links);
+        Ok(total)
+    }
+
+    /// True when any non-archived session-scoped working copy exists.
+    fn reconsolidation_pending(&self) -> Result<bool, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        let pending: i64 = connection.query_row(
+            "select exists (
+                 select 1 from short_term_memories
+                 where archived_at is null and source_crystal_id is not null
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(pending != 0)
+    }
+
+    /// The reconsolidator (July design §Dream-Time Integration): for every
+    /// non-archived working copy, a token-level diff ratio against the source
+    /// crystal's current text decides reinforce-in-place versus supersede.
+    /// Either way the processed working copy is archived. Active rule crystals
+    /// are never superseded or reinforced here (ADR 0011: dreaming cannot
+    /// transition deterministic authority).
+    fn run_reconsolidation(
+        &self,
+        run_id: i64,
+        cycle_id: i64,
+        trigger_type: &str,
+        threshold_state: &Value,
+        crystal_budget: usize,
+    ) -> Result<DeterministicSummary, DreamError> {
+        if crystal_budget == 0 || !self.reconsolidation_pending()? {
+            return Ok(DeterministicSummary::default());
+        }
+
+        // Bounded plan: absolute limit from max_short_term_memories_per_run,
+        // evaluated before persistence.
+        let connection = open_migrated(&self.config.database_path())?;
+        let copies: Vec<(i64, i64, i64, String)> = {
+            let mut statement = connection.prepare(
+                "select id, session_id, source_crystal_id, text
+                 from short_term_memories
+                 where archived_at is null and source_crystal_id is not null
+                 order by id
+                 limit ?1",
+            )?;
+            let rows = statement.query_map(
+                [self.dream_config.max_short_term_memories_per_run],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        drop(connection);
+        if copies.is_empty() {
+            return Ok(DeterministicSummary::default());
+        }
+        let phase_run_id =
+            self.start_deterministic_phase_run(run_id, "reconsolidation", copies.len() as i64)?;
+
+        let threshold = self.dream_config.reconsolidation_diff_threshold;
+        let mut summary = DeterministicSummary::default();
+        let mut budget = crystal_budget;
+        let mut connection = open_migrated(&self.config.database_path())?;
+        let transaction = connection.transaction()?;
+        for (memory_id, session_id, crystal_id, working_text) in copies {
+            // The crystal-mutation cost is charged against the remaining
+            // run budget before any work happens (caps are enforced before
+            // persistence): superseding creates one crystal and changes one,
+            // reinforcing changes one; protected and retired copies are free.
+            let Some(original) = load_reconsolidation_source(&transaction, crystal_id)? else {
+                // The source crystal is gone; the working copy has nothing to
+                // consolidate against, so it is retired.
+                archive_working_copy(&transaction, memory_id)?;
+                summary.actions.push(json!({
+                    "memory_id": memory_id,
+                    "crystal_id": crystal_id,
+                    "action": "source_missing",
+                }));
+                summary.archived_memory_ids.push(memory_id);
+                continue;
+            };
+            let ratio = token_diff_ratio(&original.text, &working_text);
+            let (action, cost) = if is_active_rule(&original.crystal_type, &original.status) {
+                // ADR 0011: dreaming never transitions active deterministic
+                // rule authority, however far the working copy diverged.
+                ("rule_protected", 0)
+            } else if ratio < threshold {
+                ("reinforced", 1)
+            } else {
+                ("superseded", 2)
+            };
+            if cost > budget {
+                break;
+            }
+            match action {
+                "reinforced" => {
+                    apply_score_delta(
+                        &transaction,
+                        crystal_id,
+                        RECONSOLIDATION_REINFORCE_DELTAS.0,
+                        RECONSOLIDATION_REINFORCE_DELTAS.1,
+                        &now(),
+                    )?;
+                    transaction.execute(
+                        "update crystals set last_reinforced_cycle = ?1, updated_at = ?2
+                         where id = ?3",
+                        rusqlite::params![cycle_id, now(), crystal_id],
+                    )?;
+                    archive_working_copy(&transaction, memory_id)?;
+                    summary.changed_crystal_ids.push(crystal_id);
+                }
+                "superseded" => {
+                    let successor_id = insert_reconsolidated_crystal(
+                        &transaction,
+                        crystal_id,
+                        &original,
+                        &working_text,
+                        cycle_id,
+                    )?;
+                    transaction.execute(
+                        "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",
+                        rusqlite::params![now(), crystal_id],
+                    )?;
+                    archive_working_copy(&transaction, memory_id)?;
+                    summary.created_crystal_ids.push(successor_id);
+                    summary.changed_crystal_ids.push(crystal_id);
+                    summary.dreamed_session_ids.push(session_id);
+                }
+                _ => {
+                    archive_working_copy(&transaction, memory_id)?;
+                }
+            }
+            summary.archived_memory_ids.push(memory_id);
+            summary.actions.push(json!({
+                "memory_id": memory_id,
+                "crystal_id": crystal_id,
+                "diff_ratio": ratio,
+                "action": action,
+            }));
+            budget -= cost;
+        }
+        // Sessions whose last pending memory was archived by this phase can
+        // complete their dream lifecycle under the same guard as the
+        // provider persistence batch.
+        for session_id in unique_ints(&summary.dreamed_session_ids) {
+            transaction.execute(
+                "update task_sessions
+                 set status = 'dreamed', cycle_id = ?1
+                 where status = 'completed'
+                   and id = ?2
+                   and not exists (
+                     select 1 from short_term_memories
+                     where short_term_memories.session_id = task_sessions.id
+                       and archived_at is null
+                   )",
+                rusqlite::params![cycle_id, session_id],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+
+        self.complete_deterministic_phase(
+            run_id,
+            phase_run_id,
+            "reconsolidation",
+            trigger_type,
+            threshold_state,
+            &summary,
+        )?;
+        Ok(summary)
+    }
+
+    /// True when any `recalled_again` memory event was not yet consumed.
+    fn reinforcement_pending(&self) -> Result<bool, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        let pending: i64 = connection.query_row(
+            "select exists (
+                 select 1 from memory_events
+                 where event_type = 'recalled_again' and applied = 0
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(pending != 0)
+    }
+
+    /// Passive reinforcement: `recalled_again` events accumulated since the
+    /// last cycle contribute their recorded strength-only deltas once, then
+    /// are stamped `applied = 1` with the run's cycle. Immediate feedback
+    /// events (`recalled_useful`/`recalled_miss`) are inserted `applied = 1`
+    /// by the feedback store and are never read here.
+    fn run_feedback_reinforcement(
+        &self,
+        run_id: i64,
+        cycle_id: i64,
+        trigger_type: &str,
+        threshold_state: &Value,
+    ) -> Result<DeterministicSummary, DreamError> {
+        if !self.reinforcement_pending()? {
+            return Ok(DeterministicSummary::default());
+        }
+        let phase_run_id = self.start_deterministic_phase_run(run_id, "reinforcement", 0)?;
+        let limit = self.dream_config.max_total_affected_crystals;
+
+        let mut summary = DeterministicSummary::default();
+        let mut connection = open_migrated(&self.config.database_path())?;
+        let transaction = connection.transaction()?;
+        let events: Vec<(i64, i64, f64, f64)> = {
+            let mut statement = transaction.prepare(
+                "select id, crystal_id, strength_delta, confidence_delta
+                 from memory_events
+                 where event_type = 'recalled_again' and applied = 0
+                 order by id
+                 limit ?1",
+            )?;
+            let rows = statement.query_map([limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (event_id, crystal_id, strength_delta, confidence_delta) in events {
+            apply_score_delta(
+                &transaction,
+                crystal_id,
+                strength_delta,
+                confidence_delta,
+                &now(),
+            )?;
+            transaction.execute(
+                "update memory_events set applied = 1, cycle_id = ?1 where id = ?2",
+                rusqlite::params![cycle_id, event_id],
+            )?;
+            summary.changed_crystal_ids.push(crystal_id);
+            summary.actions.push(json!({
+                "event_id": event_id,
+                "crystal_id": crystal_id,
+                "strength_delta": strength_delta,
+                "confidence_delta": confidence_delta,
+            }));
+        }
+        transaction.commit()?;
+        drop(connection);
+
+        self.complete_deterministic_phase(
+            run_id,
+            phase_run_id,
+            "reinforcement",
+            trigger_type,
+            threshold_state,
+            &summary,
+        )?;
+        Ok(summary)
+    }
+
+    /// True when any `useful` activation row has not been consumed by a cycle.
+    fn links_pending(&self) -> Result<bool, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        let pending: i64 = connection.query_row(
+            "select exists (
+                 select 1 from crystal_activations
+                 where outcome = 'useful' and cycle_id is null
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(pending != 0)
+    }
+
+    /// The link reinforcer (July design §Dream-Time Integration): useful
+    /// co-activated crystals strengthen (or create) their `crystal_links` row
+    /// (hebbian rule); near-duplicate pairs combine pairwise. Consumed
+    /// activation rows are stamped with the run's cycle, so feedback evidence
+    /// is consumed at most once.
+    fn run_link_reinforcement(
+        &self,
+        run_id: i64,
+        cycle_id: i64,
+        trigger_type: &str,
+        threshold_state: &Value,
+    ) -> Result<DeterministicSummary, DreamError> {
+        if !self.links_pending()? {
+            return Ok(DeterministicSummary::default());
+        }
+        let phase_run_id = self.start_deterministic_phase_run(run_id, "link_reinforcement", 0)?;
+        let activation_limit = self.dream_config.max_total_affected_crystals;
+        let mut link_budget = self.dream_config.max_relation_records_per_pass.max(0);
+        let mut combination_budget = self.dream_config.max_changed_crystals_per_cycle.max(0);
+
+        // Bounded read of the cycle's unconsumed useful activations.
+        let mut connection = open_migrated(&self.config.database_path())?;
+        let transaction = connection.transaction()?;
+        let activations: Vec<(i64, i64, i64)> = {
+            let mut statement = transaction.prepare(
+                "select id, session_id, crystal_id
+                 from crystal_activations
+                 where outcome = 'useful' and cycle_id is null
+                 order by id
+                 limit ?1",
+            )?;
+            let rows = statement.query_map([activation_limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        // Co-activation pairs per session, deterministic order.
+        let mut by_session: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+        for (_, session_id, crystal_id) in &activations {
+            let crystals = by_session.entry(*session_id).or_default();
+            if !crystals.contains(crystal_id) {
+                crystals.push(*crystal_id);
+            }
+        }
+        for crystals in by_session.values_mut() {
+            crystals.sort_unstable();
+        }
+        let mut pairs: Vec<(i64, i64)> = Vec::new();
+        for crystals in by_session.values() {
+            for (index, left) in crystals.iter().enumerate() {
+                for right in &crystals[index + 1..] {
+                    pairs.push((*left, *right));
+                }
+            }
+        }
+
+        let mut summary = DeterministicSummary::default();
+        let mut combined: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let cores = load_crystal_cores(&transaction, &pairs)?;
+        for (left, right) in pairs {
+            let (Some(left_core), Some(right_core)) = (cores.get(&left), cores.get(&right)) else {
+                continue;
+            };
+            // Pairwise combination (ADR 0011 guards: only active advisory
+            // crystals combine; active deterministic rules are never
+            // absorbed, never survivors).
+            let combinable = combination_budget > 0
+                && !combined.contains(&left)
+                && !combined.contains(&right)
+                && !is_active_rule(&left_core.crystal_type, &left_core.status)
+                && !is_active_rule(&right_core.crystal_type, &right_core.status)
+                && left_core.status == "active"
+                && right_core.status == "active"
+                && token_similarity(&left_core.text, &right_core.text)
+                    >= COMBINATION_SIMILARITY_THRESHOLD;
+            if combinable {
+                let survivor = pick_combination_survivor(left, left_core, right, right_core);
+                let absorbed = if survivor == left { right } else { left };
+                combine_crystals(&transaction, survivor, absorbed, cycle_id)?;
+                combined.insert(absorbed);
+                summary.changed_crystal_ids.push(survivor);
+                summary.changed_crystal_ids.push(absorbed);
+                summary.actions.push(json!({
+                    "survivor_crystal_id": survivor,
+                    "absorbed_crystal_id": absorbed,
+                    "action": "combined",
+                }));
+                combination_budget -= 1;
+                continue;
+            }
+            // Hebbian strengthening between survivors of co-activation.
+            if link_budget > 0 {
+                strengthen_co_activation_link(&transaction, left, right)?;
+                summary.actions.push(json!({
+                    "crystal_ids": [left, right],
+                    "action": "co_activation_link",
+                }));
+                link_budget -= 1;
+            }
+        }
+        let consumed_ids: Vec<i64> = activations.iter().map(|(id, _, _)| *id).collect();
+        for activation_id in &consumed_ids {
+            transaction.execute(
+                "update crystal_activations set cycle_id = ?1 where id = ?2",
+                rusqlite::params![cycle_id, activation_id],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+
+        self.complete_deterministic_phase(
+            run_id,
+            phase_run_id,
+            "link_reinforcement",
+            trigger_type,
+            threshold_state,
+            &summary,
+        )?;
+        Ok(summary)
+    }
+
+    fn start_deterministic_phase_run(
+        &self,
+        run_id: i64,
+        phase: &str,
+        input_count: i64,
+    ) -> Result<i64, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        connection.execute(
+            "insert into dream_phase_runs(
+               dream_run_id, phase, provider_profile, provider_type, model, status,
+               input_count, created_at
+             )
+             values (?1, ?2, 'deterministic', 'deterministic', 'deterministic', 'running', ?3, ?4)",
+            rusqlite::params![run_id, phase, input_count, now()],
+        )?;
+        Ok(connection.last_insert_rowid())
+    }
+
+    /// Complete a deterministic phase: phase record plus one audited
+    /// `phase_completed` entry carrying the affected-id sets (spec §Audit).
+    fn complete_deterministic_phase(
+        &self,
+        run_id: i64,
+        phase_run_id: i64,
+        phase: &str,
+        trigger_type: &str,
+        threshold_state: &Value,
+        summary: &DeterministicSummary,
+    ) -> Result<(), DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        connection.execute(
+            "update dream_phase_runs
+             set status = 'completed', output_count = ?1, completed_at = ?2
+             where id = ?3",
+            rusqlite::params![
+                summary.changed_crystal_ids.len() as i64,
+                now(),
+                phase_run_id
+            ],
+        )?;
+        drop(connection);
+
+        let mut payload = self.audit_base(trigger_type, threshold_state, &[], phase);
+        payload.insert("provider_type".into(), json!("deterministic"));
+        payload.insert(
+            "created_crystals".into(),
+            json!(summary.created_crystal_ids),
+        );
+        payload.insert(
+            "changed_crystals".into(),
+            json!(unique_ints(&summary.changed_crystal_ids)),
+        );
+        payload.insert(
+            "archived_short_term_memory_ids".into(),
+            json!(summary.archived_memory_ids),
+        );
+        payload.insert(
+            "dreamed_session_ids".into(),
+            json!(unique_ints(&summary.dreamed_session_ids)),
+        );
+        payload.insert("actions".into(), json!(summary.actions));
+        self.audit.append(
+            run_id,
+            Some(phase_run_id),
+            "phase_completed",
+            "info",
+            &format!("completed {phase} phase"),
+            &Value::Object(payload),
+        )?;
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -2155,4 +2753,417 @@ fn insert_dream_crystal(
 
 fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+// ----------------------------------------------------------------------
+// Reconsolidation mechanics (deterministic, no provider)
+// ----------------------------------------------------------------------
+
+fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .filter(|token| !token.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Token-level Levenshtein distance normalized by the longer token count:
+/// the reconsolidator's diff ratio (July design: "edit distance under 20% of
+/// token count"). Identical texts are 0.0, disjoint texts are 1.0.
+pub fn token_diff_ratio(source: &str, working: &str) -> f64 {
+    let source = tokenize(source);
+    let working = tokenize(working);
+    if source.is_empty() && working.is_empty() {
+        return 0.0;
+    }
+    let denominator = source.len().max(working.len());
+    if denominator == 0 {
+        return 1.0;
+    }
+    levenshtein_distance(&source, &working) as f64 / denominator as f64
+}
+
+/// Token-set Jaccard similarity, case-insensitive: the named combination
+/// similarity mechanism for co-activated near-duplicate crystals.
+pub fn token_similarity(left: &str, right: &str) -> f64 {
+    let left_text = left.to_lowercase();
+    let right_text = right.to_lowercase();
+    let left: std::collections::HashSet<String> = tokenize(&left_text).into_iter().collect();
+    let right: std::collections::HashSet<String> = tokenize(&right_text).into_iter().collect();
+    if left.is_empty() && right.is_empty() {
+        return 0.0;
+    }
+    let intersection = left.intersection(&right).count();
+    let union = left.union(&right).count();
+    if union == 0 {
+        return 0.0;
+    }
+    intersection as f64 / union as f64
+}
+
+fn levenshtein_distance(left: &[String], right: &[String]) -> usize {
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (row, left_token) in left.iter().enumerate() {
+        let mut current = vec![row + 1];
+        for (column, right_token) in right.iter().enumerate() {
+            let substitution = previous[column] + usize::from(left_token != right_token);
+            let insertion = current[column] + 1;
+            let deletion = previous[column + 1] + 1;
+            current.push(substitution.min(insertion).min(deletion));
+        }
+        previous = current;
+    }
+    previous[right.len()]
+}
+
+/// The ADR 0011 / slice-5 protection predicate: active structured rule
+/// authority never decays passively, never supersedes, never combines.
+fn is_active_rule(crystal_type: &str, status: &str) -> bool {
+    crystal_type == "rule" && status == "active"
+}
+
+/// The `crystals` columns the reconsolidator needs from the source crystal.
+struct ReconsolidationSource {
+    text: String,
+    status: String,
+    crystal_type: String,
+    title: String,
+    scope_type: String,
+    scope_key: String,
+    series_slug: String,
+    source_language: String,
+    target_language: String,
+    tags_json: String,
+    strength: f64,
+    confidence: f64,
+    source_credibility: String,
+    rule_intent: String,
+    soft_origin: String,
+    is_inferred: bool,
+    malformed_penalty: f64,
+}
+
+fn load_reconsolidation_source(
+    transaction: &rusqlite::Transaction<'_>,
+    crystal_id: i64,
+) -> Result<Option<ReconsolidationSource>, DreamError> {
+    let row = transaction
+        .query_row(
+            "select text, status, crystal_type, title, scope_type, scope_key,
+                    series_slug, source_language, target_language, tags_json,
+                    strength, confidence, source_credibility, rule_intent,
+                    soft_origin, is_inferred, malformed_penalty
+             from crystals where id = ?1",
+            [crystal_id],
+            |row| {
+                Ok(ReconsolidationSource {
+                    text: row.get(0)?,
+                    status: row.get(1)?,
+                    crystal_type: row.get(2)?,
+                    title: row.get(3)?,
+                    scope_type: row.get(4)?,
+                    scope_key: row.get(5)?,
+                    series_slug: row.get(6)?,
+                    source_language: row.get(7)?,
+                    target_language: row.get(8)?,
+                    tags_json: row.get(9)?,
+                    strength: row.get(10)?,
+                    confidence: row.get(11)?,
+                    source_credibility: row.get(12)?,
+                    rule_intent: row.get(13)?,
+                    soft_origin: row.get(14)?,
+                    is_inferred: row.get::<_, i64>(15)? != 0,
+                    malformed_penalty: row.get(16)?,
+                })
+            },
+        )
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    Ok(row)
+}
+
+/// Crystallize the successor crystal from a diverged working copy: the
+/// original's identity and metadata, the working copy's text, the original's
+/// concept rows copied (not moved), `supersedes_crystal_id` pointing back.
+fn insert_reconsolidated_crystal(
+    transaction: &rusqlite::Transaction<'_>,
+    original_crystal_id: i64,
+    original: &ReconsolidationSource,
+    working_text: &str,
+    cycle_id: i64,
+) -> Result<i64, DreamError> {
+    let timestamp = now();
+    transaction.execute(
+        "insert into crystals(
+           crystal_type, text, title, scope_type, scope_key, series_slug,
+           source_language, target_language, tags_json, strength, confidence,
+           source_credibility, rule_intent, soft_origin, is_inferred,
+           malformed_penalty, supersedes_crystal_id, status, created_cycle,
+           created_at, updated_at
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                 ?15, ?16, ?17, 'active', ?18, ?19, ?19)",
+        rusqlite::params![
+            original.crystal_type,
+            working_text,
+            original.title,
+            original.scope_type,
+            original.scope_key,
+            original.series_slug,
+            original.source_language,
+            original.target_language,
+            original.tags_json,
+            original.strength,
+            original.confidence,
+            original.source_credibility,
+            original.rule_intent,
+            original.soft_origin,
+            original.is_inferred as i64,
+            original.malformed_penalty,
+            original_crystal_id,
+            cycle_id,
+            timestamp,
+        ],
+    )?;
+    let successor_id = transaction.last_insert_rowid();
+    transaction.execute(
+        "insert into crystals_fts(rowid, title, text) values (?1, ?2, ?3)",
+        rusqlite::params![successor_id, original.title, working_text],
+    )?;
+    // Typed side tables and concept rows are copied, not moved: the
+    // superseded original keeps its rows as inert audit history.
+    transaction.execute(
+        "insert into crystal_story_scopes(crystal_id, scope, confidence, created_at)
+         select ?1, scope, confidence, created_at
+         from crystal_story_scopes where crystal_id = ?2",
+        rusqlite::params![successor_id, original_crystal_id],
+    )?;
+    transaction.execute(
+        "insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+         select ?1, tag, confidence, created_at
+         from crystal_semantic_tags where crystal_id = ?2",
+        rusqlite::params![successor_id, original_crystal_id],
+    )?;
+    transaction.execute(
+        "insert into crystal_language_tags(crystal_id, language_tag)
+         select ?1, language_tag
+         from crystal_language_tags where crystal_id = ?2",
+        rusqlite::params![successor_id, original_crystal_id],
+    )?;
+    transaction.execute(
+        "insert into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
+         select ?1, concept_id, link_type, confidence, created_at
+         from crystal_concepts where crystal_id = ?2",
+        rusqlite::params![successor_id, original_crystal_id],
+    )?;
+    Ok(successor_id)
+}
+
+fn archive_working_copy(
+    transaction: &rusqlite::Transaction<'_>,
+    memory_id: i64,
+) -> Result<(), DreamError> {
+    transaction.execute(
+        "update short_term_memories set archived_at = ?1 where id = ?2",
+        rusqlite::params![now(), memory_id],
+    )?;
+    Ok(())
+}
+
+/// Minimal crystal projection for combination decisions.
+struct CrystalCore {
+    text: String,
+    status: String,
+    crystal_type: String,
+    source_credibility: String,
+    strength: f64,
+}
+
+fn load_crystal_cores(
+    transaction: &rusqlite::Transaction<'_>,
+    pairs: &[(i64, i64)],
+) -> Result<std::collections::BTreeMap<i64, CrystalCore>, DreamError> {
+    let mut ids: Vec<i64> = pairs
+        .iter()
+        .flat_map(|(left, right)| [*left, *right])
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let ids_json = format!(
+        "[{}]",
+        ids.iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let mut statement = transaction.prepare(
+        "select id, text, status, crystal_type, source_credibility, strength
+         from crystals
+         where id in (select value from json_each(?1))",
+    )?;
+    let rows = statement.query_map([&ids_json], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            CrystalCore {
+                text: row.get(1)?,
+                status: row.get(2)?,
+                crystal_type: row.get(3)?,
+                source_credibility: row.get(4)?,
+                strength: row.get(5)?,
+            },
+        ))
+    })?;
+    let mut cores = std::collections::BTreeMap::new();
+    for row in rows {
+        let (id, core) = row?;
+        cores.insert(id, core);
+    }
+    Ok(cores)
+}
+
+/// Survivor selection (July design): higher `source_credibility` weight,
+/// tie-broken by higher `strength`, then by lower id for determinism.
+fn pick_combination_survivor(
+    left_id: i64,
+    left: &CrystalCore,
+    right_id: i64,
+    right: &CrystalCore,
+) -> i64 {
+    let left_weight = source_credibility_confidence(&left.source_credibility);
+    let right_weight = source_credibility_confidence(&right.source_credibility);
+    match right_weight.partial_cmp(&left_weight) {
+        Some(std::cmp::Ordering::Greater) => right_id,
+        Some(std::cmp::Ordering::Equal) => {
+            if right.strength > left.strength {
+                right_id
+            } else {
+                left_id
+            }
+        }
+        _ => left_id,
+    }
+}
+
+/// Pairwise combination: union the absorbed crystal's concepts and links onto
+/// the survivor, mark it `superseded`, and record one `combined_into` memory
+/// event whose evidence names the survivor (event-sourced; the
+/// `supersedes_crystal_id` column is not reused for combination).
+fn combine_crystals(
+    transaction: &rusqlite::Transaction<'_>,
+    survivor: i64,
+    absorbed: i64,
+    cycle_id: i64,
+) -> Result<(), DreamError> {
+    transaction.execute(
+        "insert or ignore into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
+         select ?1, concept_id, link_type, confidence, created_at
+         from crystal_concepts where crystal_id = ?2",
+        rusqlite::params![survivor, absorbed],
+    )?;
+    {
+        let mut statement = transaction.prepare(
+            "select source_crystal_id, target_crystal_id, link_type, weight
+             from crystal_links
+             where source_crystal_id = ?1 or target_crystal_id = ?1",
+        )?;
+        let rows = statement.query_map([absorbed], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?;
+        let links: Vec<(i64, i64, String, f64)> = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        for (source, target, link_type, weight) in links {
+            let other = if source == absorbed { target } else { source };
+            if other == survivor || other == absorbed {
+                continue;
+            }
+            // Preserve the link's orientation relative to its other endpoint.
+            let (new_source, new_target) = if source == absorbed {
+                (survivor, other)
+            } else {
+                (other, survivor)
+            };
+            transaction.execute(
+                "insert or ignore into crystal_links(
+                   source_crystal_id, target_crystal_id, link_type, weight
+                 )
+                 values (?1, ?2, ?3, ?4)",
+                rusqlite::params![new_source, new_target, link_type, weight],
+            )?;
+        }
+    }
+    transaction.execute(
+        "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",
+        rusqlite::params![now(), absorbed],
+    )?;
+    transaction.execute(
+        "insert into memory_events(
+           crystal_id, session_id, event_type, source_role, evidence,
+           strength_delta, confidence_delta, applied, cycle_id, created_at
+         )
+         values (?1, null, 'combined_into', 'system', ?2, 0, 0, 1, ?3, ?4)",
+        rusqlite::params![absorbed, survivor.to_string(), cycle_id, now()],
+    )?;
+    Ok(())
+}
+
+/// Hebbian strengthening: the canonical (lower, higher) id pair's
+/// `co_activation` link gains [`HEBBIAN_STRENGTH_DELTA`], or is created at
+/// [`LINK_INITIAL_WEIGHT`], capped at [`LINK_WEIGHT_MAX`].
+fn strengthen_co_activation_link(
+    transaction: &rusqlite::Transaction<'_>,
+    left: i64,
+    right: i64,
+) -> Result<(), DreamError> {
+    let (source, target) = (left.min(right), left.max(right));
+    let existing: Option<f64> = transaction
+        .query_row(
+            "select weight from crystal_links
+             where link_type = ?1
+               and ((source_crystal_id = ?2 and target_crystal_id = ?3)
+                 or (source_crystal_id = ?3 and target_crystal_id = ?2))",
+            rusqlite::params![CO_ACTIVATION_LINK_TYPE, source, target],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    match existing {
+        Some(weight) => {
+            transaction.execute(
+                "update crystal_links set weight = ?1
+                 where link_type = ?2
+                   and ((source_crystal_id = ?3 and target_crystal_id = ?4)
+                     or (source_crystal_id = ?4 and target_crystal_id = ?3))",
+                rusqlite::params![
+                    (weight + HEBBIAN_STRENGTH_DELTA).min(LINK_WEIGHT_MAX),
+                    CO_ACTIVATION_LINK_TYPE,
+                    source,
+                    target
+                ],
+            )?;
+        }
+        None => {
+            transaction.execute(
+                "insert into crystal_links(
+                   source_crystal_id, target_crystal_id, link_type, weight
+                 )
+                 values (?1, ?2, ?3, ?4)",
+                rusqlite::params![source, target, CO_ACTIVATION_LINK_TYPE, LINK_INITIAL_WEIGHT],
+            )?;
+        }
+    }
+    Ok(())
 }

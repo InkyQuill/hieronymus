@@ -1,8 +1,11 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::crystals::CrystalStore;
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
+use crate::dreaming::source_credibility_confidence;
+use crate::feedback::RECALLED_AGAIN_DELTAS;
 use crate::memory_models::{CrystalRecord, ShortTermMemoryRecord, TranslationContext};
 use crate::rag::RagStore;
 use crate::rag_models::RagChunkRecord;
@@ -16,6 +19,37 @@ const ACTIVE_RULE_BOOST: f64 = 0.20;
 const LOW_CONFIDENCE_THOUGHT_PENALTY: f64 = 0.12;
 const RECALL_REASON: &str = "fts";
 const LONG_TERM_METADATA_REASON: &str = "metadata";
+const SPREADING_ACTIVATION_REASON: &str = "spreading_activation";
+
+/// Post-boost score above which a recalled crystal pulls its 1-hop
+/// `crystal_links` neighbors into the same response (July design
+/// §Recall-Time Behavior; a hardcoded module constant, not user-tunable).
+pub const SPREADING_ACTIVATION_THRESHOLD: f64 = 0.55;
+
+/// Neighbor score factor: `source_score * link_weight * SPREADING_ATTENUATION`.
+pub const SPREADING_ATTENUATION: f64 = 0.5;
+
+/// Flat additive boost for crystals with a non-empty advisory `rule_intent`
+/// (the Python `_ACTIVE_RULE_BOOST` magnitude, applied by presence check
+/// instead of a `crystal_type` gate). The slice-4 boost for active rule
+/// crystals above is a separate, untouched constant.
+pub const RULE_INTENT_BOOST: f64 = 0.20;
+
+/// Single bounded neighbor query per triggering crystal.
+const SPREADING_NEIGHBOR_LIMIT: i64 = 50;
+
+/// Session-scoped working-copy provenance marker.
+const WORKING_COPY_SOURCE_ROLE: &str = "recall";
+
+/// Fresh unique id per recall invocation (ADR 0011): wall-clock nanos plus a
+/// process-local sequence; activation rows of one invocation share it.
+static RECALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn next_recall_id() -> String {
+    let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+    let sequence = RECALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("rc-{nanos}-{sequence}")
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecallError {
@@ -39,12 +73,15 @@ pub enum RecallError {
 
 /// One ranked recall hit (ADR 0011: flat graded list; the deterministic
 /// contract is returned separately and never mixed into this ordering).
+/// Long-term hits expose the activation id written for that hit, so callers
+/// can address feedback (ADR 0011 §Recall Feedback).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecallHit {
     LongTerm {
         crystal: CrystalRecord,
         score: f64,
         reason: String,
+        activation_id: i64,
     },
     ShortTerm {
         memory: ShortTermMemoryRecord,
@@ -55,6 +92,14 @@ pub enum RecallHit {
         score: f64,
         reason: String,
     },
+}
+
+/// One recall invocation: its durable `recall_id` plus the ranked hits whose
+/// long-term activation ids feed the feedback contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecallResponse {
+    pub recall_id: String,
+    pub hits: Vec<RecallHit>,
 }
 
 impl RecallHit {
@@ -134,7 +179,7 @@ impl RecallService {
         context: &TranslationContext,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<RecallHit>, RecallError> {
+    ) -> Result<RecallResponse, RecallError> {
         if limit == 0 {
             return Err(RecallError::LimitTooSmall);
         }
@@ -190,6 +235,13 @@ impl RecallService {
                 if crystal.crystal_type == "rule" && crystal.status == "active" {
                     ranked_score += ACTIVE_RULE_BOOST;
                 }
+                // Graded-memory boosts (July design §Recall-Time Behavior):
+                // source-credibility confidence plus the flat advisory
+                // rule-intent boost. Prioritized, never a mandatory lane.
+                ranked_score += source_credibility_confidence(&crystal.source_credibility);
+                if !crystal.rule_intent.trim().is_empty() {
+                    ranked_score += RULE_INTENT_BOOST;
+                }
                 if (crystal.crystal_type == "thought" || crystal.is_inferred)
                     && crystal.confidence < 0.5
                 {
@@ -199,6 +251,7 @@ impl RecallService {
                     crystal,
                     score: ranked_score,
                     reason: RECALL_REASON.to_string(),
+                    activation_id: 0,
                 }
             })
             .collect();
@@ -224,11 +277,16 @@ impl RecallService {
                     crystal,
                     score: 0.10,
                     reason: LONG_TERM_METADATA_REASON.to_string(),
+                    activation_id: 0,
                 });
             }
         }
 
         long_term.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
+
+        // Live spreading activation: crystals above the threshold pull their
+        // 1-hop neighbors into the pool at the attenuated score.
+        apply_spreading_activation(&crystals, &mut long_term)?;
 
         // One ranked memory pool (long-term + short-term), as in the Python
         // recall which sorts all memory items together before the merge.
@@ -258,10 +316,14 @@ impl RecallService {
             })
             .collect();
 
-        let selected = merge_ranked_items(memory, rag_hits, limit);
+        let mut selected = merge_ranked_items(memory, rag_hits, limit);
 
-        record_activations(&self.config, session_id, query, &selected)?;
-        Ok(selected)
+        let recall_id = next_recall_id();
+        record_recall_ledger(&self.config, session_id, query, &recall_id, &mut selected)?;
+        Ok(RecallResponse {
+            recall_id,
+            hits: selected,
+        })
     }
 }
 
@@ -393,38 +455,174 @@ fn crystals_matching_metadata(
     Ok(matches.into_values().collect())
 }
 
-fn record_activations(
+/// Fold 1-hop `crystal_links` neighbors of above-threshold crystals into the
+/// pool at `source_score * link_weight * SPREADING_ATTENUATION` (July design
+/// §Recall-Time Behavior step 4). One bounded query per triggering crystal,
+/// one hop only: neighbors added here never trigger further spreading.
+fn apply_spreading_activation(
+    crystals: &CrystalStore,
+    long_term: &mut Vec<RecallHit>,
+) -> Result<(), RecallError> {
+    let triggers: Vec<(i64, f64)> = long_term
+        .iter()
+        .filter_map(|hit| match hit {
+            RecallHit::LongTerm { crystal, score, .. }
+                if *score > SPREADING_ACTIVATION_THRESHOLD =>
+            {
+                Some((crystal.id, *score))
+            }
+            _ => None,
+        })
+        .collect();
+    if triggers.is_empty() {
+        return Ok(());
+    }
+    let mut in_pool: std::collections::HashSet<i64> = long_term
+        .iter()
+        .filter_map(|hit| match hit {
+            RecallHit::LongTerm { crystal, .. } => Some(crystal.id),
+            _ => None,
+        })
+        .collect();
+
+    let connection = open_migrated(&crystals.config().database_path())?;
+    let mut statement = connection.prepare(
+        "select case when source_crystal_id = ?1 then target_crystal_id
+                        else source_crystal_id end as neighbor_id, weight
+         from crystal_links
+         where source_crystal_id = ?1 or target_crystal_id = ?1
+         limit ?2",
+    )?;
+    for (trigger_id, trigger_score) in triggers {
+        let rows = statement.query_map(
+            rusqlite::params![trigger_id, SPREADING_NEIGHBOR_LIMIT],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+        )?;
+        for row in rows {
+            let (neighbor_id, weight) = row?;
+            if in_pool.contains(&neighbor_id) {
+                continue;
+            }
+            in_pool.insert(neighbor_id);
+            let crystal = crystals.get(neighbor_id)?;
+            long_term.push(RecallHit::LongTerm {
+                crystal,
+                score: trigger_score * weight * SPREADING_ATTENUATION,
+                reason: SPREADING_ACTIVATION_REASON.to_string(),
+                activation_id: 0,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The recall ledger (July design §Recall-Time Behavior steps 2-3, under the
+/// ADR 0011 feedback contract), applied in one transaction over the returned
+/// long-term hits:
+///
+/// 1. session-scoped working-copy dedup: a returned crystal without a
+///    non-archived `short_term_memories` row for this session gets one
+///    (text seeded from the crystal); a repeat hit records one
+///    `recalled_again` memory event instead of duplicating the copy;
+/// 2. one `crystal_activations` row per returned hit, stamped with the
+///    invocation's `recall_id`, exposing the activation id on the hit.
+fn record_recall_ledger(
     config: &HieronymusConfig,
     session_id: i64,
     query: &str,
-    hits: &[RecallHit],
+    recall_id: &str,
+    hits: &mut [RecallHit],
 ) -> Result<(), RecallError> {
-    let connection = open_migrated(Path::new(&config.database_path()))?;
+    let mut connection = open_migrated(Path::new(&config.database_path()))?;
+    let transaction = connection.transaction()?;
     let now = chrono::Utc::now().to_rfc3339();
-    for (position, hit) in hits.iter().enumerate() {
-        if let RecallHit::LongTerm {
+    for (position, hit) in hits.iter_mut().enumerate() {
+        let RecallHit::LongTerm {
             crystal,
             score,
             reason,
+            activation_id,
         } = hit
-        {
-            connection.execute(
-                "insert into crystal_activations(
-                   crystal_id, session_id, recall_query, rank, score, reason,
-                   cycle_id, created_at
-                 )
-                 values (?1, ?2, ?3, ?4, ?5, ?6, null, ?7)",
-                rusqlite::params![
-                    crystal.id,
-                    session_id,
-                    query,
-                    (position + 1) as i64,
-                    score,
-                    reason,
-                    now
-                ],
-            )?;
+        else {
+            continue;
+        };
+        let (crystal_id, hit_score, hit_reason) = (crystal.id, *score, reason.clone());
+        let existing_working_copy: Option<i64> = transaction
+            .query_row(
+                "select id from short_term_memories
+                 where session_id = ?1 and source_crystal_id = ?2
+                   and archived_at is null
+                 limit 1",
+                rusqlite::params![session_id, crystal_id],
+                |row| row.get(0),
+            )
+            .map(Some)
+            .or_else(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        match existing_working_copy {
+            None => {
+                transaction.execute(
+                    "insert into short_term_memories(
+                       session_id, source_role, kind, text, source_credibility,
+                       rule_intent, source_crystal_id, created_at
+                     )
+                     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        session_id,
+                        WORKING_COPY_SOURCE_ROLE,
+                        crystal.crystal_type,
+                        crystal.text,
+                        crystal.source_credibility,
+                        crystal.rule_intent,
+                        crystal_id,
+                        now
+                    ],
+                )?;
+                let memory_id = transaction.last_insert_rowid();
+                transaction.execute(
+                    "insert into short_term_memories_fts(rowid, text) values (?1, ?2)",
+                    rusqlite::params![memory_id, crystal.text],
+                )?;
+            }
+            Some(memory_id) => {
+                transaction.execute(
+                    "insert into memory_events(
+                       crystal_id, session_id, event_type, source_role, evidence,
+                       strength_delta, confidence_delta, applied, created_at
+                     )
+                     values (?1, ?2, 'recalled_again', 'system', ?3, ?4, ?5, 0, ?6)",
+                    rusqlite::params![
+                        crystal_id,
+                        session_id,
+                        memory_id.to_string(),
+                        RECALLED_AGAIN_DELTAS.0,
+                        RECALLED_AGAIN_DELTAS.1,
+                        now
+                    ],
+                )?;
+            }
         }
+        transaction.execute(
+            "insert into crystal_activations(
+               crystal_id, session_id, recall_query, rank, score, reason,
+               recall_id, outcome, cycle_id, created_at
+             )
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, null, null, ?8)",
+            rusqlite::params![
+                crystal_id,
+                session_id,
+                query,
+                (position + 1) as i64,
+                hit_score,
+                hit_reason,
+                recall_id,
+                now
+            ],
+        )?;
+        *activation_id = transaction.last_insert_rowid();
     }
+    transaction.commit()?;
     Ok(())
 }

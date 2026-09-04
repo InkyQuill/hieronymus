@@ -62,7 +62,8 @@ fn recall_returns_crystal_and_short_term_hits() {
     let service = RecallService::open(&fixture.config).unwrap();
     let hits = service
         .recall(fixture.session_id, &context, "chalk binding", 10)
-        .unwrap();
+        .unwrap()
+        .hits;
 
     assert!(!hits.is_empty());
     let sources: Vec<&str> = hits.iter().map(RecallHit::source).collect();
@@ -107,7 +108,8 @@ fn recall_respects_limit_and_active_rule_protection() {
     let service = RecallService::open(&fixture.config).unwrap();
     let hits = service
         .recall(fixture.session_id, &context, "magic", 2)
-        .unwrap();
+        .unwrap()
+        .hits;
 
     assert_eq!(hits.len(), 2);
     // The protected active rule occupies a slot ahead of pooled memories.
@@ -227,7 +229,8 @@ fn recall_joins_rag_hits_into_merged_recall() {
     let service = RecallService::open(&fixture.config).unwrap();
     let hits = service
         .recall(fixture.session_id, &context, "Cooking Talent", 10)
-        .unwrap();
+        .unwrap()
+        .hits;
 
     assert!(
         hits.iter()
@@ -254,7 +257,8 @@ fn recall_keeps_rag_hits_series_isolated() {
     let service = RecallService::open(&fixture.config).unwrap();
     let hits = service
         .recall(fixture.session_id, &context, "Cooking Talent", 10)
-        .unwrap();
+        .unwrap()
+        .hits;
 
     assert!(hits.iter().all(|hit| !matches!(hit, RecallHit::Rag { .. })));
 }
@@ -278,7 +282,8 @@ fn failed_conflicting_reimport_preserves_rag_recall() {
     let service = RecallService::open(&fixture.config).unwrap();
     let hits = service
         .recall(fixture.session_id, &context, "Sense", 10)
-        .unwrap();
+        .unwrap()
+        .hits;
 
     assert!(
         hits.iter()
