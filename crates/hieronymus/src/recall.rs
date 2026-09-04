@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::concepts::ConceptStore;
 use crate::crystals::CrystalStore;
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
@@ -67,6 +68,8 @@ pub enum RecallError {
     Workspace(#[from] crate::workspace::WorkspaceError),
     #[error(transparent)]
     Crystal(#[from] crate::crystals::CrystalError),
+    #[error(transparent)]
+    Concept(#[from] crate::concepts::ConceptError),
     #[error(transparent)]
     Rag(#[from] crate::rag::RagError),
 }
@@ -213,8 +216,36 @@ impl RecallService {
             .map(String::as_str)
             .collect();
 
-        let mut long_term: Vec<RecallHit> = crystals
-            .search_scored(context, query, candidate_limit)?
+        let scored: Vec<(CrystalRecord, f64)> =
+            crystals.search_scored(context, query, candidate_limit)?;
+        // Metadata-only candidates: crystals with no FTS hit but matching
+        // story scopes/semantic tags still enter the pool at the metadata
+        // base score. Resolved before ranking so the concept boosts below
+        // cover the merged candidate pool, as in the Python call site.
+        let metadata_candidates = crystals_matching_metadata(
+            &self.config,
+            context,
+            &context_story_scopes,
+            &context_semantic_tags,
+        )?;
+
+        // Concept recall boosts (Python `recall_boosts_for_crystals`):
+        // query matches against the concepts linked to the candidates.
+        let mut candidate_ids: Vec<i64> = scored.iter().map(|(crystal, _)| crystal.id).collect();
+        candidate_ids.extend(metadata_candidates.iter().map(|crystal| crystal.id));
+        let context_story_scope_values: Vec<String> = context
+            .story_scopes
+            .iter()
+            .chain(context.tags.iter())
+            .cloned()
+            .collect();
+        let concept_boosts = ConceptStore::open(&self.config)?.recall_boosts_for_crystals(
+            &candidate_ids,
+            query,
+            &context_story_scope_values,
+        )?;
+
+        let mut long_term: Vec<RecallHit> = scored
             .into_iter()
             .map(|(crystal, score)| {
                 let mut ranked_score = score;
@@ -232,6 +263,7 @@ impl RecallService {
                 {
                     ranked_score += SEMANTIC_TAG_BOOST;
                 }
+                ranked_score += concept_boosts.get(&crystal.id).copied().unwrap_or(0.0);
                 if crystal.crystal_type == "rule" && crystal.status == "active" {
                     ranked_score += ACTIVE_RULE_BOOST;
                 }
@@ -256,9 +288,6 @@ impl RecallService {
             })
             .collect();
 
-        // Metadata-only candidates: crystals with no FTS hit but matching
-        // story scopes/semantic tags still enter the pool at the metadata
-        // base score.
         let long_term_ids: std::collections::HashSet<i64> = long_term
             .iter()
             .filter_map(|hit| match hit {
@@ -266,16 +295,12 @@ impl RecallService {
                 _ => None,
             })
             .collect();
-        for crystal in crystals_matching_metadata(
-            &self.config,
-            context,
-            &context_story_scopes,
-            &context_semantic_tags,
-        )? {
+        for crystal in metadata_candidates {
             if !long_term_ids.contains(&crystal.id) {
+                let concept_boost = concept_boosts.get(&crystal.id).copied().unwrap_or(0.0);
                 long_term.push(RecallHit::LongTerm {
                     crystal,
-                    score: 0.10,
+                    score: 0.10 + concept_boost,
                     reason: LONG_TERM_METADATA_REASON.to_string(),
                     activation_id: 0,
                 });

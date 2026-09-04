@@ -157,6 +157,70 @@ fn recall_records_activations_for_long_term_hits() {
 }
 
 #[test]
+fn concept_match_boosts_linked_crystal_in_ranking() {
+    let fixture = fixture("demo");
+    let concepts = ConceptStore::open(&fixture.config).unwrap();
+    let concept = concepts
+        .create_concept("enchant", &Default::default())
+        .unwrap();
+    let crystals = CrystalStore::open(&fixture.config).unwrap();
+    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    // Identical texts produce identical FTS lane scores, so without the
+    // concept boost the earlier crystal would win the id tie-break.
+    let unlinked_id = crystals
+        .add_crystal(
+            &context,
+            "lesson",
+            &NewCrystal::new("lesson", "The enchant ritual needs chalk."),
+        )
+        .unwrap();
+    let boosted_id = crystals
+        .add_crystal(
+            &context,
+            "lesson",
+            &NewCrystal {
+                concept_ids: vec![concept.id],
+                ..NewCrystal::new("lesson", "The enchant ritual needs chalk.")
+            },
+        )
+        .unwrap();
+
+    let service = RecallService::open(&fixture.config).unwrap();
+    let hits = service
+        .recall(fixture.session_id, &context, "enchant", 10)
+        .unwrap()
+        .hits;
+    let long_term_scores: Vec<(i64, f64)> = hits
+        .iter()
+        .filter_map(|hit| match hit {
+            RecallHit::LongTerm { crystal, score, .. } => Some((crystal.id, *score)),
+            _ => None,
+        })
+        .collect();
+    let score_of = |crystal_id: i64| {
+        long_term_scores
+            .iter()
+            .find(|(id, _)| *id == crystal_id)
+            .map(|(_, score)| *score)
+    };
+
+    let boosted_score = score_of(boosted_id).expect("boosted crystal recalled");
+    let unlinked_score = score_of(unlinked_id).expect("unlinked crystal recalled");
+    assert!(
+        boosted_score > unlinked_score,
+        "expected the concept-linked crystal to outrank its twin"
+    );
+    assert_close(boosted_score - unlinked_score, 0.15);
+}
+
+fn assert_close(value: f64, expected: f64) {
+    assert!(
+        (value - expected).abs() < 1e-9,
+        "expected {expected}, got {value}"
+    );
+}
+
+#[test]
 fn recall_rejects_inactive_and_unknown_sessions() {
     let fixture = fixture("demo");
     let context = TranslationContext::new("demo", "ja", "en", "translation");

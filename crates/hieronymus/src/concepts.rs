@@ -23,6 +23,14 @@ pub const ESTABLISHED_CONFIDENCE: f64 = 0.75;
 /// Linked-evidence count required (together with confidence) for established.
 pub const ESTABLISHED_EVIDENCE_COUNT: i64 = 2;
 
+/// Recall-time boost for a crystal whose linked concept matches the query
+/// text (Python `_CONCEPT_RECALL_TEXT_BOOST`).
+pub const CONCEPT_RECALL_TEXT_BOOST: f64 = 0.15;
+/// Recall-time boost for a crystal whose linked concept has a query-matching,
+/// non-superseded facet scoped to a context story scope (Python
+/// `_CONCEPT_RECALL_STORY_SCOPE_BOOST`).
+pub const CONCEPT_RECALL_STORY_SCOPE_BOOST: f64 = 0.25;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConceptError {
     #[error("unknown concept: {0}")]
@@ -1184,6 +1192,204 @@ impl ConceptStore {
         let rows = statement.query_map([crystal_id], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    /// Recall-time ranking boosts (Python
+    /// `ConceptStore.recall_boosts_for_crystals`): crystals whose linked
+    /// concept matches the query text gain [`CONCEPT_RECALL_TEXT_BOOST`],
+    /// and crystals whose linked concept carries a query-matching,
+    /// non-superseded facet scoped to one of `story_scopes` additionally
+    /// gain [`CONCEPT_RECALL_STORY_SCOPE_BOOST`]. Empty crystal ids or a
+    /// blank query yield an empty map; zero-boost entries are filtered.
+    pub fn recall_boosts_for_crystals(
+        &self,
+        crystal_ids: &[i64],
+        query: &str,
+        story_scopes: &[String],
+    ) -> Result<std::collections::HashMap<i64, f64>, ConceptError> {
+        let mut clean_crystal_ids = crystal_ids.to_vec();
+        clean_crystal_ids.sort_unstable();
+        clean_crystal_ids.dedup();
+        let clean_query = query.trim();
+        if clean_crystal_ids.is_empty() || clean_query.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let clean_story_scopes = clean_tags(story_scopes.iter().map(String::as_str));
+
+        let mut boosts: std::collections::HashMap<i64, f64> = clean_crystal_ids
+            .iter()
+            .map(|crystal_id| (*crystal_id, 0.0))
+            .collect();
+        let connection = self.connection()?;
+
+        let matching_concept_ids = concept_ids_matching_recall_query(&connection, clean_query)?;
+        if !matching_concept_ids.is_empty() {
+            let crystal_placeholders = placeholders(clean_crystal_ids.len());
+            let concept_placeholders = placeholders(matching_concept_ids.len());
+            let mut statement = connection.prepare(&format!(
+                "select distinct crystal_id
+                 from crystal_concepts
+                 where crystal_id in ({crystal_placeholders})
+                   and concept_id in ({concept_placeholders})"
+            ))?;
+            let rows = statement.query_map(
+                rusqlite::params_from_iter(
+                    clean_crystal_ids.iter().chain(matching_concept_ids.iter()),
+                ),
+                |row| row.get(0),
+            )?;
+            for row in rows {
+                *boosts.entry(row?).or_insert(0.0) += CONCEPT_RECALL_TEXT_BOOST;
+            }
+        }
+
+        if !clean_story_scopes.is_empty() {
+            let matching_facet_ids = facet_ids_matching_query(&connection, clean_query)?;
+            if matching_facet_ids.is_empty() {
+                return Ok(positive_boosts(boosts));
+            }
+            let facet_placeholders = placeholders(matching_facet_ids.len());
+            let crystal_placeholders = placeholders(clean_crystal_ids.len());
+            let scope_placeholders = placeholders(clean_story_scopes.len());
+            let mut statement = connection.prepare(&format!(
+                "select distinct cc.crystal_id
+                 from crystal_concepts cc
+                 join concept_facets f
+                   on f.concept_id = cc.concept_id
+                  and f.superseded_at is null
+                 join concept_facet_story_scopes s
+                   on s.facet_id = f.id
+                 where f.id in ({facet_placeholders})
+                   and cc.crystal_id in ({crystal_placeholders})
+                   and s.story_scope in ({scope_placeholders})"
+            ))?;
+            let rows = statement.query_map(
+                rusqlite::params_from_iter(
+                    matching_facet_ids
+                        .iter()
+                        .map(|facet_id| rusqlite::types::Value::Integer(*facet_id))
+                        .chain(
+                            clean_crystal_ids
+                                .iter()
+                                .map(|crystal_id| rusqlite::types::Value::Integer(*crystal_id)),
+                        )
+                        .chain(
+                            clean_story_scopes
+                                .iter()
+                                .map(|scope| rusqlite::types::Value::Text(scope.clone())),
+                        ),
+                ),
+                |row| row.get(0),
+            )?;
+            for row in rows {
+                *boosts.entry(row?).or_insert(0.0) += CONCEPT_RECALL_STORY_SCOPE_BOOST;
+            }
+        }
+
+        Ok(positive_boosts(boosts))
+    }
+}
+
+/// Comma-separated `?` placeholders for `in (...)` clauses.
+fn placeholders(count: usize) -> String {
+    std::iter::repeat_n("?", count)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn positive_boosts(
+    boosts: std::collections::HashMap<i64, f64>,
+) -> std::collections::HashMap<i64, f64> {
+    boosts
+        .into_iter()
+        .filter(|(_, boost)| *boost > 0.0)
+        .collect()
+}
+
+/// Python `_facet_ids_matching_query_with_connection`: live facets whose
+/// value equals the query (case-insensitively) plus FTS matches, in id order.
+fn facet_ids_matching_query(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<i64>, ConceptError> {
+    let mut facet_ids: std::collections::HashSet<i64> = {
+        let mut statement = connection.prepare(
+            "select id
+             from concept_facets
+             where value = ? collate nocase
+               and superseded_at is null",
+        )?;
+        let rows = statement.query_map([query], |row| row.get(0))?;
+        rows.collect::<Result<std::collections::HashSet<i64>, _>>()?
+    };
+    let expression = search_expression(query);
+    if !expression.is_empty() {
+        let mut statement = connection.prepare(
+            "select f.id
+             from concept_facet_fts
+             join concept_facets f on f.id = concept_facet_fts.rowid
+             where concept_facet_fts match ?1
+               and f.superseded_at is null",
+        )?;
+        let rows = statement.query_map([expression], |row| row.get(0))?;
+        for facet_id in rows {
+            facet_ids.insert(facet_id?);
+        }
+    }
+    let mut sorted: Vec<i64> = facet_ids.into_iter().collect();
+    sorted.sort_unstable();
+    Ok(sorted)
+}
+
+/// Python `_concept_ids_matching_recall_query_with_connection`: active
+/// (non-archived, non-merged) concepts whose canonical name equals the query
+/// (case-insensitively) plus the concepts behind query-matching facets.
+fn concept_ids_matching_recall_query(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<i64>, ConceptError> {
+    let mut concept_ids: std::collections::HashSet<i64> = {
+        let mut statement = connection.prepare(
+            "select id
+             from concepts
+             where canonical_name = ? collate nocase
+               and status not in (?, ?)",
+        )?;
+        let rows = statement.query_map(
+            rusqlite::params![query, CONCEPT_ARCHIVED, CONCEPT_MERGED],
+            |row| row.get(0),
+        )?;
+        rows.collect::<Result<std::collections::HashSet<i64>, _>>()?
+    };
+    let facet_ids = facet_ids_matching_query(connection, query)?;
+    if !facet_ids.is_empty() {
+        let facet_placeholders = placeholders(facet_ids.len());
+        let mut statement = connection.prepare(&format!(
+            "select distinct c.id
+             from concepts c
+             join concept_facets f on f.concept_id = c.id
+             where f.id in ({facet_placeholders})
+               and c.status not in (?, ?)"
+        ))?;
+        let rows = statement.query_map(
+            rusqlite::params_from_iter(
+                facet_ids
+                    .iter()
+                    .map(|facet_id| rusqlite::types::Value::Integer(*facet_id))
+                    .chain(
+                        [CONCEPT_ARCHIVED, CONCEPT_MERGED]
+                            .iter()
+                            .map(|status| rusqlite::types::Value::Text((*status).to_string())),
+                    ),
+            ),
+            |row| row.get(0),
+        )?;
+        for concept_id in rows {
+            concept_ids.insert(concept_id?);
+        }
+    }
+    let mut sorted: Vec<i64> = concept_ids.into_iter().collect();
+    sorted.sort_unstable();
+    Ok(sorted)
 }
 
 /// Established status requires both the confidence threshold and the linked
