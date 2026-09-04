@@ -30,7 +30,7 @@ pub use assets::Assets;
 pub use discovery::DiscoveryRecord;
 pub use registry::{McpRegistry, PROTOCOL_REVISION};
 
-use rest::providers::{FixtureProviderClient, ProviderClientSeam};
+use rest::providers::{DaemonProviderClient, ProviderClientSeam};
 use sessions::SessionStore;
 
 /// The daemon crate version, served by `GET /status`.
@@ -117,7 +117,8 @@ pub(crate) struct DaemonRuntime {
     /// The embedded console asset set backing the static SPA routes.
     pub assets: assets::Assets,
     /// The provider-client seam for the providers `check`/`models` routes
-    /// (fixture-backed until the real provider slice).
+    /// (the synthetic fixture world answers with frozen oracle semantics;
+    /// configured profiles are probed through the real client).
     pub provider_client: Box<dyn ProviderClientSeam>,
     /// The record this daemon published at startup; kept in memory so
     /// diagnostics never depend on the file still existing.
@@ -195,7 +196,7 @@ impl Daemon {
             sessions: SessionStore::default(),
             events: Arc::new(events::AdminEventHub::default()),
             assets: options.assets.clone(),
-            provider_client: Box::new(FixtureProviderClient),
+            provider_client: Box::new(DaemonProviderClient::with_default_transport()),
             record,
             database: Mutex::new(connection),
         });

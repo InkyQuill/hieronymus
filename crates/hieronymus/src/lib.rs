@@ -3,7 +3,9 @@
 //! Owns typed configuration, secret handling, data-root resolution, and
 //! storage primitives shared by the `hiero` binary, the daemon, and the MCP
 //! transports. Presentation lives in the binary crate; this library must not
-//! print, log, or touch the network.
+//! print or log. Its only outbound network access is the configured provider
+//! client (`dream_providers` over `provider_http`), which stays behind a
+//! transport seam so tests run on in-process loopback servers.
 
 pub mod atomic;
 pub mod concept_models;
@@ -14,10 +16,12 @@ pub mod db;
 pub mod dream_audit;
 pub mod dream_config;
 pub mod dream_locks;
+pub mod dream_providers;
 pub mod dreaming;
 pub mod ingest_config;
 pub mod memory_models;
 pub mod provider_config;
+pub mod provider_http;
 pub mod rag;
 pub mod rag_models;
 pub mod recall;

@@ -7,11 +7,15 @@
 //! short-term memories, the seven evidence passes behind an injected
 //! [`DreamProvider`], one validated mutation batch applied transactionally,
 //! and audit entries covering inputs, outputs, parse decisions, and
-//! mutations with redacted payloads.
+//! mutations with redacted payloads. `open` is the fail-closed workflow
+//! gate: every enabled `dream.conf` workflow assignment must resolve
+//! against the `provider.conf` catalog before any cycle runs (spec
+//! §Provider Policy).
 //!
-//! Out of scope here (later slices own them): real LLM provider clients,
-//! concept/facet application, supersede/reinforce provider actions, passive
-//! feedback events, decay/maintenance, and scheduler timers. Provider output
+//! Real configured LLM clients live in [`crate::dream_providers`] behind the
+//! same [`DreamProvider`] seam. Still out of scope here: concept/facet
+//! application, supersede/reinforce provider actions, passive feedback
+//! events, decay/maintenance, and scheduler timers. Provider output
 //! sections that would feed those slices fail the run closed instead of
 //! being silently dropped.
 
@@ -27,7 +31,7 @@ use crate::dream_audit::DreamAuditStore;
 use crate::dream_config::{DREAM_WORKFLOW_NAMES, DreamConfig, load_dream_config};
 use crate::dream_locks::{DreamCycleState, DreamLockError, dream_cycle_lock};
 use crate::memory_models::{ShortTermMemoryRecord, TranslationContext};
-use crate::provider_config::load_provider_catalog;
+use crate::provider_config::{ProviderCatalog, load_provider_catalog};
 
 pub const ALLOWED_CRYSTAL_TYPES: [&str; 7] = [
     "lesson",
@@ -68,6 +72,12 @@ pub enum DreamError {
     Provider(String),
     #[error("{0}")]
     InvalidOutput(String),
+    /// Fail-closed workflow gate rejection at `open` time: names the workflow
+    /// and the problem (no run context exists yet, so the text is the audit).
+    #[error("{0}")]
+    InvalidWorkflow(String),
+    #[error(transparent)]
+    Catalog(#[from] crate::provider_config::ProviderCatalogError),
     #[error(transparent)]
     Database(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -109,9 +119,9 @@ pub struct DreamRunRecord {
 }
 
 /// Provider access seam. The dreaming core never touches the network; real
-/// LLM workflows are later slices that implement this trait. Phase
-/// orchestration stays typed: the seven passes are fixed calls, not erased
-/// trait objects.
+/// configured LLM clients live in [`crate::dream_providers`] behind this
+/// trait. Phase orchestration stays typed: the seven passes are fixed calls,
+/// not erased trait objects.
 pub trait DreamProvider {
     fn name(&self) -> &str;
 
@@ -123,6 +133,13 @@ pub trait DreamProvider {
     /// Model id recorded on phase runs and audit entries.
     fn model(&self) -> &str {
         self.name()
+    }
+
+    /// True only for the deterministic provider. The open-time gate uses this
+    /// to refuse deterministic substitution for LLM-declared workflows (spec
+    /// §Provider Policy: it never silently replaces a configured workflow).
+    fn is_deterministic(&self) -> bool {
+        false
     }
 
     /// Run one evidence pass over the bounded selection. The returned JSON
@@ -143,6 +160,10 @@ pub struct DeterministicDreamProvider;
 impl DreamProvider for DeterministicDreamProvider {
     fn name(&self) -> &str {
         "deterministic"
+    }
+
+    fn is_deterministic(&self) -> bool {
+        true
     }
 
     fn run_pass(
@@ -254,10 +275,33 @@ pub struct DreamService<P: DreamProvider> {
     audit: DreamAuditStore,
 }
 
+/// `Debug` names the provider instead of dumping it, so `unwrap_err` in
+/// tests and any diagnostic path stay redacted by construction.
+impl<P: DreamProvider> std::fmt::Debug for DreamService<P> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DreamService")
+            .field("provider", &self.provider.name())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<P: DreamProvider> DreamService<P> {
     pub fn open(config: &HieronymusConfig, provider: P) -> Result<Self, DreamError> {
-        // TODO(dreaming-providers): fail closed on disabled/invalid workflows and resolve declared provider/model against provider.conf (spec Provider Policy).
         let dream_config = load_dream_config(config)?;
+        // The fail-closed workflow gate (spec §Provider Policy): every
+        // enabled workflow assignment must resolve against provider.conf and
+        // match the injected provider before the service accepts any run.
+        // There is no run context here, so the precise redacted error text
+        // is the audit record.
+        let catalog = load_provider_catalog(config)?;
+        validate_workflow_wiring(
+            &dream_config,
+            &catalog,
+            provider.is_deterministic(),
+            provider.profile_name(),
+            provider.model(),
+        )?;
         let audit = DreamAuditStore::open(config)?;
         Ok(Self {
             config: config.clone(),
@@ -1221,6 +1265,81 @@ impl<P: DreamProvider> DreamService<P> {
             Err(_) => message,
         }
     }
+}
+
+/// Resolve every enabled `dream.conf` workflow assignment against the
+/// `provider.conf` catalog (ADR 0007 resolution: explicit assignment, then
+/// catalog defaults, then fail closed) and require the injected provider to
+/// be the one the wiring declares. Disabled workflows are skipped, never
+/// errors. The error text names the workflow and the problem and carries no
+/// secret material, so it is safe for run records and audit surfaces.
+fn validate_workflow_wiring(
+    dream_config: &DreamConfig,
+    catalog: &ProviderCatalog,
+    injected_deterministic: bool,
+    injected_profile: &str,
+    injected_model: &str,
+) -> Result<(), DreamError> {
+    for (name, workflow) in &dream_config.workflows {
+        if !workflow.enabled {
+            continue;
+        }
+        let provider_id = if workflow.provider.trim().is_empty() {
+            catalog.defaults.provider.trim()
+        } else {
+            workflow.provider.trim()
+        };
+        let model = if workflow.model.trim().is_empty() {
+            catalog.defaults.model.trim()
+        } else {
+            workflow.model.trim()
+        };
+        if provider_id.is_empty() {
+            return Err(DreamError::InvalidWorkflow(format!(
+                "workflow {name}: enabled workflow must have a provider"
+            )));
+        }
+        if model.is_empty() {
+            return Err(DreamError::InvalidWorkflow(format!(
+                "workflow {name}: enabled workflow must have a model"
+            )));
+        }
+        if provider_id == "deterministic" {
+            if !injected_deterministic {
+                return Err(DreamError::InvalidWorkflow(format!(
+                    "workflow {name} is declared deterministic; only the deterministic \
+                     provider may run it"
+                )));
+            }
+            continue;
+        }
+        if injected_deterministic {
+            return Err(DreamError::InvalidWorkflow(format!(
+                "workflow {name} requires configured provider {provider_id}; the \
+                 deterministic provider never substitutes for a configured LLM workflow"
+            )));
+        }
+        let Some(profile) = catalog.providers.get(provider_id) else {
+            return Err(DreamError::InvalidWorkflow(format!(
+                "workflow {name}: provider profile missing: {provider_id}"
+            )));
+        };
+        // Python `_provider_from_profile`: only ollama runs without a key.
+        if profile.provider_type() != "ollama" && profile.key().is_blank() {
+            return Err(DreamError::InvalidWorkflow(format!(
+                "workflow {name}: API key missing for provider profile: {provider_id}"
+            )));
+        }
+        // One provider runs the whole cycle, so the injected provider must be
+        // exactly the wiring the enabled workflows resolve to.
+        if injected_profile != provider_id || injected_model != model {
+            return Err(DreamError::InvalidWorkflow(format!(
+                "workflow {name} is assigned to provider {provider_id} model {model}; \
+                 the injected provider serves {injected_profile} model {injected_model}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn next_cycle_id(connection: &Connection) -> Result<i64, DreamError> {

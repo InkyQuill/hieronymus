@@ -50,6 +50,14 @@ impl<T> Serialize for Secret<T> {
     }
 }
 
+impl Secret<String> {
+    /// Presence check for configuration gates: whether the secret is missing
+    /// or whitespace-only, without exposing the value.
+    pub fn is_blank(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+}
+
 /// Replace every occurrence of the given secret values in `text` with
 /// `[redacted]`, longest values first so overlapping values cannot leave
 /// fragments behind.

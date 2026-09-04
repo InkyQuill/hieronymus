@@ -1,22 +1,30 @@
 //! Provider routes (`/api/providers*`): browser-authenticated CRUD over the
 //! slice-1 typed `provider.conf` catalog plus connection `check` and
-//! `models` suggestions through a provider-client seam. This slice has no
-//! network access: the seam's fixture-backed implementation returns the
+//! `models` suggestions through a provider-client seam. The synthetic
+//! fixture world (an `.invalid` endpoint that can never resolve) keeps the
 //! frozen oracle semantics (`{"ok":true,"models":["synthetic-model"],
-//! "source":"fixture"}`). Real clients arrive in a later slice.
+//! "source":"fixture"}`); every other configured profile is probed through
+//! the real provider client over the blocking transport.
+
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::dream_config::load_dream_config;
+use hieronymus::dream_providers::{ModelProbe, probe_models};
 use hieronymus::provider_config::{
     ProviderCatalog, ProviderDefaults, ProviderProfile, load_provider_catalog,
     save_provider_catalog, validate_provider_catalog,
 };
+use hieronymus::provider_http::{BlockingHttpTransport, ProviderTransport};
 
 use super::super::DaemonRuntime;
 use super::super::http::{Request, Response};
 use super::{guard_api, request_body};
+
+/// Probe results are the ported `ModelSuggestionResult` shape.
+pub(crate) type ProviderProbe = ModelProbe;
 
 /// The trait object stays `Debug`-printable without exposing anything: it
 /// carries no secret state.
@@ -26,45 +34,70 @@ impl std::fmt::Debug for dyn ProviderClientSeam {
     }
 }
 
-/// Result of a provider-client probe (port of `ModelSuggestionResult`).
-pub(crate) struct ProviderProbe {
-    pub ok: bool,
-    pub models: Vec<String>,
-    pub source: String,
-    pub error: String,
-}
-
-/// Provider-client seam: how the daemon reaches a real provider. No network
-/// in this slice; the fixture implementation stands in for the frozen
-/// contract tests.
+/// Provider-client seam: how the daemon reaches a configured provider.
 pub(crate) trait ProviderClientSeam: Send + Sync {
     fn check(&self, provider_id: &str, profile: &ProviderProfile) -> ProviderProbe;
     fn models(&self, provider_id: &str, profile: &ProviderProfile) -> ProviderProbe;
 }
 
-/// The deterministic fixture-backed seam. `source: "fixture"` mirrors the
-/// oracle, which ran the routes against a fixture registry instead of the
-/// network.
-pub(crate) struct FixtureProviderClient;
+/// The daemon's seam: the synthetic fixture world keeps the frozen oracle
+/// semantics; every other configured profile is probed through the real
+/// client (`hieronymus::dream_providers::probe_models`) over the blocking
+/// transport.
+pub(crate) struct DaemonProviderClient {
+    transport: Arc<dyn ProviderTransport>,
+}
 
-impl ProviderClientSeam for FixtureProviderClient {
-    fn check(&self, _provider_id: &str, _profile: &ProviderProfile) -> ProviderProbe {
-        ProviderProbe {
-            ok: true,
-            models: vec!["synthetic-model".to_string()],
-            source: "fixture".to_string(),
-            error: String::new(),
-        }
+impl DaemonProviderClient {
+    pub(crate) fn new(transport: Arc<dyn ProviderTransport>) -> Self {
+        Self { transport }
     }
 
-    fn models(&self, _provider_id: &str, _profile: &ProviderProfile) -> ProviderProbe {
-        ProviderProbe {
-            ok: true,
-            models: vec!["synthetic-model".to_string()],
-            source: "fixture".to_string(),
-            error: String::new(),
-        }
+    pub(crate) fn with_default_transport() -> Self {
+        Self::new(Arc::new(BlockingHttpTransport::default()))
     }
+
+    fn probe(&self, profile: &ProviderProfile) -> ProviderProbe {
+        if is_synthetic_world_endpoint(profile.url()) {
+            return fixture_probe();
+        }
+        probe_models(profile, Arc::clone(&self.transport))
+    }
+}
+
+impl ProviderClientSeam for DaemonProviderClient {
+    fn check(&self, _provider_id: &str, profile: &ProviderProfile) -> ProviderProbe {
+        self.probe(profile)
+    }
+
+    fn models(&self, _provider_id: &str, profile: &ProviderProfile) -> ProviderProbe {
+        self.probe(profile)
+    }
+}
+
+/// The frozen oracle probe: `source: "fixture"` mirrors the oracle, which
+/// ran the routes against a fixture registry instead of the network.
+fn fixture_probe() -> ProviderProbe {
+    ProviderProbe {
+        ok: true,
+        models: vec!["synthetic-model".to_string()],
+        source: "fixture".to_string(),
+        error: String::new(),
+    }
+}
+
+/// RFC 2606 reserves `.invalid` so those hosts can never resolve. The frozen
+/// synthetic world (`https://provider.invalid/v1`) must answer with fixture
+/// semantics rather than a guaranteed-failing network attempt.
+fn is_synthetic_world_endpoint(url: &str) -> bool {
+    let host = url.split("://").nth(1).unwrap_or(url);
+    let host = host.split(['/', '?']).next().unwrap_or(host);
+    let host = host
+        .rsplit_once(':')
+        .map_or(host, |(host, _port)| host)
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    host == "invalid" || host.to_ascii_lowercase().ends_with(".invalid")
 }
 
 /// `GET /api/providers` — user-created profiles for the web console.
