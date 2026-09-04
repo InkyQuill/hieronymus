@@ -37,6 +37,21 @@ Planned slices, in order:
 9. Distribution: one binary + command links, installer, update flow, manual
    release rehearsal checklist, managed cutover.
 
+Done so far: slices 1–2 (skeleton, config, series, sessions, short-term
+memories, concepts/facets, crystals), slice 3 core (term_rules authority,
+contract, context disambiguation), slice 4 core (FTS recall lane, RAG store,
+rag recall lane with active-rule-protected merge), `hiero` version/classify
+skeleton, CI workflows.
+
+Deferred capability gaps to close before cutover:
+
+- DOCX/PDF RAG import: Python converts via mammoth/pypdf; Rust rejects these
+  formats pending an ingestion-slice decision (offline crate or rejection
+  made contractual).
+- strict_terms → term_rules migration belongs to `hiero migrate` (slice 8).
+- concept recall boosts (`recall_boosts_for_crystals`) port with the
+  dreaming slice.
+
 ## Python Alpha Baseline (closed, behavioral reference)
 
 Hieronymus is still an alpha local-first translation memory system. The current
