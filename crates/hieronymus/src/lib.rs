@@ -15,6 +15,7 @@ pub mod dream_config;
 pub mod ingest_config;
 pub mod memory_models;
 pub mod provider_config;
+pub mod recall;
 pub mod registry;
 pub mod release_config;
 pub mod secret;

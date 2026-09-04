@@ -503,6 +503,26 @@ impl CrystalStore {
             .collect())
     }
 
+    /// Bounded listing of active/candidate crystals for metadata-only recall
+    /// candidates, newest first.
+    pub fn list_all_candidates(&self, limit: usize) -> Result<Vec<CrystalRecord>, CrystalError> {
+        let connection = self.connection()?;
+        let ids: Vec<i64> = {
+            let mut statement = connection.prepare(
+                "select id from crystals
+                 where status in ('active', 'candidate')
+                 order by id desc limit ?1",
+            )?;
+            let rows = statement.query_map([limit as i64], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            records.push(hydrate_crystal(&connection, id)?);
+        }
+        Ok(records)
+    }
+
     /// Supersede an old crystal with a new same-shape one: the old record
     /// becomes `superseded`, the new one points at it, and a memory event is
     /// recorded for the audit trail.

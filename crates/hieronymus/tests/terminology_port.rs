@@ -342,9 +342,11 @@ fn context_tags_disambiguate_conflicting_source_surfaces() {
 
     // Without the tag the surface stays ambiguous: no contract term, only a
     // warning.
-    let plain_termbase =
-        Termbase::open(&config, &TranslationContext::new("demo", "ja", "en", "translation"))
-            .unwrap();
+    let plain_termbase = Termbase::open(
+        &config,
+        &TranslationContext::new("demo", "ja", "en", "translation"),
+    )
+    .unwrap();
     assert!(plain_termbase.contract("mahou appears").unwrap().is_empty());
     let findings = plain_termbase
         .validate("mahou appears", Source::Raw("mahou".into()))
