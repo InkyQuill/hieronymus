@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
+use hieronymus::dream_config::{default_dream_config, save_dream_config};
 use hieronymus::dream_locks::dream_cycle_lock;
 use hieronymus::dreaming::{DeterministicDreamProvider, DreamError, DreamProvider, DreamService};
 use hieronymus::memory_models::{ShortTermMemoryRecord, TranslationContext};
@@ -569,6 +570,174 @@ fn incomplete_coverage_rolls_back_all_dream_mutations() {
     );
 }
 
+#[test]
+fn dreaming_fails_closed_on_unsupported_provider_output_sections() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    completed_session(&config, "book", &["Valid input."]);
+
+    // The crystal itself would apply cleanly; only the unsupported
+    // `concepts` section must fail the run closed.
+    let provider = ScriptedProvider::new(
+        "unsupported-sections",
+        vec![(
+            "knowledge_crystals",
+            json!({
+                "crystals": [{
+                    "crystal_type": "observation",
+                    "title": "Would-be crystal",
+                    "text": "This crystal must not be applied.",
+                    "confidence": 0.8
+                }],
+                "concepts": [{"name": "Concept application is a later slice"}]
+            }),
+        )],
+    );
+    let service = DreamService::open(&config, provider).unwrap();
+    let error = service.run_cycle("manual", false).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("not applied by the dreaming core yet: concepts"),
+        "{error}"
+    );
+
+    let run_row = query(
+        &config,
+        "select status, error, created_crystal_count from dream_runs",
+        &[],
+    )
+    .remove(0);
+    assert_eq!(run_row[0], json!("failed"));
+    assert!(run_row[1].as_str().unwrap().contains("concepts"));
+    assert_eq!(run_row[2], json!(0));
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
+    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
+    assert_eq!(session_row[0], json!("completed"));
+    assert_eq!(session_row[1], Value::Null);
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is not null"
+        ),
+        json!(0)
+    );
+    let audited_events = scalar(
+        &config,
+        "select count(*) from dream_audit_entries
+         where dream_run_id = (select max(id) from dream_runs)",
+    );
+    assert!(
+        audited_events.as_i64().unwrap() > 0,
+        "the failed run must keep its audit entries"
+    );
+}
+
+#[test]
+fn dreaming_fails_closed_when_pass_output_exceeds_max_records_per_pass() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    completed_session(&config, "book", &["One.", "Two.", "Three."]);
+
+    let mut dream_config = default_dream_config();
+    dream_config
+        .workflows
+        .get_mut("knowledge_crystals")
+        .unwrap()
+        .max_records_per_pass = 1;
+    save_dream_config(&config, &dream_config).unwrap();
+
+    let provider = ScriptedProvider::new(
+        "over-pass-cap",
+        vec![(
+            "knowledge_crystals",
+            json!({"crystals": [
+                {"crystal_type": "observation", "text": "First conclusion."},
+                {"crystal_type": "observation", "text": "Second conclusion."}
+            ]}),
+        )],
+    );
+    let service = DreamService::open(&config, provider).unwrap();
+    let error = service.run_cycle("manual", false).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("knowledge_crystals output exceeds max_records_per_pass"),
+        "{error}"
+    );
+
+    let run_row = query(&config, "select status from dream_runs", &[]).remove(0);
+    assert_eq!(run_row[0], json!("failed"));
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
+    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
+    assert_eq!(session_row[0], json!("completed"));
+    assert_eq!(session_row[1], Value::Null);
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is not null"
+        ),
+        json!(0)
+    );
+}
+
+#[test]
+fn dreaming_fails_closed_when_batch_exceeds_max_long_term_records_affected_per_run() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    completed_session(&config, "book", &["Valid input."]);
+
+    // Three staged crystals across passes: under every per-pass cap but
+    // over the run cap.
+    let mut dream_config = default_dream_config();
+    dream_config.max_long_term_records_affected_per_run = 2;
+    save_dream_config(&config, &dream_config).unwrap();
+
+    let provider = ScriptedProvider::new(
+        "over-run-cap",
+        vec![
+            (
+                "rule_crystals",
+                json!({"rule_crystals": [
+                    {"crystal_type": "rule", "text": "Rule conclusion."}
+                ]}),
+            ),
+            (
+                "knowledge_crystals",
+                json!({"crystals": [
+                    {"crystal_type": "observation", "text": "First conclusion."},
+                    {"crystal_type": "observation", "text": "Second conclusion."}
+                ]}),
+            ),
+        ],
+    );
+    let service = DreamService::open(&config, provider).unwrap();
+    let error = service.run_cycle("manual", false).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("exceeds max_long_term_records_affected_per_run"),
+        "{error}"
+    );
+
+    let run_row = query(&config, "select status from dream_runs", &[]).remove(0);
+    assert_eq!(run_row[0], json!("failed"));
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
+    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
+    assert_eq!(session_row[0], json!("completed"));
+    assert_eq!(session_row[1], Value::Null);
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is not null"
+        ),
+        json!(0)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Evidence passes over one bounded selection
 // ---------------------------------------------------------------------------
@@ -687,6 +856,53 @@ fn book_scale_batch_is_covered_by_every_dream_pass() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn provider_sees_only_the_selection_bounded_by_max_short_term_memories_per_run() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let memory_ids = completed_session_with(&config, "book", |workspace, session_id| {
+        (0..5)
+            .map(|index| {
+                add_memory(
+                    workspace,
+                    session_id,
+                    "note",
+                    &format!("Distinct reading conclusion {index}."),
+                )
+            })
+            .collect()
+    });
+
+    let mut dream_config = default_dream_config();
+    dream_config.max_short_term_memories_per_run = 2;
+    save_dream_config(&config, &dream_config).unwrap();
+
+    let provider = EvidenceProvider::new();
+    let call_log = provider.call_log();
+    let service = DreamService::open(&config, provider).unwrap();
+    let run = service.run_cycle("manual", false).unwrap();
+
+    assert_eq!(run.status, "completed");
+    assert_eq!(run.input_count, 2);
+    let calls = call_log.lock().unwrap().clone();
+    assert_eq!(calls.len(), 7);
+    let bounded = memory_ids[..2].to_vec();
+    assert!(
+        calls.iter().all(|(_pass, ids)| ids == &bounded),
+        "every pass must see only the bounded selection, saw {calls:?}"
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(3),
+        "memories beyond the run cap stay pending for the next run"
+    );
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
 }
 
 // ---------------------------------------------------------------------------

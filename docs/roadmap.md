@@ -49,6 +49,8 @@ Deferred capability gaps to close before cutover:
 - strict_terms → term_rules migration belongs to `hiero migrate` (slice 8).
 - concept recall boosts (`recall_boosts_for_crystals`) port with the
   dreaming slice.
+- Dreaming provider fail-closed gate (workflow enabled/provider resolution)
+  ports with the provider-client slice.
 
 ## Python Alpha Baseline (closed, behavioral reference)
 

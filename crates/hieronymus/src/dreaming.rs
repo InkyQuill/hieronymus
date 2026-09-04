@@ -256,6 +256,7 @@ pub struct DreamService<P: DreamProvider> {
 
 impl<P: DreamProvider> DreamService<P> {
     pub fn open(config: &HieronymusConfig, provider: P) -> Result<Self, DreamError> {
+        // TODO(dreaming-providers): fail closed on disabled/invalid workflows and resolve declared provider/model against provider.conf (spec Provider Policy).
         let dream_config = load_dream_config(config)?;
         let audit = DreamAuditStore::open(config)?;
         Ok(Self {
