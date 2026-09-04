@@ -4,6 +4,8 @@ use crate::crystals::CrystalStore;
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::memory_models::{CrystalRecord, ShortTermMemoryRecord, TranslationContext};
+use crate::rag::RagStore;
+use crate::rag_models::RagChunkRecord;
 use crate::workspace::WorkspaceStore;
 
 const SHORT_TERM_BASE_SCORE: f64 = 0.30;
@@ -31,6 +33,8 @@ pub enum RecallError {
     Workspace(#[from] crate::workspace::WorkspaceError),
     #[error(transparent)]
     Crystal(#[from] crate::crystals::CrystalError),
+    #[error(transparent)]
+    Rag(#[from] crate::rag::RagError),
 }
 
 /// One ranked recall hit (ADR 0011: flat graded list; the deterministic
@@ -46,6 +50,11 @@ pub enum RecallHit {
         memory: ShortTermMemoryRecord,
         score: f64,
     },
+    Rag {
+        chunk: RagChunkRecord,
+        score: f64,
+        reason: String,
+    },
 }
 
 impl RecallHit {
@@ -53,12 +62,15 @@ impl RecallHit {
         match self {
             RecallHit::LongTerm { .. } => "long_term",
             RecallHit::ShortTerm { .. } => "short_term",
+            RecallHit::Rag { .. } => "rag",
         }
     }
 
     pub fn score(&self) -> f64 {
         match self {
-            RecallHit::LongTerm { score, .. } | RecallHit::ShortTerm { score, .. } => *score,
+            RecallHit::LongTerm { score, .. }
+            | RecallHit::ShortTerm { score, .. }
+            | RecallHit::Rag { score, .. } => *score,
         }
     }
 
@@ -66,6 +78,7 @@ impl RecallHit {
         match self {
             RecallHit::LongTerm { crystal, .. } => crystal.id,
             RecallHit::ShortTerm { memory, .. } => memory.id,
+            RecallHit::Rag { chunk, .. } => chunk.id,
         }
     }
 
@@ -81,10 +94,11 @@ impl RecallHit {
 }
 
 fn sort_key(hit: &RecallHit) -> SortKey {
-    // Higher score first; long-term before short-term on ties; then id.
+    // Higher score first; long-term before short-term before rag on ties; then id.
     let source_preference = match hit.source() {
         "long_term" => 0,
-        _ => 1,
+        "short_term" => 1,
+        _ => 2,
     };
     SortKey(-hit.score(), source_preference, hit.item_id())
 }
@@ -98,9 +112,10 @@ impl SortKey {
     }
 }
 
-/// Recall service: bounded multi-lane retrieval with the FTS lane only for
-/// now (RAG lane joins behind the same merge once the RAG slice lands; an
-/// absent semantic lane is the supported degraded mode).
+/// Recall service: bounded multi-lane retrieval combining the long-term FTS
+/// lane, the session short-term lane, and the RAG lane behind the Python
+/// `_merge_ranked_items` semantics (an absent semantic lane is the supported
+/// degraded mode).
 pub struct RecallService {
     config: HieronymusConfig,
 }
@@ -215,31 +230,121 @@ impl RecallService {
 
         long_term.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
 
-        // Merge: protected active rules survive first, then the ranked pool,
-        // bounded by the limit (the RAG lane joins the pool in its slice).
-        let mut protected: Vec<RecallHit> = Vec::new();
-        let mut pool: Vec<RecallHit> = Vec::new();
-        for hit in long_term {
-            if hit.is_protected_active_rule() {
-                protected.push(hit);
-            } else {
-                pool.push(hit);
-            }
-        }
-        for hit in &short_term_hits {
-            if !hit.is_protected_active_rule() {
-                pool.push(hit.clone());
-            }
-        }
-        pool.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
+        // One ranked memory pool (long-term + short-term), as in the Python
+        // recall which sorts all memory items together before the merge.
+        let mut memory: Vec<RecallHit> = long_term;
+        memory.extend(short_term_hits);
+        memory.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
 
-        let mut selected: Vec<RecallHit> = protected.into_iter().take(limit).collect();
-        let remaining = limit - selected.len();
-        selected.extend(pool.into_iter().take(remaining));
+        // RAG lane: FTS search over the context's series with typed metadata
+        // boosts from the context's language tags, story scopes, and tags.
+        let rag_store = RagStore::open(&self.config)?;
+        let rag_story_scopes = merged_context_values(&context.story_scopes, &context.tags);
+        let rag_semantic_tags = merged_context_values(&context.semantic_tags, &context.tags);
+        let rag_hits: Vec<RecallHit> = rag_store
+            .search(
+                &context.series_slug,
+                query,
+                limit,
+                &context.language_tags,
+                &rag_story_scopes,
+                &rag_semantic_tags,
+            )?
+            .into_iter()
+            .map(|hit| RecallHit::Rag {
+                chunk: hit.chunk,
+                score: hit.score,
+                reason: hit.reason,
+            })
+            .collect();
+
+        let selected = merge_ranked_items(memory, rag_hits, limit);
 
         record_activations(&self.config, session_id, query, &selected)?;
         Ok(selected)
     }
+}
+
+fn merged_context_values(primary: &[String], extra: &[String]) -> Vec<String> {
+    let mut merged = primary.to_vec();
+    for value in extra {
+        if !merged.contains(value) {
+            merged.push(value.clone());
+        }
+    }
+    merged
+}
+
+/// Python `_merge_ranked_items`: with no RAG hits the ranked memory list is
+/// just truncated; otherwise protected active rules keep their slots, the
+/// remaining budget splits evenly between the memory pool (larger half) and
+/// the RAG hits, the primaries interleave, and overflow fills by rank.
+fn merge_ranked_items(
+    mut memory: Vec<RecallHit>,
+    rag: Vec<RecallHit>,
+    limit: usize,
+) -> Vec<RecallHit> {
+    if rag.is_empty() {
+        memory.truncate(limit);
+        return memory;
+    }
+
+    let mut protected: Vec<RecallHit> = Vec::new();
+    let mut memory_pool: Vec<RecallHit> = Vec::new();
+    for item in memory {
+        if item.is_protected_active_rule() {
+            protected.push(item);
+        } else {
+            memory_pool.push(item);
+        }
+    }
+
+    let mut selected: Vec<RecallHit> = protected.into_iter().take(limit).collect();
+    if selected.len() >= limit {
+        return selected;
+    }
+    let remaining = limit - selected.len();
+    let unsplit_memory_budget = remaining.div_ceil(2);
+    let memory_budget = unsplit_memory_budget.min(memory_pool.len());
+    let rag_budget = (remaining - unsplit_memory_budget).min(rag.len());
+
+    let mut memory_primary = std::mem::take(&mut memory_pool);
+    let memory_overflow = memory_primary.split_off(memory_budget);
+    let mut rag_primary = rag;
+    let rag_overflow = rag_primary.split_off(rag_budget);
+    selected.extend(interleave_ranked_items(memory_primary, rag_primary));
+
+    if selected.len() >= limit {
+        return selected;
+    }
+    let remaining = limit - selected.len();
+    let mut overflow = memory_overflow;
+    overflow.extend(rag_overflow);
+    overflow.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
+    selected.extend(overflow.into_iter().take(remaining));
+    selected
+}
+
+/// Python `_interleave_ranked_items`: round-robin memory slot, rag slot.
+fn interleave_ranked_items(memory: Vec<RecallHit>, rag: Vec<RecallHit>) -> Vec<RecallHit> {
+    let mut memory = memory.into_iter();
+    let mut rag = rag.into_iter();
+    let mut interleaved: Vec<RecallHit> = Vec::new();
+    loop {
+        let mut pushed = false;
+        if let Some(item) = memory.next() {
+            interleaved.push(item);
+            pushed = true;
+        }
+        if let Some(item) = rag.next() {
+            interleaved.push(item);
+            pushed = true;
+        }
+        if !pushed {
+            break;
+        }
+    }
+    interleaved
 }
 
 fn require_active_session(workspace: &WorkspaceStore, session_id: i64) -> Result<(), RecallError> {

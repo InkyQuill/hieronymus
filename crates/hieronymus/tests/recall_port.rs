@@ -9,6 +9,7 @@ use hieronymus::concepts::ConceptStore;
 use hieronymus::crystals::{CrystalStore, NewCrystal};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::memory_models::TranslationContext;
+use hieronymus::rag::{RagError, RagImport, RagStore};
 use hieronymus::recall::{RecallError, RecallHit, RecallService};
 use hieronymus::registry::Registry;
 use hieronymus::workspace::{ShortTermMemoryInput, WorkspaceStore};
@@ -210,4 +211,78 @@ fn add_crystal_hydrates_concept_links() {
 
     let crystal = crystals.get(crystal_id).unwrap();
     assert_eq!(crystal.concept_ids, vec![concept.id]);
+}
+
+#[test]
+fn recall_joins_rag_hits_into_merged_recall() {
+    let fixture = fixture("demo");
+    let rag_path = fixture.root.path().join("chapter.txt");
+    fs::write(&rag_path, "Cooking Talent appears here.").unwrap();
+    RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file("demo", &rag_path, &RagImport::new())
+        .unwrap();
+
+    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    let service = RecallService::open(&fixture.config).unwrap();
+    let hits = service
+        .recall(fixture.session_id, &context, "Cooking Talent", 10)
+        .unwrap();
+
+    assert!(
+        hits.iter()
+            .any(|hit| matches!(hit, RecallHit::Rag { chunk, .. } if chunk.text == "Cooking Talent appears here."))
+    );
+    assert!(hits.len() <= 10);
+}
+
+#[test]
+fn recall_keeps_rag_hits_series_isolated() {
+    let fixture = fixture("demo");
+    let registry = Registry::open(&fixture.config).unwrap();
+    registry
+        .create_series("other", "other", "ja", "en", None)
+        .unwrap();
+    let rag_path = fixture.root.path().join("chapter.txt");
+    fs::write(&rag_path, "Cooking Talent appears here.").unwrap();
+    RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file("other", &rag_path, &RagImport::new())
+        .unwrap();
+
+    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    let service = RecallService::open(&fixture.config).unwrap();
+    let hits = service
+        .recall(fixture.session_id, &context, "Cooking Talent", 10)
+        .unwrap();
+
+    assert!(hits.iter().all(|hit| !matches!(hit, RecallHit::Rag { .. })));
+}
+
+#[test]
+fn failed_conflicting_reimport_preserves_rag_recall() {
+    let fixture = fixture("demo");
+    let glossary_path = fixture.root.path().join("glossary.json");
+    fs::write(&glossary_path, r#"[{"source": "Sense", "target": "Сенс"}]"#).unwrap();
+    let rag = RagStore::open(&fixture.config).unwrap();
+    rag.import_file("demo", &glossary_path, &RagImport::new())
+        .unwrap();
+
+    fs::write(&glossary_path, "{broken json").unwrap();
+    let error = rag
+        .import_file("demo", &glossary_path, &RagImport::new())
+        .unwrap_err();
+    assert!(matches!(error, RagError::InvalidSource(_)));
+
+    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    let service = RecallService::open(&fixture.config).unwrap();
+    let hits = service
+        .recall(fixture.session_id, &context, "Sense", 10)
+        .unwrap();
+
+    assert!(
+        hits.iter()
+            .any(|hit| matches!(hit, RecallHit::Rag { chunk, .. }
+        if chunk.metadata.get("source") == Some(&serde_json::Value::String("Sense".to_string()))))
+    );
 }
