@@ -39,9 +39,10 @@ Planned slices, in order:
 
 Done so far: slices 1–2 (skeleton, config, series, sessions, short-term
 memories, concepts/facets, crystals), slice 3 core (term_rules authority,
-contract, context disambiguation), slice 4 core (FTS recall lane, RAG store,
-rag recall lane with active-rule-protected merge), `hiero` version/classify
-skeleton, CI workflows.
+contract, context disambiguation), slice 4 (FTS recall lane, RAG store with
+DOCX/PDF ingestion hardened against malformed documents, rag recall lane
+with active-rule-protected merge), `hiero` version/classify skeleton, CI
+workflows.
 
 Deferred capability gaps to close before cutover:
 
