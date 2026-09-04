@@ -90,6 +90,7 @@ fn occupied_port_is_an_error_without_discovery_or_scan() {
     let error = Daemon::start(&DaemonOptions {
         data_root: Some(root.path().to_path_buf()),
         port,
+        assets: hiero::daemon::Assets::default(),
     })
     .unwrap_err();
 
@@ -117,6 +118,7 @@ fn corrupt_database_fails_closed() {
     let error = Daemon::start(&DaemonOptions {
         data_root: Some(root.path().to_path_buf()),
         port: 0,
+        assets: hiero::daemon::Assets::default(),
     })
     .unwrap_err();
 
@@ -132,6 +134,7 @@ fn python_schema_database_fails_closed() {
     let error = Daemon::start(&DaemonOptions {
         data_root: Some(root.path().to_path_buf()),
         port: 0,
+        assets: hiero::daemon::Assets::default(),
     })
     .unwrap_err();
 
@@ -277,6 +280,7 @@ fn unknown_daemon_database_state_prevents_ready_flag() {
     let error = Daemon::start(&DaemonOptions {
         data_root: Some(root.path().to_path_buf()),
         port: 0,
+        assets: hiero::daemon::Assets::default(),
     })
     .unwrap_err();
 

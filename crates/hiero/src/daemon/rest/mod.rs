@@ -102,6 +102,12 @@ pub(super) fn forbidden_origin() -> Response {
     Response::json(403, &json!({"error": "forbidden_origin"}))
 }
 
+/// A browser-context request on `/ws/admin` without a websocket handshake
+/// (Python reference error body).
+pub(super) fn websocket_upgrade_required() -> Response {
+    Response::json(400, &json!({"error": "websocket_upgrade_required"}))
+}
+
 pub(super) fn host_is_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
     header(&request.headers, "host") == Some(runtime.bound_address.to_string().as_str())
 }
@@ -114,13 +120,13 @@ pub(super) fn bearer_matches(request: &Request, runtime: &DaemonRuntime) -> bool
 /// The browser context check: the `Origin` header must name this daemon
 /// exactly. Absent origins fail closed (the CSRF layer is waived, so this is
 /// the only cross-site guard).
-fn origin_is_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
+pub(super) fn origin_is_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
     let origin = header(&request.headers, "origin");
     Some(format!("http://{}", runtime.bound_address).as_str()) == origin
 }
 
 /// The presented `hieronymus_session` cookie value, if any.
-fn presented_session(request: &Request) -> Option<String> {
+pub(super) fn presented_session(request: &Request) -> Option<String> {
     header(&request.headers, "cookie")
         .and_then(session_from_cookie_header)
         .map(str::to_string)

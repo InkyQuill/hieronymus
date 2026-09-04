@@ -26,4 +26,6 @@ quick-xml = "0.42"
 pdf-extract = "0.12"
 getrandom = "0.4"
 ctrlc = "3"
+base64 = "0.22"
+sha1 = "0.10"
 

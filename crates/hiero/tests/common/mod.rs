@@ -10,10 +10,45 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const PROTOCOL_REVISION: &str = "2026-07-28";
 pub const INVALID_BEARER: &str = "hieronymus-invalid-bearer";
+
+/// The `Sec-WebSocket-Key` the frozen WS fixture carries.
+pub const WS_FIXTURE_KEY: &str = "Zml4dHVyZS13ZWJzb2NrZXQta2V5";
+/// The `Sec-WebSocket-Accept` the frozen key must produce
+/// (base64 of SHA-1 over key + the RFC 6455 GUID).
+pub const WS_FIXTURE_ACCEPT: &str = "zRmV7JySKs1VpyXat69eoJAJafs=";
+
+/// The frozen index body (`frontend.route.get.root` target).
+pub const FIXTURE_INDEX_HTML: &str = "<!doctype html><title>Hieronymus Web Console</title>";
+/// The frozen JS asset body (`frontend.route.get.assets.path` target).
+pub const FIXTURE_ASSET_JS: &str = "console.log('Hieronymus fixture');";
+
+/// The fixture-world asset set: the frozen index body
+/// (`frontend.route.get.root` target) and the frozen JS asset
+/// (`frontend.route.get.assets.path` target, exact Content-Type). The
+/// injected set carries its content types explicitly because the fixture
+/// asset name has no extension to infer from.
+pub fn fixture_assets() -> hiero::daemon::Assets {
+    let mut entries = std::collections::BTreeMap::new();
+    entries.insert(
+        "index.html".to_string(),
+        hiero::daemon::assets::Asset {
+            content_type: "text/html; charset=utf-8",
+            body: FIXTURE_INDEX_HTML.as_bytes().to_vec(),
+        },
+    );
+    entries.insert(
+        "assets/fixture".to_string(),
+        hiero::daemon::assets::Asset {
+            content_type: "application/javascript",
+            body: FIXTURE_ASSET_JS.as_bytes().to_vec(),
+        },
+    );
+    hiero::daemon::Assets::Memory(entries)
+}
 
 pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -216,8 +251,21 @@ pub fn start_daemon(root: &Path) -> hiero::daemon::Daemon {
     hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
         data_root: Some(root.to_path_buf()),
         port: 0,
+        assets: hiero::daemon::Assets::default(),
     })
     .unwrap()
+}
+
+/// Daemon with the fixture-world console assets injected (static SPA tests).
+pub fn start_daemon_with_fixture_assets() -> (tempfile::TempDir, hiero::daemon::Daemon) {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: fixture_assets(),
+    })
+    .unwrap();
+    (root, daemon)
 }
 
 /// Headers every authorized POST /mcp request carries, mirroring the frozen
@@ -354,4 +402,208 @@ pub fn seed_synthetic_admin_data(root: &Path) -> i64 {
     };
     let store = hieronymus::crystals::CrystalStore::open(&config).unwrap();
     store.add_crystal(&context, "rule", &crystal).unwrap()
+}
+
+/// Headers of an authorized same-origin websocket upgrade on `/ws/admin`,
+/// mirroring the frozen fixture success request.
+pub fn ws_upgrade_headers(fixture: &RouteFixture) -> Vec<(String, String)> {
+    vec![
+        (
+            "Cookie".to_string(),
+            format!("hieronymus_session={}", fixture.session),
+        ),
+        ("Origin".to_string(), same_origin(fixture.port)),
+        ("Upgrade".to_string(), "websocket".to_string()),
+        ("Sec-WebSocket-Key".to_string(), WS_FIXTURE_KEY.to_string()),
+        ("Sec-WebSocket-Version".to_string(), "13".to_string()),
+    ]
+}
+
+/// The parsed response head of a websocket handshake (a 101 has no body).
+pub struct WsHandshake {
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+}
+
+/// A raw byte-level websocket test client: masked client frames (clients
+/// always mask), deadline-bounded server-frame reads. Deliberately
+/// independent of any websocket library so the tests assert exact framing.
+pub struct WsClient {
+    stream: TcpStream,
+    buffer: Vec<u8>,
+}
+
+/// Perform the `GET /ws/admin` upgrade handshake on a fresh connection and
+/// return the raw response head plus a client for frame I/O.
+pub fn ws_connect(port: u16, headers: &[(String, String)]) -> (WsHandshake, WsClient) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut request = String::from("GET /ws/admin HTTP/1.1\r\n");
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("host"))
+    {
+        request.push_str(&format!("Host: 127.0.0.1:{port}\r\n"));
+    }
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+        assert!(Instant::now() < deadline, "handshake head never completed");
+        let mut temporary = [0_u8; 4096];
+        match stream.read(&mut temporary) {
+            Ok(0) => panic!("connection closed during handshake"),
+            Ok(count) => raw.extend_from_slice(&temporary[..count]),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(error) => panic!("handshake read failed: {error}"),
+        }
+    }
+    let separator = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap();
+    let head = std::str::from_utf8(&raw[..separator]).unwrap();
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().unwrap();
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut response_headers = BTreeMap::new();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            response_headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+    (
+        WsHandshake {
+            status,
+            headers: response_headers,
+        },
+        WsClient {
+            stream,
+            buffer: Vec::new(),
+        },
+    )
+}
+
+impl WsClient {
+    /// Send a masked text frame (the client-side mask key is fixed but
+    /// nonzero, exercising the unmask path).
+    pub fn send_text(&mut self, text: &str) {
+        let frame = encode_client_frame(0x1, text.as_bytes());
+        self.stream.write_all(&frame).unwrap();
+        self.stream.flush().unwrap();
+    }
+
+    /// Send a masked close frame and drop the connection.
+    pub fn close(mut self) {
+        let frame = encode_client_frame(0x8, b"");
+        let _ = self.stream.write_all(&frame);
+        let _ = self.stream.flush();
+    }
+
+    /// Read the next server frame before `deadline`: `(opcode, payload)`.
+    /// `None` on EOF, clean close, or deadline.
+    pub fn read_frame(&mut self, deadline: Instant) -> Option<(u8, Vec<u8>)> {
+        loop {
+            if let Some(frame) = parse_server_frame(&mut self.buffer) {
+                return Some(frame);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            let mut temporary = [0_u8; 4096];
+            match self.stream.read(&mut temporary) {
+                Ok(0) => return None,
+                Ok(count) => self.buffer.extend_from_slice(&temporary[..count]),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        || error.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
+/// Encode a masked client frame (fixed nonzero mask key).
+fn encode_client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    let mask = [0x37_u8, 0x13, 0x90, 0x77];
+    let mut frame = vec![0x80 | opcode];
+    if payload.len() < 126 {
+        frame.push(0x80 | payload.len() as u8);
+    } else if payload.len() <= 0xFFFF {
+        frame.push(0x80 | 126);
+        frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    } else {
+        frame.push(0x80 | 127);
+        frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+    }
+    frame.extend_from_slice(&mask);
+    frame.extend(
+        payload
+            .iter()
+            .zip(mask.iter().cycle())
+            .map(|(byte, key)| byte ^ key),
+    );
+    frame
+}
+
+/// Parse one complete unmasked server frame from the front of `buffer`.
+fn parse_server_frame(buffer: &mut Vec<u8>) -> Option<(u8, Vec<u8>)> {
+    if buffer.len() < 2 {
+        return None;
+    }
+    let opcode = buffer[0] & 0x0F;
+    let masked = buffer[1] & 0x80 != 0;
+    let (length, header_length): (usize, usize) = match (buffer[1] & 0x7F) as usize {
+        length @ 0..=125 => (length, 2),
+        126 => {
+            if buffer.len() < 4 {
+                return None;
+            }
+            (u16::from_be_bytes([buffer[2], buffer[3]]) as usize, 4)
+        }
+        _ => {
+            if buffer.len() < 10 {
+                return None;
+            }
+            let mut bytes = [0_u8; 8];
+            bytes.copy_from_slice(&buffer[2..10]);
+            (u64::from_be_bytes(bytes) as usize, 10)
+        }
+    };
+    let mask_bytes = if masked { 4 } else { 0 };
+    let total = header_length.checked_add(mask_bytes)?.checked_add(length)?;
+    if buffer.len() < total {
+        return None;
+    }
+    let payload = buffer[header_length + mask_bytes..total].to_vec();
+    buffer.drain(..total);
+    Some((opcode, payload))
+}
+
+/// Poll `condition` until it holds or the deadline passes.
+pub fn wait_until(condition: impl Fn() -> bool, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    condition()
 }

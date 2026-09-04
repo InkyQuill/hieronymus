@@ -4,13 +4,16 @@
 //! bearer token, publishes the non-secret discovery record atomically, and
 //! serves until SIGINT or an authenticated `POST /shutdown`.
 
+pub mod assets;
 pub mod discovery;
+mod events;
 pub mod http;
 pub mod protocol;
 pub mod registry;
 mod rest;
 mod server;
 mod sessions;
+mod ws;
 
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -23,6 +26,7 @@ use hieronymus::data_root::{HieronymusConfig, load_config};
 use hieronymus::db::{classify_database, open_migrated};
 use hieronymus::secret::Secret;
 
+pub use assets::Assets;
 pub use discovery::DiscoveryRecord;
 pub use registry::{McpRegistry, PROTOCOL_REVISION};
 
@@ -55,6 +59,8 @@ const ACCEPT_POLL: Duration = Duration::from_millis(50);
 pub struct DaemonOptions {
     pub data_root: Option<PathBuf>,
     pub port: u16,
+    /// The embedded console asset set backing the static SPA routes.
+    pub assets: Assets,
 }
 
 impl Default for DaemonOptions {
@@ -62,6 +68,7 @@ impl Default for DaemonOptions {
         Self {
             data_root: None,
             port: DEFAULT_PORT,
+            assets: Assets::default(),
         }
     }
 }
@@ -104,6 +111,11 @@ pub(crate) struct DaemonRuntime {
     /// One-time launch grants and browser sessions (in-memory, daemon
     /// lifetime).
     pub sessions: SessionStore,
+    /// The admin event hub: websocket event stream with bounded retention
+    /// for resume (see `events`).
+    pub events: Arc<events::AdminEventHub>,
+    /// The embedded console asset set backing the static SPA routes.
+    pub assets: assets::Assets,
     /// The provider-client seam for the providers `check`/`models` routes
     /// (fixture-backed until the real provider slice).
     pub provider_client: Box<dyn ProviderClientSeam>,
@@ -181,6 +193,8 @@ impl Daemon {
             bound_address,
             stop: AtomicBool::new(false),
             sessions: SessionStore::default(),
+            events: Arc::new(events::AdminEventHub::default()),
+            assets: options.assets.clone(),
             provider_client: Box::new(FixtureProviderClient),
             record,
             database: Mutex::new(connection),
@@ -203,6 +217,11 @@ impl Daemon {
     /// Test and adapter support: read the live credential.
     pub fn bearer(&self) -> &Secret<String> {
         &self.runtime.bearer
+    }
+
+    /// Diagnostics support: the number of live admin websocket subscribers.
+    pub fn admin_subscriber_count(&self) -> usize {
+        self.runtime.events.subscriber_count()
     }
 
     /// The discovery record this daemon published at startup.
@@ -272,9 +291,15 @@ fn serve_connection(mut stream: std::net::TcpStream, runtime: &DaemonRuntime) {
         Ok(request) => request,
         Err(_) => return,
     };
-    let response = server::handle(&request, runtime);
-    let _ = http::write_response(&mut stream, &response);
-    let _ = stream.shutdown(std::net::Shutdown::Both);
+    match server::dispatch(&request, runtime) {
+        server::Dispatch::Respond(response) => {
+            let _ = http::write_response(&mut stream, &response);
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        // The upgrade owns the connection from here (the 101 head, frames,
+        // and unsubscribe happen inside the session).
+        server::Dispatch::Upgrade(session) => session.serve(stream, runtime),
+    }
 }
 
 fn http_io_timeout() -> Duration {

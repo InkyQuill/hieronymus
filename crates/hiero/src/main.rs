@@ -126,6 +126,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             let options = DaemonOptions {
                 data_root: parsed.data_root.clone().map(std::path::PathBuf::from),
                 port: parsed.port.unwrap_or(hiero::daemon::DEFAULT_PORT),
+                assets: hiero::daemon::Assets::default(),
             };
             run_foreground(options).map_err(|error| error.to_string())
         }

@@ -4,6 +4,9 @@
 //! against the frozen fixture targets.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -11,9 +14,10 @@ use serde_json::{Value, json};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
 use hieronymus::dream_config::{DreamConfig, default_dream_config, load_dream_config};
-use hieronymus::dreaming::{DeterministicDreamProvider, DreamService};
+use hieronymus::dreaming::{DeterministicDreamProvider, DreamError, DreamRunRecord, DreamService};
 
 use super::super::DaemonRuntime;
+use super::super::events;
 use super::super::http::{Request, Response};
 use super::parse_query;
 use super::request_body;
@@ -247,32 +251,148 @@ pub(super) fn action(request: &Request, runtime: &DaemonRuntime, action: &str) -
 /// `POST /api/admin/actions/run_manual_dreaming` — starts a dream run through
 /// the slice-5 `DreamService` seam in the background and answers
 /// immediately. The run is fail-closed: any failure is recorded on the run
-/// row, never propagated to the caller.
+/// row, never propagated to the caller. The run's lifecycle is published on
+/// the admin event hub (`dream_started` synchronously, then
+/// `dream_phase_progress` / `dream_completed` / `dream_failed` as the run
+/// progresses, ported from Python `_start_manual_dreaming`).
 pub(super) fn run_manual_dreaming(_request: &Request, runtime: &DaemonRuntime) -> Response {
     let config = runtime.config.clone();
+    // Published before the route answers, so subscribers see the run begin
+    // even when the background work fails immediately.
+    runtime
+        .events
+        .publish("dream_started", json!({"trigger": "manual"}));
+    let finished = Arc::new(AtomicBool::new(false));
+    {
+        let config = config.clone();
+        let events = Arc::clone(&runtime.events);
+        let finished = Arc::clone(&finished);
+        std::thread::spawn(move || monitor_dream_progress(&config, &events, &finished));
+    }
+    let events = Arc::clone(&runtime.events);
     std::thread::spawn(move || {
+        // The monitor stops when this drops — on completion and on unwind,
+        // so it can never outlive the run.
+        let _finished = FinishFlag(Arc::clone(&finished));
         let outcome = DreamService::open(&config, DeterministicDreamProvider)
             .and_then(|service| service.run_all("admin", true, false));
-        if let Ok(record) = outcome {
-            // Port of AdminStore.run_manual_dreaming's audit entry.
-            let Ok(connection) = open_migrated(&config.database_path()) else {
-                return;
-            };
-            let _ = connection.execute(
-                "insert into audit_log(action, entity_type, entity_id, note, created_at)
-                 values ('run', 'dream', ?1, ?2, ?3)",
-                rusqlite::params![
-                    record.id.to_string(),
-                    format!(
-                        "Manual dream run {} with provider {}",
-                        record.cycle_id, record.provider
-                    ),
-                    now(),
-                ],
-            );
+        match outcome {
+            Ok(record) => {
+                // Port of AdminStore.run_manual_dreaming's audit entry.
+                if let Ok(connection) = open_migrated(&config.database_path()) {
+                    let _ = connection.execute(
+                        "insert into audit_log(action, entity_type, entity_id, note, created_at)
+                         values ('run', 'dream', ?1, ?2, ?3)",
+                        rusqlite::params![
+                            record.id.to_string(),
+                            format!(
+                                "Manual dream run {} with provider {}",
+                                record.cycle_id, record.provider
+                            ),
+                            now(),
+                        ],
+                    );
+                }
+                events.publish(
+                    "dream_completed",
+                    json!({"trigger": "manual", "result": dream_run_payload(&record)}),
+                );
+            }
+            Err(error) => {
+                events.publish(
+                    "dream_failed",
+                    json!({"trigger": "manual", "error": redacted_error(&config, &error)}),
+                );
+            }
         }
     });
     Response::json(200, &json!({"started": true, "status": "running"}))
+}
+
+/// Sets its flag on drop: the monitor's stop signal survives any early
+/// return or unwind in the run thread.
+struct FinishFlag(Arc<AtomicBool>);
+
+impl Drop for FinishFlag {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// How often the dream monitor samples the run/phase registry (the Python
+/// monitor slept 0.2s between samples).
+const DREAM_PROGRESS_POLL: Duration = Duration::from_millis(200);
+
+/// Port of the Python dream monitor: while a manual run is in flight, watch
+/// the slice-5 run/phase registry (the durable `dream_runs`/`dream_phase_runs`
+/// rows the `DreamService` writes) and publish `dream_phase_progress`
+/// whenever the running phase row changes.
+fn monitor_dream_progress(
+    config: &HieronymusConfig,
+    events: &events::AdminEventHub,
+    finished: &AtomicBool,
+) {
+    let mut seen_phase_id = 0;
+    while !finished.load(Ordering::Acquire) {
+        if let Some((phase_id, run_id, cycle_id, phase)) = latest_running_phase(config)
+            && phase_id != seen_phase_id
+        {
+            seen_phase_id = phase_id;
+            events.publish(
+                "dream_phase_progress",
+                json!({"run_id": run_id, "cycle_id": cycle_id, "phase": phase}),
+            );
+        }
+        std::thread::sleep(DREAM_PROGRESS_POLL);
+    }
+}
+
+/// The currently running phase row of the dream registry, newest first:
+/// (phase row id, run id, cycle id, phase name).
+fn latest_running_phase(config: &HieronymusConfig) -> Option<(i64, i64, i64, String)> {
+    let connection = open_migrated(&config.database_path()).ok()?;
+    connection
+        .query_row(
+            "select p.id, p.dream_run_id, r.cycle_id, p.phase
+             from dream_phase_runs as p
+             join dream_runs as r on r.id = p.dream_run_id
+             where p.status = 'running'
+             order by p.id desc limit 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .ok()
+}
+
+/// The `dream_completed` result payload: the serialized dream-run record
+/// (Python `dataclass_to_json(run)`, field names verbatim).
+fn dream_run_payload(record: &DreamRunRecord) -> Value {
+    json!({
+        "id": record.id,
+        "cycle_id": record.cycle_id,
+        "status": record.status,
+        "provider": record.provider,
+        "input_count": record.input_count,
+        "created_crystal_count": record.created_crystal_count,
+        "proposal_count": record.proposal_count,
+        "error": record.error,
+    })
+}
+
+/// Error text for the `dream_failed` event, redacted exactly like the
+/// dreaming core so configured provider keys never leave the process.
+fn redacted_error(config: &HieronymusConfig, error: &DreamError) -> String {
+    let message = error.to_string();
+    hieronymus::provider_config::load_provider_catalog(config)
+        .map(|catalog| {
+            let keys: Vec<&str> = catalog
+                .providers
+                .values()
+                .map(|profile| profile.key().expose_secret().as_str())
+                .collect();
+            hieronymus::secret::redact_values(&message, &keys)
+        })
+        .unwrap_or(message)
 }
 
 /// `POST /api/admin/actions/reinforce_crystal` — one `confirmed_by_user`
@@ -953,4 +1073,99 @@ fn view_label(view: &str) -> String {
         .position(|key| *key == view)
         .map(|position| ADMIN_VIEWS[position].to_string())
         .unwrap_or_else(|| view.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    /// The monitor publishes a `dream_phase_progress` event whenever the
+    /// running phase row in the slice-5 registry changes.
+    #[test]
+    fn dream_progress_monitor_publishes_phase_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let connection = open_migrated(&config.database_path()).unwrap();
+        connection
+            .execute(
+                "insert into dream_runs(cycle_id, status, provider, created_at)
+                 values (7, 'running', 'test', '2026-09-04T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into dream_phase_runs(
+                   dream_run_id, phase, provider_profile, provider_type, model, status, created_at
+                 )
+                 values (1, 'knowledge_crystals', 'test', 'test', 'test', 'running',
+                         '2026-09-04T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let hub = events::AdminEventHub::default();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        {
+            let seen = Arc::clone(&seen);
+            hub.subscribe(Arc::new(move |event: &events::AdminEvent| {
+                seen.lock().unwrap().push(event.clone());
+                true
+            }));
+        }
+        let finished = Arc::new(AtomicBool::new(false));
+        let monitor = {
+            let config = config.clone();
+            let hub = hub;
+            let finished = Arc::clone(&finished);
+            std::thread::spawn(move || monitor_dream_progress(&config, &hub, &finished))
+        };
+
+        let wait_for = |count: usize| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while seen.lock().unwrap().len() < count {
+                assert!(
+                    Instant::now() < deadline,
+                    "monitor never published event {count}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        wait_for(1);
+        // A new running phase row is the change the monitor reports next.
+        let connection = open_migrated(&config.database_path()).unwrap();
+        connection
+            .execute(
+                "insert into dream_phase_runs(
+                   dream_run_id, phase, provider_profile, provider_type, model, status, created_at
+                 )
+                 values (1, 'persistence', 'test', 'test', 'test', 'running',
+                         '2026-09-04T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        wait_for(2);
+        finished.store(true, Ordering::Release);
+        monitor.join().unwrap();
+
+        let published = seen.lock().unwrap().clone();
+        assert_eq!(
+            published.len(),
+            2,
+            "unchanged phase rows are not republished"
+        );
+        assert_eq!(published[0].event_type, "dream_phase_progress");
+        assert_eq!(
+            published[0].payload,
+            json!({"run_id": 1, "cycle_id": 7, "phase": "knowledge_crystals"})
+        );
+        assert_eq!(
+            published[1].payload,
+            json!({"run_id": 1, "cycle_id": 7, "phase": "persistence"})
+        );
+    }
 }
