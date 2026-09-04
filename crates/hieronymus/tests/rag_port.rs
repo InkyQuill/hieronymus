@@ -471,3 +471,204 @@ fn chunk_title_uses_source_ref_and_location() {
     );
     assert_eq!(hit.chunk.kind(), "markdown_section");
 }
+
+// ---------------------------------------------------------------------------
+// DOCX and PDF ingestion (Python `rag_conversion.py`: mammoth and pypdf)
+// ---------------------------------------------------------------------------
+
+/// Write a minimal DOCX whose only payload is `word/document.xml`, mirroring
+/// the Python test fixtures that hand-roll the archive with `ZipFile`.
+fn write_docx(path: &Path, body: &str) {
+    use std::io::Write as _;
+
+    let document = format!(
+        "<?xml version=\"1.0\"?><w:document \
+         xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let file = std::fs::File::create(path).unwrap();
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    archive.start_file("word/document.xml", options).unwrap();
+    archive.write_all(document.as_bytes()).unwrap();
+    archive.finish().unwrap();
+}
+
+fn docx_paragraph(style: Option<&str>, text: &str) -> String {
+    let properties = match style {
+        Some(style) => format!("<w:pPr><w:pStyle w:val=\"{style}\"/></w:pPr>"),
+        None => String::new(),
+    };
+    format!("<w:p>{properties}<w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+/// Hand-craft a single-page PDF with correct xref offsets: an empty page when
+/// `text` is `None`, otherwise one text run in base-14 Helvetica.
+fn write_pdf(path: &Path, text: Option<&str>) {
+    let content = text
+        .map(|text| format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET"))
+        .unwrap_or_default();
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+             /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+        ),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in objects.drain(..).enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", index + 1));
+    }
+    let object_count = offsets.len();
+    let xref_offset = pdf.len();
+    pdf.push_str(&format!("xref\n0 {}\n", object_count + 1));
+    pdf.push_str("0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+        object_count + 1
+    ));
+    std::fs::write(path, pdf).unwrap();
+}
+
+#[test]
+fn import_docx_converts_to_managed_markdown_and_searches() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("chapter.docx");
+    write_docx(
+        &path,
+        &[
+            docx_paragraph(Some("Heading1"), "Sense"),
+            docx_paragraph(None, "Sense menu note."),
+            docx_paragraph(None, "Cooking Talent appears here."),
+        ]
+        .concat(),
+    );
+
+    let result = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(
+            &fixture.series_slug,
+            &path,
+            &RagImport::new().source_ref("chapter.docx"),
+        )
+        .unwrap();
+
+    assert_eq!(result.source.source_type, "markdown");
+    // Content type follows the normalized file, like Python (`load_rag_file`
+    // on the managed markdown); the DOCX path stays visible via provenance.
+    assert_eq!(result.source.content_type, "md");
+    assert_eq!(
+        result.source.metadata.get("original_path"),
+        Some(&serde_json::Value::String(path.display().to_string()))
+    );
+    assert_eq!(result.normalized_format, "markdown");
+    assert!(result.normalized_path.ends_with(".md"));
+    assert_eq!(
+        std::fs::read_to_string(&result.normalized_path).unwrap(),
+        "# Sense\n\nSense menu note.\n\nCooking Talent appears here.\n"
+    );
+    assert_eq!(result.chunk_count, 2);
+
+    let hits = RagStore::open(&fixture.config)
+        .unwrap()
+        .search(&fixture.series_slug, "Cooking Talent", 5, &[], &[], &[])
+        .unwrap();
+    assert_eq!(
+        hits.iter()
+            .map(|hit| hit.chunk.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Cooking Talent appears here."]
+    );
+    assert_eq!(hits[0].chunk.chunk_kind, "markdown_section");
+    assert_eq!(hits[0].chunk.location, "Sense paragraph 2");
+    assert_eq!(hits[0].chunk.source_ref, "chapter.docx");
+}
+
+#[test]
+fn import_corrupt_docx_is_invalid_source() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("chapter.docx");
+    write(&path, "not a zip archive");
+
+    let error = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(&fixture.series_slug, &path, &RagImport::new())
+        .unwrap_err();
+
+    assert!(matches!(error, RagError::InvalidSource(_)));
+}
+
+#[test]
+fn import_pdf_extracts_text_and_searches() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("chapter.pdf");
+    write_pdf(&path, Some("Cooking Talent appears here."));
+
+    let result = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(
+            &fixture.series_slug,
+            &path,
+            &RagImport::new().source_ref("chapter.pdf"),
+        )
+        .unwrap();
+
+    assert_eq!(result.source.source_type, "text");
+    assert_eq!(result.source.content_type, "txt");
+    assert_eq!(
+        result.source.metadata.get("original_path"),
+        Some(&serde_json::Value::String(path.display().to_string()))
+    );
+    assert_eq!(result.normalized_format, "text");
+    assert!(result.normalized_path.ends_with(".txt"));
+    assert_eq!(result.chunk_count, 1);
+
+    let hits = RagStore::open(&fixture.config)
+        .unwrap()
+        .search(&fixture.series_slug, "Cooking Talent", 5, &[], &[], &[])
+        .unwrap();
+    assert_eq!(
+        hits.iter()
+            .map(|hit| hit.chunk.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Cooking Talent appears here."]
+    );
+    assert_eq!(hits[0].chunk.chunk_kind, "text");
+    assert_eq!(hits[0].chunk.source_ref, "chapter.pdf");
+}
+
+#[test]
+fn import_pdf_without_extractable_text_is_rejected() {
+    let fixture = fixture();
+    let path = fixture.root.path().join("scan.pdf");
+    write_pdf(&path, None);
+
+    let error = RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file(&fixture.series_slug, &path, &RagImport::new())
+        .unwrap_err();
+
+    assert!(
+        matches!(error, RagError::InvalidSource(_)),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .starts_with("invalid RAG source: source produced no extractable text"),
+        "unexpected error: {error}"
+    );
+}

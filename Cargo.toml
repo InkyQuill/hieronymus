@@ -21,4 +21,7 @@ toml = { version = "0.8", features = ["preserve_order"] }
 sha2 = "0.10"
 csv = "1"
 serde_yaml_ng = "0.10"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+pdf-extract = "0.12"
 

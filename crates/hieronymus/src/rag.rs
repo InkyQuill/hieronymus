@@ -1338,9 +1338,9 @@ pub struct NormalizedRagSource {
     pub original_path: PathBuf,
 }
 
-/// Pass supported sources through unchanged; convert HTML into managed
-/// markdown under `managed_root`. DOCX and PDF conversion (Python mammoth /
-/// pypdf) is not ported: they are rejected like unknown extensions.
+/// Pass supported sources through unchanged; convert HTML and DOCX into
+/// managed markdown and PDF into managed text under `managed_root`
+/// (Python mammoth / pypdf equivalents).
 fn normalize_rag_source(path: &Path, managed_root: &Path) -> Result<NormalizedRagSource, RagError> {
     let suffix = path
         .extension()
@@ -1367,34 +1367,190 @@ fn normalize_rag_source(path: &Path, managed_root: &Path) -> Result<NormalizedRa
     }
     if suffix == "html" {
         let markdown = html_to_markdown(&read_text(path)?);
-        return write_managed_markdown(path, managed_root, &markdown);
+        return write_managed_source(path, managed_root, &markdown, "markdown");
+    }
+    if suffix == "docx" {
+        let markdown = docx_to_markdown(path)?;
+        return write_managed_source(path, managed_root, &markdown, "markdown");
+    }
+    if suffix == "pdf" {
+        let text = pdf_to_text(path)?;
+        return write_managed_source(path, managed_root, &text, "text");
     }
     Err(RagError::InvalidSource(format!(
         "unsupported RAG source extension: {suffix}"
     )))
 }
 
-fn write_managed_markdown(
+/// Write converted content under `managed_root` keyed by the ORIGINAL source
+/// checksum; the format selects the managed extension (`markdown` → `.md`,
+/// `text` → `.txt`).
+fn write_managed_source(
     source: &Path,
     managed_root: &Path,
-    markdown: &str,
+    content: &str,
+    format: &str,
 ) -> Result<NormalizedRagSource, RagError> {
-    let normalized_text = format!("{}\n", markdown.trim());
+    let normalized_text = format!("{}\n", content.trim());
     if normalized_text.trim().is_empty() {
         return Err(RagError::InvalidSource(format!(
             "source produced no extractable text: {}",
             source.display()
         )));
     }
+    let extension = managed_extension(format);
     let checksum = sha256_hex(&std::fs::read(source)?);
-    let destination = managed_root.join(format!("{checksum}.md"));
+    let destination = managed_root.join(format!("{checksum}.{extension}"));
     std::fs::create_dir_all(managed_root)?;
     std::fs::write(&destination, normalized_text)?;
     Ok(NormalizedRagSource {
         path: destination,
-        format: "markdown".to_string(),
+        format: format.to_string(),
         original_path: source.to_path_buf(),
     })
+}
+
+fn managed_extension(format: &str) -> &'static str {
+    match format {
+        "markdown" => "md",
+        _ => "txt",
+    }
+}
+
+/// Minimal DOCX-to-markdown conversion (Python used `mammoth`): the
+/// `word/document.xml` member is read from the zip container, paragraphs
+/// become blank-line-separated blocks, `Heading1`–`Heading6` paragraph styles
+/// become ATX headings, and run text is concatenated as plain text.
+fn docx_to_markdown(path: &Path) -> Result<String, RagError> {
+    use std::io::Read as _;
+
+    let file = std::fs::File::open(path)?;
+    let mut archive = zip::ZipArchive::new(std::io::BufReader::new(file))
+        .map_err(|error| RagError::InvalidSource(format!("invalid DOCX source: {error}")))?;
+    let mut entry = archive
+        .by_name("word/document.xml")
+        .map_err(|error| RagError::InvalidSource(format!("invalid DOCX source: {error}")))?;
+    let mut document = String::new();
+    entry
+        .read_to_string(&mut document)
+        .map_err(|error| RagError::InvalidSource(format!("invalid DOCX source: {error}")))?;
+    docx_document_to_markdown(&document)
+}
+
+fn docx_document_to_markdown(document: &str) -> Result<String, RagError> {
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_str(document);
+    let mut blocks: Vec<String> = Vec::new();
+    let mut paragraph_text = String::new();
+    let mut heading_level: Option<usize> = None;
+    let mut inside_text_run = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) => match event.name().as_ref() {
+                "w:p" => {
+                    paragraph_text.clear();
+                    heading_level = None;
+                }
+                "w:t" => inside_text_run = true,
+                _ => {}
+            },
+            Ok(Event::Empty(event)) => match event.name().as_ref() {
+                "w:p" => {
+                    paragraph_text.clear();
+                    heading_level = None;
+                }
+                "w:pStyle" => {
+                    if let Some(style) = event
+                        .try_get_attribute("w:val")
+                        .map_err(invalid_docx_source)?
+                        .and_then(|attribute| {
+                            attribute
+                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .ok()
+                        })
+                    {
+                        heading_level = docx_heading_level(&style);
+                    }
+                }
+                "w:tab" => paragraph_text.push('\t'),
+                "w:br" | "w:cr" => paragraph_text.push('\n'),
+                _ => {}
+            },
+            Ok(Event::Text(event)) if inside_text_run => {
+                paragraph_text.push_str(&event.xml10_content());
+            }
+            Ok(Event::GeneralRef(event)) if inside_text_run => {
+                push_docx_entity(&event, &mut paragraph_text)?;
+            }
+            Ok(Event::End(event)) => match event.name().as_ref() {
+                "w:t" => inside_text_run = false,
+                "w:p" => {
+                    let text = paragraph_text.trim();
+                    if !text.is_empty() {
+                        match heading_level {
+                            Some(level) => blocks.push(format!("{} {text}", "#".repeat(level))),
+                            None => blocks.push(text.to_string()),
+                        }
+                    }
+                    paragraph_text.clear();
+                    heading_level = None;
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(invalid_docx_source(error)),
+        }
+    }
+    Ok(blocks.join("\n\n"))
+}
+
+fn invalid_docx_source(error: impl std::fmt::Display) -> RagError {
+    RagError::InvalidSource(format!("invalid DOCX source: {error}"))
+}
+
+/// Decode a general entity reference inside a text run: the five predefined
+/// XML entities plus numeric character references.
+fn push_docx_entity(
+    entity: &quick_xml::events::BytesRef,
+    text: &mut String,
+) -> Result<(), RagError> {
+    let decoded = match entity.as_ref() {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        _ => match entity.resolve_char_ref() {
+            Ok(Some(character)) => character,
+            _ => {
+                return Err(RagError::InvalidSource(format!(
+                    "invalid DOCX source: unsupported entity reference: {}",
+                    entity.as_ref()
+                )));
+            }
+        },
+    };
+    text.push(decoded);
+    Ok(())
+}
+
+/// `Heading1`–`Heading6` style ids (case-insensitive, spaces tolerated) map to
+/// ATX heading levels like mammoth's default style map.
+fn docx_heading_level(style: &str) -> Option<usize> {
+    let normalized = style.replace(' ', "").to_lowercase();
+    let digits = normalized.strip_prefix("heading")?;
+    let level = digits.parse::<usize>().ok()?;
+    (1..=6).contains(&level).then_some(level)
+}
+
+/// PDF text extraction (Python used `pypdf`); the output is treated as plain
+/// text and lands as managed `.txt`.
+fn pdf_to_text(path: &Path) -> Result<String, RagError> {
+    pdf_extract::extract_text(path)
+        .map_err(|error| RagError::InvalidSource(format!("invalid PDF source: {error}")))
 }
 
 /// Minimal HTML-to-markdown normalization: ATX headings, blank-line block

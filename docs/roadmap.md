@@ -45,9 +45,6 @@ skeleton, CI workflows.
 
 Deferred capability gaps to close before cutover:
 
-- DOCX/PDF RAG import: Python converts via mammoth/pypdf; Rust rejects these
-  formats pending an ingestion-slice decision (offline crate or rejection
-  made contractual).
 - strict_terms → term_rules migration belongs to `hiero migrate` (slice 8).
 - concept recall boosts (`recall_boosts_for_crystals`) port with the
   dreaming slice.
