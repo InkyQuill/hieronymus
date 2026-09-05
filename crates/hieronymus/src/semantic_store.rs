@@ -14,8 +14,9 @@
 //!   `acquire_model` and the generation APIs are the only explicit semantic
 //!   operations. With the model absent or invalid every semantic path fails
 //!   closed and FTS retrieval remains fully functional.
-//! - Durable jobs, leases, and cancellation plumbing arrive with the search
-//!   slice; a building generation here is in-process and single-writer.
+//! - Durable jobs, leases, cancellation, and crash recovery live in
+//!   `semantic_jobs`, which drives this lifecycle as durable work; a direct
+//!   `begin_generation` build here remains in-process and single-writer.
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +37,13 @@ use crate::semantic_model::{
 const ACTIVATION_SAMPLE_LIMIT: usize = 10;
 /// File name of the promoted model under the model directory.
 const MODEL_FILE_NAME: &str = "model.onnx";
+
+/// Ensures the derived semantic schema (generation manifests) exists. The
+/// durable-jobs module extends the database with its own table on top of this.
+pub(crate) fn ensure_semantic_schema(connection: &Connection) -> Result<(), SemanticError> {
+    connection.execute_batch(SEMANTIC_SCHEMA_SQL)?;
+    Ok(())
+}
 
 const SEMANTIC_SCHEMA_SQL: &str = "
 create table if not exists semantic_generations (
@@ -104,7 +112,7 @@ impl SemanticStore {
     /// never downloads a model and never opens the vector store.
     pub fn open(config: &HieronymusConfig) -> Result<Self, SemanticError> {
         let connection = open_migrated(&config.database_path())?;
-        connection.execute_batch(SEMANTIC_SCHEMA_SQL)?;
+        ensure_semantic_schema(&connection)?;
         Ok(Self {
             config: config.clone(),
         })
@@ -549,7 +557,7 @@ impl SemanticStore {
         index: &VectorIndex,
         manifest: &GenerationManifest,
     ) -> Result<(), SemanticError> {
-        let expected = self.checksums_behind_cursor(manifest.last_chunk_id)?;
+        let expected = self.chunk_checksums_behind_cursor(manifest.last_chunk_id)?;
         let stored = index.snapshot_rows(manifest.expected_count as usize)?;
         if stored.len() != expected.len() {
             return Err(SemanticError::ValidationFailed(format!(
@@ -593,7 +601,10 @@ impl SemanticStore {
         }
     }
 
-    fn checksums_behind_cursor(
+    /// Vector-free fingerprints (chunk id to text checksum) of every
+    /// authoritative row behind the cursor. Generation activation and job
+    /// takeover reconcile the stored rows against these.
+    pub fn chunk_checksums_behind_cursor(
         &self,
         last_chunk_id: i64,
     ) -> Result<std::collections::HashMap<i64, String>, SemanticError> {
@@ -717,7 +728,10 @@ impl SemanticStore {
         Ok(open_migrated(&self.config.database_path())?)
     }
 
-    fn chunk_row(&self, chunk_id: i64) -> Result<Option<(String, String)>, SemanticError> {
+    /// The series and text of one authoritative chunk: `(series_slug, text)`.
+    /// Durable jobs hand the text to the tokenizer and carry the series back
+    /// with the chunk's token stream.
+    pub fn chunk_row(&self, chunk_id: i64) -> Result<Option<(String, String)>, SemanticError> {
         let connection = self.connection()?;
         let mut statement =
             connection.prepare("select series_slug, text from rag_chunks where id = ?1")?;
