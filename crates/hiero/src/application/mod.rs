@@ -6,9 +6,10 @@
 //!
 //! [`Application::call`] takes the tool name, the raw JSON arguments, and the
 //! authenticated actor, fans out across the tool families (see
-//! [`series_sessions`], [`memory`], and [`terms`]), and reports every tool
-//! that no family claims as [`AppError::NotImplemented`].
+//! [`series_sessions`], [`memory`], [`terms`], and [`graph`]), and reports
+//! every tool that no family claims as [`AppError::NotImplemented`].
 
+pub mod graph;
 pub mod memory;
 pub mod series_sessions;
 pub mod terms;
@@ -84,6 +85,7 @@ impl Application {
         series_sessions::dispatch(self, tool, arguments, actor)
             .or_else(|| memory::dispatch(self, tool, arguments, actor))
             .or_else(|| terms::dispatch(self, tool, arguments, actor))
+            .or_else(|| graph::dispatch(self, tool, arguments, actor))
             .unwrap_or_else(|| Err(AppError::NotImplemented(tool.to_string())))
     }
 }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use rusqlite::Connection;
+use serde_json::{Value, json};
 use toml::Table;
 
 use crate::concept_models::{ConceptFacetRecord, ConceptRecord};
@@ -147,6 +148,13 @@ fn clean_tags<'a>(tags: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     cleaned
 }
 
+/// Parse a strict proposal's stored variant array; malformed JSON is a
+/// rejection, never forwarded as raw text.
+fn parse_variant_array(raw: &str) -> Result<Vec<String>, ConceptError> {
+    serde_json::from_str(raw)
+        .map_err(|error| ConceptError::Invalid(format!("malformed proposal variants: {error}")))
+}
+
 fn clean_language_tags<'a>(
     legacy_language: &'a str,
     language_tags: impl IntoIterator<Item = &'a str>,
@@ -208,6 +216,48 @@ pub struct FacetFields {
     pub source_crystal_id: Option<i64>,
     pub story_scopes: Vec<String>,
     pub semantic_tags: Vec<String>,
+}
+
+/// Presence-aware facet patch for [`ConceptStore::update_facet`]: every field
+/// mirrors one optional field of the frozen `hieronymus_concept_facet_update`
+/// schema and preserves the difference between an omitted key (`None`) and an
+/// explicit JSON `null` (`Some(None)`).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct FacetPatch {
+    #[serde(default, deserialize_with = "presence")]
+    pub facet_type: Option<Option<String>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub kind: Option<Option<String>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub value: Option<Option<String>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub language: Option<Option<String>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub language_tags: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub story_scopes: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub semantic_tags: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub confidence: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub source_crystal_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "presence")]
+    pub is_canonical: Option<Option<bool>>,
+}
+
+/// Deserialize one optional patch field, preserving explicit nulls: an
+/// omitted key defaults to `None`, and a present key decodes as
+/// `Some(Option::<T>)` so a JSON `null` becomes `Some(None)` instead of
+/// collapsing into "omitted".
+fn presence<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(<Option<T> as serde::Deserialize>::deserialize(
+        deserializer,
+    )?))
 }
 
 impl ConceptStore {
@@ -374,6 +424,107 @@ impl ConceptStore {
         Ok(())
     }
 
+    /// Update one live facet of an active concept from a presence-aware
+    /// [`FacetPatch`]. The Python `update_facet` reference cannot distinguish
+    /// an explicit JSON `null` from an omitted field and treats both as
+    /// "unchanged" for every optional field, so both patch states map to
+    /// "keep the stored value" here; a present value replaces it (an empty
+    /// list clears a list field, an explicitly empty value is rejected). The
+    /// row update, side-table replacements, and the requested canonical move
+    /// commit in one transaction, so the FTS triggers keep the facet
+    /// projection consistent with the row or nothing at all.
+    pub fn update_facet(
+        &self,
+        facet_id: i64,
+        patch: &FacetPatch,
+    ) -> Result<ConceptFacetRecord, ConceptError> {
+        let now = now_iso8601();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let row = require_live_facet_row(&transaction, facet_id)?;
+        let concept_id = row.concept_id;
+        require_active_concept(&transaction, concept_id)?;
+
+        let next_value = match &patch.value {
+            None | Some(None) => row.value.clone(),
+            Some(Some(value)) => {
+                let clean = value.trim();
+                if clean.is_empty() {
+                    return Err(ConceptError::Invalid(
+                        "concept facet value must not be empty".to_string(),
+                    ));
+                }
+                clean.to_string()
+            }
+        };
+        let kind = patch.kind.as_ref().and_then(|value| value.as_deref());
+        let facet_type = patch.facet_type.as_ref().and_then(|value| value.as_deref());
+        let next_kind = match (kind, facet_type) {
+            // Both absent (or both null): the stored kind stays.
+            (None, None) => row.facet_type.clone(),
+            (kind, facet_type) => normalize_facet_storage_kind(kind, facet_type)?,
+        };
+        let language = patch.language.as_ref().and_then(|value| value.as_deref());
+        let language_tags = patch
+            .language_tags
+            .as_ref()
+            .and_then(|value| value.as_deref());
+        let next_language_tags: Option<Vec<String>> = match (language, language_tags) {
+            (None, None) => None,
+            (language, language_tags) => Some(clean_language_tags(
+                language.unwrap_or(""),
+                language_tags.unwrap_or(&[]).iter().map(String::as_str),
+            )),
+        };
+        let next_language = match &next_language_tags {
+            None => row.language.clone(),
+            Some(tags) => tags.first().cloned().unwrap_or_default(),
+        };
+        let next_confidence = match patch.confidence {
+            None | Some(None) => row.confidence,
+            Some(Some(confidence)) => clamp_confidence(confidence),
+        };
+        let next_source_crystal_id = match patch.source_crystal_id {
+            None | Some(None) => row.source_crystal_id,
+            Some(Some(source_crystal_id)) => Some(source_crystal_id),
+        };
+        let next_is_canonical = match patch.is_canonical {
+            None | Some(None) => row.is_canonical,
+            Some(Some(is_canonical)) => is_canonical,
+        };
+        transaction.execute(
+            "update concept_facets
+             set language = ?1, facet_type = ?2, value = ?3, source_crystal_id = ?4,
+                 confidence = ?5, is_canonical = ?6, updated_at = ?7
+             where id = ?8",
+            rusqlite::params![
+                next_language,
+                next_kind,
+                next_value,
+                next_source_crystal_id,
+                next_confidence,
+                next_is_canonical as i64,
+                now,
+                facet_id,
+            ],
+        )?;
+        if let Some(tags) = &next_language_tags {
+            set_facet_language_tags(&transaction, facet_id, tags)?;
+        }
+        if let Some(Some(story_scopes)) = &patch.story_scopes {
+            set_facet_story_scopes(&transaction, facet_id, story_scopes)?;
+        }
+        if let Some(Some(semantic_tags)) = &patch.semantic_tags {
+            set_facet_semantic_tags(&transaction, facet_id, semantic_tags)?;
+        }
+        if next_is_canonical {
+            set_canonical_facet_with_connection(&transaction, concept_id, facet_id)?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        get_facet(&self.config, facet_id)
+    }
+
     pub fn set_semantic_tags(&self, concept_id: i64, tags: &[String]) -> Result<(), ConceptError> {
         let now = now_iso8601();
         let mut connection = self.connection()?;
@@ -382,6 +533,70 @@ impl ConceptStore {
         set_semantic_tags(&transaction, concept_id, tags, &now)?;
         transaction.commit()?;
         Ok(())
+    }
+
+    /// The pending strict concept proposals as safe DTO payloads (Python
+    /// `ConceptProposalStore.list_pending`'s strict half, projected through
+    /// `StrictConceptProposal`): the explicit column list never forwards
+    /// internal rows wholesale (`dream_run_id` and timestamps stay
+    /// unprojected) and the variant arrays are parsed, not carried as raw
+    /// JSON text — a malformed row is a loud rejection, not leaked SQL
+    /// output.
+    pub fn list_proposals(&self) -> Result<Vec<Value>, ConceptError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "select id, series_slug, source_language, target_language, concept_text,
+                    source_form, canonical_rendering, approved_variants_json,
+                    forbidden_variants_json, rationale, status
+             from strict_concept_proposals
+             where status = 'pending'
+             order by id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+            ))
+        })?;
+        let mut payloads = Vec::new();
+        for row in rows {
+            let (
+                id,
+                series_slug,
+                source_language,
+                target_language,
+                concept_text,
+                source_form,
+                canonical_rendering,
+                approved_variants_json,
+                forbidden_variants_json,
+                rationale,
+                status,
+            ) = row?;
+            payloads.push(json!({
+                "id": id,
+                "series_slug": series_slug,
+                "source_language": source_language,
+                "target_language": target_language,
+                "concept_text": concept_text,
+                "source_form": source_form,
+                "canonical_rendering": canonical_rendering,
+                "approved_variants": parse_variant_array(&approved_variants_json)?,
+                "forbidden_variants": parse_variant_array(&forbidden_variants_json)?,
+                "rationale": rationale,
+                "status": status,
+            }));
+        }
+        Ok(payloads)
     }
 
     pub fn update_concept(
@@ -636,6 +851,27 @@ fn require_active_concept(
         ));
     }
     Ok(row)
+}
+
+/// The live (non-superseded) facet row; a superseded or unknown facet id is
+/// the same [`ConceptError::UnknownFacet`] rejection (Python treats both as
+/// unknown).
+fn require_live_facet_row(
+    connection: &Connection,
+    facet_id: i64,
+) -> Result<FacetRow, ConceptError> {
+    connection
+        .query_row(
+            "select id, concept_id, language, facet_type, value, confidence,
+                    source_crystal_id, is_canonical
+             from concept_facets where id = ?1 and superseded_at is null",
+            [facet_id],
+            facet_row,
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => ConceptError::UnknownFacet(facet_id),
+            other => other.into(),
+        })
 }
 
 fn concept_ids_for_semantic_tag(
