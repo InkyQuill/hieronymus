@@ -25,5 +25,25 @@ pdf-extract.workspace = true
 
 serde_json.workspace = true
 
+# Semantic RAG data plane, pinned to the qualified stack (ADR 0013,
+# qualification/records/semantic-native.json: decision semantic-enabled).
+# Versions and features are copied verbatim from the qualification harness.
+arrow-array = "=58.3.0"
+arrow-schema = "=58.3.0"
+futures = "0.3"
+lancedb = { version = "=0.37.1", default-features = false }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+  "api-28",
+  "load-dynamic",
+  "ndarray",
+  "std",
+  "tracing",
+] }
+tokio = { version = "1", default-features = false, features = [
+  "rt",
+  "rt-multi-thread",
+  "time",
+] }
+
 [dev-dependencies]
 serde_json = "1"

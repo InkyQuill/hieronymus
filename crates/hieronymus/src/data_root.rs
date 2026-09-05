@@ -54,6 +54,12 @@ impl HieronymusConfig {
         self.config_root().join("agent-plugins")
     }
 
+    /// Derived semantic RAG state: the LanceDB store and acquired embedding
+    /// models. Everything under this root is rebuildable from the database.
+    pub fn semantic_root(&self) -> PathBuf {
+        self.config_root().join("semantic")
+    }
+
     /// Non-secret discovery record published by `hiero daemon` (ADR 0009,
     /// ADR 0012 as amended 2026-09-03). Kept separate from the bearer token.
     pub fn daemon_discovery_path(&self) -> PathBuf {

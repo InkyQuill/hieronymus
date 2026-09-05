@@ -1,0 +1,297 @@
+//! Embedding model acquisition: the pinned qualification model's constants, a
+//! streaming download transport seam (loopback-testable, `http://` only), and
+//! the temp-file + checksum + atomic-promotion acquisition flow.
+//!
+//! Acquisition runs only when a caller invokes it explicitly (the store's
+//! `acquire_model` API); config load, store open, and doctor-style checks
+//! never touch the network and never download anything. An incomplete or
+//! incompatible model leaves FTS retrieval fully functional.
+
+use std::io::{Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use sha2::{Digest, Sha256};
+
+use crate::semantic_error::SemanticError;
+
+/// Embedding model pinned by the qualification record
+/// (`qualification/records/semantic-native.json`, decision `semantic-enabled`).
+pub const MODEL_NAME: &str = "all-MiniLM-L6-v2";
+/// Immutable upstream revision of the pinned model file.
+pub const MODEL_REVISION: &str = "9a53d751e60e6dd34f2443711d44d5b09389f89a";
+/// SHA-256 of the pinned ONNX model file (hex).
+pub const MODEL_SHA256: &str = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452";
+/// Size of the pinned ONNX model file in bytes.
+pub const MODEL_BYTES: u64 = 90_405_214;
+/// Canonical download source of the pinned model file.
+pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx";
+
+/// Read window used for checksum computation and network streaming.
+const STREAM_BUFFER_BYTES: usize = 1024 * 1024;
+
+/// Cheap availability verdict over the locally present model file. The full
+/// SHA-256 verification runs only when the provider is loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelStatus {
+    /// The model file is present with the expected size.
+    Available,
+    /// The model file exists but does not match the pinned artifact.
+    Invalid(String),
+    /// No model file has been acquired.
+    Missing,
+}
+
+/// Outcome of a successful acquisition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelAcquisition {
+    pub path: PathBuf,
+    pub bytes: u64,
+    pub checksum: String,
+}
+
+/// The download transport seam. Implementations stream `url` into
+/// `destination` (a fresh file) and return the number of bytes written; they
+/// must never buffer more than `max_bytes` and must treat a short body as an
+/// error. Loopback tests implement this in-process over `http://127.0.0.1`.
+pub trait ModelTransport: Send + Sync {
+    fn download_to(
+        &self,
+        url: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<u64, SemanticError>;
+}
+
+/// Production transport: one blocking streaming HTTP/1.1 GET per call, `http://`
+/// only (TLS is out of scope for this slice, like `provider_http`), read-bounded
+/// by `max_bytes`.
+pub struct HttpModelTransport {
+    timeout: Duration,
+}
+
+impl HttpModelTransport {
+    pub fn new(timeout: Duration) -> Self {
+        Self { timeout }
+    }
+}
+
+impl ModelTransport for HttpModelTransport {
+    fn download_to(
+        &self,
+        url: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<u64, SemanticError> {
+        let (host, port, path) = parse_http_url(url)?;
+        let address = (host.as_str(), port)
+            .to_socket_addrs()
+            .map_err(|error| SemanticError::Download(format!("could not resolve {host}: {error}")))?
+            .next()
+            .ok_or_else(|| {
+                SemanticError::Download(format!("host resolved to no addresses: {host}"))
+            })?;
+        let mut stream = TcpStream::connect_timeout(&address, self.timeout)
+            .map_err(|error| SemanticError::Download(format!("connect failed: {error}")))?;
+        let _ = stream.set_write_timeout(Some(self.timeout));
+        let _ = stream.set_read_timeout(Some(self.timeout));
+
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+        );
+        stream
+            .write_all(request.as_bytes())
+            .map_err(|error| SemanticError::Download(format!("request write failed: {error}")))?;
+
+        let (content_length, buffered) = read_response_head(&mut stream)?;
+        stream_body(
+            &mut stream,
+            destination,
+            &buffered,
+            content_length,
+            max_bytes,
+        )
+    }
+}
+
+fn parse_http_url(url: &str) -> Result<(String, u16, String), SemanticError> {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err(SemanticError::UnsupportedUrl(format!(
+            "model url has no scheme: {url}"
+        )));
+    };
+    if !scheme.eq_ignore_ascii_case("http") {
+        return Err(SemanticError::UnsupportedUrl(format!(
+            "{scheme}:// (only http:// endpoints are supported)"
+        )));
+    }
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, "/".to_string()),
+    };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            let port = port.parse::<u16>().map_err(|_| {
+                SemanticError::UnsupportedUrl(format!("model url has an invalid port: {url}"))
+            })?;
+            (host.to_string(), port)
+        }
+        None => (authority.to_string(), 80),
+    };
+    if host.is_empty() {
+        return Err(SemanticError::UnsupportedUrl(format!(
+            "model url has no host: {url}"
+        )));
+    }
+    Ok((host, port, path))
+}
+
+/// Reads the status line and headers, rejecting non-200 responses, and returns
+/// the advertised `Content-Length` when present plus the body bytes already
+/// buffered past the header separator (head and body can arrive in one TCP
+/// segment, and discarding them would truncate the artifact).
+fn read_response_head(stream: &mut TcpStream) -> Result<(Option<u64>, Vec<u8>), SemanticError> {
+    let mut raw: Vec<u8> = Vec::with_capacity(1024);
+    let mut buffer = [0_u8; 1024];
+    let separator = loop {
+        if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position;
+        }
+        let count = stream
+            .read(&mut buffer)
+            .map_err(|error| SemanticError::Download(format!("read failed: {error}")))?;
+        if count == 0 {
+            return Err(SemanticError::Download(
+                "response ended before the header separator".to_string(),
+            ));
+        }
+        raw.extend_from_slice(&buffer[..count]);
+        if raw.len() > 64 * 1024 {
+            return Err(SemanticError::Download(
+                "response head exceeded 64 KiB".to_string(),
+            ));
+        }
+    };
+    let head = String::from_utf8_lossy(&raw[..separator]);
+    let mut lines = head.split("\r\n");
+    let status_line = lines
+        .next()
+        .ok_or_else(|| SemanticError::Download("response has no status line".to_string()))?;
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .ok_or_else(|| {
+            SemanticError::Download(format!(
+                "response has an invalid status line: {status_line}"
+            ))
+        })?;
+    if status != 200 {
+        return Err(SemanticError::Download(format!(
+            "server answered with status {status}"
+        )));
+    }
+    let mut content_length = None;
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':')
+            && name.trim().eq_ignore_ascii_case("content-length")
+        {
+            content_length = value.trim().parse::<u64>().ok();
+        }
+    }
+    Ok((content_length, raw[separator + 4..].to_vec()))
+}
+
+/// Streams the body to `destination`, starting from the bytes buffered with
+/// the response head, refusing to buffer more than `max_bytes`, and treating
+/// a short body as a truncated download.
+fn stream_body(
+    stream: &mut TcpStream,
+    destination: &Path,
+    buffered: &[u8],
+    content_length: Option<u64>,
+    max_bytes: u64,
+) -> Result<u64, SemanticError> {
+    let mut file = std::io::BufWriter::new(std::fs::File::create(destination)?);
+    let mut buffer = vec![0_u8; STREAM_BUFFER_BYTES];
+    let mut written: u64 = 0;
+    let mut buffered = buffered;
+    loop {
+        let count = if buffered.is_empty() {
+            match stream.read(&mut buffer) {
+                Ok(count) => count,
+                Err(error) => {
+                    return Err(SemanticError::Download(format!(
+                        "body read failed: {error}"
+                    )));
+                }
+            }
+        } else {
+            let take = buffered.len().min(buffer.len());
+            buffer[..take].copy_from_slice(&buffered[..take]);
+            buffered = &buffered[take..];
+            take
+        };
+        if count == 0 {
+            break;
+        }
+        written += count as u64;
+        if written > max_bytes {
+            return Err(SemanticError::Download(format!(
+                "download exceeded the {max_bytes} byte limit"
+            )));
+        }
+        file.write_all(&buffer[..count])?;
+    }
+    file.flush()?;
+    if let Some(content_length) = content_length
+        && written != content_length
+    {
+        return Err(SemanticError::Download(format!(
+            "truncated download: server advertised {content_length} bytes but sent {written}"
+        )));
+    }
+    Ok(written)
+}
+
+/// Streams the SHA-256 of the file at `path` with a bounded read window.
+pub fn sha256_file(path: &Path) -> Result<String, SemanticError> {
+    let mut file = std::fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; STREAM_BUFFER_BYTES];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn url_parsing_accepts_only_http() {
+        assert!(parse_http_url("http://127.0.0.1:9/x").is_ok());
+        assert!(matches!(
+            parse_http_url("https://example.invalid/x"),
+            Err(SemanticError::UnsupportedUrl(_))
+        ));
+        assert!(matches!(
+            parse_http_url("ftp://example.invalid/x"),
+            Err(SemanticError::UnsupportedUrl(_))
+        ));
+        assert!(matches!(
+            parse_http_url("http://host:notaport/x"),
+            Err(SemanticError::UnsupportedUrl(_))
+        ));
+    }
+}
