@@ -122,7 +122,10 @@ fn corrupt_database_fails_closed() {
     })
     .unwrap_err();
 
-    assert!(error.to_string().contains("'corrupt'"), "{error}");
+    match error {
+        DaemonError::InvalidStartupState { code, .. } => assert_eq!(code, "invalid_startup_state"),
+        other => panic!("unexpected error: {other}"),
+    }
     assert!(!root.path().join("daemon.json").exists());
 }
 
@@ -138,10 +141,15 @@ fn python_schema_database_fails_closed() {
     })
     .unwrap_err();
 
-    assert!(
-        error.to_string().contains("'python-schema'"),
-        "unexpected diagnostic: {error}"
-    );
+    match error {
+        DaemonError::InvalidStartupState {
+            code, remediation, ..
+        } => {
+            assert_eq!(code, "migration_required");
+            assert_eq!(remediation, "hiero migrate");
+        }
+        other => panic!("unexpected error: {other}"),
+    }
     assert!(!root.path().join("daemon.json").exists());
 }
 
@@ -284,10 +292,10 @@ fn unknown_daemon_database_state_prevents_ready_flag() {
     })
     .unwrap_err();
 
-    assert!(
-        matches!(error, DaemonError::UnsupportedDatabase { .. }),
-        "unexpected error: {error}"
-    );
+    match error {
+        DaemonError::InvalidStartupState { code, .. } => assert_eq!(code, "invalid_startup_state"),
+        other => panic!("unexpected error: {other}"),
+    }
     assert!(!root.path().join("daemon.json").exists());
 }
 
@@ -300,16 +308,19 @@ fn unknown_daemon_database_state_prevents_ready_flag() {
 fn unfinished_cutover_journal_fails_closed_even_on_a_supported_database() {
     // A supported Rust database plus an unfinished cutover journal: the
     // database alone would start, but the middle state must not.
-    for expected in [
-        "prepared",
-        "database_committed",
-        "config_promotion_required",
+    // `prepared` is an unfinished upgrade (fail closed); a committed database
+    // awaiting config promotion is the explicit `config_promotion_required`
+    // diagnostic (ADR 0009).
+    for (journal_state, expected_code) in [
+        ("prepared", "upgrade_incomplete"),
+        ("database_committed", "config_promotion_required"),
+        ("config_promotion_required", "config_promotion_required"),
     ] {
         let root = tempfile::tempdir().unwrap();
         hieronymus::db::open_migrated(&root.path().join("hieronymus.sqlite")).unwrap();
         let journal = hieronymus::upgrade::CutoverJournal {
             journal_version: 1,
-            state: expected.to_string(),
+            state: journal_state.to_string(),
             source_state: "python-schema".to_string(),
             target_schema_version: hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION,
             staging_dir: ".migrate-staging".to_string(),
@@ -333,8 +344,13 @@ fn unfinished_cutover_journal_fails_closed_even_on_a_supported_database() {
         .unwrap_err();
 
         match error {
-            DaemonError::UpgradePending { state } => assert_eq!(state, expected),
-            other => panic!("state {expected}: unexpected error: {other}"),
+            DaemonError::InvalidStartupState {
+                code, remediation, ..
+            } => {
+                assert_eq!(code, expected_code, "journal state {journal_state}");
+                assert_eq!(remediation, "hiero migrate");
+            }
+            other => panic!("state {journal_state}: unexpected error: {other}"),
         }
         assert!(
             !root.path().join("daemon.json").exists(),

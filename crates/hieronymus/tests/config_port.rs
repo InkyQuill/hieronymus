@@ -21,6 +21,11 @@ fn write(root: &Path, name: &str, text: &str) {
     fs::write(root.join(name), text).unwrap();
 }
 
+/// `HIERONYMUS_DATA_ROOT` is process-global; the tests that mutate it must not
+/// run concurrently with each other (cargo runs a binary's tests on many
+/// threads). Every such test takes this lock for its whole body.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // ---------------------------------------------------------------- data root
 
 #[test]
@@ -48,7 +53,8 @@ fn load_config_uses_explicit_data_root() {
 
 #[test]
 fn load_config_defaults_to_config_home_when_unset() {
-    // SAFETY: tests run single-threaded per process env mutation discipline.
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    // SAFETY: `_guard` serializes every `HIERONYMUS_DATA_ROOT` mutation.
     unsafe { std::env::remove_var("HIERONYMUS_DATA_ROOT") };
     let config = load_config(None);
 
@@ -58,7 +64,9 @@ fn load_config_defaults_to_config_home_when_unset() {
 
 #[test]
 fn load_config_uses_environment_root() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let root = tempfile::tempdir().unwrap();
+    // SAFETY: `_guard` serializes every `HIERONYMUS_DATA_ROOT` mutation.
     unsafe { std::env::set_var("HIERONYMUS_DATA_ROOT", root.path()) };
 
     let config = load_config(None);
@@ -69,6 +77,8 @@ fn load_config_uses_environment_root() {
 
 #[test]
 fn load_config_expands_home_shorthand() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    // SAFETY: `_guard` serializes every `HIERONYMUS_DATA_ROOT` mutation.
     unsafe { std::env::remove_var("HIERONYMUS_DATA_ROOT") };
     let config = load_config(Some(Path::new("~/hieronymus-root")));
 

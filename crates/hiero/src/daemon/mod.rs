@@ -23,8 +23,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use hieronymus::data_root::{HieronymusConfig, load_config};
-use hieronymus::db::{classify_database, open_migrated};
+use hieronymus::db::open_migrated;
 use hieronymus::secret::Secret;
+use hieronymus::state_classifier::{StartupState, classify};
 
 pub use assets::Assets;
 pub use discovery::DiscoveryRecord;
@@ -75,18 +76,12 @@ impl Default for DaemonOptions {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
-    #[error(
-        "daemon cannot start: database state '{state}' is not supported; \
-         run the documented database upgrade path first"
-    )]
-    UnsupportedDatabase { state: &'static str },
-    #[error(
-        "daemon cannot start: cutover journal state '{state}' is unfinished; \
-         run `hiero migrate` to complete the upgrade"
-    )]
-    UpgradePending { state: String },
-    #[error("daemon cannot read the cutover journal: {0}")]
-    Journal(#[from] hieronymus::migrate::MigrateError),
+    #[error("daemon cannot start: {message} (run `{remediation}`)")]
+    InvalidStartupState {
+        code: &'static str,
+        message: String,
+        remediation: String,
+    },
     #[error("daemon cannot open the database: {0}")]
     Database(#[from] hieronymus::db::OpenMigratedError),
     #[error("daemon cannot bind loopback endpoint {address}: {source}")]
@@ -146,36 +141,34 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Start the daemon: journal gate, database check, loopback bind, token,
-    /// discovery.
+    /// Start the daemon: bounded startup-state classification, database open,
+    /// loopback bind, token, discovery.
     pub fn start(options: &DaemonOptions) -> Result<Daemon, DaemonError> {
         let config = load_config(options.data_root.as_deref());
 
-        // The daemon starts only when the cutover journal is absent or
-        // `complete` (database-upgrade design): a middle state would serve
-        // traffic against mismatched database/config versions. This gate
-        // runs before everything else, so an unfinished cutover refuses even
-        // a database that would classify as supported.
-        if let Some(state) = hieronymus::upgrade::daemon_start_blocker(&config)? {
-            return Err(DaemonError::UpgradePending { state });
+        // The shared bounded startup-state classifier is the first gate
+        // (ADR 0009): it reads schema/config version markers and the
+        // cutover-journal state, runs no converters or scans, and never
+        // mutates the data root. Only `Fresh` and `Current` proceed;
+        // everything else refuses before binding, tokens, or discovery, so a
+        // rejected state never publishes readiness.
+        match classify(&config) {
+            Ok(StartupState::Fresh | StartupState::Current) => {}
+            Err(error) => {
+                return Err(DaemonError::InvalidStartupState {
+                    code: error.code(),
+                    message: error.message().to_string(),
+                    remediation: error.remediation().to_string(),
+                });
+            }
         }
 
-        // Fail closed on unsupported database states before binding anything
-        // (ADR 0009: startup never publishes readiness for rejected state).
+        // `classify` ran a moment ago against files that could in principle
+        // change before this line; `open_migrated` is the authoritative
+        // re-classification (it re-reads the markers and refuses any
+        // non-startable state). The daemon is not serving yet, so a race here
+        // fails safe as `DaemonError::Database` without publishing readiness.
         let database_path = config.database_path();
-        let state = classify_database(&database_path);
-        let supported = match &state {
-            hieronymus::db::DatabaseState::Empty => true,
-            hieronymus::db::DatabaseState::RustSchema { version } => {
-                *version == hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION
-            }
-            _ => false,
-        };
-        if !supported {
-            return Err(DaemonError::UnsupportedDatabase {
-                state: state.as_str(),
-            });
-        }
         let connection = open_migrated(&database_path)?;
 
         let registry = McpRegistry::embedded();

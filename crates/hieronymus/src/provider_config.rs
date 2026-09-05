@@ -24,13 +24,30 @@ const LEGACY_DREAM_PROFILE_FIELDS: [&str; 7] = [
 #[error("{message}")]
 pub struct ProviderCatalogError {
     message: String,
+    migration_required: bool,
 }
 
 impl ProviderCatalogError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            migration_required: false,
         }
+    }
+
+    fn migration_required(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            migration_required: true,
+        }
+    }
+
+    /// Whether this error is the structural legacy shape that `hiero migrate`
+    /// converts — a `dream.conf` `[providers]` block — rather than an outright
+    /// invalid file. The startup classifier maps this to
+    /// `config_migration_required`.
+    pub fn is_migration_required(&self) -> bool {
+        self.migration_required
     }
 }
 
@@ -118,42 +135,30 @@ pub fn default_provider_catalog() -> ProviderCatalog {
     ProviderCatalog::default()
 }
 
-/// Load `provider.conf`, migrating legacy `dream.conf.providers` blocks and
-/// canonicalizing the removed `gemini` type to `google` (rewriting the file
-/// when that legacy type is present).
+/// Load `provider.conf`. Read-only (ADR 0009/0010): the only structural
+/// legacy shape is a `dream.conf` `[providers]` block, which needs the staged
+/// two-file `hiero migrate` protocol and returns an explicit
+/// `is_migration_required` error. The deprecated `gemini` provider type is an
+/// accepted alias — it canonicalizes to `google` in memory with no change to
+/// the file on disk.
 pub fn load_provider_catalog(
-    config: &HieronymusConfig,
-) -> Result<ProviderCatalog, ProviderCatalogError> {
-    let catalog = load_provider_catalog_file(config)?;
-    let catalog = migrate_legacy_dream_providers(config, catalog)?;
-    if provider_config_uses_legacy_gemini_type(config) {
-        save_provider_catalog(config, &catalog)?;
-    }
-    Ok(catalog)
-}
-
-/// Rewrite dream.conf without its deprecated `[providers.*]` payload after a
-/// provider migration; a broken dream config does not fail the migration.
-pub fn load_and_resave_dream_config(
-    config: &HieronymusConfig,
-) -> Result<(), crate::dream_config::DreamConfigError> {
-    let dream_config = crate::dream_config::load_dream_config(config)?;
-    crate::dream_config::save_dream_config(config, &dream_config)
-}
-
-fn load_provider_catalog_file(
     config: &HieronymusConfig,
 ) -> Result<ProviderCatalog, ProviderCatalogError> {
     resolve_provider_catalog_readonly(config)
 }
 
-/// Parse and validate provider.conf without touching any file: unlike
-/// [`load_provider_catalog`] this never performs the legacy-dream-providers
-/// or legacy-gemini migration writes, so read-only surfaces (doctor) resolve
-/// through here.
+/// Parse and validate provider.conf without touching any file. A `dream.conf`
+/// `[providers]` block is rejected with `is_migration_required`; everything
+/// else (including the `gemini` alias) resolves in memory.
 pub fn resolve_provider_catalog_readonly(
     config: &HieronymusConfig,
 ) -> Result<ProviderCatalog, ProviderCatalogError> {
+    if legacy_dream_provider_payload(config)?.is_some() {
+        return Err(ProviderCatalogError::migration_required(
+            "dream.conf still carries a [providers] block; run `hiero migrate` to move \
+             provider profiles into provider.conf",
+        ));
+    }
     let path = config.provider_config_path();
     if !path.exists() {
         return validate_provider_catalog(&default_provider_catalog());
@@ -173,21 +178,6 @@ pub(crate) fn provider_catalog_from_text(
         ProviderCatalogError::new(format!("provider.conf is not valid TOML: {error}"))
     })?;
     validate_provider_catalog(&provider_catalog_from_payload(&payload)?)
-}
-
-fn migrate_legacy_dream_providers(
-    config: &HieronymusConfig,
-    catalog: ProviderCatalog,
-) -> Result<ProviderCatalog, ProviderCatalogError> {
-    let Some(providers_payload) = legacy_dream_provider_payload(config)? else {
-        return Ok(catalog);
-    };
-    let migrated = migrate_dream_provider_payload(&providers_payload, &catalog)?;
-    save_provider_catalog(config, &migrated)?;
-    // Remove the migrated block from dream.conf; a broken dream config must
-    // not fail the provider migration.
-    let _ = load_and_resave_dream_config(config);
-    Ok(migrated)
 }
 
 /// Returns `None` when dream.conf is absent, has no `providers` key, or is
@@ -446,27 +436,6 @@ fn provider_catalog_from_payload(payload: &Table) -> Result<ProviderCatalog, Pro
     Ok(ProviderCatalog {
         providers,
         defaults,
-    })
-}
-
-fn provider_config_uses_legacy_gemini_type(config: &HieronymusConfig) -> bool {
-    let path = config.provider_config_path();
-    if !path.exists() {
-        return false;
-    }
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return false;
-    };
-    let Ok(payload) = text.parse::<Table>() else {
-        return false;
-    };
-    payload.iter().any(|(name, profile)| {
-        name != "defaults"
-            && profile
-                .as_table()
-                .and_then(|table| table.get("type"))
-                .and_then(|value| value.as_str())
-                == Some("gemini")
     })
 }
 

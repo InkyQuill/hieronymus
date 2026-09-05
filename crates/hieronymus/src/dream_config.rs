@@ -38,13 +38,30 @@ const WORKFLOW_FIELDS: [&str; 4] = ["provider", "model", "enabled", "max_records
 #[error("{message}")]
 pub struct DreamConfigError {
     message: String,
+    migration_required: bool,
 }
 
 impl DreamConfigError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            migration_required: false,
         }
+    }
+
+    fn migration_required(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            migration_required: true,
+        }
+    }
+
+    /// Whether this error is a recognized legacy `dream.conf` shape that
+    /// `hiero migrate` converts, rather than an outright invalid file. The
+    /// startup classifier maps these to `config_migration_required` and every
+    /// other parse/validation error to a fail-closed `invalid` verdict.
+    pub fn is_migration_required(&self) -> bool {
+        self.migration_required
     }
 }
 
@@ -151,28 +168,16 @@ impl DreamConfig {
     }
 }
 
+/// Load `dream.conf`. Read-only (ADR 0009/0010): a recognized legacy shape is
+/// an explicit `is_migration_required` error, never a silent rewrite. Only the
+/// staged upgrade protocol in `upgrade.rs` converts legacy config.
 pub fn load_dream_config(config: &HieronymusConfig) -> Result<DreamConfig, DreamConfigError> {
-    let path = config.dream_config_path();
-    if !path.exists() {
-        return validate_dream_config(&default_dream_config());
-    }
-
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| DreamConfigError::new(format!("dream.conf could not be read: {error}")))?;
-    let payload = text
-        .parse::<Table>()
-        .map_err(|error| DreamConfigError::new(format!("dream.conf is not valid TOML: {error}")))?;
-    let (payload, migrated) = migrate_workflow_payload(payload);
-    let dream_config = validate_dream_config(&dream_config_from_payload(&payload)?)?;
-    if migrated {
-        save_dream_config(config, &dream_config)?;
-    }
-    Ok(dream_config)
+    resolve_dream_config_readonly(config)
 }
 
-/// Parse and validate dream.conf without touching any file: unlike
-/// [`load_dream_config`] this never persists a legacy-payload migration, so
-/// read-only surfaces (doctor) resolve through here.
+/// Parse and validate dream.conf without touching any file. A pre-seven-pass
+/// workflow layout is rejected as `is_migration_required` rather than
+/// normalized in place; the canonical rewrite is the upgrade protocol's job.
 pub fn resolve_dream_config_readonly(
     config: &HieronymusConfig,
 ) -> Result<DreamConfig, DreamConfigError> {
@@ -182,7 +187,15 @@ pub fn resolve_dream_config_readonly(
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|error| DreamConfigError::new(format!("dream.conf could not be read: {error}")))?;
-    dream_config_from_text(&text)
+    let payload = text
+        .parse::<Table>()
+        .map_err(|error| DreamConfigError::new(format!("dream.conf is not valid TOML: {error}")))?;
+    if payload_has_legacy_workflows(&payload) {
+        return Err(DreamConfigError::migration_required(
+            "dream.conf uses pre-seven-pass workflow names; run `hiero migrate` to convert it",
+        ));
+    }
+    validate_dream_config(&dream_config_from_payload(&payload)?)
 }
 
 /// Parse and validate dream text without touching any file: the upgrade

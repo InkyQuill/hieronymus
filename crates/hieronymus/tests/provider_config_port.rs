@@ -33,13 +33,14 @@ fn load_provider_catalog_defaults_when_missing() {
 }
 
 #[test]
-fn load_provider_catalog_migrates_legacy_dream_providers_on_disk() {
+fn load_provider_catalog_rejects_legacy_dream_providers_without_migrating() {
+    // ADR 0009/0010: a `dream.conf` `[providers]` block is
+    // `config_migration_required`, never a silent rewrite of two files on
+    // read. Only the staged `hiero migrate` protocol converts it.
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     fs::create_dir_all(config.config_root()).unwrap();
-    fs::write(
-        config.dream_config_path(),
-        r#"
+    let dream_raw = r#"
 [providers.openai]
 name = "DeepSeek"
 type = "openai"
@@ -51,31 +52,22 @@ timeout_seconds = 12
 provider = "openai"
 model = "deepseek-v4-flash"
 enabled = true
-"#,
-    )
-    .unwrap();
+"#;
+    fs::write(config.dream_config_path(), dream_raw).unwrap();
 
-    let catalog = load_provider_catalog(&config).unwrap();
+    let error = load_provider_catalog(&config).unwrap_err();
 
+    assert!(error.is_migration_required(), "{error}");
+    assert!(error.to_string().contains("hiero migrate"), "{error}");
     assert_eq!(
-        catalog.providers["openai"],
-        ProviderProfile::new(
-            "DeepSeek",
-            "openai",
-            "https://api.deepseek.com",
-            "raw-secret",
-            12.0,
-        )
+        fs::read_to_string(config.dream_config_path()).unwrap(),
+        dream_raw
     );
-    let provider_raw = fs::read_to_string(config.provider_config_path()).unwrap();
-    assert!(provider_raw.contains("raw-secret"));
-    let dream_raw = fs::read_to_string(config.dream_config_path()).unwrap();
-    assert!(!dream_raw.contains("[providers.openai]"));
-    assert!(dream_raw.contains("[workflows.knowledge_crystals]"));
+    assert!(!config.provider_config_path().exists());
 }
 
 #[test]
-fn load_provider_catalog_rejects_legacy_dream_provider_collision_on_disk() {
+fn load_provider_catalog_rejects_legacy_dream_providers_before_collision_check() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     save_provider_catalog(
@@ -96,6 +88,7 @@ fn load_provider_catalog_rejects_legacy_dream_provider_collision_on_disk() {
         },
     )
     .unwrap();
+    let provider_before = fs::read_to_string(config.provider_config_path()).unwrap();
     fs::write(
         config.dream_config_path(),
         r#"
@@ -109,12 +102,9 @@ api_key = "legacy-secret"
 
     let error = load_provider_catalog(&config).unwrap_err();
 
-    assert!(
-        error
-            .to_string()
-            .contains("would overwrite provider profile")
-    );
+    assert!(error.is_migration_required(), "{error}");
     let provider_raw = fs::read_to_string(config.provider_config_path()).unwrap();
+    assert_eq!(provider_raw, provider_before);
     assert!(!provider_raw.contains("legacy-secret"));
 }
 
@@ -252,19 +242,22 @@ fn provider_catalog_rejects_unknown_provider_type() {
 }
 
 #[test]
-fn load_provider_catalog_canonicalizes_legacy_gemini_type() {
+fn load_provider_catalog_canonicalizes_gemini_alias_without_rewriting() {
+    // The deprecated `gemini` spelling is an accepted alias: it resolves to
+    // `google` in memory, and the file on disk is left byte-identical
+    // (ADR 0010: no mutation on read).
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
-    write_provider_config(
-        &config,
-        "[gemini]\ntype = \"gemini\"\nurl = \"https://generativelanguage.googleapis.com\"\n",
-    );
+    let raw = "[gemini]\ntype = \"gemini\"\nurl = \"https://generativelanguage.googleapis.com\"\n";
+    write_provider_config(&config, raw);
 
     let catalog = load_provider_catalog(&config).unwrap();
 
     assert_eq!(catalog.providers["gemini"].provider_type(), "google");
-    let raw = fs::read_to_string(config.provider_config_path()).unwrap();
-    assert!(raw.contains("type = \"google\""), "{raw}");
+    assert_eq!(
+        fs::read_to_string(config.provider_config_path()).unwrap(),
+        raw
+    );
 }
 
 #[test]
