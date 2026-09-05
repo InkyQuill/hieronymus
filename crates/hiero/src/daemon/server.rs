@@ -15,6 +15,7 @@
 
 use serde_json::{Value, json};
 
+use super::BEARER_ACTOR;
 use super::DaemonRuntime;
 use super::assets;
 use super::http::{Request, Response, header};
@@ -195,7 +196,12 @@ fn handle_mcp(request: &Request, runtime: &DaemonRuntime) -> Response {
         }
         None => return Response::json(400, &protocol::invalid_params(id)),
     }
-    let response = protocol::process_request(&runtime.registry, &body);
+    let response = protocol::process_request_with_application(
+        &runtime.registry,
+        &runtime.application,
+        BEARER_ACTOR,
+        &body,
+    );
     let is_error = response.get("error").is_some();
     let status = if is_error { 400 } else { 200 };
     let wants_sse = header(&request.headers, "accept")

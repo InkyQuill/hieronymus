@@ -26,12 +26,18 @@ use hieronymus::data_root::{HieronymusConfig, load_config};
 use hieronymus::db::{classify_database, open_migrated};
 use hieronymus::secret::Secret;
 
+use crate::application::Application;
+
 pub use assets::Assets;
 pub use discovery::DiscoveryRecord;
 pub use registry::{McpRegistry, PROTOCOL_REVISION};
 
 use rest::providers::{DaemonProviderClient, ProviderClientSeam};
 use sessions::SessionStore;
+
+/// The authenticated actor reported to the application for MCP calls: the
+/// per-installation bearer token holder (no per-actor identities exist yet).
+pub(crate) const BEARER_ACTOR: &str = "local-bearer";
 
 /// The daemon crate version, served by `GET /status`.
 pub(crate) fn daemon_version() -> &'static str {
@@ -89,6 +95,8 @@ pub enum DaemonError {
     Journal(#[from] hieronymus::migrate::MigrateError),
     #[error("daemon cannot open the database: {0}")]
     Database(#[from] hieronymus::db::OpenMigratedError),
+    #[error("daemon cannot initialize the application: {0}")]
+    Application(#[from] crate::application::AppError),
     #[error("daemon cannot bind loopback endpoint {address}: {source}")]
     Bind {
         address: SocketAddr,
@@ -130,6 +138,8 @@ pub(crate) struct DaemonRuntime {
     /// The record this daemon published at startup; kept in memory so
     /// diagnostics never depend on the file still existing.
     pub record: DiscoveryRecord,
+    /// The application dispatcher backing the ported MCP tools (plan M1).
+    pub application: Application,
     /// The daemon holds the database open for its whole lifetime: it owns the
     /// data root (ADR 0009). Nobody reads it on the hot path yet.
     #[allow(dead_code)]
@@ -179,6 +189,7 @@ impl Daemon {
         let connection = open_migrated(&database_path)?;
 
         let registry = McpRegistry::embedded();
+        let application = Application::open(&config)?;
 
         let address = SocketAddr::new(IpAddr::from([127, 0, 0, 1]), options.port);
         let listener =
@@ -215,6 +226,7 @@ impl Daemon {
             assets: options.assets.clone(),
             provider_client: Box::new(DaemonProviderClient::with_default_transport()),
             record,
+            application,
             database: Mutex::new(connection),
         });
         let accept_thread = spawn_accept_thread(listener, Arc::clone(&runtime));

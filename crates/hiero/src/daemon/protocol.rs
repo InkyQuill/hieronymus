@@ -6,8 +6,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::registry::McpRegistry;
+use crate::application::Application;
+
 pub use super::registry::PROTOCOL_REVISION;
+use super::registry::{CallError, McpRegistry};
 
 pub(crate) enum ValidatedRequest<'a> {
     List,
@@ -215,9 +217,33 @@ pub(crate) fn mcp_method_label_safe(value: &str) -> bool {
     )
 }
 
-/// Serve one stateless request from the registry: `tools/list` or
-/// `tools/call`. Used by both transports (stdio frames and HTTP bodies).
+/// Serve one stateless request from the registry skeleton: `tools/list` and
+/// the registry-backed `tools/call` contract without a live application.
+/// This is the replay surface for the frozen stdio wire contract; the daemon's
+/// HTTP route serves ported tools through
+/// [`process_request_with_application`].
 pub fn process_request(registry: &McpRegistry, request: &Value) -> Value {
+    serve_request(registry, None, "", request)
+}
+
+/// Serve one stateless request with the live application: ported `tools/call`
+/// names run real domain work and are wrapped centrally by the registry.
+/// `actor` is the authenticated credential holder reported to the domain.
+pub fn process_request_with_application(
+    registry: &McpRegistry,
+    application: &Application,
+    actor: &str,
+    request: &Value,
+) -> Value {
+    serve_request(registry, Some(application), actor, request)
+}
+
+fn serve_request(
+    registry: &McpRegistry,
+    application: Option<&Application>,
+    actor: &str,
+    request: &Value,
+) -> Value {
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     match validate_request(request, false) {
         Ok(ValidatedRequest::List) => json!({
@@ -230,10 +256,21 @@ pub fn process_request(registry: &McpRegistry, request: &Value) -> Value {
                 "ttlMs": 0
             }
         }),
-        Ok(ValidatedRequest::Call { name, arguments }) => match registry.call(name, arguments) {
-            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-            Err(error) => error_response(id, -32603, &error.to_string(), None),
-        },
+        Ok(ValidatedRequest::Call { name, arguments }) => {
+            let outcome = match application {
+                Some(application) => registry.call(application, name, arguments, actor),
+                None => registry.call_skeleton(name),
+            };
+            match outcome {
+                Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+                // Malformed arguments are invalid params; everything else is
+                // an internal error surfaced with its diagnostic.
+                Err(CallError::InvalidParams(message)) => {
+                    error_response(id, -32602, &message, None)
+                }
+                Err(error) => error_response(id, -32603, &error.to_string(), None),
+            }
+        }
         Err(()) => invalid_params(id),
     }
 }

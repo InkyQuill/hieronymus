@@ -5,6 +5,7 @@
 
 pub mod agent_hook;
 pub mod app;
+pub mod application;
 pub mod client;
 pub mod daemon;
 pub mod doctor;
