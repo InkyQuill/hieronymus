@@ -9,7 +9,9 @@ use crate::dreaming::source_credibility_confidence;
 use crate::feedback::RECALLED_AGAIN_DELTAS;
 use crate::memory_models::{CrystalRecord, ShortTermMemoryRecord, TranslationContext};
 use crate::rag::RagStore;
-use crate::rag_models::RagChunkRecord;
+use crate::rag_models::{RagChunkRecord, RagSearchHit};
+use crate::semantic_recall::{SEMANTIC_MATCH_REASON, SemanticLane, conflicting_rule_ids, rrf_fuse};
+use crate::terminology::{ContractTerm, Termbase, TermbaseError};
 use crate::workspace::WorkspaceStore;
 
 const SHORT_TERM_BASE_SCORE: f64 = 0.30;
@@ -72,12 +74,16 @@ pub enum RecallError {
     Concept(#[from] crate::concepts::ConceptError),
     #[error(transparent)]
     Rag(#[from] crate::rag::RagError),
+    #[error(transparent)]
+    Terminology(#[from] TermbaseError),
 }
 
 /// One ranked recall hit (ADR 0011: flat graded list; the deterministic
 /// contract is returned separately and never mixed into this ordering).
 /// Long-term hits expose the activation id written for that hit, so callers
-/// can address feedback (ADR 0011 §Recall Feedback).
+/// can address feedback (ADR 0011 §Recall Feedback). Advisory RAG hits carry
+/// `conflicts_with_rule_ids`: the active term-contract rules whose forbidden
+/// variants occur in the chunk text — markers only, never contract authority.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecallHit {
     LongTerm {
@@ -94,15 +100,37 @@ pub enum RecallHit {
         chunk: RagChunkRecord,
         score: f64,
         reason: String,
+        conflicts_with_rule_ids: Vec<i64>,
     },
 }
 
+/// Structured, machine-readable warning riding on a recall response (additive
+/// response metadata: consumers that ignore it see unchanged hit behavior).
+/// `kind` is one of the stable `WARNING_*` constants below; `reason` is a
+/// human-readable explanation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecallWarning {
+    pub kind: String,
+    pub reason: String,
+}
+
+/// The semantic lane could not run; the response carries FTS results only.
+pub const WARNING_SEMANTIC_UNAVAILABLE: &str = "semantic_lane_unavailable";
+/// Corrupt semantic hits were excluded and a rebuild was scheduled (or one is
+/// already in progress).
+pub const WARNING_REPAIR_SCHEDULED: &str = "semantic_repair_scheduled";
+/// Corrupt semantic hits were excluded but scheduling the rebuild failed.
+pub const WARNING_REPAIR_FAILED: &str = "semantic_repair_failed";
+
 /// One recall invocation: its durable `recall_id` plus the ranked hits whose
-/// long-term activation ids feed the feedback contract.
+/// long-term activation ids feed the feedback contract. `warnings` carries the
+/// structured degraded-mode/repair notices; an empty list means every lane ran
+/// clean.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecallResponse {
     pub recall_id: String,
     pub hits: Vec<RecallHit>,
+    pub warnings: Vec<RecallWarning>,
 }
 
 impl RecallHit {
@@ -162,10 +190,13 @@ impl SortKey {
 
 /// Recall service: bounded multi-lane retrieval combining the long-term FTS
 /// lane, the session short-term lane, and the RAG lane behind the Python
-/// `_merge_ranked_items` semantics (an absent semantic lane is the supported
-/// degraded mode).
+/// `_merge_ranked_items` semantics. An unarmed semantic lane is the supported
+/// degraded mode (no warning: the lane is simply absent); an armed lane that
+/// cannot run (no active generation, identity mismatch, index loss) degrades
+/// with a structured warning and FTS-only results.
 pub struct RecallService {
     config: HieronymusConfig,
+    semantic_lane: Option<SemanticLane>,
 }
 
 impl RecallService {
@@ -173,7 +204,16 @@ impl RecallService {
         open_migrated(Path::new(&config.database_path()))?;
         Ok(Self {
             config: config.clone(),
+            semantic_lane: None,
         })
+    }
+
+    /// Arms the query-time semantic lane (design §Search And Fusion): the
+    /// provided embedding provider must match the active generation's model
+    /// identity or the lane degrades on every recall.
+    pub fn with_semantic_lane(mut self, lane: SemanticLane) -> Self {
+        self.semantic_lane = Some(lane);
+        self
     }
 
     pub fn recall(
@@ -319,27 +359,77 @@ impl RecallService {
         memory.extend(short_term_hits);
         memory.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
 
-        // RAG lane: FTS search over the context's series with typed metadata
-        // boosts from the context's language tags, story scopes, and tags.
+        // Deterministic term contract (ADR 0011): computed from the same
+        // query/source context BEFORE any lane fusion. Advisory chunks that
+        // contradict an active rule's canonical rendering are marked with
+        // `conflicts_with_rule_ids`; the contract itself is never removed,
+        // ranked, or satisfied by retrieval — validation stays a separate,
+        // post-retrieval step over this computation.
+        let contract = Termbase::open(&self.config, context)?.contract(query)?;
+
+        // RAG lanes: the FTS chunk lane over the context's series with typed
+        // metadata boosts, and — when armed — the semantic chunk lane, fused
+        // by reciprocal rank over ranks only.
         let rag_store = RagStore::open(&self.config)?;
         let rag_story_scopes = merged_context_values(&context.story_scopes, &context.tags);
         let rag_semantic_tags = merged_context_values(&context.semantic_tags, &context.tags);
-        let rag_hits: Vec<RecallHit> = rag_store
-            .search(
-                &context.series_slug,
-                query,
-                limit,
-                &context.language_tags,
-                &rag_story_scopes,
-                &rag_semantic_tags,
-            )?
-            .into_iter()
-            .map(|hit| RecallHit::Rag {
-                chunk: hit.chunk,
-                score: hit.score,
-                reason: hit.reason,
-            })
-            .collect();
+        let fts_hits: Vec<RagSearchHit> = rag_store.search(
+            &context.series_slug,
+            query,
+            limit,
+            &context.language_tags,
+            &rag_story_scopes,
+            &rag_semantic_tags,
+        )?;
+
+        let (rag_hits, lane_warnings) = match &self.semantic_lane {
+            None => (advisory_hits(fts_hits, &contract), Vec::new()),
+            Some(lane) => {
+                let run = lane.run(&self.config, context, query, limit);
+                if run.degraded {
+                    // Missing semantic state: the FTS results ride along
+                    // untouched, exactly as in the unarmed service, with the
+                    // structured degraded-mode warning on the response.
+                    (advisory_hits(fts_hits, &contract), run.warnings)
+                } else {
+                    let fts_ranked: Vec<i64> = fts_hits.iter().map(|hit| hit.chunk.id).collect();
+                    let semantic_ranked: Vec<i64> =
+                        run.records.iter().map(|record| record.id).collect();
+                    // The FTS hit is the preferred carrier (it holds the
+                    // boost context); semantic-only chunks carry the semantic
+                    // reason.
+                    let mut carriers: std::collections::HashMap<i64, RagSearchHit> = fts_hits
+                        .into_iter()
+                        .map(|hit| (hit.chunk.id, hit))
+                        .collect();
+                    for record in run.records {
+                        carriers.entry(record.id).or_insert(RagSearchHit {
+                            chunk: record,
+                            score: 0.0,
+                            reason: SEMANTIC_MATCH_REASON.to_string(),
+                        });
+                    }
+                    let fused = rrf_fuse(&fts_ranked, &semantic_ranked)
+                        .into_iter()
+                        .map(|(chunk_id, score)| {
+                            let hit = carriers
+                                .remove(&chunk_id)
+                                .expect("fused ids always have a lane carrier");
+                            RecallHit::Rag {
+                                conflicts_with_rule_ids: conflicting_rule_ids(
+                                    &hit.chunk.text,
+                                    &contract,
+                                ),
+                                chunk: hit.chunk,
+                                score,
+                                reason: hit.reason,
+                            }
+                        })
+                        .collect();
+                    (fused, run.warnings)
+                }
+            }
+        };
 
         let mut selected = merge_ranked_items(memory, rag_hits, limit);
 
@@ -348,8 +438,22 @@ impl RecallService {
         Ok(RecallResponse {
             recall_id,
             hits: selected,
+            warnings: lane_warnings,
         })
     }
+}
+
+/// Fused-hit metadata without fusion: the FTS lane's hits with their
+/// conflict markers, in lane rank order with lane scores.
+fn advisory_hits(hits: Vec<RagSearchHit>, contract: &[ContractTerm]) -> Vec<RecallHit> {
+    hits.into_iter()
+        .map(|hit| RecallHit::Rag {
+            conflicts_with_rule_ids: conflicting_rule_ids(&hit.chunk.text, contract),
+            chunk: hit.chunk,
+            score: hit.score,
+            reason: hit.reason,
+        })
+        .collect()
 }
 
 fn merged_context_values(primary: &[String], extra: &[String]) -> Vec<String> {

@@ -15,7 +15,10 @@ use crate::rag_models::{RagChunkRecord, RagImportResult, RagSearchHit, RagSource
 use crate::short_memory::search_expression;
 
 pub const MAX_RAG_CHUNK_CHARS: usize = 1200;
-const MAX_RAG_SEARCH_LIMIT: usize = 50;
+/// Shared search-depth bound: both advisory lanes (FTS and semantic) cap
+/// their candidate lists identically so reciprocal rank fusion sees evenly
+/// deep lane rankings.
+pub(crate) const MAX_RAG_SEARCH_LIMIT: usize = 50;
 const LANGUAGE_TAG_BOOST: f64 = 0.05;
 const STORY_SCOPE_BOOST: f64 = 0.10;
 const SEMANTIC_TAG_BOOST: f64 = 0.10;
@@ -438,6 +441,115 @@ impl RagStore {
                     chunk,
                     score: row.score,
                     reason: reason_for_chunk_kind(&row.chunk_kind).to_string(),
+                }
+            })
+            .collect())
+    }
+
+    /// Full chunk records for the given ids (id ascending, unknown ids
+    /// skipped). The semantic recall lane hydrates its hits through this so
+    /// fused advisory hits always carry complete, authoritative records.
+    pub fn chunks_by_ids(&self, chunk_ids: &[i64]) -> Result<Vec<RagChunkRecord>, RagError> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let unique_ids: Vec<i64> = {
+            let mut ids = chunk_ids.to_vec();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
+        let placeholders = (1..=unique_ids.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "select
+               rag_chunks.id,
+               rag_chunks.source_id,
+               rag_chunks.series_slug,
+               rag_chunks.chunk_kind,
+               rag_chunks.text,
+               rag_chunks.display_text,
+               rag_chunks.location,
+               rag_chunks.metadata_json,
+               rag_sources.source_ref
+             from rag_chunks
+             join rag_sources
+               on rag_sources.id = rag_chunks.source_id
+              and rag_sources.series_slug = rag_chunks.series_slug
+             where rag_chunks.id in ({placeholders})
+             order by rag_chunks.id"
+        );
+        let parameters: Vec<rusqlite::types::Value> = unique_ids
+            .iter()
+            .map(|id| rusqlite::types::Value::from(*id))
+            .collect();
+        let mut statement = connection.prepare(&sql)?;
+        let rows: Vec<ChunkRow> = statement
+            .query_map(params_from_iter(parameters.iter()), |row| {
+                Ok(ChunkRow {
+                    id: row.get(0)?,
+                    source_id: row.get(1)?,
+                    series_slug: row.get(2)?,
+                    chunk_kind: row.get(3)?,
+                    text: row.get(4)?,
+                    display_text: row.get(5)?,
+                    location: row.get(6)?,
+                    metadata_json: row.get(7)?,
+                    source_ref: row.get(8)?,
+                    score: 0.0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let resolved_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let chunk_language_tags = text_values_for_chunks(
+            &connection,
+            "rag_chunk_language_tags",
+            "language_tag",
+            &resolved_ids,
+        )?;
+        let chunk_story_scopes = text_values_for_chunks(
+            &connection,
+            "rag_chunk_story_scopes",
+            "story_scope",
+            &resolved_ids,
+        )?;
+        let chunk_semantic_tags = text_values_for_chunks(
+            &connection,
+            "rag_chunk_semantic_tags",
+            "semantic_tag",
+            &resolved_ids,
+        )?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let metadata = match serde_json::from_str::<Value>(&row.metadata_json) {
+                    Ok(Value::Object(map)) => map,
+                    _ => Map::new(),
+                };
+                RagChunkRecord {
+                    id: row.id,
+                    source_id: row.source_id,
+                    series_slug: row.series_slug,
+                    source_ref: row.source_ref,
+                    chunk_kind: row.chunk_kind,
+                    text: row.text,
+                    display_text: row.display_text,
+                    location: row.location,
+                    metadata,
+                    language_tags: chunk_language_tags
+                        .get(&row.id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    story_scopes: chunk_story_scopes.get(&row.id).cloned().unwrap_or_default(),
+                    semantic_tags: chunk_semantic_tags
+                        .get(&row.id)
+                        .cloned()
+                        .unwrap_or_default(),
                 }
             })
             .collect())

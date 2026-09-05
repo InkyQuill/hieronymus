@@ -34,6 +34,7 @@ pub mod semantic_error;
 pub mod semantic_index;
 pub mod semantic_jobs;
 pub mod semantic_model;
+pub mod semantic_recall;
 pub mod semantic_store;
 pub mod short_memory;
 pub mod terminology;

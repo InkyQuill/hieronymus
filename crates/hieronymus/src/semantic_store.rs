@@ -790,7 +790,10 @@ fn manifest_from_row(row: &rusqlite::Row<'_>) -> Result<GenerationManifest, Sema
     })
 }
 
-fn sha256_text(text: &str) -> String {
+/// Vector-free fingerprint of one chunk text. The store writes it into every
+/// `IndexRow` at build time; the query-time semantic lane recomputes it to
+/// detect corrupt hits.
+pub(crate) fn sha256_text(text: &str) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(text.as_bytes());
     let mut hex = String::with_capacity(digest.len() * 2);
