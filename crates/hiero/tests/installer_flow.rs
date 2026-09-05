@@ -320,3 +320,27 @@ fn install_requires_a_release_source() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--release-dir"), "{stderr}");
 }
+
+#[test]
+fn install_refuses_a_non_https_release_url() {
+    let sandbox = Sandbox::new();
+    // A loopback port that refuses connections: the installer must reject the
+    // scheme before any fetch is attempted.
+    let output = Command::new(installer_path())
+        .args(["--release-url", "http://127.0.0.1:1/releases"])
+        .arg("--app-dir")
+        .arg(sandbox.app())
+        .arg("--data-root")
+        .arg(sandbox.data_root())
+        .env("HOME", sandbox.home())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("https://"),
+        "the refusal must name the https requirement: {stderr}"
+    );
+    // Nothing was fetched or installed.
+    assert!(!sandbox.app().exists());
+}

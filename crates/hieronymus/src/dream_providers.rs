@@ -345,6 +345,19 @@ impl DreamProvider for LlmDreamProvider {
         &self.model
     }
 
+    fn endpoint(&self) -> &str {
+        self.profile.url()
+    }
+
+    fn render_pass_prompt(
+        &self,
+        pass_name: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<String, DreamError> {
+        phase_prompt(pass_name, context, memories)
+    }
+
     fn run_pass(
         &self,
         pass_name: &str,
@@ -352,7 +365,9 @@ impl DreamProvider for LlmDreamProvider {
         memories: &[ShortTermMemoryRecord],
     ) -> Result<Value, DreamError> {
         let wire = self.wire()?;
-        let prompt = phase_prompt(pass_name, context, memories)?;
+        // Rendered through the trait method so the prompt audited by the
+        // dreaming core is exactly the prompt sent here.
+        let prompt = self.render_pass_prompt(pass_name, context, memories)?;
         let plan = pass_request(&self.profile, wire, &self.model, &prompt)?;
         let response = self
             .core

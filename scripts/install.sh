@@ -90,6 +90,15 @@ if [ -n "$RELEASE_DIR" ] && [ -n "$RELEASE_URL" ]; then
   echo "error: --release-dir and --release-url are mutually exclusive" >&2
   usage
 fi
+if [ -n "$RELEASE_URL" ]; then
+  case "$RELEASE_URL" in
+    https://*) : ;;
+    *)
+      echo "error: --release-url must be an https:// base URL; over http:// a network attacker could replace the binary together with the release.json sha256 that vouches for it. Use --release-dir for local or test installs." >&2
+      exit 1
+      ;;
+  esac
+fi
 
 # The managed layout needs absolute paths: the stable and PATH links carry
 # them, and the service unit execs them. Relative arguments are resolved

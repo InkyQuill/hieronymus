@@ -4,6 +4,16 @@ Status: build, ship, and install/update machinery complete. Authority:
 `docs/superpowers/specs/2026-08-31-rust-distribution-cutover-design.md` AS
 AMENDED (2026-09-03) and ADR 0006.
 
+> **MCP scope of the initial release (cutover gap, 2026-09-04):** the
+> distributed daemon advertises the frozen tool registry but implements only
+> `hieronymus_status` in its MCP `tools/call` dispatch — the ported memory,
+> recall, terminology, and dreaming domain tools are not wired into the
+> registry yet — and the semantic recall lane is not armed in the daemon
+> (`arm_recall_service` has no non-test caller). Over MCP the initial release
+> can therefore serve daemon status only; the domain-tool wiring and semantic
+> arming are a required follow-up slice before cutover
+> (see `docs/roadmap.md`, deferred gaps).
+
 ## Support matrix
 
 | Property | Value |

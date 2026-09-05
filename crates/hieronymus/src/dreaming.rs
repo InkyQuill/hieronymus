@@ -165,6 +165,27 @@ pub trait DreamProvider {
         false
     }
 
+    /// The provider endpoint recorded (redacted) on audit entries (spec
+    /// §Audit: redacted endpoint). Empty for providers without an HTTP
+    /// endpoint; the dreaming core strips query strings and credentials
+    /// before storing it.
+    fn endpoint(&self) -> &str {
+        ""
+    }
+
+    /// The rendered prompt for one pass. The dreaming core stores its
+    /// SHA-256 on the pass's request and response audit entries (spec
+    /// §Audit: prompt hash); an LLM provider must return exactly the text
+    /// it sends on the wire.
+    fn render_pass_prompt(
+        &self,
+        pass_name: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<String, DreamError> {
+        Ok(canonical_pass_projection(pass_name, context, memories))
+    }
+
     /// Run one evidence pass over the bounded selection. The returned JSON
     /// must be an object (the phase payload schema).
     fn run_pass(
@@ -173,6 +194,35 @@ pub trait DreamProvider {
         context: &TranslationContext,
         memories: &[ShortTermMemoryRecord],
     ) -> Result<Value, DreamError>;
+}
+
+/// The default prompt projection for providers without a custom prompt
+/// rendering (the deterministic provider, diagnostics): a stable JSON
+/// object binding the pass name and the exact evidence the pass consumes,
+/// so the audited prompt hash stays content-addressed without an LLM.
+fn canonical_pass_projection(
+    pass_name: &str,
+    context: &TranslationContext,
+    memories: &[ShortTermMemoryRecord],
+) -> String {
+    json!({
+        "pass": pass_name,
+        "context": {
+            "series_slug": context.series_slug,
+            "source_language": context.source_language,
+            "target_language": context.target_language,
+            "task_type": context.task_type,
+            "volume": context.volume,
+            "chapter": context.chapter,
+        },
+        "memories": memories.iter().map(|memory| json!({
+            "id": memory.id,
+            "text": memory.text,
+            "source_credibility": memory.source_credibility,
+            "rule_intent": memory.rule_intent,
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 /// The deterministic provider: tests, diagnostics, and workflows explicitly
@@ -508,6 +558,14 @@ impl<P: DreamProvider> DreamService<P> {
             let phase_run_id =
                 self.start_phase_run(run_id, pass_name, selected_memory_ids.len() as i64)?;
             phase_run_ids.push(phase_run_id);
+            // The prompt is rendered before the request audit so the stored
+            // hash binds the exact text the pass runs against (spec §Audit).
+            let prompt = self.provider.render_pass_prompt(
+                pass_name,
+                &selection_context,
+                &selected_memories,
+            )?;
+            let prompt_hash = prompt_sha256(&prompt);
             self.audit_provider_request(
                 run_id,
                 Some(phase_run_id),
@@ -516,6 +574,7 @@ impl<P: DreamProvider> DreamService<P> {
                 &selected_memory_ids,
                 pass_name,
                 &groups,
+                &prompt_hash,
             )?;
 
             let raw = self
@@ -540,6 +599,7 @@ impl<P: DreamProvider> DreamService<P> {
                     &selected_memory_ids,
                     pass_name,
                     &self.response_summary(&[]),
+                    &prompt_hash,
                 )?;
                 continue;
             }
@@ -570,6 +630,7 @@ impl<P: DreamProvider> DreamService<P> {
                 &selected_memory_ids,
                 pass_name,
                 &response_summary,
+                &prompt_hash,
             )?;
         }
 
@@ -969,7 +1030,9 @@ impl<P: DreamProvider> DreamService<P> {
     /// crystal's current text decides reinforce-in-place versus supersede.
     /// Either way the processed working copy is archived. Active rule crystals
     /// are never superseded or reinforced here (ADR 0011: dreaming cannot
-    /// transition deterministic authority).
+    /// transition deterministic authority), and a source that is no longer
+    /// active at all (combined away or superseded) only retires the copy —
+    /// dreaming never mutates or succeeds a non-active row.
     fn run_reconsolidation(
         &self,
         run_id: i64,
@@ -1035,6 +1098,23 @@ impl<P: DreamProvider> DreamService<P> {
                 summary.archived_memory_ids.push(memory_id);
                 continue;
             };
+            if original.status != "active" {
+                // The source was combined away or superseded after the
+                // working copy was created: like a missing source, it offers
+                // nothing live to consolidate against. Reinforcing would
+                // mutate a retired row and superseding would crystallize a
+                // fresh active successor of an absorbed crystal, resurfacing
+                // combined-away knowledge — so the copy just retires.
+                archive_working_copy(&transaction, memory_id)?;
+                summary.actions.push(json!({
+                    "memory_id": memory_id,
+                    "crystal_id": crystal_id,
+                    "source_status": original.status,
+                    "action": "source_inactive",
+                }));
+                summary.archived_memory_ids.push(memory_id);
+                continue;
+            }
             let ratio = token_diff_ratio(&original.text, &working_text);
             let (action, cost) = if is_active_rule(&original.crystal_type, &original.status) {
                 // ADR 0011: dreaming never transitions active deterministic
@@ -1573,6 +1653,15 @@ impl<P: DreamProvider> DreamService<P> {
             json!(self.provider.profile_name()),
         );
         payload.insert("model".into(), json!(self.provider.model()));
+        let endpoint = self.provider.endpoint();
+        payload.insert(
+            "endpoint".into(),
+            if endpoint.is_empty() {
+                Value::Null
+            } else {
+                json!(redact_endpoint(endpoint))
+            },
+        );
         payload
     }
 
@@ -1612,6 +1701,7 @@ impl<P: DreamProvider> DreamService<P> {
         selected_memory_ids: &[i64],
         pass_name: &str,
         groups: &[SelectionGroup],
+        prompt_sha256: &str,
     ) -> Result<(), DreamError> {
         let mut payload = self.audit_base(
             trigger_type,
@@ -1620,6 +1710,7 @@ impl<P: DreamProvider> DreamService<P> {
             pass_name,
         );
         payload.insert("request_summary".into(), self.request_summary(groups));
+        payload.insert("prompt_sha256".into(), json!(prompt_sha256));
         self.audit.append(
             run_id,
             phase_run_id,
@@ -1641,6 +1732,7 @@ impl<P: DreamProvider> DreamService<P> {
         selected_memory_ids: &[i64],
         pass_name: &str,
         response_summary: &Value,
+        prompt_sha256: &str,
     ) -> Result<(), DreamError> {
         let mut payload = self.audit_base(
             trigger_type,
@@ -1650,6 +1742,7 @@ impl<P: DreamProvider> DreamService<P> {
         );
         payload.insert("response_summary".into(), response_summary.clone());
         payload.insert("parse_warnings".into(), json!([]));
+        payload.insert("prompt_sha256".into(), json!(prompt_sha256));
         self.audit.append(
             run_id,
             phase_run_id,
@@ -2753,6 +2846,33 @@ fn insert_dream_crystal(
 
 fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+/// Lowercase hex SHA-256: the audited prompt hash (spec §Audit).
+fn prompt_sha256(prompt: &str) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(prompt.as_bytes()))
+}
+
+/// Redact an endpoint URL for the audit record (spec §Audit "redacted
+/// endpoint"): scheme, host, port, and path are kept; query strings and
+/// userinfo credentials are stripped.
+fn redact_endpoint(url: &str) -> String {
+    let without_suffix = url.split(['?', '#']).next().unwrap_or(url);
+    let Some(colon) = without_suffix.find("://") else {
+        return without_suffix.to_string();
+    };
+    let scheme = &without_suffix[..colon + 1];
+    let rest = &without_suffix[colon + 3..];
+    let (authority, path) = match rest.find('/') {
+        Some(slash) => (&rest[..slash], &rest[slash..]),
+        None => (rest, ""),
+    };
+    let host = match authority.rfind('@') {
+        Some(at) => &authority[at + 1..],
+        None => authority,
+    };
+    format!("{scheme}//{host}{path}")
 }
 
 // ----------------------------------------------------------------------

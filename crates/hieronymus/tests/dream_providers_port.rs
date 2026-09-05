@@ -373,6 +373,28 @@ fn assert_key_absent_from_records(config: &HieronymusConfig) {
     }
 }
 
+fn audit_payloads(config: &HieronymusConfig, run_id: i64, event_type: &str) -> Vec<Value> {
+    let connection = open_migrated(&config.database_path()).unwrap();
+    let mut statement = connection
+        .prepare(
+            "select payload_json from dream_audit_entries
+             where dream_run_id = ?1 and event_type = ?2 order by id",
+        )
+        .unwrap();
+    let rows = statement
+        .query_map(rusqlite::params![run_id, event_type], |row| {
+            let payload: String = row.get(0)?;
+            Ok(serde_json::from_str(&payload).unwrap())
+        })
+        .unwrap();
+    rows.map(|row| row.unwrap()).collect()
+}
+
+fn sha256_hex(input: &str) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(input.as_bytes()))
+}
+
 // ---------------------------------------------------------------------------
 // RED: workflow fail-closed gate at DreamService::open
 // ---------------------------------------------------------------------------
@@ -1023,6 +1045,67 @@ fn dream_service_runs_configured_llm_workflow_over_loopback() {
         sent_key,
         "the configured key authenticates the outbound call"
     );
+    assert_key_absent_from_records(&config);
+}
+
+#[test]
+fn audit_prompt_hash_and_endpoint_match_the_request_sent_over_the_wire() {
+    let server = LoopbackLlm::start(dream_pass_handler());
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    completed_session(&config, "book", &["The loopback memory is important."]);
+    save_catalog(
+        &config,
+        vec![("local-llm", openai_profile(&server.url("/v1")))],
+    );
+    with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
+
+    let provider = LlmDreamProvider::new(
+        "local-llm",
+        openai_profile(&server.url("/v1")),
+        "test-model",
+    )
+    .unwrap();
+    let service = DreamService::open(&config, provider).unwrap();
+    let run = service.run_cycle("manual", false).unwrap();
+    assert_eq!(run.status, "completed");
+
+    // The prompt that actually left the process, one request per pass, in
+    // pass order (each pass completes before the next starts).
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 7, "one wire request per pass");
+    let wire_hashes: Vec<String> = requests
+        .iter()
+        .map(|request| {
+            let body = request.json();
+            let content = body["messages"][0]["content"].as_str().unwrap();
+            sha256_hex(content)
+        })
+        .collect();
+    drop(requests);
+
+    let request_payloads = audit_payloads(&config, run.id, "provider_request");
+    let response_payloads = audit_payloads(&config, run.id, "provider_response");
+    assert_eq!(request_payloads.len(), 7);
+    assert_eq!(response_payloads.len(), 7);
+    for index in 0..7 {
+        let expected_hash = &wire_hashes[index];
+        assert_eq!(
+            request_payloads[index]["prompt_sha256"],
+            json!(expected_hash),
+            "request audit entry {index} must hash the prompt sent on the wire"
+        );
+        assert_eq!(
+            response_payloads[index]["prompt_sha256"],
+            json!(expected_hash),
+            "response audit entry {index} must hash the same prompt"
+        );
+        assert_eq!(
+            request_payloads[index]["endpoint"],
+            json!(server.url("/v1")),
+            "the audited endpoint is the redacted profile endpoint"
+        );
+    }
     assert_key_absent_from_records(&config);
 }
 

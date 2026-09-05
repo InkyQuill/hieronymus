@@ -142,6 +142,23 @@ fn last_phase_completed_payload(config: &HieronymusConfig, run_id: i64) -> Value
     serde_json::from_str(&payload).unwrap()
 }
 
+fn audit_payloads(config: &HieronymusConfig, run_id: i64, event_type: &str) -> Vec<Value> {
+    query(
+        config,
+        "select payload_json from dream_audit_entries
+         where dream_run_id = ?1 and event_type = ?2 order by id",
+        &[&run_id, &event_type],
+    )
+    .into_iter()
+    .map(|row| serde_json::from_str(row[0].as_str().unwrap()).unwrap())
+    .collect()
+}
+
+fn sha256_hex(input: &str) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(input.as_bytes()))
+}
+
 // ---------------------------------------------------------------------------
 // Test providers
 // ---------------------------------------------------------------------------
@@ -267,6 +284,58 @@ impl DreamProvider for ScriptedProvider {
             .get(pass_name)
             .cloned()
             .unwrap_or_else(|| json!({})))
+    }
+}
+
+/// Serves a fixed prompt and endpoint so the audit contract can be pinned
+/// exactly: the request and response audit entries must carry the SHA-256 of
+/// the rendered prompt and the endpoint with credentials and query stripped.
+struct PromptAuditProvider {
+    prompt: &'static str,
+    endpoint: &'static str,
+}
+
+impl DreamProvider for PromptAuditProvider {
+    fn name(&self) -> &str {
+        "prompt-audit"
+    }
+
+    fn endpoint(&self) -> &str {
+        self.endpoint
+    }
+
+    fn render_pass_prompt(
+        &self,
+        _pass_name: &str,
+        _context: &TranslationContext,
+        _memories: &[ShortTermMemoryRecord],
+    ) -> Result<String, DreamError> {
+        Ok(self.prompt.to_string())
+    }
+
+    fn run_pass(
+        &self,
+        pass_name: &str,
+        _context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<Value, DreamError> {
+        let ids: Vec<i64> = memories.iter().map(|memory| memory.id).collect();
+        if pass_name == "coverage_audit" {
+            return Ok(json!({"covered_memory_ids": ids}));
+        }
+        if pass_name == "knowledge_crystals" {
+            return Ok(json!({
+                "crystals": [{
+                    "crystal_type": "observation",
+                    "title": "Prompt audit",
+                    "text": "The audited memory is important.",
+                    "strength": 0.6,
+                    "confidence": 0.8,
+                    "source_memory_ids": ids,
+                }]
+            }));
+        }
+        Ok(json!({}))
     }
 }
 
@@ -812,6 +881,51 @@ fn evidence_dream_runs_all_passes_over_the_same_selection() {
         "completed persistence phase".to_string(),
     ));
     assert_eq!(summaries, expected_summaries);
+}
+
+#[test]
+fn audit_records_prompt_hash_and_redacted_endpoint_on_request_and_response() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    completed_session(&config, "book", &["The audited memory is important."]);
+
+    const RENDERED_PROMPT: &str = "rendered dream prompt for the audit hash";
+    let provider = PromptAuditProvider {
+        prompt: RENDERED_PROMPT,
+        endpoint: "https://editor:secret@api.example.com:8443/v1?api_key=topsecret#frag",
+    };
+    let service = DreamService::open(&config, provider).unwrap();
+    let run = service.run_cycle("manual", false).unwrap();
+
+    let expected_hash = sha256_hex(RENDERED_PROMPT);
+    for event_type in ["provider_request", "provider_response"] {
+        let payloads = audit_payloads(&config, run.id, event_type);
+        assert_eq!(payloads.len(), 7, "{event_type}: one entry per pass");
+        for payload in &payloads {
+            assert_eq!(
+                payload["prompt_sha256"],
+                json!(expected_hash),
+                "{event_type}: the hash must match the rendered prompt"
+            );
+            assert_eq!(
+                payload["endpoint"],
+                json!("https://api.example.com:8443/v1"),
+                "{event_type}: only scheme, host, port, and path survive"
+            );
+        }
+    }
+    // Raw endpoint credentials and query strings never reach any audit
+    // record of the run.
+    for row in query(
+        &config,
+        "select payload_json from dream_audit_entries where dream_run_id = ?1",
+        &[&run.id],
+    ) {
+        let payload = row[0].as_str().unwrap();
+        assert!(!payload.contains("editor:secret"), "{payload}");
+        assert!(!payload.contains("topsecret"), "{payload}");
+    }
 }
 
 #[test]

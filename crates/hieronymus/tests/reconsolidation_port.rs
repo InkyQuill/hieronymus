@@ -1090,6 +1090,89 @@ fn dream_protects_active_rule_crystals_from_supersession_and_combination() {
 }
 
 #[test]
+fn reconsolidation_never_acts_on_a_non_active_source_crystal() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session_id) = active_session(&root, "demo");
+    let crystal_context = context("demo");
+    let crystal_id = add_crystal(&config, &crystal_context, "The binding ritual needs chalk.");
+
+    recall(&config, session_id, "demo", "binding ritual chalk");
+    let working_copy = working_copy_id(&config, crystal_id);
+    // Diverge far beyond the default threshold (0.20): without the guard
+    // this working copy supersedes its source.
+    set_working_copy_text(
+        &config,
+        working_copy,
+        "Completely different content about quantum tea ceremony protocols.",
+    );
+    // The source crystal was combined away after the working copy was
+    // created (status set directly; the combination path produces the same
+    // row state).
+    hieronymus::db::open_migrated(&config.database_path())
+        .unwrap()
+        .execute(
+            "update crystals set status = 'superseded' where id = ?1",
+            rusqlite::params![crystal_id],
+        )
+        .unwrap();
+
+    let _run = dream(&config);
+
+    // No successor crystal is crystallized, the absorbed row is untouched,
+    // and the pending working copy is archived as unprocessable.
+    assert_eq!(
+        scalar(&config, "select count(*) from crystals"),
+        json!(1),
+        "a non-active source must never grow a fresh active successor"
+    );
+    let source = query(
+        &config,
+        "select status, strength, last_reinforced_cycle, updated_at is not null
+         from crystals where id = ?1",
+        &[&crystal_id],
+    )
+    .remove(0);
+    assert_eq!(source[0], json!("superseded"));
+    assert_eq!(
+        source[1],
+        json!(0.5),
+        "the absorbed row is never reinforced"
+    );
+    assert_eq!(source[2], Value::Null);
+    assert_eq!(
+        scalar_params(
+            &config,
+            "select archived_at is not null from short_term_memories where id = ?1",
+            &[&working_copy]
+        ),
+        json!(1),
+        "the pending copy retires instead of acting on an absorbed source"
+    );
+
+    // The reconsolidation audit records why the copy was retired.
+    let payloads = query(
+        &config,
+        "select payload_json from dream_audit_entries where event_type = 'phase_completed'",
+        &[],
+    );
+    let actions: Vec<Value> = payloads
+        .iter()
+        .flat_map(|row| {
+            let payload: Value = serde_json::from_str(row[0].as_str().unwrap()).unwrap();
+            payload["actions"].as_array().cloned().unwrap_or_default()
+        })
+        .collect();
+    assert!(
+        actions.iter().any(|action| {
+            action["action"] == json!("source_inactive")
+                && action["memory_id"] == json!(working_copy)
+                && action["crystal_id"] == json!(crystal_id)
+        }),
+        "the retirement must be audited with its reason, saw {actions:?}"
+    );
+}
+
+#[test]
 fn reconsolidation_respects_bounded_mutation_caps() {
     let root = tempfile::tempdir().unwrap();
     let (config, session_id) = active_session(&root, "demo");

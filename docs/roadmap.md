@@ -51,6 +51,11 @@ Deferred capability gaps to close before cutover:
   dreaming slice.
 - Dreaming provider fail-closed gate (workflow enabled/provider resolution)
   ports with the provider-client slice.
+- Daemon/MCP wiring: the ported domain tools are advertised in the frozen
+  registry but not wired into the daemon's MCP `tools/call` dispatch (only
+  `hieronymus_status` is implemented), and the semantic recall lane is not
+  armed in the daemon (`arm_recall_service` has no non-test caller). A
+  wiring slice for both is required before cutover.
 
 ## Python Alpha Baseline (closed, behavioral reference)
 
