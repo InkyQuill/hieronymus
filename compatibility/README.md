@@ -46,3 +46,20 @@ harness. That harness will replay the same fixtures independently against the
 Rust candidate and compare only contract-approved normalization boundaries.
 The Python reference records migration parity; it is neither a rollback path
 nor a commitment to support Python in production after cutover.
+
+## Versioned Rust expectations
+
+`compatibility/rust/` holds separate, versioned expectation files for
+ADR-backed Rust response deltas. They never replace or regenerate the frozen
+Python snapshots and fixtures: the Python boundary stays exactly as reviewed,
+and a Rust delta is a new file that names its ADR, states the delta, and pins
+the changed response shape with explicit expected subsets.
+
+Precedence follows each file's ADR. For `rust/recall-v2.json` (ADR 0011), the
+`hieronymus_recall` transport DTO is
+`{recall_id, deterministic_contract, results, warnings}`: the deterministic
+contract is computed from the query/source context before any lane fusion,
+returned separately from the ranked `results`, and serialized whole even when
+`limit` removed every advisory hit. The Python fixture's bare ranked list
+remains the frozen reference for the Python tool; Rust consumers read the
+versioned delta.

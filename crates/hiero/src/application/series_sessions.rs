@@ -13,23 +13,14 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use hieronymus::memory_models::TranslationContext;
 use hieronymus::registry::{Registry, Series};
 use hieronymus::workspace::WorkspaceStore;
 
 use super::AppError;
 use super::Application;
-
-/// Decode one tool's arguments against its frozen schema shape.
-fn decode<T: serde::de::DeserializeOwned>(arguments: &Value) -> Result<T, AppError> {
-    T::deserialize(arguments).map_err(|error| AppError::Invalid(error.to_string()))
-}
-
-/// Map any store rejection to a domain failure; the protocol layer decides
-/// the envelope.
-fn domain<E: std::fmt::Display>(error: E) -> AppError {
-    AppError::Domain(error.to_string())
-}
+use super::decode;
+use super::domain;
+use super::translation_context;
 
 /// The family dispatcher: `None` means the tool is not ours.
 pub(crate) fn dispatch(
@@ -139,27 +130,14 @@ fn session_start(application: &Application, arguments: &Value) -> Result<Value, 
     let args = decode::<SessionStart>(arguments)?;
     let registry = Registry::open(application.config()).map_err(domain)?;
     let series = registry.get_series(&args.series_slug).map_err(domain)?;
-    let source = args
-        .source_language
-        .unwrap_or_else(|| series.source_language.clone());
-    let target = args
-        .target_language
-        .unwrap_or_else(|| series.target_language.clone());
-    if source != series.source_language {
-        return Err(AppError::Domain(format!(
-            "source_language {source:?} does not match registry default {:?} for series {:?}",
-            series.source_language, series.slug
-        )));
-    }
-    if target != series.target_language {
-        return Err(AppError::Domain(format!(
-            "target_language {target:?} does not match registry default {:?} for series {:?}",
-            series.target_language, series.slug
-        )));
-    }
-    let context = TranslationContext::new(series.slug, source, target, args.task_type)
-        .volume(args.volume)
-        .chapter(args.chapter);
+    let context = translation_context(
+        &series,
+        args.source_language,
+        args.target_language,
+        &args.task_type,
+        &args.volume,
+        &args.chapter,
+    )?;
     let store = WorkspaceStore::open(application.config()).map_err(domain)?;
     let session = store.start_session(&context).map_err(domain)?;
     Ok(json!({ "session_id": session.id }))

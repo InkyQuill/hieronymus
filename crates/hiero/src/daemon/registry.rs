@@ -228,15 +228,17 @@ mod tests {
     fn unported_tools_report_not_ported() {
         let registry = McpRegistry::embedded();
         let (_root, application) = test_application();
+        // The memory family (including hieronymus_recall) is ported; the
+        // dream dispatch is still outstanding.
         let error = registry
             .call(
                 &application,
-                "hieronymus_recall",
+                "hieronymus_dream",
                 &serde_json::json!({}),
                 "local-user",
             )
             .unwrap_err();
-        assert!(error.to_string().contains("hieronymus_recall"));
+        assert!(error.to_string().contains("hieronymus_dream"));
     }
 
     #[test]
@@ -251,8 +253,8 @@ mod tests {
             result,
             protocol["target"]["tools_call"]["response"]["result"]
         );
-        let error = registry.call_skeleton("hieronymus_recall").unwrap_err();
-        assert!(error.to_string().contains("hieronymus_recall"));
+        let error = registry.call_skeleton("hieronymus_dream").unwrap_err();
+        assert!(error.to_string().contains("hieronymus_dream"));
     }
 
     #[test]

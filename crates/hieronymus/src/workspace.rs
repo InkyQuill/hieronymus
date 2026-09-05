@@ -173,6 +173,106 @@ impl WorkspaceStore {
         })
     }
 
+    /// The newest active session whose full context matches exactly (the
+    /// Python `_active_default_session`/`_ensure_default_session` lookup used
+    /// by the legacy memory wrappers). `None` when no such session exists.
+    pub fn active_default_session(
+        &self,
+        context: &TranslationContext,
+    ) -> Result<Option<TaskSessionRecord>, WorkspaceError> {
+        let connection = self.connection()?;
+        let session_id: Option<i64> = connection
+            .query_row(
+                "select id from task_sessions
+                 where series_slug = ?1
+                   and source_language = ?2
+                   and target_language = ?3
+                   and task_type = ?4
+                   and volume = ?5
+                   and chapter = ?6
+                   and status = 'active'
+                 order by id desc
+                 limit 1",
+                rusqlite::params![
+                    context.series_slug,
+                    context.source_language,
+                    context.target_language,
+                    context.task_type,
+                    context.volume,
+                    context.chapter,
+                ],
+                |row| row.get(0),
+            )
+            .map(Some)
+            .or_else(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })?;
+        match session_id {
+            Some(id) => Ok(Some(self.get_session(id)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Legacy fallback search (Python `MemoryStore._fallback_search`, the
+    /// short-term half): FTS over non-archived short-term memories whose
+    /// owning session matches the full context, bm25 order. Used when no
+    /// active default session exists to recall through.
+    pub fn search_short_term_memories_for_context(
+        &self,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
+        if limit < 1 {
+            return Err(WorkspaceError::LimitTooSmall);
+        }
+        let expression = search_expression(query);
+        if expression.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let ids: Vec<i64> = {
+            let mut statement = connection.prepare(
+                "select short_term_memories.id
+                 from short_term_memories_fts
+                 join short_term_memories
+                   on short_term_memories.id = short_term_memories_fts.rowid
+                 join task_sessions
+                   on task_sessions.id = short_term_memories.session_id
+                 where short_term_memories_fts match ?1
+                   and short_term_memories.archived_at is null
+                   and task_sessions.series_slug = ?2
+                   and task_sessions.source_language = ?3
+                   and task_sessions.target_language = ?4
+                   and task_sessions.task_type = ?5
+                   and task_sessions.volume = ?6
+                   and task_sessions.chapter = ?7
+                 order by bm25(short_term_memories_fts), short_term_memories.id
+                 limit ?8",
+            )?;
+            let rows = statement.query_map(
+                rusqlite::params![
+                    expression,
+                    context.series_slug,
+                    context.source_language,
+                    context.target_language,
+                    context.task_type,
+                    context.volume,
+                    context.chapter,
+                    limit as i64,
+                ],
+                |row| row.get(0),
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            records.push(hydrate_memory(&connection, id)?);
+        }
+        Ok(records)
+    }
+
     pub fn get_session(&self, session_id: i64) -> Result<TaskSessionRecord, WorkspaceError> {
         let connection = self.connection()?;
         let row = connection

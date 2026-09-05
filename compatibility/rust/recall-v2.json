@@ -1,0 +1,45 @@
+{
+  "expectation_set": "recall-v2",
+  "adr": "0011",
+  "rule": "Versioned Rust expectation, separate from the frozen Python fixtures. ADR 0011 amends the hieronymus_recall response: the transport DTO serializes {recall_id, deterministic_contract, results, warnings}. The Python response was a bare ranked list, so the frozen mcp.json fixture stays untouched; this file pins the Rust delta instead. `results` is the normative key for the flattened ranked hits (the library field stays `hits`); `deterministic_contract` is computed before lane fusion and serialized whole even when `limit` removed every advisory hit; `warnings` carries structured degraded-mode notices (an armed-but-unavailable semantic lane degrades explicitly; an unarmed lane is simply absent).",
+  "expectations": [
+    {
+      "tool": "hieronymus_recall",
+      "seed": "none",
+      "arguments": {
+        "session_id": 1,
+        "series_slug": "book",
+        "query": "absent",
+        "limit": 1
+      },
+      "expected": {
+        "recall_id_is_string": true,
+        "results": [],
+        "warnings": [],
+        "deterministic_contract": []
+      }
+    },
+    {
+      "tool": "hieronymus_recall",
+      "seed": "approved rule: source_text '猫', canonical_translation 'кот'",
+      "arguments": {
+        "session_id": 1,
+        "series_slug": "book",
+        "query": "猫",
+        "limit": 1
+      },
+      "expected": {
+        "recall_id_is_string": true,
+        "deterministic_contract": [
+          {
+            "source_text": "猫",
+            "canonical_translation": "кот",
+            "forbidden_variants": [],
+            "tags": [],
+            "notes": "猫 is translated as кот."
+          }
+        ]
+      }
+    }
+  ]
+}

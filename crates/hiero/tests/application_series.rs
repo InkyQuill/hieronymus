@@ -423,11 +423,11 @@ fn session_complete_marks_the_session_completed() {
 #[test]
 fn unclaimed_tools_report_not_implemented() {
     let (_root, app) = test_application();
-    let error = app
-        .call("hieronymus_recall", &json!({}), ACTOR)
-        .unwrap_err();
+    // `hieronymus_recall` and the memory family are claimed since M2; the
+    // dream dispatch (D5) is still outstanding.
+    let error = app.call("hieronymus_dream", &json!({}), ACTOR).unwrap_err();
     match error {
-        AppError::NotImplemented(name) => assert!(name.contains("hieronymus_recall")),
+        AppError::NotImplemented(name) => assert!(name.contains("hieronymus_dream")),
         other => panic!("expected NotImplemented, got: {other}"),
     }
 }

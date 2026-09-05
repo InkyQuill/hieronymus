@@ -36,8 +36,10 @@ pub enum TermbaseError {
     Open(#[from] crate::db::OpenMigratedError),
 }
 
-/// One enforceable rule in the translation contract.
-#[derive(Debug, Clone, PartialEq)]
+/// One enforceable rule in the translation contract. The serde projection is
+/// the transport DTO for the recall response's `deterministic_contract`
+/// section (ADR 0011); the field names are the frozen snake_case payload.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ContractTerm {
     pub id: i64,
     pub category: String,

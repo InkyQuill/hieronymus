@@ -513,6 +513,60 @@ impl CrystalStore {
             .collect())
     }
 
+    /// Legacy fallback search (Python `MemoryStore._fallback_search`, the
+    /// long-term half): plain bm25 FTS over `active` crystals with
+    /// series/global scope and language filters — no graded boosts, no
+    /// candidate-status crystals.
+    pub fn search_active(
+        &self,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CrystalRecord>, CrystalError> {
+        if limit == 0 {
+            return Err(CrystalError::LimitTooSmall);
+        }
+        let expression = search_expression(query);
+        if expression.is_empty() {
+            return Ok(Vec::new());
+        }
+        let bounded_limit = limit.min(MAX_SEARCH_LIMIT) as i64;
+        let connection = self.connection()?;
+        let ids: Vec<i64> = {
+            let mut statement = connection.prepare(
+                "select crystals.id
+                 from crystals_fts
+                 join crystals on crystals.id = crystals_fts.rowid
+                 where crystals_fts match ?1
+                   and crystals.status = 'active'
+                   and (
+                     (crystals.scope_type = 'series' and crystals.scope_key = ?2)
+                     or crystals.scope_type = 'global'
+                   )
+                   and (crystals.source_language = ?3 or crystals.source_language = '')
+                   and (crystals.target_language = ?4 or crystals.target_language = '')
+                 order by bm25(crystals_fts), crystals.id
+                 limit ?5",
+            )?;
+            let rows = statement.query_map(
+                rusqlite::params![
+                    expression,
+                    context.scope_key(),
+                    context.source_language,
+                    context.target_language,
+                    bounded_limit
+                ],
+                |row| row.get(0),
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            records.push(hydrate_crystal(&connection, id)?);
+        }
+        Ok(records)
+    }
+
     /// Bounded listing of active/candidate crystals for metadata-only recall
     /// candidates, newest first.
     pub fn list_all_candidates(&self, limit: usize) -> Result<Vec<CrystalRecord>, CrystalError> {

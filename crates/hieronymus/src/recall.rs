@@ -104,11 +104,12 @@ pub enum RecallHit {
     },
 }
 
-/// Structured, machine-readable warning riding on a recall response (additive
-/// response metadata: consumers that ignore it see unchanged hit behavior).
-/// `kind` is one of the stable `WARNING_*` constants below; `reason` is a
-/// human-readable explanation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One structured, machine-readable warning riding on a recall response
+/// (additive response metadata: consumers that ignore it see unchanged hit
+/// behavior). `kind` is one of the stable `WARNING_*` constants below;
+/// `reason` is a human-readable explanation. The serde projection is the
+/// transport DTO for the recall response's `warnings` list.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecallWarning {
     pub kind: String,
     pub reason: String,
@@ -122,13 +123,16 @@ pub const WARNING_REPAIR_SCHEDULED: &str = "semantic_repair_scheduled";
 /// Corrupt semantic hits were excluded but scheduling the rebuild failed.
 pub const WARNING_REPAIR_FAILED: &str = "semantic_repair_failed";
 
-/// One recall invocation: its durable `recall_id` plus the ranked hits whose
-/// long-term activation ids feed the feedback contract. `warnings` carries the
-/// structured degraded-mode/repair notices; an empty list means every lane ran
-/// clean.
+/// One recall invocation: its durable `recall_id`, the deterministic term
+/// contract computed from the query/source context BEFORE any lane fusion
+/// (ADR 0011: returned separately, never recomputed from selected hits and
+/// never mixed into the ordering), the ranked hits whose long-term activation
+/// ids feed the feedback contract, and the structured degraded-mode/repair
+/// `warnings` (an empty list means every lane ran clean).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecallResponse {
     pub recall_id: String,
+    pub deterministic_contract: Vec<ContractTerm>,
     pub hits: Vec<RecallHit>,
     pub warnings: Vec<RecallWarning>,
 }
@@ -437,6 +441,7 @@ impl RecallService {
         record_recall_ledger(&self.config, session_id, query, &recall_id, &mut selected)?;
         Ok(RecallResponse {
             recall_id,
+            deterministic_contract: contract,
             hits: selected,
             warnings: lane_warnings,
         })
