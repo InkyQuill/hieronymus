@@ -130,6 +130,27 @@ pub fn remove_discovery(config: &HieronymusConfig, instance_id: &str) -> bool {
     }
 }
 
+/// Whether anything currently accepts TCP connections at the discovery
+/// record's address: a read-only liveness probe used by the migrate/update
+/// preflights. A missing or unreadable record means "not active".
+pub fn daemon_is_active(config: &HieronymusConfig) -> bool {
+    use std::net::ToSocketAddrs;
+    let Ok(record) = read_discovery(config) else {
+        return false;
+    };
+    let Ok(addresses) = (record.host.as_str(), record.port).to_socket_addrs() else {
+        return false;
+    };
+    for address in addresses {
+        if std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(250))
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

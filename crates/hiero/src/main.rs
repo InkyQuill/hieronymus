@@ -14,17 +14,21 @@ use hiero::agent_hook;
 use hiero::daemon::{DaemonOptions, run_foreground};
 use hiero::doctor;
 use hiero::stdio::{StdioOptions, run_stdio_adapter};
+use hiero::{service, uninstall, update};
 use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|classify|doctor|semantic|agent-hook|migrate|recover|daemon|mcp|recall-feedback> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>]";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable> [--json] [--data-root <path>] (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end> [--cwd <dir>] [--json] [--data-root <path>]";
+const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
+const UPDATE_USAGE: &str = "usage: hiero update --release-dir <dir> [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
+const UNINSTALL_USAGE: &str = "usage: hiero uninstall [--yes] [--delete-data] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 
 /// The command this argv[0] presets, if the binary was invoked under one of
 /// the compatibility link names.
@@ -66,6 +70,13 @@ struct ParsedArguments {
     sha256: Option<String>,
     bytes: Option<String>,
     runtime: Option<String>,
+    unit_dir: Option<String>,
+    binary: Option<String>,
+    no_activate: bool,
+    release_dir: Option<String>,
+    app_dir: Option<String>,
+    yes: bool,
+    delete_data: bool,
 }
 
 fn parse_arguments(
@@ -89,6 +100,13 @@ fn parse_arguments(
         sha256: None,
         bytes: None,
         runtime: None,
+        unit_dir: None,
+        binary: None,
+        no_activate: false,
+        release_dir: None,
+        app_dir: None,
+        yes: false,
+        delete_data: false,
     };
     let mut positionals: Vec<String> = Vec::new();
     let mut index = 0;
@@ -198,6 +216,45 @@ fn parse_arguments(
                         .clone(),
                 );
             }
+            "--unit-dir" => {
+                index += 1;
+                parsed.unit_dir = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--unit-dir requires a directory argument".to_string())?
+                        .clone(),
+                );
+            }
+            "--binary" => {
+                index += 1;
+                parsed.binary = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--binary requires a path argument".to_string())?
+                        .clone(),
+                );
+            }
+            "--release-dir" => {
+                index += 1;
+                parsed.release_dir = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--release-dir requires a directory argument".to_string())?
+                        .clone(),
+                );
+            }
+            "--app-dir" => {
+                index += 1;
+                parsed.app_dir = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--app-dir requires a directory argument".to_string())?
+                        .clone(),
+                );
+            }
+            "--no-activate" => parsed.no_activate = true,
+            "--yes" => parsed.yes = true,
+            "--delete-data" => parsed.delete_data = true,
             value if value.starts_with('-') => {
                 return Err(format!("unknown option: {value}"));
             }
@@ -233,7 +290,14 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
     match parsed.command.as_deref() {
         Some("version") => {
             if parsed.json {
-                println!("{{\"version\": \"{VERSION}\"}}");
+                // The update flow probes exactly this payload to learn what
+                // a candidate binary supports before touching anything.
+                println!(
+                    "{{\"version\": \"{VERSION}\", \"protocol_revision\": \"{}\", \
+                     \"supported_schema_version\": {}}}",
+                    hiero::daemon::registry::PROTOCOL_REVISION,
+                    hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION,
+                );
             } else {
                 println!("hiero v{VERSION}\u{03b1}");
             }
@@ -299,6 +363,9 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some("recall-feedback") => run_recall_feedback(&parsed, data_root),
         Some("migrate") => run_migrate(&parsed, data_root),
         Some("recover") => run_recover(&parsed, data_root),
+        Some("service") => run_service(&parsed, data_root),
+        Some("update") => run_update_command(&parsed),
+        Some("uninstall") => run_uninstall_command(&parsed),
         Some(other) => Err(format!("unknown command: {other}; {USAGE}")),
         None => Err(format!("missing command; {USAGE}")),
     }
@@ -326,23 +393,24 @@ fn reject_feedback_flags(parsed: &ParsedArguments, command: &str) -> Result<(), 
 
 /// Whether a live local daemon is reachable per its discovery record. Read
 /// only: preflight reports the fact; locking the daemon is the write-side
-/// upgrade protocol's job.
+/// upgrade protocol's and the update flow's job.
 fn daemon_is_active(config: &hieronymus::data_root::HieronymusConfig) -> bool {
-    use std::net::ToSocketAddrs;
-    let Ok(record) = hiero::daemon::discovery::read_discovery(config) else {
-        return false;
-    };
-    let Ok(addresses) = (record.host.as_str(), record.port).to_socket_addrs() else {
-        return false;
-    };
-    for address in addresses {
-        if std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(250))
-            .is_ok()
-        {
-            return true;
-        }
+    hiero::daemon::discovery::daemon_is_active(config)
+}
+
+/// Make a user-supplied path absolute against the current working directory.
+/// Service units and stable links carry absolute paths by design, so relative
+/// `--unit-dir`/`--app-dir`/`--data-root`/`--binary` values are resolved at
+/// the CLI boundary instead of failing deep inside the flows.
+fn absolute_path(path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(path)
     }
-    false
 }
 
 /// The `doctor` subcommand: non-mutating checks, human or JSON output, and
@@ -359,7 +427,7 @@ fn run_doctor(
     reject_subcommand(parsed, "doctor")?;
     reject_feedback_flags(parsed, "doctor")?;
     let config = load_config(data_root);
-    let report = doctor::run(&config);
+    let report = doctor::run_with_service(&config, None);
     if parsed.json {
         let text =
             serde_json::to_string_pretty(&report.to_json()).map_err(|error| error.to_string())?;
@@ -800,4 +868,168 @@ fn run_recall_feedback(
         println!("recall feedback already applied: {recall_id}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The `service` subcommand: install (idempotent unit render + optional
+/// manager enable), uninstall (unit removal only), status, start, stop. The
+/// systemd user manager is only contacted for the default unit location;
+/// `--unit-dir` overrides are render/remove only, which keeps tests and
+/// custom setups away from the real manager.
+fn run_service(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
+    if parsed.port.is_some() || parsed.start_daemon || parsed.dry_run {
+        return Err(format!(
+            "service does not accept --port, --start-daemon, or --dry-run; {SERVICE_USAGE}"
+        ));
+    }
+    let subcommand = parsed
+        .subcommand
+        .as_deref()
+        .ok_or_else(|| format!("service requires a subcommand (install, uninstall, status, start, or stop); {SERVICE_USAGE}"))?;
+    let binary = match &parsed.binary {
+        Some(path) => absolute_path(path),
+        None => std::env::current_exe()
+            .map_err(|error| format!("could not locate the running binary: {error}"))?,
+    };
+    let options = service::ServiceOptions {
+        data_root: absolute_path(load_config(data_root).data_root()),
+        unit_dir: parsed
+            .unit_dir
+            .as_deref()
+            .map(absolute_path)
+            .unwrap_or_else(service::default_unit_dir),
+        binary,
+        use_manager: !parsed.no_activate,
+    };
+    match subcommand {
+        "install" => {
+            for line in service::install(&options).map_err(|error| error.to_string())? {
+                println!("{line}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        "uninstall" => {
+            for line in service::uninstall(&options).map_err(|error| error.to_string())? {
+                println!("{line}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        "status" => {
+            let status = service::status(&options).map_err(|error| error.to_string())?;
+            if parsed.json {
+                let text = serde_json::to_string_pretty(&status.to_json())
+                    .map_err(|error| error.to_string())?;
+                println!("{text}");
+            } else {
+                println!("{}", status.render_human());
+            }
+            Ok(ExitCode::from(if status.consistent() { 0 } else { 1 }))
+        }
+        "start" | "stop" => {
+            let lines = if subcommand == "start" {
+                service::start(&options)
+            } else {
+                service::stop(&options)
+            }
+            .map_err(|error| error.to_string())?;
+            for line in lines {
+                println!("{line}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        other => Err(format!(
+            "unknown service subcommand: {other}; {SERVICE_USAGE}"
+        )),
+    }
+}
+
+/// The `update` subcommand: the one-way cutover flow over a release feed
+/// directory. Refusals exit 2 (nothing changed), applied-but-rolled-back
+/// failures exit 1, success (including migration-pending) exits 0.
+fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
+    if parsed.port.is_some() || parsed.start_daemon {
+        return Err(format!(
+            "update does not accept --port or --start-daemon; {UPDATE_USAGE}"
+        ));
+    }
+    let release_dir = parsed
+        .release_dir
+        .clone()
+        .ok_or_else(|| format!("update requires --release-dir; {UPDATE_USAGE}"))?;
+    let options = update::UpdateOptions {
+        release_dir: absolute_path(&release_dir),
+        app_dir: parsed.app_dir.as_deref().map(absolute_path),
+        data_root: parsed.data_root.as_deref().map(absolute_path),
+        unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
+    };
+    match update::run_update(&options) {
+        Ok(report) => {
+            if parsed.json {
+                let text = serde_json::to_string_pretty(&report.to_json())
+                    .map_err(|error| error.to_string())?;
+                println!("{text}");
+            } else {
+                print!("{}", report.render_human());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            if let update::UpdateError::Failed { steps, .. } = &error {
+                for step in steps {
+                    eprintln!("  {step}");
+                }
+            }
+            eprintln!("hiero update: {error}");
+            Ok(ExitCode::from(error.exit_code()))
+        }
+    }
+}
+
+/// The `uninstall` subcommand: confirmation-gated removal of the service
+/// unit, application directory, owned PATH links, and generated agent-plugin
+/// entries. Data deletion happens only through the explicit `--delete-data`.
+fn run_uninstall_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
+    if parsed.port.is_some() || parsed.start_daemon {
+        return Err(format!(
+            "uninstall does not accept --port or --start-daemon; {UNINSTALL_USAGE}"
+        ));
+    }
+    let mut confirmed = parsed.yes;
+    if !confirmed {
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() {
+            print!(
+                "Uninstall the Hieronymus binaries, command links, and service unit? \
+                 Databases, configuration, models, and backups are preserved unless \
+                 --delete-data is passed. [y/N] "
+            );
+            use std::io::Write as _;
+            let _ = std::io::stdout().flush();
+            let mut answer = String::new();
+            let _ = std::io::stdin().read_line(&mut answer);
+            confirmed = matches!(answer.trim(), "y" | "Y" | "yes" | "YES");
+        }
+    }
+    let options = uninstall::UninstallOptions {
+        app_dir: parsed.app_dir.as_deref().map(absolute_path),
+        data_root: parsed.data_root.as_deref().map(absolute_path),
+        unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
+        confirmed,
+        delete_data: parsed.delete_data,
+    };
+    match uninstall::run_uninstall(&options) {
+        Ok(report) => {
+            if parsed.json {
+                let text = serde_json::to_string_pretty(&report.to_json())
+                    .map_err(|error| error.to_string())?;
+                println!("{text}");
+            } else {
+                print!("{}", report.render_human());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }

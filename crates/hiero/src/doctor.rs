@@ -1,12 +1,14 @@
 //! `hiero doctor`: non-mutating health checks over the data root (security
 //! design spec §Service Installation): database classification, config file
 //! parsing and credential permissions, discovery-record consistency, daemon
-//! reachability, protocol compatibility, semantic model/index health, and the
-//! provider catalog resolve. The report renders human or JSON; exit codes
+//! reachability, protocol compatibility, semantic model/index health, the
+//! provider catalog resolve, and — for managed installs — the daemon service
+//! definition. The report renders human or JSON; exit codes
 //! distinguish healthy (0) / degraded (1) / unhealthy (2). A doctor run never
 //! downloads, never repairs, and never writes anything — every check is a
 //! read over existing state.
 
+use std::path::Path;
 use std::time::Duration;
 
 use hieronymus::data_root::HieronymusConfig;
@@ -112,6 +114,15 @@ impl DoctorReport {
 
 /// Runs every read-only check over `config` and returns the report.
 pub fn run(config: &HieronymusConfig) -> DoctorReport {
+    run_with_service(config, None)
+}
+
+/// The full check set plus the service-definition check. `unit_dir = None`
+/// uses the default systemd user unit directory. The service finding only
+/// exists for a managed installation (the running binary lives at
+/// `<app>/versions/<version>/hiero`): a developer or library build has no
+/// service definition to report, so the check is skipped instead of guessed.
+pub fn run_with_service(config: &HieronymusConfig, unit_dir: Option<&Path>) -> DoctorReport {
     let mut report = DoctorReport {
         status: Health::Healthy,
         findings: Vec::new(),
@@ -121,6 +132,7 @@ pub fn run(config: &HieronymusConfig) -> DoctorReport {
     check_credential_permissions(config, &mut report);
     check_discovery(config, &mut report);
     check_semantic(config, &mut report);
+    check_service(config, unit_dir, &mut report);
     if report
         .findings
         .iter()
@@ -135,6 +147,68 @@ pub fn run(config: &HieronymusConfig) -> DoctorReport {
         report.status = Health::Degraded;
     }
     report
+}
+
+/// Service-definition health: the unit must be present, point at the running
+/// (installed) binary, and serve the checked data root. Read-only.
+fn check_service(config: &HieronymusConfig, unit_dir: Option<&Path>, report: &mut DoctorReport) {
+    if crate::app::AppLayout::detect_from_exe().is_err() {
+        return;
+    }
+    let unit_dir = unit_dir
+        .map(|directory| directory.to_path_buf())
+        .unwrap_or_else(crate::service::default_unit_dir);
+    let options = crate::service::ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir,
+        binary: match std::env::current_exe() {
+            Ok(binary) => binary,
+            Err(_) => return,
+        },
+        use_manager: false,
+    };
+    let current_binary = options.binary.clone();
+    match crate::service::check_unit(&options, &current_binary) {
+        crate::service::UnitVerdict::Absent => report.push(
+            Level::Ok,
+            "service-unit",
+            "no daemon service unit is installed (`hiero service install` adds one)".to_string(),
+        ),
+        crate::service::UnitVerdict::Consistent => report.push(
+            Level::Ok,
+            "service-unit",
+            format!(
+                "service unit is installed and points at this binary and data root: {}",
+                options.unit_path().display()
+            ),
+        ),
+        crate::service::UnitVerdict::Broken(reason) => report.push(
+            Level::Warning,
+            "service-unit-broken",
+            format!(
+                "service unit at {} is broken: {reason}",
+                options.unit_path().display()
+            ),
+        ),
+        crate::service::UnitVerdict::DataRootMismatch { unit_root } => report.push(
+            Level::Warning,
+            "service-unit-mismatch",
+            format!(
+                "service unit serves data root {} but this root is {}",
+                unit_root.display(),
+                config.data_root().display()
+            ),
+        ),
+        crate::service::UnitVerdict::StaleBinary { unit_binary } => report.push(
+            Level::Warning,
+            "service-unit-stale",
+            format!(
+                "service unit still execs {} while this binary is {}; run `hiero service install`",
+                unit_binary.display(),
+                current_binary.display()
+            ),
+        ),
+    }
 }
 
 /// Database classify (read-only): empty and supported Rust schemas are

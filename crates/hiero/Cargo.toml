@@ -25,6 +25,10 @@ rusqlite.workspace = true
 thiserror.workspace = true
 base64.workspace = true
 sha1.workspace = true
+home.workspace = true
+# Release archive verification (`hiero update`, byte-for-byte parity with the
+# bootstrap installer's sha256sum check).
+sha2.workspace = true
 # The embedded console lookup/iteration (security spec §HTTP And Frontend
 # Contracts). `debug-embed` makes even test/debug builds carry the real
 # compile-time bytes; `interpolate-folder-path` resolves the bundle outside
@@ -37,4 +41,3 @@ rust-embed = { version = "8", optional = true, features = [
 [dev-dependencies]
 rusqlite.workspace = true
 tempfile.workspace = true
-sha2.workspace = true

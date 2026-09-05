@@ -312,6 +312,12 @@ fn stdio_adapter_wraps_route_level_daemon_errors_as_jsonrpc() {
         "daemon must publish discovery before the adapter starts"
     );
 
+    // The daemon keeps its in-memory token, so overwriting the file before
+    // the adapter starts makes the adapter deterministically read a stale
+    // credential (invalidating after `spawn` would race the adapter's
+    // startup read under load).
+    std::fs::write(root.path().join("daemon.token"), b"stale-token\n").unwrap();
+
     let mut adapter = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["mcp", "--data-root", root.path().to_str().unwrap()])
         .stdin(Stdio::piped())
@@ -319,10 +325,6 @@ fn stdio_adapter_wraps_route_level_daemon_errors_as_jsonrpc() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-
-    // The adapter has already read the live token; invalidate the file to
-    // force a 401 on the next request.
-    std::fs::write(root.path().join("daemon.token"), b"stale-token\n").unwrap();
 
     let exchanges = frozen_exchanges();
     let (request_line, _) = exchanges[0].clone();

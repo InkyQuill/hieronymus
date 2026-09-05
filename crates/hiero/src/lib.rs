@@ -4,7 +4,11 @@
 //! live in the `hieronymus` library.
 
 pub mod agent_hook;
+pub mod app;
 pub mod client;
 pub mod daemon;
 pub mod doctor;
+pub mod service;
 pub mod stdio;
+pub mod uninstall;
+pub mod update;
