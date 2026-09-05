@@ -161,10 +161,8 @@ pub enum MigrateError {
     },
     #[error("cutover journal is inconsistent: {0}")]
     JournalInconsistent(String),
-    #[error("an upgrade is already in progress (pid {0})")]
-    UpgradeLockHeld(u32),
-    #[error("an upgrade may already be in progress: the data-root lock has no recorded owner yet")]
-    UpgradeLockHeldOwnerless,
+    #[error("data-root ownership is held by another process: {0}")]
+    RootOwnership(String),
     #[error("no verified pre-upgrade backup was found")]
     BackupMissing,
     #[error("recovery is blocked: {0}")]

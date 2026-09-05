@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::migrate::{MigrateError, REFUSAL_DAEMON_ACTIVE, run_dry_run_in};
+use hieronymus::ownership::RootOwnership;
 use hieronymus::upgrade::{
     CutoverJournal, InjectionPoint, StagedFileRecord, UpgradeOptions, daemon_start_blocker,
     read_cutover_journal, run_recovery, run_upgrade,
@@ -160,7 +161,13 @@ fn file_tree_digest(root: &Path) -> String {
             let path = entry.path();
             if path.is_dir() {
                 walk(&path, entries);
-            } else {
+            } else if path.file_name().and_then(|name| name.to_str())
+                != Some(hieronymus::ownership::OWNER_LOCK_FILE)
+            {
+                // The shared ownership lock is test infrastructure, not data:
+                // it is created on every `run_upgrade` and left in place
+                // (its inode is never unlinked), so exclude it from the
+                // "nothing changed" digest.
                 entries.push(path);
             }
         }
@@ -348,8 +355,9 @@ fn upgrade_completes_the_full_cutover() {
     // Staging is cleaned up; the derived cache was invalidated.
     assert!(!root.path().join(".migrate-staging").exists());
     assert!(!root.path().join("llmcache.tmp").exists());
-    // The upgrade lock is released.
-    assert!(!root.path().join(".migrate.lock").exists());
+    // Ownership is released (the OS lock, not the inode): another owner can
+    // take it now.
+    assert!(RootOwnership::acquire(&config(root.path()), "test").is_ok());
     // The daemon may start again.
     assert_eq!(daemon_start_blocker(&config(root.path())).unwrap(), None);
 
@@ -550,7 +558,10 @@ fn failure_injection_leaves_only_safe_end_states_and_resume_completes() {
         let dream = std::fs::read_to_string(root.path().join("dream.conf")).unwrap();
         assert!(!dream.contains("[providers.openai]"), "{point:?}: {dream}");
         assert!(!root.path().join(".migrate-staging").exists(), "{point:?}");
-        assert!(!root.path().join(".migrate.lock").exists(), "{point:?}");
+        assert!(
+            RootOwnership::acquire(&config(root.path()), "test").is_ok(),
+            "{point:?}: ownership must be released after a resumed cutover"
+        );
     }
 }
 
@@ -780,46 +791,44 @@ fn recovery_secures_the_live_database_with_its_wal_sidecars() {
 }
 
 // ---------------------------------------------------------------------------
-// Data-root ownership lock
+// Data-root ownership guard (shared OS lock; see tests/ownership.rs for the
+// primitive's own coverage, including the SIGKILL-release case)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_data_root_lock_fails_closed_on_an_ownerless_lock_file() {
-    // An empty lock file is the window between another process's exclusive
-    // create and its pid write; stealing it would let two runs proceed.
+fn upgrade_refuses_a_root_another_owner_holds() {
     let root = fresh_fixture();
-    std::fs::write(root.path().join(".migrate.lock"), "").unwrap();
+    let held = RootOwnership::acquire(&config(root.path()), "daemon").unwrap();
     let before = file_tree_digest(root.path());
 
     let error = run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap_err();
+    assert!(matches!(error, MigrateError::RootOwnership(_)), "{error}");
+    let message = error.to_string();
     assert!(
-        matches!(error, MigrateError::UpgradeLockHeldOwnerless),
-        "{error}"
+        message.contains("daemon"),
+        "diagnostic names the owner: {message}"
     );
-    // The foreign lock file is left exactly as it was found.
-    assert_eq!(
-        std::fs::read_to_string(root.path().join(".migrate.lock")).unwrap(),
-        ""
-    );
+    // The upgrade touched nothing.
     assert_eq!(file_tree_digest(root.path()), before);
-}
 
-#[test]
-fn the_data_root_lock_steals_only_a_verifiably_dead_owner() {
-    let root = fresh_fixture();
-    let dead_pid = 4194303_u32;
-    assert!(
-        !std::path::Path::new(&format!("/proc/{dead_pid}")).exists(),
-        "test precondition: {dead_pid} must not be a live pid"
-    );
-    std::fs::write(root.path().join(".migrate.lock"), format!("{dead_pid}\n")).unwrap();
-
-    // A dead owner's lock is stale: the run steals it and completes.
+    // Releasing the guard lets the upgrade proceed.
+    drop(held);
     let report = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
         .map_err(|error| error.to_string())
         .unwrap();
     assert_eq!(report.outcome.as_str(), "complete");
-    assert!(!root.path().join(".migrate.lock").exists());
+}
+
+#[test]
+fn recovery_refuses_a_root_another_owner_holds() {
+    let root = fresh_fixture();
+    // A completed cutover so recovery gets past the journal gate.
+    run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap();
+    let held = RootOwnership::acquire(&config(root.path()), "daemon").unwrap();
+
+    let error = run_recovery(&config(root.path()), false).unwrap_err();
+    assert!(matches!(error, MigrateError::RootOwnership(_)), "{error}");
+    drop(held);
 }
 
 // ---------------------------------------------------------------------------

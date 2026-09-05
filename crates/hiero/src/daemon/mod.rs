@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use hieronymus::data_root::{HieronymusConfig, load_config};
 use hieronymus::db::open_migrated;
+use hieronymus::ownership::RootOwnership;
 use hieronymus::secret::Secret;
 use hieronymus::state_classifier::{StartupState, classify};
 
@@ -82,6 +83,12 @@ pub enum DaemonError {
         message: String,
         remediation: String,
     },
+    #[error(
+        "another process already owns this data root: {message} (stop the running daemon or maintenance command first)"
+    )]
+    OwnershipHeld { message: String },
+    #[error("daemon cannot acquire data-root ownership: {source}")]
+    Ownership { source: std::io::Error },
     #[error("daemon cannot open the database: {0}")]
     Database(#[from] hieronymus::db::OpenMigratedError),
     #[error("daemon cannot bind loopback endpoint {address}: {source}")]
@@ -138,6 +145,11 @@ pub(crate) struct DaemonRuntime {
 pub struct Daemon {
     runtime: Arc<DaemonRuntime>,
     accept_thread: Option<JoinHandle<()>>,
+    /// Exclusive data-root ownership (ADR 0009), held for the daemon's whole
+    /// lifetime and released on a graceful stop AFTER the discovery record is
+    /// removed. Kept outside `DaemonRuntime` so the ctrl-c handler's `Arc`
+    /// clone cannot pin it past shutdown.
+    ownership: Option<RootOwnership>,
 }
 
 impl Daemon {
@@ -151,16 +163,44 @@ impl Daemon {
         // cutover-journal state, runs no converters or scans, and never
         // mutates the data root. Only `Fresh` and `Current` proceed;
         // everything else refuses before binding, tokens, or discovery, so a
-        // rejected state never publishes readiness.
+        // rejected state never publishes readiness. R1 deliberately keeps
+        // this ahead of ownership acquisition so a rejected root is never
+        // touched.
+        let to_startup_error =
+            |error: hieronymus::state_classifier::ClassifyError| DaemonError::InvalidStartupState {
+                code: error.code(),
+                message: error.message().to_string(),
+                remediation: error.remediation().to_string(),
+            };
         match classify(&config) {
             Ok(StartupState::Fresh | StartupState::Current) => {}
-            Err(error) => {
-                return Err(DaemonError::InvalidStartupState {
-                    code: error.code(),
-                    message: error.message().to_string(),
-                    remediation: error.remediation().to_string(),
-                });
-            }
+            Err(error) => return Err(to_startup_error(error)),
+        }
+
+        // Take exclusive ownership of the data root before opening the
+        // database, binding, or publishing anything (ADR 0009). One
+        // nonblocking OS `try_lock`: a root another daemon (or an offline
+        // maintenance run) already owns refuses here (`WouldBlock`), so a
+        // second daemon never overwrites the first daemon's token or
+        // discovery record. Any other io error (permissions, ENOSPC, a
+        // read-only mount) is a plain startup failure, not a contention.
+        // The guard lives on `Daemon` for the whole lifetime and releases
+        // on drop.
+        let ownership =
+            RootOwnership::acquire(&config, "daemon").map_err(|error| match error.kind() {
+                std::io::ErrorKind::WouldBlock => DaemonError::OwnershipHeld {
+                    message: error.to_string(),
+                },
+                _ => DaemonError::Ownership { source: error },
+            })?;
+
+        // Re-check the cutover-journal gate now that ownership is held. This
+        // is the authoritative re-check: it closes the window between the
+        // `classify` above and this point against any (future) unlocked
+        // journal writer, and a mid-cutover root discovered here refuses
+        // before binding or publishing anything.
+        if let Err(error) = classify(&config) {
+            return Err(to_startup_error(error));
         }
 
         // `classify` ran a moment ago against files that could in principle
@@ -214,6 +254,7 @@ impl Daemon {
         Ok(Daemon {
             runtime,
             accept_thread: Some(accept_thread),
+            ownership: Some(ownership),
         })
     }
 
@@ -260,16 +301,38 @@ impl Daemon {
         self.wait_for_shutdown()
     }
 
+    /// Clean up in the ADR 0009 order: stop the accept loop, remove the
+    /// matching discovery record, then release data-root ownership last so no
+    /// other process can claim the root while this daemon's discovery state is
+    /// still visible. Idempotent: safe to call from both `wait_for_shutdown`
+    /// and the `Drop` guard.
     fn finish_shutdown(&mut self) -> Result<(), DaemonError> {
+        // Ensure the accept loop will actually exit before we join it — a
+        // `Daemon` dropped without `shutdown()` never set this flag.
+        self.runtime.stop.store(true, Ordering::Release);
+        let join_result = match self.accept_thread.take() {
+            Some(handle) => handle
+                .join()
+                .map_err(|_| DaemonError::Worker("accept loop panicked".to_string())),
+            None => Ok(()),
+        };
         // Stale discovery from a crashed run is tolerated for now (documented
         // in the port report); a graceful stop removes its own record.
         discovery::remove_discovery(&self.runtime.config, &self.runtime.record.instance_id);
-        if let Some(handle) = self.accept_thread.take() {
-            handle
-                .join()
-                .map_err(|_| DaemonError::Worker("accept loop panicked".to_string()))?;
-        }
-        Ok(())
+        // Release ownership last.
+        drop(self.ownership.take());
+        join_result
+    }
+}
+
+impl Drop for Daemon {
+    /// A `Daemon` dropped without `shutdown()` / `wait_for_shutdown()` (for
+    /// instance a panic between `start` and shutdown) still removes its
+    /// discovery record before the ownership guard drops, preserving the
+    /// "remove discovery → release ownership" order. Best-effort; the normal
+    /// path already ran `finish_shutdown` and this call then no-ops.
+    fn drop(&mut self) {
+        let _ = self.finish_shutdown();
     }
 }
 

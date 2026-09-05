@@ -6,11 +6,14 @@ mod common;
 
 use common::{send_request, start_daemon_on_ephemeral_port};
 use hiero::daemon::{Daemon, DaemonError, DaemonOptions};
+use hieronymus::data_root::HieronymusConfig;
+use hieronymus::ownership::RootOwnership;
 use serde_json::{Value, json};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 fn write_python_sentinel_database(root: &Path) {
     let connection = rusqlite::Connection::open(root.join("hieronymus.sqlite")).unwrap();
@@ -388,4 +391,238 @@ fn complete_cutover_journal_allows_daemon_start() {
     })
     .unwrap_or_else(|error| panic!("complete journal must not block: {error}"));
     daemon.shutdown().unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Data-root ownership (ADR 0009 / Astra finding 9): one owner across the
+// daemon, `hiero migrate`, and `hiero recover`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_second_daemon_on_one_root_refuses_without_disturbing_the_first() {
+    // Astra finding 9: the reviewer started two live daemons on one root with
+    // different ephemeral ports; the second overwrote the token/discovery and
+    // the first kept running. The ownership guard must make the second start
+    // fail before it writes anything.
+    let (root, first) = start_daemon_on_ephemeral_port();
+    let first_port = first.local_addr().port();
+    let token_before = std::fs::read_to_string(root.path().join("daemon.token")).unwrap();
+    let discovery_before = std::fs::read_to_string(root.path().join("daemon.json")).unwrap();
+
+    let error = Daemon::start(&DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap_err();
+    match error {
+        DaemonError::OwnershipHeld { message } => {
+            assert!(
+                message.contains("daemon"),
+                "diagnostic names the owner: {message}"
+            );
+        }
+        other => panic!("expected an ownership refusal, got: {other}"),
+    }
+
+    // The second start touched neither the token nor the discovery record.
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("daemon.token")).unwrap(),
+        token_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("daemon.json")).unwrap(),
+        discovery_before
+    );
+
+    // The first daemon is still serving on its original port.
+    let health = send_request(first_port, "GET", "/health", &[], b"");
+    assert_eq!(health.status, 200);
+    assert_eq!(health.body(), json!({"ok": true}));
+
+    first.shutdown().unwrap();
+}
+
+#[test]
+fn a_graceful_stop_releases_ownership_for_the_next_daemon() {
+    let (root, first) = start_daemon_on_ephemeral_port();
+    first.shutdown().unwrap();
+
+    // Ownership was released after discovery removal, so a fresh daemon on
+    // the same root starts cleanly.
+    let second = Daemon::start(&DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap_or_else(|error| panic!("ownership must be free after a graceful stop: {error}"));
+    second.shutdown().unwrap();
+}
+
+#[test]
+fn a_graceful_stop_releases_ownership_for_offline_maintenance() {
+    // The maintenance direction: after a graceful stop `hiero migrate` and
+    // `hiero recover` can take the root. Both get past step 1b (ownership
+    // acquisition); they may then refuse for an unrelated reason (nothing to
+    // do / no backup), which is fine — what matters is that neither fails
+    // with `RootOwnership`.
+    let (root, daemon) = start_daemon_on_ephemeral_port();
+    let config = HieronymusConfig::new(root.path());
+    daemon.shutdown().unwrap();
+
+    let migrate = hieronymus::upgrade::run_upgrade(
+        &config,
+        false,
+        &hieronymus::upgrade::UpgradeOptions::default(),
+    );
+    assert!(
+        !matches!(
+            migrate,
+            Err(hieronymus::migrate::MigrateError::RootOwnership(_))
+        ),
+        "migrate must be able to take the root after a stop: {migrate:?}"
+    );
+
+    let recover = hieronymus::upgrade::run_recovery(&config, false);
+    assert!(
+        !matches!(
+            recover,
+            Err(hieronymus::migrate::MigrateError::RootOwnership(_))
+        ),
+        "recover must be able to take the root after a stop: {recover:?}"
+    );
+}
+
+#[test]
+fn migrate_and_daemon_start_are_mutually_exclusive() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+
+    // A migration run that has taken ownership (here: the guard directly,
+    // standing in for `run_upgrade`'s step 1b, which happens before the
+    // journal is ever created) blocks the daemon.
+    let migrate_guard = RootOwnership::acquire(&config, "migrate").unwrap();
+    let error = Daemon::start(&DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap_err();
+    assert!(
+        matches!(error, DaemonError::OwnershipHeld { .. }),
+        "daemon must refuse while migrate owns the root: {error}"
+    );
+    assert!(!root.path().join("daemon.json").exists());
+    drop(migrate_guard);
+
+    // With the daemon running, a migration attempt refuses.
+    let daemon = Daemon::start(&DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap();
+    let error = hieronymus::upgrade::run_upgrade(
+        &config,
+        false,
+        &hieronymus::upgrade::UpgradeOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, hieronymus::migrate::MigrateError::RootOwnership(_)),
+        "migrate must refuse while the daemon owns the root: {error}"
+    );
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn recover_refuses_while_the_daemon_owns_the_root() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let daemon = Daemon::start(&DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap();
+
+    let error = hieronymus::upgrade::run_recovery(&config, false).unwrap_err();
+    assert!(
+        matches!(error, hieronymus::migrate::MigrateError::RootOwnership(_)),
+        "recover must refuse while the daemon owns the root: {error}"
+    );
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn doctor_on_an_owned_root_stays_lock_free_and_non_mutating() {
+    let (root, daemon) = start_daemon_on_ephemeral_port();
+    let config = HieronymusConfig::new(root.path());
+
+    // Doctor reads an owned root without acquiring ownership itself and
+    // without deadlocking.
+    let report = hiero::doctor::run(&config);
+    let _ = report.render_human();
+
+    // The daemon still owns the root (nobody released it) and still serves.
+    assert!(
+        RootOwnership::acquire(&config, "probe").is_err(),
+        "doctor must not have taken or released ownership"
+    );
+    let health = send_request(daemon.local_addr().port(), "GET", "/health", &[], b"");
+    assert_eq!(health.status, 200);
+
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn a_sigkilled_daemon_releases_data_root_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "daemon",
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--port",
+            "0",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let discovery_path = root.path().join("daemon.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !discovery_path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "daemon never published discovery"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // While the daemon lives, the root is owned.
+    assert!(RootOwnership::acquire(&config, "probe").is_err());
+
+    let killed = Command::new("kill")
+        .args(["-KILL", &child.id().to_string()])
+        .status()
+        .expect("kill must be available");
+    assert!(killed.success());
+    child.wait().unwrap();
+
+    // The kernel dropped the daemon's flock; a maintenance run can take the
+    // root now.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if RootOwnership::acquire(&config, "recover").is_ok() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "ownership was not released after the daemon was SIGKILLed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

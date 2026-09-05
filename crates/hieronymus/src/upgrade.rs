@@ -49,6 +49,7 @@ use crate::migrate::{
     VerificationReport, convert_strict_terms, integrity_result, open_read_only, run_preflight,
     sha256_file, verify_upgraded_target,
 };
+use crate::ownership::RootOwnership;
 use crate::provider_config::{
     ProviderCatalog, ProviderProfile, default_provider_catalog, migrate_dream_provider_payload,
     provider_catalog_from_text,
@@ -62,8 +63,6 @@ use crate::provider_config::{
 pub const JOURNAL_FILE: &str = "cutover.json";
 /// Sibling staging directory for rendered current-format config files.
 pub const STAGING_DIR: &str = ".migrate-staging";
-/// Data-root ownership lock held for the whole protocol, including promotion.
-pub const LOCK_FILE: &str = ".migrate.lock";
 
 pub const JOURNAL_STATE_PREPARED: &str = "prepared";
 pub const JOURNAL_STATE_DATABASE_COMMITTED: &str = "database_committed";
@@ -95,9 +94,10 @@ const EXTERNAL_CONTENT_FTS_TABLES: [&str; 6] = [
 /// Protocol step boundaries that accept fault injection. This is the
 /// acceptance seam for the design's failure-injection requirement: an
 /// injected failure aborts the run exactly like a crashed process — no
-/// cleanup, the data-root lock left behind — so tests can assert the three
-/// possible end states (original intact / resumable
-/// `config_promotion_required` / complete). Never set by the CLI.
+/// cleanup — so tests can assert the three possible end states (original
+/// intact / resumable `config_promotion_required` / complete). The ownership
+/// guard drops as the run unwinds, exactly as the kernel would release it on
+/// a crash, so a same-process resume reacquires cleanly. Never set by the CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InjectionPoint {
     AfterPreflight,
@@ -298,7 +298,7 @@ fn write_journal(
 }
 
 // ---------------------------------------------------------------------------
-// Small primitives: fsync, ownership lock
+// Small primitives: fsync
 // ---------------------------------------------------------------------------
 
 fn fsync_dir(path: &Path) -> std::io::Result<()> {
@@ -358,66 +358,21 @@ fn require_user_only(_path: &Path) -> Result<(), MigrateError> {
     Ok(())
 }
 
-/// The data-root ownership lock (design: resolve and lock the data root;
-/// promotion takes the same lock). The lock file records the owning pid; a
-/// lock from a dead pid is stale and stolen, a lock from this process is
-/// re-acquired (the failure-injection tests resume in-process), and a lock
-/// from another live pid refuses the run. An ownerless lock file — the
-/// window between another process's exclusive create and its pid write — is
-/// held, never stolen: stealing it would let two runs proceed. A crashed run
-/// leaves the file behind on purpose; a dead owner's file is the stale case
-/// the next run steals, and an ownerless file needs the documented manual
-/// `rm` (fail closed beats mutual exclusion lost).
-struct DataRootLock {
-    path: PathBuf,
-}
-
-impl DataRootLock {
-    fn acquire(config: &HieronymusConfig) -> Result<Self, MigrateError> {
-        let path = config.data_root().join(LOCK_FILE);
-        if Self::try_create(&path).is_ok() {
-            return Ok(Self { path });
-        }
-        let owner = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| text.trim().parse::<u32>().ok());
-        match owner {
-            Some(pid) if pid == std::process::id() => Ok(Self { path }),
-            Some(pid) if process_is_alive(pid) => Err(MigrateError::UpgradeLockHeld(pid)),
-            // Unreadable or ownerless: another process may be inside the
-            // create-to-write window right now, so the lock is held.
-            None => Err(MigrateError::UpgradeLockHeldOwnerless),
-            Some(_) => {
-                std::fs::remove_file(&path).ok();
-                Self::try_create(&path)?;
-                Ok(Self { path })
-            }
-        }
-    }
-
-    fn try_create(path: &Path) -> std::io::Result<()> {
-        use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
-        writeln!(file, "{}", std::process::id())?;
-        file.sync_all()
-    }
-
-    fn release(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-#[cfg(unix)]
-fn process_is_alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
-}
-
-#[cfg(not(unix))]
-fn process_is_alive(_pid: u32) -> bool {
-    true
+/// Take the shared data-root ownership guard for a maintenance run (ADR
+/// 0009). One nonblocking OS `try_lock`: a root the daemon (or another
+/// maintenance run) already owns refuses as [`MigrateError::RootOwnership`]
+/// with a diagnostic that names the current owner (`WouldBlock`); any other
+/// io error (permissions, a read-only mount, ENOSPC creating the root)
+/// surfaces as [`MigrateError::Io`] so it reads as what actually failed. The
+/// guard is held for the whole call and released when it drops — including as
+/// the stack unwinds on a failure injection, which is exactly how the kernel
+/// would release it after a crash, so a same-process resume reacquires
+/// cleanly.
+fn acquire_ownership(config: &HieronymusConfig, role: &str) -> Result<RootOwnership, MigrateError> {
+    RootOwnership::acquire(config, role).map_err(|error| match error.kind() {
+        std::io::ErrorKind::WouldBlock => MigrateError::RootOwnership(error.to_string()),
+        _ => MigrateError::Io(error),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,12 +1103,14 @@ pub fn run_upgrade(
     if daemon_active {
         return Err(MigrateError::Refused(REFUSAL_DAEMON_ACTIVE.to_string()));
     }
-    // Step 1b: resolve and lock the explicit data root.
-    let lock = DataRootLock::acquire(config)?;
+    // Step 1b: resolve and take exclusive ownership of the explicit data
+    // root. Held for the whole protocol, promotion included; released on
+    // drop (normal return or unwind).
+    let _ownership = acquire_ownership(config, "migrate")?;
     let had_staging = config.data_root().join(STAGING_DIR).exists();
     let existing = read_cutover_journal(config)?;
 
-    let result = match existing {
+    match existing {
         Some(journal) if journal.state == JOURNAL_STATE_COMPLETE => {
             already_complete_report(config, &journal)
         }
@@ -1185,15 +1142,7 @@ pub fn run_upgrade(
             journal.state
         ))),
         None => run_fresh(config, options, had_staging),
-    };
-
-    match &result {
-        // An injected failure simulates a crashed process: the lock file
-        // stays behind for the stale-steal on the next run.
-        Err(MigrateError::Injected(_)) => {}
-        Ok(_) | Err(_) => lock.release(),
     }
-    result
 }
 
 fn already_complete_report(
@@ -1398,6 +1347,13 @@ pub fn run_recovery(
     if daemon_active {
         return Err(MigrateError::Refused(REFUSAL_DAEMON_ACTIVE.to_string()));
     }
+    // Take exclusive ownership before any preflight copy or staging. Held for
+    // the whole recovery, promotion included; released on drop. The internal
+    // helpers reused below (`config_preflight`, `stage_configs`,
+    // `upgrade_database_transaction`) all operate on a throwaway work root
+    // outside the data root and never lock, so there is no re-acquisition and
+    // no deadlock.
+    let _ownership = acquire_ownership(config, "recover")?;
     if let Some(journal) = read_cutover_journal(config)?
         && journal.state != JOURNAL_STATE_COMPLETE
     {
@@ -1472,14 +1428,13 @@ pub fn run_recovery(
     }
     let new_database_sha256 = sha256_file(&work_root.join("hieronymus.sqlite"))?;
 
-    // Atomically promote: ownership lock; the live database secured into a
-    // fresh backup directory (main file plus WAL sidecars, never deleted);
-    // the rebuilt database copied next to its destination and swapped in
-    // with ONE plain rename — POSIX rename replaces the existing file
-    // atomically, so there is no moment at which the data root has no
+    // Atomically promote (ownership already held): the live database secured
+    // into a fresh backup directory (main file plus WAL sidecars, never
+    // deleted); the rebuilt database copied next to its destination and
+    // swapped in with ONE plain rename — POSIX rename replaces the existing
+    // file atomically, so there is no moment at which the data root has no
     // database (a crash before the rename leaves the old database and the
     // staging copy; a crash after it leaves the new one).
-    let lock = DataRootLock::acquire(config)?;
     let root = config.data_root();
     let backups_dir = config.backups_root();
     std::fs::create_dir_all(&backups_dir)?;
@@ -1522,7 +1477,6 @@ pub fn run_recovery(
     std::fs::rename(&staging_path, &live)?;
     fsync_dir(root)?;
     fsync_dir(&backups_dir)?;
-    lock.release();
 
     Ok(RecoveryReport {
         recovered_from: source,
