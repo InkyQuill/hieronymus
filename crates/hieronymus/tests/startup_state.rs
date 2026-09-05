@@ -69,6 +69,54 @@ fn python_schema_database_requires_migration() {
     assert!(error.remediation().contains("hiero migrate"));
 }
 
+/// An older but supported Rust schema is a routine upgrade, not a broken root:
+/// the daemon refuses it with the `hiero migrate` remediation, the database
+/// file bytes are untouched, not one write-ahead log frame is produced, and no
+/// discovery record is published. (Both gates open the file read-only; on a
+/// WAL database SQLite recreates an EMPTY `-wal` plus a `-shm` purely to
+/// coordinate that read, which writes no data.)
+#[test]
+fn older_rust_schema_requires_an_ordered_upgrade() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    std::fs::create_dir_all(config.data_root()).unwrap();
+    // Written the way this line really writes a database: WAL journal mode,
+    // which persists in the header, then cleanly checkpointed.
+    let connection = rusqlite::Connection::open(config.database_path()).unwrap();
+    connection
+        .query_row("pragma journal_mode = wal", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap();
+    connection
+        .execute_batch(include_str!("fixtures/rust-v1.sql"))
+        .unwrap();
+    connection
+        .query_row("pragma wal_checkpoint(truncate)", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+    drop(connection);
+    let before = std::fs::read(config.database_path()).unwrap();
+
+    let error = classify(&config).unwrap_err();
+    assert_eq!(error.code(), "schema_upgrade_required");
+    assert!(error.remediation().contains("hiero migrate"));
+
+    // Opening for writes is refused too, and leaves the file byte-identical.
+    assert!(hieronymus::db::open_migrated(&config.database_path()).is_err());
+    assert_eq!(std::fs::read(config.database_path()).unwrap(), before);
+    assert!(!config.daemon_discovery_path().exists());
+    let wal = config.data_root().join("hieronymus.sqlite-wal");
+    if wal.exists() {
+        assert_eq!(
+            std::fs::metadata(&wal).unwrap().len(),
+            0,
+            "the refused startup produced write-ahead log frames"
+        );
+    }
+}
+
 #[test]
 fn newer_schema_database_fails_closed() {
     let root = tempfile::tempdir().unwrap();

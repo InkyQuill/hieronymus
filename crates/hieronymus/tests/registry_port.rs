@@ -36,7 +36,9 @@ fn create_series_initializes_global_database() {
     // Rust schema, not as a Python database.
     assert_eq!(
         classify_database(&config.database_path()),
-        DatabaseState::RustSchema { version: 1 }
+        DatabaseState::RustSchema {
+            version: hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION
+        }
     );
 }
 

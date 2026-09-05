@@ -434,8 +434,17 @@ pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> 
 }
 
 /// The schema-compatibility gate (database-upgrade spec): the candidate must
-/// support what is on disk. Returns whether a migration is required before
-/// the daemon may start; refusals abort the update before any change.
+/// support what is on disk. The comparison is against the ACTUAL on-disk
+/// schema version, not a label — a candidate that supports a newer schema than
+/// the database carries is a routine upgrade (install completes, the daemon
+/// stays stopped until `hiero migrate`), while a candidate that supports less
+/// than the disk holds is refused outright. A `NewerSchema` verdict is refused
+/// unconditionally: this binary cannot validate a schema it does not know, so
+/// it will not hand the root to another binary on the strength of a version
+/// number it cannot interpret.
+///
+/// Returns whether a migration is required before the daemon may start;
+/// refusals abort the update before any change.
 fn schema_gate(
     config: &HieronymusConfig,
     candidate: &CandidateIdentity,
@@ -843,6 +852,75 @@ mod tests {
         drop(connection);
         let error = schema_gate(&config, &candidate).unwrap_err();
         assert!(error.to_string().contains("newer schema"), "{error}");
+        assert_eq!(error.exit_code(), 2);
+    }
+
+    /// A data root whose database carries `version` as its Rust schema marker.
+    fn root_at_schema_version(version: i64) -> (tempfile::TempDir, HieronymusConfig) {
+        let temp = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(temp.path());
+        let connection = rusqlite::Connection::open(config.database_path()).unwrap();
+        connection
+            .execute_batch(&format!(
+                "create table hieronymus_meta (schema_version integer not null unique);
+                 insert into hieronymus_meta values ({version});"
+            ))
+            .unwrap();
+        drop(connection);
+        (temp, config)
+    }
+
+    fn candidate_supporting(version: i64) -> CandidateIdentity {
+        CandidateIdentity {
+            version: "9.9.9".to_string(),
+            protocol_revision: PROTOCOL_REVISION.to_string(),
+            supported_schema_version: version,
+        }
+    }
+
+    /// The gate compares the candidate against the ACTUAL on-disk version, in
+    /// both directions.
+    #[test]
+    fn schema_gate_is_directional_about_the_on_disk_version() {
+        let current = hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION;
+
+        // Candidate supports the current schema, the disk is one behind: a
+        // routine upgrade. The install completes and `hiero migrate` is
+        // reported — never a refusal.
+        let (_temp, config) = root_at_schema_version(current - 1);
+        assert!(
+            schema_gate(&config, &candidate_supporting(current)).unwrap(),
+            "an older database with a newer candidate must require migration"
+        );
+
+        // Candidate supports only the older schema, the disk is current:
+        // refused outright. The updater never launches an older binary against
+        // a newer schema.
+        let (_temp, config) = root_at_schema_version(current);
+        let error = schema_gate(&config, &candidate_supporting(current - 1)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("database is at Rust schema {current}")),
+            "{error}"
+        );
+        assert_eq!(error.exit_code(), 2);
+
+        // Same version on both sides: nothing to migrate.
+        assert!(!schema_gate(&config, &candidate_supporting(current)).unwrap());
+    }
+
+    #[test]
+    fn schema_gate_refuses_a_database_written_by_a_newer_binary() {
+        let current = hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION;
+        let (_temp, config) = root_at_schema_version(current + 1);
+        // Even a candidate that claims to support it: this binary cannot
+        // validate a schema it does not know, so it fails closed.
+        let error = schema_gate(&config, &candidate_supporting(current + 1)).unwrap_err();
+        assert!(
+            error.to_string().contains("written by a newer binary"),
+            "{error}"
+        );
         assert_eq!(error.exit_code(), 2);
     }
 

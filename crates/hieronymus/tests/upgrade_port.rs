@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use hieronymus::data_root::HieronymusConfig;
+use hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION;
 use hieronymus::migrate::{MigrateError, REFUSAL_DAEMON_ACTIVE, run_dry_run_in};
 use hieronymus::ownership::RootOwnership;
 use hieronymus::upgrade::{
@@ -22,8 +23,11 @@ const GLOBAL_SQL: &str = include_str!("../migrations/global.sql");
 const PROVIDER_SENTINEL: &str = "sk-sentinel-upgrade-key-9b2c";
 const MEMORY_SENTINEL: &str = "сентинель-память-кристалл";
 
-/// Every protocol step boundary that accepts failure injection, in protocol
-/// order.
+/// Every protocol step boundary that aborts the run like a crashed process,
+/// in protocol order. `InjectionPoint::VerificationFailed` is deliberately
+/// absent: it takes the real `verification-failed` refusal path rather than
+/// returning `MigrateError::Injected`, so it has its own test
+/// (`rust_upgrade.rs::a_failed_verification_refuses_the_upgrade_and_rolls_back`).
 const ALL_INJECTION_POINTS: &[InjectionPoint] = &[
     InjectionPoint::AfterPreflight,
     InjectionPoint::AfterStaging,
@@ -219,7 +223,7 @@ fn write_journal_file(root: &Path, state: &str) {
         journal_version: 1,
         state: state.to_string(),
         source_state: "python-schema".to_string(),
-        target_schema_version: 1,
+        target_schema_version: SUPPORTED_RUST_SCHEMA_VERSION,
         staging_dir: ".migrate-staging".to_string(),
         backup_dir: "backups/pre-upgrade-test".to_string(),
         staged: Vec::<StagedFileRecord>::new(),
@@ -270,7 +274,10 @@ fn upgrade_completes_the_full_cutover() {
 
     // Database side: converted rules, ledger, FTS, schema version, job row.
     let connection = open(&root.path().join("hieronymus.sqlite"));
-    assert_eq!(query_scalar(&connection, "pragma user_version"), 1);
+    assert_eq!(
+        query_scalar(&connection, "pragma user_version"),
+        SUPPORTED_RUST_SCHEMA_VERSION
+    );
     assert_eq!(
         query_scalar(&connection, "select count(*) from term_rules"),
         expected_converted()
@@ -296,7 +303,7 @@ fn upgrade_completes_the_full_cutover() {
     let journal = read_cutover_journal(&config(root.path())).unwrap().unwrap();
     assert_eq!(journal.state, "complete");
     assert_eq!(journal.source_state, "python-schema");
-    assert_eq!(journal.target_schema_version, 1);
+    assert_eq!(journal.target_schema_version, SUPPORTED_RUST_SCHEMA_VERSION);
     assert!(journal.backup_database_sha256.len() == 64);
     assert!(
         journal
@@ -321,7 +328,9 @@ fn upgrade_completes_the_full_cutover() {
     assert_eq!(report.receipt_path.as_deref(), Some(receipt_path.as_path()));
     let receipt = std::fs::read_to_string(&receipt_path).unwrap();
     assert!(
-        receipt.contains("\"target_schema_version\": 1"),
+        receipt.contains(&format!(
+            "\"target_schema_version\": {SUPPORTED_RUST_SCHEMA_VERSION}"
+        )),
         "{receipt}"
     );
     assert!(receipt.contains("backup_database_sha256"), "{receipt}");
@@ -684,7 +693,10 @@ fn recovery_rebuilds_a_new_database_from_the_immutable_backup() {
     );
     // The rebuilt database is a verified Rust database with converted rules.
     let connection = open(&root.path().join("hieronymus.sqlite"));
-    assert_eq!(query_scalar(&connection, "pragma user_version"), 1);
+    assert_eq!(
+        query_scalar(&connection, "pragma user_version"),
+        SUPPORTED_RUST_SCHEMA_VERSION
+    );
     assert_eq!(
         query_scalar(&connection, "select count(*) from term_rules"),
         expected_converted()
@@ -786,7 +798,10 @@ fn recovery_secures_the_live_database_with_its_wal_sidecars() {
     // And the live database file itself is present and converted (the
     // promotion is a single rename, never a remove-then-rename window).
     let connection = open(&root.path().join("hieronymus.sqlite"));
-    assert_eq!(query_scalar(&connection, "pragma user_version"), 1);
+    assert_eq!(
+        query_scalar(&connection, "pragma user_version"),
+        SUPPORTED_RUST_SCHEMA_VERSION
+    );
     drop(connection);
 }
 

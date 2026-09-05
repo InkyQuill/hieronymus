@@ -76,6 +76,11 @@ pub const REFUSAL_SOURCE_UNREADABLE: &str = "source-unreadable";
 pub const REFUSAL_UNKNOWN_SCHEMA: &str = "unknown-schema";
 pub const REFUSAL_NEWER_SCHEMA: &str = "newer-schema";
 pub const REFUSAL_ALREADY_CURRENT: &str = "already-current";
+/// Detected-state string for a Rust database at an older supported schema
+/// version: not "already current" and not the legacy Python schema, but a
+/// valid ordered-upgrade source. Recorded in the cutover journal and receipt
+/// so an attempt says which kind of cutover it was.
+pub const STATE_RUST_SCHEMA_UPGRADABLE: &str = "rust-schema-upgradable";
 pub const REFUSAL_UNSUPPORTED_LEGACY_SCHEMA: &str = "unsupported-legacy-schema";
 pub const REFUSAL_INTEGRITY_DEGRADED: &str = "integrity-degraded";
 pub const REFUSAL_FOREIGN_KEY_VIOLATIONS: &str = "foreign-key-violations";
@@ -332,7 +337,12 @@ pub(crate) fn verify_upgraded_target(
 /// The design's domain invariants: lifecycle statuses stay inside the typed
 /// set, every forbidden-variants payload parses as a string array, and every
 /// converted strict-term ledger row resolves to an existing rule.
-fn domain_invariants_hold(connection: &Connection) -> Result<bool, MigrateError> {
+///
+/// The ledger clause is skipped when the database carries no conversion
+/// ledger: a Rust database created fresh never went through the Python
+/// converter, and its absence is not a defect. A Python-converted target
+/// always has one, so that path is unchanged.
+pub(crate) fn domain_invariants_hold(connection: &Connection) -> Result<bool, MigrateError> {
     let bad_status: i64 = connection.query_row(
         "select count(*) from term_rules
          where status not in ('candidate', 'active', 'superseded', 'archived')",
@@ -360,6 +370,14 @@ fn domain_invariants_hold(connection: &Connection) -> Result<bool, MigrateError>
         if !valid {
             return Ok(false);
         }
+    }
+    let ledger_present: i64 = connection.query_row(
+        "select count(*) from sqlite_master where type = 'table' and name = ?1",
+        [LEDGER_TABLE],
+        |row| row.get(0),
+    )?;
+    if ledger_present == 0 {
+        return Ok(true);
     }
     let unresolved: i64 = connection.query_row(
         "select count(*) from term_migration_ledger
@@ -468,6 +486,12 @@ pub fn run_preflight(
         DatabaseState::NewerSchema { .. } => {
             report.refusal_code = Some(REFUSAL_NEWER_SCHEMA.to_string());
         }
+        // An older supported Rust schema is a valid upgrade source: the
+        // ordered step runner moves it to the current version. Only a
+        // database that is already AT the current version is `already-current`.
+        DatabaseState::RustSchema { version } if version < SUPPORTED_RUST_SCHEMA_VERSION => {
+            return inspect_rust_database(config, report);
+        }
         DatabaseState::RustSchema { .. } => {
             report.refusal_code = Some(REFUSAL_ALREADY_CURRENT.to_string());
         }
@@ -488,6 +512,31 @@ pub fn run_preflight(
         if let Ok(counts) = count_all_tables(&connection) {
             report.table_counts = counts;
         }
+    }
+    Ok(report)
+}
+
+/// Inspection of a Rust database at an older supported schema version. There
+/// is no legacy terminology conversion to plan — the ordered SQL steps are the
+/// whole transformation — so the report carries the health facts the upgrade
+/// gate needs (integrity, foreign keys, table counts) and the same
+/// conversion-safe verdict rule as the Python path.
+fn inspect_rust_database(
+    config: &HieronymusConfig,
+    mut report: PreflightReport,
+) -> Result<PreflightReport, MigrateError> {
+    report.detected_state = STATE_RUST_SCHEMA_UPGRADABLE.to_string();
+    let connection = open_read_only(&config.database_path())?;
+    report.integrity = integrity_result(&connection)?;
+    report.foreign_key_violations = foreign_key_violation_count(&connection)?;
+    report.table_counts = count_all_tables(&connection)?;
+    report.conversion_safe = report.integrity == "ok" && report.foreign_key_violations == 0;
+    if !report.conversion_safe {
+        report.refusal_code = Some(if report.integrity != "ok" {
+            REFUSAL_INTEGRITY_DEGRADED.to_string()
+        } else {
+            REFUSAL_FOREIGN_KEY_VIOLATIONS.to_string()
+        });
     }
     Ok(report)
 }
@@ -577,7 +626,7 @@ pub(crate) fn foreign_key_violation_count(connection: &Connection) -> rusqlite::
     Ok(violations)
 }
 
-fn count_all_tables(connection: &Connection) -> rusqlite::Result<BTreeMap<String, i64>> {
+pub(crate) fn count_all_tables(connection: &Connection) -> rusqlite::Result<BTreeMap<String, i64>> {
     let mut statement =
         connection.prepare("select name from sqlite_master where type = 'table' order by name")?;
     let names: Vec<String> = statement
@@ -1547,6 +1596,141 @@ pub fn rebuild_strict_terms_fts(connection: &Connection) -> Result<(), MigrateEr
     Ok(())
 }
 
+/// External-content FTS projections rebuilt from authoritative rows (upgrade
+/// protocol step 8), each paired with the content table it projects.
+pub(crate) const EXTERNAL_CONTENT_FTS_TABLES: [(&str, &str); 6] = [
+    ("short_term_memories_fts", "short_term_memories"),
+    ("crystals_fts", "crystals"),
+    ("strict_terms_fts", "strict_terms"),
+    ("concepts_fts", "concepts"),
+    ("concept_facet_fts", "concept_facets"),
+    ("rag_chunks_fts", "rag_chunks"),
+];
+
+fn table_exists(connection: &Connection, table: &str) -> rusqlite::Result<bool> {
+    let present: i64 = connection.query_row(
+        "select count(*) from sqlite_master where type = 'table' and name = ?1",
+        [table],
+        |row| row.get(0),
+    )?;
+    Ok(present > 0)
+}
+
+/// Rebuild every present external-content FTS projection from its
+/// authoritative rows (upgrade protocol step 8).
+pub(crate) fn rebuild_external_content_fts(connection: &Connection) -> Result<(), MigrateError> {
+    for (table, _) in EXTERNAL_CONTENT_FTS_TABLES {
+        if table_exists(connection, table)? {
+            let quoted = table.replace('"', "\"\"");
+            connection.execute(
+                &format!("insert into \"{0}\"(\"{0}\") values ('rebuild')", quoted),
+                [],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Row counts for every authoritative table, excluding the external-content
+/// FTS projections and their fts5 shadow tables. Those are derived state that
+/// the rebuild step legitimately reorganizes, so they are verified by
+/// projection/content equality instead of by exact row accounting.
+pub(crate) fn authoritative_row_counts(
+    connection: &Connection,
+) -> rusqlite::Result<BTreeMap<String, i64>> {
+    let counts = count_all_tables(connection)?;
+    Ok(counts
+        .into_iter()
+        .filter(|(name, _)| !name.ends_with("_fts") && !name.contains("_fts_"))
+        .collect())
+}
+
+/// Verification for a Rust→Rust ordered upgrade: foreign keys, integrity,
+/// domain invariants, external-content FTS coverage, and exact row accounting
+/// against the pre-step baseline.
+///
+/// Row accounting here means what it says: an ordered schema step adds tables,
+/// it never adds, drops, or rewrites an authoritative row. Every table present
+/// before the steps must hold exactly the same number of rows afterwards, and
+/// every table the steps introduced must be empty.
+///
+/// `baseline` is `None` only for a re-verification that runs AFTER the
+/// transaction committed, where the durable rebuild job has legitimately added
+/// its own bookkeeping rows and re-running the census would read them as
+/// drift. Such a caller must copy the verdict established inside the
+/// transaction onto the returned report; until it does, the report fails
+/// closed (`row_accounting_ok: false`).
+pub(crate) fn verify_rust_upgraded_target(
+    connection: &Connection,
+    baseline: Option<&BTreeMap<String, i64>>,
+) -> Result<VerificationReport, MigrateError> {
+    let foreign_key_violations = foreign_key_violation_count(connection)?;
+    let integrity = integrity_result(connection)?;
+
+    let row_accounting_ok = match baseline {
+        Some(baseline) => {
+            let after = authoritative_row_counts(connection)?;
+            let preserved = baseline
+                .iter()
+                .all(|(table, count)| after.get(table) == Some(count));
+            let new_tables_empty = after
+                .iter()
+                .filter(|(table, _)| !baseline.contains_key(*table))
+                .all(|(_, count)| *count == 0);
+            preserved && new_tables_empty
+        }
+        None => false,
+    };
+
+    // FTS equivalence for a schema step: every rebuilt projection covers
+    // exactly its authoritative content table.
+    //
+    // The indexed count MUST come from the fts5 `_docsize` shadow table, never
+    // from the projection itself: `select count(*)` on an external-content
+    // FTS5 table is answered from the CONTENT table, so it reports the same
+    // number whether the index is complete or has just been emptied with
+    // `('delete-all')` — a check that can never fail. `_docsize` holds one row
+    // per document the index actually carries (all six projections use the
+    // default `columnsize=1`), so an emptied or half-built index is caught.
+    let mut fts_probes = 0_u64;
+    let mut fts_equivalent = true;
+    for (projection, content) in EXTERNAL_CONTENT_FTS_TABLES {
+        if !table_exists(connection, projection)? || !table_exists(connection, content)? {
+            continue;
+        }
+        fts_probes += 1;
+        let docsize = format!("{projection}_docsize");
+        if !table_exists(connection, &docsize)? {
+            // A projection whose document index cannot be inspected cannot be
+            // proved equivalent; fail closed rather than assume.
+            fts_equivalent = false;
+            continue;
+        }
+        let indexed: i64 = connection.query_row(
+            &format!("select count(*) from \"{}\"", docsize.replace('"', "\"\"")),
+            [],
+            |row| row.get(0),
+        )?;
+        let authoritative: i64 = connection.query_row(
+            &format!("select count(*) from \"{}\"", content.replace('"', "\"\"")),
+            [],
+            |row| row.get(0),
+        )?;
+        if indexed != authoritative {
+            fts_equivalent = false;
+        }
+    }
+
+    Ok(VerificationReport {
+        foreign_key_violations,
+        integrity,
+        row_accounting_ok,
+        fts_equivalent,
+        fts_probes,
+        domain_invariants_ok: domain_invariants_hold(connection)?,
+    })
+}
+
 pub(crate) fn sha256_file(path: &Path) -> Result<String, MigrateError> {
     use sha2::Digest;
     let bytes = std::fs::read(path)?;
@@ -1689,28 +1873,53 @@ pub fn run_dry_run_in(
     let mut connection = Connection::open(&target)?;
     connection.execute_batch("pragma foreign_keys = on;")?;
 
-    // Rehearse the upgrade's target-schema SQL steps.
-    {
-        let transaction = connection.transaction()?;
-        apply_terminology_schema_steps(&transaction)?;
-        transaction.commit()?;
-    }
+    // A Rust source at an older schema version rehearses the ordered SQL
+    // steps instead of the Python converter: there is no legacy terminology
+    // to convert, and the ordered runner is the whole transformation.
+    let rust_source = report.preflight.detected_state == STATE_RUST_SCHEMA_UPGRADABLE;
+    let (conversion, verification) = if rust_source {
+        // The source version is required, never defaulted: rehearsing from a
+        // guessed `from` would rehearse a different upgrade than the real run.
+        let from = report.preflight.detected_schema_version.ok_or_else(|| {
+            MigrateError::UnsupportedLegacySchema(
+                "an upgradable Rust database reported no schema version".to_string(),
+            )
+        })?;
+        let baseline = authoritative_row_counts(&connection)?;
+        {
+            let transaction = connection.transaction()?;
+            crate::schema_upgrade::apply_steps(&transaction, from, SUPPORTED_RUST_SCHEMA_VERSION)?;
+            rebuild_external_content_fts(&transaction)?;
+            transaction.commit()?;
+        }
+        (
+            None,
+            verify_rust_upgraded_target(&connection, Some(&baseline))?,
+        )
+    } else {
+        // Rehearse the upgrade's target-schema SQL steps.
+        {
+            let transaction = connection.transaction()?;
+            apply_terminology_schema_steps(&transaction)?;
+            transaction.commit()?;
+        }
 
-    // Rehearse the typed conversion and the FTS rebuild through one
-    // transaction handle; verification then runs over the committed shape
-    // exactly as the upgrade verifies its committed target.
-    let conversion = {
-        let transaction = connection.transaction()?;
-        let conversion = convert_strict_terms(&transaction)?;
-        rebuild_strict_terms_fts(&transaction)?;
-        transaction.commit()?;
-        conversion
+        // Rehearse the typed conversion and the FTS rebuild through one
+        // transaction handle; verification then runs over the committed shape
+        // exactly as the upgrade verifies its committed target.
+        let conversion = {
+            let transaction = connection.transaction()?;
+            let conversion = convert_strict_terms(&transaction)?;
+            rebuild_strict_terms_fts(&transaction)?;
+            transaction.commit()?;
+            conversion
+        };
+        let verification = verify_upgraded_target(&connection, &conversion)?;
+        (Some(conversion), verification)
     };
-
-    let verification = verify_upgraded_target(&connection, &conversion)?;
     let verification_ok = verification.all_checks_pass();
 
-    report.conversion = Some(conversion);
+    report.conversion = conversion;
     report.verification = Some(verification);
     // The conversion-safe verdict is only trustworthy after verification: a
     // dry-run whose verification fails is refused (`verification-failed`) and
@@ -1728,4 +1937,164 @@ pub fn run_dry_run_in(
     std::fs::remove_dir_all(&run_dir)?;
     report.temp_artifacts_removed = true;
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The frozen schema-version-1 snapshot the upgrade suite uses.
+    const RUST_V1_SQL: &str = include_str!("../tests/fixtures/rust-v1.sql");
+
+    fn v1_connection() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("pragma foreign_keys = on;")
+            .unwrap();
+        connection.execute_batch(RUST_V1_SQL).unwrap();
+        connection
+            .execute_batch(
+                "insert into term_rules(source_language, target_language, source_text,
+                                        canonical_translation, status, created_at, updated_at)
+                 values ('ja', 'en', 'センス', 'Sense', 'active',
+                         '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');",
+            )
+            .unwrap();
+        connection
+    }
+
+    /// Rows in a table that has an external-content FTS projection, so the
+    /// FTS coverage check has something to be right or wrong about.
+    fn seed_indexed_rows(connection: &Connection) {
+        connection
+            .execute_batch(
+                "insert into crystals(crystal_type, text, scope_type, scope_key,
+                                      strength, confidence, status, created_at, updated_at)
+                 values ('fact', 'the admiral commands the fleet', 'series', 'series:demo',
+                         0.7, 0.9, 'active', '2026-01-01T00:00:00+00:00',
+                         '2026-01-01T00:00:00+00:00');",
+            )
+            .unwrap();
+    }
+
+    /// The in-transaction gate that decides whether the single commit happens:
+    /// any clause failing makes `upgrade_database_transaction` return
+    /// `verification-failed`, which drops the transaction and rolls the whole
+    /// upgrade back with the original database intact.
+    #[test]
+    fn the_ordered_upgrade_verifier_passes_only_a_clean_target() {
+        let connection = v1_connection();
+        seed_indexed_rows(&connection);
+        rebuild_external_content_fts(&connection).unwrap();
+        let baseline = authoritative_row_counts(&connection).unwrap();
+        let report = verify_rust_upgraded_target(&connection, Some(&baseline)).unwrap();
+        assert!(report.all_checks_pass(), "{report:?}");
+        assert_eq!(report.foreign_key_violations, 0);
+        assert_eq!(report.integrity, "ok");
+        assert_eq!(
+            report.fts_probes,
+            EXTERNAL_CONTENT_FTS_TABLES.len() as u64,
+            "every external-content projection is probed"
+        );
+        assert!(report.fts_equivalent);
+    }
+
+    /// The FTS check must actually be able to fail. `select count(*)` on an
+    /// external-content FTS5 table is answered from the CONTENT table, so a
+    /// destroyed index still reports the full count; only the `_docsize`
+    /// shadow reveals it.
+    #[test]
+    fn a_destroyed_fts_index_fails_the_ordered_upgrade_verifier() {
+        let connection = v1_connection();
+        seed_indexed_rows(&connection);
+        rebuild_external_content_fts(&connection).unwrap();
+        let baseline = authoritative_row_counts(&connection).unwrap();
+
+        connection
+            .execute_batch("insert into crystals_fts(crystals_fts) values ('delete-all');")
+            .unwrap();
+
+        // The naive check would still see the content-table count here.
+        let naive: i64 = connection
+            .query_row("select count(*) from crystals_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(naive, 1, "the vacuous check this test exists to prevent");
+        // A real MATCH finds nothing, and the verifier agrees.
+        let matched: i64 = connection
+            .query_row(
+                "select count(*) from crystals_fts where crystals_fts match 'admiral'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(matched, 0);
+
+        let report = verify_rust_upgraded_target(&connection, Some(&baseline)).unwrap();
+        assert!(!report.fts_equivalent, "{report:?}");
+        assert!(!report.all_checks_pass(), "{report:?}");
+
+        // Rebuilding restores both the index and the verdict.
+        rebuild_external_content_fts(&connection).unwrap();
+        let report = verify_rust_upgraded_target(&connection, Some(&baseline)).unwrap();
+        assert!(report.fts_equivalent, "{report:?}");
+        assert!(report.all_checks_pass(), "{report:?}");
+    }
+
+    #[test]
+    fn a_foreign_key_violation_fails_the_ordered_upgrade_verifier() {
+        let connection = v1_connection();
+        let baseline = authoritative_row_counts(&connection).unwrap();
+        connection
+            .execute_batch(
+                "pragma foreign_keys = off;
+                 insert into term_rule_forms(rule_id, form_kind, surface, language)
+                 values (9999, 'source', 'ghost', 'ja');",
+            )
+            .unwrap();
+        let report = verify_rust_upgraded_target(&connection, Some(&baseline)).unwrap();
+        assert_eq!(report.foreign_key_violations, 1);
+        assert!(!report.all_checks_pass(), "{report:?}");
+    }
+
+    #[test]
+    fn row_drift_fails_the_ordered_upgrade_verifier() {
+        let connection = v1_connection();
+        let baseline = authoritative_row_counts(&connection).unwrap();
+        // A step that lost an authoritative row is exactly what row
+        // accounting exists to catch.
+        connection.execute_batch("delete from term_rules;").unwrap();
+        let report = verify_rust_upgraded_target(&connection, Some(&baseline)).unwrap();
+        assert!(!report.row_accounting_ok);
+        assert!(!report.all_checks_pass(), "{report:?}");
+    }
+
+    #[test]
+    fn a_non_empty_new_table_fails_the_ordered_upgrade_verifier() {
+        let connection = v1_connection();
+        let baseline = authoritative_row_counts(&connection).unwrap();
+        connection
+            .execute_batch(
+                "create table dream_link_batches (
+                     id integer primary key, session_id integer,
+                     created_cycle integer, completed_cycle integer
+                 );
+                 insert into dream_link_batches(session_id, created_cycle) values (1, 1);",
+            )
+            .unwrap();
+        let report = verify_rust_upgraded_target(&connection, Some(&baseline)).unwrap();
+        assert!(
+            !report.row_accounting_ok,
+            "a step must never seed rows into the tables it adds"
+        );
+    }
+
+    #[test]
+    fn a_post_commit_reverification_fails_closed_without_a_census() {
+        let connection = v1_connection();
+        let report = verify_rust_upgraded_target(&connection, None).unwrap();
+        assert!(
+            !report.row_accounting_ok,
+            "row accounting must never be assumed when no census was supplied"
+        );
+    }
 }

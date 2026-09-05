@@ -10,9 +10,11 @@ const GLOBAL_MIGRATION_SQL: &str = include_str!("../migrations/global.sql");
 const TERMINOLOGY_MIGRATION_SQL: &str = include_str!("../migrations/terminology.sql");
 
 /// Supported Rust schema version created by this line. Bumped only by an
-/// accepted schema-upgrade decision; a database written by a newer binary
-/// fails closed.
-pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 1;
+/// accepted schema-upgrade decision, together with a registered step in
+/// [`crate::schema_upgrade`]; a database written by a newer binary fails
+/// closed, and a database at an older supported version is upgraded in place
+/// by the ordered runner (never opened for writes as-is).
+pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 2;
 
 /// The Rust schema-version marker table. Its presence is the primary signal
 /// that a database was written by this line rather than Python.
@@ -24,7 +26,7 @@ pub const RUST_META_TABLE: &str = "hieronymus_meta";
 /// starts). This is a bounded `sqlite_master` check, never `integrity_check`
 /// or a data scan; it names the load-bearing tables from every subsystem
 /// (`migrations/global.sql` + `migrations/terminology.sql`), not all of them.
-const RUST_MANDATORY_TABLES: [&str; 15] = [
+const RUST_MANDATORY_TABLES: [&str; 19] = [
     "series",
     "task_sessions",
     "short_term_memories",
@@ -40,6 +42,13 @@ const RUST_MANDATORY_TABLES: [&str; 15] = [
     "memory_graph_migration_ledger",
     "term_rules",
     "term_rule_forms",
+    // Schema version 2 (`migrations/002-durable-work.sql`): a v1 database
+    // carries the marker but none of these, so it can never verify as the
+    // current schema — it is routed to the ordered upgrade instead.
+    "dream_link_batches",
+    "dream_link_members",
+    "dream_link_pairs",
+    "term_rule_actions",
 ];
 /// Sentinel tables that identify a Python-era Hieronymus database. Python has
 /// no schema-version marker; the ported migration table set is the fingerprint
@@ -101,22 +110,31 @@ pub fn open_migrated(path: &Path) -> Result<rusqlite::Connection, OpenMigratedEr
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(OpenMigratedError::Io)?;
     }
-    let mut connection = rusqlite::Connection::open(path)?;
-    connection.execute_batch(
-        "pragma foreign_keys = on;
-         pragma journal_mode = wal;",
-    )?;
+    // Classify BEFORE opening for writes. `pragma journal_mode = wal` rewrites
+    // the database header and creates WAL sidecars, so a refused state must
+    // never reach it: an older, newer, Python, unknown, or corrupt database is
+    // left byte-identical for the upgrade path (or the operator) to inspect.
     let state = classify_database(path);
     match state {
         DatabaseState::Empty => {
+            let mut connection = open_for_writes(path)?;
             create_fresh_schema(&mut connection)?;
             Ok(connection)
         }
         DatabaseState::RustSchema { version } if version == SUPPORTED_RUST_SCHEMA_VERSION => {
-            Ok(connection)
+            Ok(open_for_writes(path)?)
         }
         other => Err(OpenMigratedError::UnsupportedState(other)),
     }
+}
+
+fn open_for_writes(path: &Path) -> rusqlite::Result<rusqlite::Connection> {
+    let connection = rusqlite::Connection::open(path)?;
+    connection.execute_batch(
+        "pragma foreign_keys = on;
+         pragma journal_mode = wal;",
+    )?;
+    Ok(connection)
 }
 
 /// Build the current Rust schema on an empty database in a single transaction,
@@ -124,20 +142,39 @@ pub fn open_migrated(path: &Path) -> Result<rusqlite::Connection, OpenMigratedEr
 /// rolls the whole thing back, so an interrupted fresh create never leaves a
 /// half-built database that would later classify as a usable Rust schema
 /// (ADR 0010).
+///
+/// A fresh database is built by the SAME statements an existing one is
+/// upgraded with: the version-1 baseline, then the ordered steps. There is
+/// exactly one definition of "what schema version N looks like", so a fresh
+/// current database and an upgraded old one are schema-identical by
+/// construction (`tests/rust_upgrade.rs` asserts it).
 fn create_fresh_schema(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     let transaction = connection.transaction()?;
-    transaction.execute_batch(GLOBAL_MIGRATION_SQL)?;
-    transaction.execute_batch(TERMINOLOGY_MIGRATION_SQL)?;
-    transaction.pragma_update(None, "user_version", SUPPORTED_RUST_SCHEMA_VERSION)?;
-    // Marker last: every domain table exists before the version is claimed.
-    transaction.execute_batch(&format!(
+    apply_baseline_schema(&transaction)?;
+    crate::schema_upgrade::apply_steps(
+        &transaction,
+        crate::schema_upgrade::BASELINE_SCHEMA_VERSION,
+        SUPPORTED_RUST_SCHEMA_VERSION,
+    )?;
+    transaction.commit()
+}
+
+/// The version-1 baseline: the ported global and terminology schema plus the
+/// version-1 markers, exactly as this line has always written them. Safe
+/// inside the caller's transaction; publishes no version above 1.
+fn apply_baseline_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(GLOBAL_MIGRATION_SQL)?;
+    connection.execute_batch(TERMINOLOGY_MIGRATION_SQL)?;
+    // Marker last: every version-1 domain table exists before 1 is claimed.
+    connection.execute_batch(&format!(
         "create table if not exists {RUST_META_TABLE} (
              schema_version integer not null unique
          );
          insert or ignore into {RUST_META_TABLE} (schema_version)
-         values ({SUPPORTED_RUST_SCHEMA_VERSION});"
-    ))?;
-    transaction.commit()
+         values ({baseline});
+         pragma user_version = {baseline};",
+        baseline = crate::schema_upgrade::BASELINE_SCHEMA_VERSION
+    ))
 }
 
 /// Why a database that carries the current Rust schema-version marker is not
@@ -205,11 +242,10 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
         return Err(SchemaDefect::MissingTables(missing));
     }
 
-    // A representative column check on the Rust-owned terminology table and
-    // the marker table; the full column contract is the upgrade path's job.
-    // TODO(schema-v2): widen the mandatory-column check when R3 lands in-place
-    // ALTERs — a partially applied column add on another mandatory table
-    // currently still classifies as Current.
+    // Representative columns from every schema step, so a partially applied
+    // step (a table created without the columns its version promises) fails
+    // the check instead of classifying as Current. The full column contract
+    // stays the upgrade path's job.
     for (table, required) in [
         (
             "term_rules",
@@ -218,6 +254,39 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
         (
             "term_rule_forms",
             &["id", "rule_id", "form_kind", "surface"][..],
+        ),
+        // Schema version 2.
+        (
+            "dream_link_batches",
+            &["id", "session_id", "created_cycle", "completed_cycle"][..],
+        ),
+        ("dream_link_members", &["batch_id", "activation_id"][..]),
+        (
+            "dream_link_pairs",
+            &[
+                "batch_id",
+                "left_id",
+                "right_id",
+                "status",
+                "applied_cycle",
+                "result_json",
+            ][..],
+        ),
+        (
+            "term_rule_actions",
+            &[
+                "id",
+                "idempotency_key",
+                "rule_id",
+                "actor",
+                "reason",
+                "action",
+                "prior_revision",
+                "resulting_revision",
+                "request_json",
+                "result_json",
+                "created_at",
+            ][..],
         ),
         (RUST_META_TABLE, &["schema_version"][..]),
     ] {
@@ -272,10 +341,15 @@ pub enum OpenMigratedError {
     UnsupportedState(DatabaseState),
 }
 
-/// Apply the target-schema SQL steps of an upgrade to `connection`: the
-/// terminology rule tables plus the schema-version metadata. Idempotent, and
-/// safe inside the caller's transaction — the upgrade protocol owns the
-/// commit. This is the same statement set a fresh Rust database receives.
+/// Apply the target-schema SQL steps of a Python→Rust upgrade to
+/// `connection`: the version-1 terminology rule tables and markers, then every
+/// ordered step up to the current supported version. A Python database
+/// converted today therefore lands directly on the CURRENT schema, never on a
+/// version that would immediately need a second upgrade.
+///
+/// Idempotent, and safe inside the caller's transaction — the upgrade protocol
+/// owns the commit. This is the same statement set a fresh Rust database
+/// receives (`create_fresh_schema`).
 pub(crate) fn apply_terminology_schema_steps(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
@@ -283,11 +357,23 @@ pub(crate) fn apply_terminology_schema_steps(
     connection.execute_batch(&format!(
         "create table if not exists {RUST_META_TABLE} (
              schema_version integer not null unique
-         );
-         insert or ignore into {RUST_META_TABLE} (schema_version)
-         values ({SUPPORTED_RUST_SCHEMA_VERSION});"
+         );"
     ))?;
-    connection.pragma_update(None, "user_version", SUPPORTED_RUST_SCHEMA_VERSION)
+    // Start from whatever version this database already claims, so a second
+    // call is a no-op instead of inserting a stale marker row or replaying a
+    // step that already landed.
+    let from = match crate::schema_upgrade::marked_version(connection)? {
+        Some(version) => version,
+        None => {
+            connection.execute_batch(&format!(
+                "insert into {RUST_META_TABLE} (schema_version) values ({baseline});
+                 pragma user_version = {baseline};",
+                baseline = crate::schema_upgrade::BASELINE_SCHEMA_VERSION
+            ))?;
+            crate::schema_upgrade::BASELINE_SCHEMA_VERSION
+        }
+    };
+    crate::schema_upgrade::apply_steps(connection, from, SUPPORTED_RUST_SCHEMA_VERSION)
 }
 
 /// Classify the database at `path` without writing to it.

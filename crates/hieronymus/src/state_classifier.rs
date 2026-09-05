@@ -11,7 +11,8 @@
 //!
 //! Only the current Rust schema, current config versions, and a complete or
 //! absent cutover journal classify as startable ([`StartupState::Fresh`] or
-//! [`StartupState::Current`]). A legacy Python schema is `migration_required`;
+//! [`StartupState::Current`]). An older but supported Rust schema is
+//! `schema_upgrade_required`; a legacy Python schema is `migration_required`;
 //! legacy config is `config_migration_required`; a committed database awaiting
 //! config promotion is `config_promotion_required`. Newer, unknown, corrupt,
 //! partially built, or internally inconsistent state fails closed.
@@ -36,6 +37,13 @@ pub enum StartupState {
 /// surface [`ClassifyError::remediation`] verbatim rather than infer a command
 /// from the code.
 pub const CODE_MIGRATION_REQUIRED: &str = "migration_required";
+/// A Rust database at an older but still supported schema version: the
+/// ordered upgrade runner moves it forward, so the remediation is the same
+/// `hiero migrate` command as a Python cutover. Distinct from
+/// [`CODE_MIGRATION_REQUIRED`] because the source is not the legacy Python
+/// schema, and distinct from [`CODE_INVALID`] because it is a routine,
+/// supported state — not a fail-closed one.
+pub const CODE_SCHEMA_UPGRADE_REQUIRED: &str = "schema_upgrade_required";
 pub const CODE_CONFIG_MIGRATION_REQUIRED: &str = "config_migration_required";
 pub const CODE_CONFIG_PROMOTION_REQUIRED: &str = "config_promotion_required";
 /// A partially applied upgrade (a `prepared` or otherwise non-terminal cutover
@@ -67,6 +75,10 @@ impl ClassifyError {
 
     fn migration_required(message: impl Into<String>) -> Self {
         Self::new(CODE_MIGRATION_REQUIRED, message, MIGRATE_COMMAND)
+    }
+
+    fn schema_upgrade_required(message: impl Into<String>) -> Self {
+        Self::new(CODE_SCHEMA_UPGRADE_REQUIRED, message, MIGRATE_COMMAND)
     }
 
     fn config_migration_required(message: impl Into<String>) -> Self {
@@ -150,10 +162,17 @@ fn classify_database(config: &HieronymusConfig) -> Result<StartupState, Classify
             })?;
             Ok(StartupState::Current)
         }
-        DatabaseState::RustSchema { version } => Err(ClassifyError::invalid(format!(
-            "database schema version {version} is not the supported version {}",
-            db::SUPPORTED_RUST_SCHEMA_VERSION
-        ))),
+        // An older supported Rust schema is a routine upgrade, not a broken
+        // root: the daemon still refuses to open it (`open_migrated` accepts
+        // only the current version, so nothing is written), and points at the
+        // ordered upgrade runner behind `hiero migrate`.
+        DatabaseState::RustSchema { version } => {
+            Err(ClassifyError::schema_upgrade_required(format!(
+                "the database is at Rust schema version {version}; this binary requires \
+                 version {}",
+                db::SUPPORTED_RUST_SCHEMA_VERSION
+            )))
+        }
         DatabaseState::NewerSchema { version } => Err(ClassifyError::invalid(format!(
             "database schema version {version} is newer than this binary supports (max {})",
             db::SUPPORTED_RUST_SCHEMA_VERSION
