@@ -28,6 +28,28 @@ pub enum TermbaseError {
     BothSources,
     #[error("validate requires raw_text or source_text")]
     MissingSource,
+    #[error(
+        "revision conflict for rule {rule_id}: expected revision {expected_revision}, current revision {current_revision}"
+    )]
+    RevisionConflict {
+        rule_id: i64,
+        expected_revision: i64,
+        current_revision: i64,
+    },
+    #[error("idempotency key {0:?} was already used with a different request")]
+    IdempotencyConflict(String),
+    #[error("rule crystal {0} is linked to more than one term_rules row")]
+    AmbiguousCrystalLink(i64),
+    #[error(
+        "rule crystal {0} has no linked term_rules authority row; archive the authority through the explicit rule lifecycle instead of the projection alone"
+    )]
+    UnlinkedCrystalLink(i64),
+    #[error("rule-crystal projection {crystal_id} failed: {source}")]
+    ProjectionFailure {
+        crystal_id: i64,
+        #[source]
+        source: crate::crystals::CrystalError,
+    },
     #[error(transparent)]
     Database(#[from] rusqlite::Error),
     #[error("{0}")]
@@ -50,7 +72,9 @@ pub struct ContractTerm {
     pub notes: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// One validation finding; the serde projection is the transport DTO for the
+/// `hieronymus_termbase_validate` payload (the Python `asdict` shape).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ValidationFinding {
     pub term_id: i64,
     pub kind: String,
@@ -60,8 +84,10 @@ pub struct ValidationFinding {
     pub message: String,
 }
 
-/// A stored rule with its forms hydrated.
-#[derive(Debug, Clone, PartialEq)]
+/// A stored rule with its forms hydrated. The serde projection is a safe DTO
+/// for tool payloads and for the audited lifecycle's stored results
+/// (`term_rule_actions.result_json`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TermRule {
     pub id: i64,
     pub concept_id: Option<i64>,
@@ -79,6 +105,68 @@ pub struct TermRule {
     pub language_tags: Vec<String>,
 }
 
+/// One explicit lifecycle transition over one structured rule (ADR 0011).
+/// Only these actions may move a rule between statuses, and only
+/// [`Termbase::apply_action`] executes them — audited, revision-checked, and
+/// idempotent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleAction {
+    Approve,
+    Archive,
+    Replace { replacement_id: i64 },
+}
+
+impl RuleAction {
+    /// The stable audit name recorded in `term_rule_actions.action`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            RuleAction::Approve => "approve",
+            RuleAction::Archive => "archive",
+            RuleAction::Replace { .. } => "replace",
+        }
+    }
+}
+
+/// One audited lifecycle request. `expected_revision` is the optimistic
+/// concurrency token (the caller's observed `TermRule::revision`);
+/// `idempotency_key` deduplicates retries: the same key with the same
+/// canonical request replays its stored result, the same key with a
+/// different request is a conflict. The transport layer supplies `actor`
+/// from the authenticated credential — it is never accepted from raw tool
+/// arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleActionRequest {
+    pub rule_id: i64,
+    pub action: RuleAction,
+    pub actor: String,
+    pub reason: String,
+    pub expected_revision: i64,
+    pub idempotency_key: String,
+}
+
+/// The canonical serialization of a [`RuleActionRequest`] stored in
+/// `term_rule_actions.request_canonical`. serde_json maps are key-sorted, so
+/// equal requests always serialize identically; the idempotency key itself is
+/// the lookup key and is not repeated in the payload.
+fn canonical_request(request: &RuleActionRequest) -> Result<String, TermbaseError> {
+    let action = match &request.action {
+        RuleAction::Approve => serde_json::json!({ "kind": "approve" }),
+        RuleAction::Archive => serde_json::json!({ "kind": "archive" }),
+        RuleAction::Replace { replacement_id } => serde_json::json!({
+            "kind": "replace",
+            "replacement_id": replacement_id,
+        }),
+    };
+    let payload = serde_json::json!({
+        "action": action,
+        "actor": request.actor,
+        "expected_revision": request.expected_revision,
+        "reason": request.reason,
+        "rule_id": request.rule_id,
+    });
+    serde_json::to_string(&payload).map_err(|error| TermbaseError::Json(error.to_string()))
+}
+
 /// The deterministic termbase over one translation context.
 pub struct Termbase {
     config: HieronymusConfig,
@@ -87,6 +175,43 @@ pub struct Termbase {
 
 fn now_iso8601() -> String {
     Utc::now().to_rfc3339()
+}
+
+/// Code-side ensure for the audited lifecycle ledger (`term_rule_actions`),
+/// following the code-side pattern of
+/// `semantic_store::ensure_semantic_schema`/`SEMANTIC_SCHEMA_SQL`: every
+/// writer creates the derived table it needs with `if not exists`, so fresh
+/// and upgraded databases converge without a schema-version bump.
+///
+/// COORDINATION POINT: the canonical schema-v2 definition of this table is
+/// owned by the runtime plan (R1-R5), implemented by another agent in a
+/// separate worktree. Once R3's migration lands, this `if not exists` ensure
+/// becomes a deliberate no-op against the migrated table. Every column here
+/// is NULLable or defaulted so the v2 definition can widen the table without
+/// a rewrite; the partial unique index on `idempotency_key` is the only
+/// constraint [`Termbase::apply_action`] relies on (partial, so future
+/// writers may still store rows without a key).
+const TERM_RULE_ACTIONS_SCHEMA_SQL: &str = "
+create table if not exists term_rule_actions (
+  id integer primary key,
+  rule_id integer,
+  action text not null default '',
+  actor text not null default '',
+  reason text not null default '',
+  expected_revision integer,
+  resulting_revision integer,
+  idempotency_key text not null default '',
+  request_canonical text not null default '',
+  result_json text not null default '',
+  created_at text not null default ''
+);
+create unique index if not exists term_rule_actions_idempotency_key_idx
+  on term_rule_actions(idempotency_key) where idempotency_key <> '';
+";
+
+fn ensure_term_rule_actions_schema(connection: &Connection) -> Result<(), TermbaseError> {
+    connection.execute_batch(TERM_RULE_ACTIONS_SCHEMA_SQL)?;
+    Ok(())
 }
 
 /// The canonical rule sentence: also the round-trip shape enforced on
@@ -133,6 +258,32 @@ fn validate_rule_shape(
         }
         _ => Err(TermbaseError::RoundTripFailure),
     }
+}
+
+/// Deterministic re-validation of one stored rule's structured forms before
+/// an activation transition (ADR 0011: a lifecycle action "succeeds only
+/// after deterministic validation of the structured rule"). Runs inside the
+/// caller's transaction.
+fn validate_structured_rule(connection: &Connection, rule_id: i64) -> Result<(), TermbaseError> {
+    let (source_text, canonical_translation, forbidden_json): (String, String, String) = connection
+        .query_row(
+            "select source_text, canonical_translation, forbidden_variants_json
+                 from term_rules where id = ?1",
+            [rule_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => TermbaseError::UnknownRule(rule_id),
+            other => other.into(),
+        })?;
+    let forbidden_variants: Vec<String> = serde_json::from_str(&forbidden_json)
+        .map_err(|error| TermbaseError::Json(error.to_string()))?;
+    validate_rule_shape(
+        &source_text,
+        &canonical_translation,
+        &[],
+        &forbidden_variants,
+    )
 }
 
 /// Parse the canonical rule sentence. Returns
@@ -313,9 +464,9 @@ impl Termbase {
             "insert into term_rules(
                concept_id, source_language, target_language, source_text,
                canonical_translation, forbidden_variants_json, status,
-               provenance, created_at, updated_at
+               provenance, notes, created_at, updated_at
              )
-             values (?1, ?2, ?3, ?4, ?5, ?6, 'candidate', 'proposed', ?7, ?8)",
+             values (?1, ?2, ?3, ?4, ?5, ?6, 'candidate', 'proposed', ?7, ?8, ?9)",
             rusqlite::params![
                 concept_id,
                 self.context.source_language,
@@ -324,6 +475,7 @@ impl Termbase {
                 canonical_translation,
                 serde_json::to_string(forbidden_variants)
                     .map_err(|error| TermbaseError::Json(error.to_string()))?,
+                fields.notes,
                 now,
                 now,
             ],
@@ -386,40 +538,284 @@ impl Termbase {
         self.get_rule(rule_id)
     }
 
-    /// The audited lifecycle transition: only an explicit approval activates a
-    /// rule; passive processes cannot reach `active`.
+    /// The legacy approval entry (compatibility wrapper): an explicit
+    /// candidate→active transition delegated to [`Termbase::apply_action`]
+    /// with a deterministic internal idempotency key derived from the
+    /// action, the rule, and the currently pending transition, so legacy
+    /// retries can never double-apply. The transition itself stays strict:
+    /// approving a rule that is no longer a candidate is a rejection (a
+    /// retry after a committed approval reports the transition error instead
+    /// of silently re-approving).
     pub fn approve(&self, rule_id: i64, actor: &str, reason: &str) -> Result<(), TermbaseError> {
+        let rule = self.get_rule(rule_id)?;
+        let request = RuleActionRequest {
+            rule_id,
+            action: RuleAction::Approve,
+            actor: actor.to_string(),
+            reason: reason.to_string(),
+            expected_revision: rule.revision,
+            idempotency_key: format!("legacy-approve:{rule_id}:{}@{}", rule.status, rule.revision),
+        };
+        self.apply_action(&request)?;
+        Ok(())
+    }
+
+    /// The audited lifecycle transition (ADR 0011): the ONLY path that moves
+    /// a structured rule between statuses. One SQLite transaction
+    ///
+    /// 1. replays the stored result when the idempotency key matches the
+    ///    canonical request (retries are safe), or rejects a key reuse with a
+    ///    different request;
+    /// 2. checks `expected_revision` against the stored revision (stale
+    ///    callers get [`TermbaseError::RevisionConflict`]);
+    /// 3. re-validates the structured forms of every rule the action
+    ///    activates (deterministic round-trip, never a guess);
+    /// 4. mutates `term_rules`/`term_rule_revisions` and, when a projection
+    ///    is linked, the rule-crystal projection IN THE SAME transaction;
+    /// 5. records the `term_rule_actions` row (actor, reason, expected and
+    ///    resulting revision, canonical request, resulting state) inside the
+    ///    same commit — a failure anywhere rolls the whole action back.
+    ///
+    /// The returned rule is the resulting authority: the target rule for
+    /// approve/archive, the activated replacement for
+    /// [`RuleAction::Replace`]. The `actor` must be the authenticated
+    /// caller; passive processes (dreaming, scoring, imports) have no actor
+    /// and therefore no way through this API.
+    pub fn apply_action(&self, request: &RuleActionRequest) -> Result<TermRule, TermbaseError> {
+        if request.actor.trim().is_empty() {
+            return Err(TermbaseError::Invalid(
+                "actor must not be empty: lifecycle transitions require an authenticated actor"
+                    .to_string(),
+            ));
+        }
+        if request.idempotency_key.trim().is_empty() {
+            return Err(TermbaseError::Invalid(
+                "idempotency_key must not be empty".to_string(),
+            ));
+        }
+        let canonical = canonical_request(request)?;
         let now = now_iso8601();
         let mut connection = self.connection()?;
+        ensure_term_rule_actions_schema(&connection)?;
         let transaction = connection.transaction()?;
-        let status: String = transaction
+
+        // Idempotency first: the lookup key is the idempotency key.
+        let existing: Option<(String, String)> = transaction
             .query_row(
-                "select status from term_rules where id = ?1",
-                [rule_id],
-                |row| row.get(0),
+                "select request_canonical, result_json from term_rule_actions
+                 where idempotency_key = ?1",
+                [&request.idempotency_key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map(Some)
+            .or_else(|error: rusqlite::Error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(TermbaseError::Database(other)),
+            })?;
+        if let Some((stored_canonical, stored_result)) = existing {
+            if stored_canonical == canonical {
+                // Same key, same request: replay the stored result instead
+                // of re-executing the transition.
+                return serde_json::from_str(&stored_result)
+                    .map_err(|error| TermbaseError::Json(error.to_string()));
+            }
+            return Err(TermbaseError::IdempotencyConflict(
+                request.idempotency_key.clone(),
+            ));
+        }
+
+        let (status, revision, rule_crystal_id): (String, i64, Option<i64>) = transaction
+            .query_row(
+                "select status, revision, rule_crystal_id from term_rules where id = ?1",
+                [request.rule_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|error| match error {
-                rusqlite::Error::QueryReturnedNoRows => TermbaseError::UnknownRule(rule_id),
+                rusqlite::Error::QueryReturnedNoRows => TermbaseError::UnknownRule(request.rule_id),
                 other => other.into(),
             })?;
-        if status != "candidate" {
-            return Err(TermbaseError::Invalid(format!(
-                "only candidate rules can be approved; rule {rule_id} is {status}"
-            )));
+        if revision != request.expected_revision {
+            return Err(TermbaseError::RevisionConflict {
+                rule_id: request.rule_id,
+                expected_revision: request.expected_revision,
+                current_revision: revision,
+            });
         }
+        let resulting_revision = revision + 1;
+
+        let result_rule_id = match &request.action {
+            RuleAction::Approve => {
+                if status != "candidate" {
+                    return Err(TermbaseError::Invalid(format!(
+                        "only candidate rules can be approved; rule {rule_id} is {status}",
+                        rule_id = request.rule_id
+                    )));
+                }
+                validate_structured_rule(&transaction, request.rule_id)?;
+                transaction.execute(
+                    "update term_rules set status = 'active', revision = ?2, updated_at = ?3
+                     where id = ?1",
+                    rusqlite::params![request.rule_id, resulting_revision, now],
+                )?;
+                transaction.execute(
+                    "insert into term_rule_revisions(
+                       rule_id, actor, reason, prior_status, new_status, created_at
+                     )
+                     values (?1, ?2, ?3, 'candidate', 'active', ?4)",
+                    rusqlite::params![request.rule_id, request.actor, request.reason, now],
+                )?;
+                request.rule_id
+            }
+            RuleAction::Archive => {
+                if !matches!(status.as_str(), "candidate" | "active") {
+                    return Err(TermbaseError::Invalid(format!(
+                        "only candidate or active rules can be archived; rule {rule_id} is {status}",
+                        rule_id = request.rule_id
+                    )));
+                }
+                transaction.execute(
+                    "update term_rules set status = 'archived', revision = ?2, updated_at = ?3
+                     where id = ?1",
+                    rusqlite::params![request.rule_id, resulting_revision, now],
+                )?;
+                transaction.execute(
+                    "insert into term_rule_revisions(
+                       rule_id, actor, reason, prior_status, new_status, created_at
+                     )
+                     values (?1, ?2, ?3, ?4, 'archived', ?5)",
+                    rusqlite::params![request.rule_id, request.actor, request.reason, status, now],
+                )?;
+                if let Some(crystal_id) = rule_crystal_id {
+                    // The projection is archived in the SAME transaction as
+                    // the authority: an archive never leaves an active
+                    // advisory projection behind, and a projection failure
+                    // rolls the authority back.
+                    crate::crystals::archive_rule_crystal_in_transaction(
+                        &transaction,
+                        crystal_id,
+                        &now,
+                    )
+                    .map_err(|source| TermbaseError::ProjectionFailure { crystal_id, source })?;
+                }
+                request.rule_id
+            }
+            RuleAction::Replace { replacement_id } => {
+                if *replacement_id == request.rule_id {
+                    return Err(TermbaseError::Invalid(
+                        "a rule cannot replace itself".to_string(),
+                    ));
+                }
+                if status != "active" {
+                    return Err(TermbaseError::Invalid(format!(
+                        "only active rules can be replaced; rule {rule_id} is {status}",
+                        rule_id = request.rule_id
+                    )));
+                }
+                let replacement = hydrate_rule(&transaction, *replacement_id)?;
+                if replacement.status != "candidate" {
+                    return Err(TermbaseError::Invalid(format!(
+                        "only candidate rules can activate as replacements; rule {replacement_id} is {status}",
+                        replacement_id = replacement.id,
+                        status = replacement.status,
+                    )));
+                }
+                if replacement.rule_crystal_id.is_some() {
+                    return Err(TermbaseError::Invalid(format!(
+                        "replacement rule {replacement_id} already links a rule-crystal projection; \
+                         the replaced rule's projection cannot move there without ambiguity",
+                        replacement_id = replacement.id,
+                    )));
+                }
+                validate_structured_rule(&transaction, replacement.id)?;
+                // Supersede the replaced rule (revision-checked above) and
+                // release its projection link: the link moves to the
+                // replacement below, so exactly one authority row ever
+                // claims the crystal.
+                transaction.execute(
+                    "update term_rules set status = 'superseded', revision = ?2,
+                     rule_crystal_id = null, updated_at = ?3 where id = ?1",
+                    rusqlite::params![request.rule_id, resulting_revision, now],
+                )?;
+                transaction.execute(
+                    "insert into term_rule_revisions(
+                       rule_id, actor, reason, prior_status, new_status, created_at
+                     )
+                     values (?1, ?2, ?3, 'active', 'superseded', ?4)",
+                    rusqlite::params![request.rule_id, request.actor, request.reason, now],
+                )?;
+                // Activate the replacement; when the replaced rule owned a
+                // crystal projection, the link and the derived crystal text
+                // move to the replacement in the same transaction — the
+                // projection stays the derived rendering of the authority.
+                let replacement_revision = replacement.revision + 1;
+                match rule_crystal_id {
+                    Some(crystal_id) => {
+                        let sentence = rule_text(
+                            &replacement.source_text,
+                            &replacement.canonical_translation,
+                            &replacement.forbidden_variants,
+                        );
+                        transaction.execute(
+                            "update term_rules set status = 'active', revision = ?2,
+                             rule_crystal_id = ?3, updated_at = ?4 where id = ?1",
+                            rusqlite::params![
+                                replacement.id,
+                                replacement_revision,
+                                crystal_id,
+                                now
+                            ],
+                        )?;
+                        transaction.execute(
+                            "update crystals set text = ?2, updated_at = ?3 where id = ?1",
+                            rusqlite::params![crystal_id, sentence, now],
+                        )?;
+                        transaction.execute(
+                            "update crystals_fts set text = ?2 where rowid = ?1",
+                            rusqlite::params![crystal_id, sentence],
+                        )?;
+                    }
+                    None => {
+                        transaction.execute(
+                            "update term_rules set status = 'active', revision = ?2,
+                             updated_at = ?3 where id = ?1",
+                            rusqlite::params![replacement.id, replacement_revision, now],
+                        )?;
+                    }
+                }
+                transaction.execute(
+                    "insert into term_rule_revisions(
+                       rule_id, actor, reason, prior_status, new_status, created_at
+                     )
+                     values (?1, ?2, ?3, 'candidate', 'active', ?4)",
+                    rusqlite::params![replacement.id, request.actor, request.reason, now],
+                )?;
+                replacement.id
+            }
+        };
+
+        let result = hydrate_rule(&transaction, result_rule_id)?;
         transaction.execute(
-            "update term_rules set status = 'active', updated_at = ?2 where id = ?1",
-            rusqlite::params![rule_id, now],
-        )?;
-        transaction.execute(
-            "insert into term_rule_revisions(
-               rule_id, actor, reason, prior_status, new_status, created_at
+            "insert into term_rule_actions(
+               rule_id, action, actor, reason, expected_revision, resulting_revision,
+               idempotency_key, request_canonical, result_json, created_at
              )
-             values (?1, ?2, ?3, 'candidate', 'active', ?4)",
-            rusqlite::params![rule_id, actor, reason, now],
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                request.rule_id,
+                request.action.name(),
+                request.actor,
+                request.reason,
+                request.expected_revision,
+                resulting_revision,
+                request.idempotency_key,
+                canonical,
+                serde_json::to_string(&result)
+                    .map_err(|error| TermbaseError::Json(error.to_string()))?,
+                now,
+            ],
         )?;
         transaction.commit()?;
-        Ok(())
+        Ok(result)
     }
 
     /// The deterministic contract for the raw source text: every active rule
@@ -649,6 +1045,29 @@ impl Termbase {
         let connection = self.connection()?;
         hydrate_rule(&connection, rule_id)
     }
+
+    /// Resolve the single authority rule a rule-crystal projection is linked
+    /// to (`term_rules.rule_crystal_id`). ADR 0011: the projection is
+    /// derived, so lifecycle operations against a crystal must resolve the
+    /// authority exactly — an unknown link and an ambiguous link (multiple
+    /// rules claiming one crystal) both fail instead of guessing.
+    pub fn rule_id_for_crystal(
+        config: &HieronymusConfig,
+        crystal_id: i64,
+    ) -> Result<Option<i64>, TermbaseError> {
+        let connection = open_migrated(Path::new(&config.database_path()))?;
+        let ids: Vec<i64> = {
+            let mut statement = connection
+                .prepare("select id from term_rules where rule_crystal_id = ?1 order by id")?;
+            let rows = statement.query_map([crystal_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        match ids.as_slice() {
+            [] => Ok(None),
+            [rule_id] => Ok(Some(*rule_id)),
+            _ => Err(TermbaseError::AmbiguousCrystalLink(crystal_id)),
+        }
+    }
 }
 
 /// Which source text to resolve the contract against.
@@ -660,7 +1079,8 @@ pub enum Source {
 
 /// Optional context metadata attached to a proposed rule; used to resolve
 /// ambiguous source surfaces (best context overlap wins, zero overlap stays
-/// ambiguous).
+/// ambiguous). `notes` lands in `term_rules.notes` (legacy
+/// `hieronymus_termbase_propose` notes argument).
 #[derive(Debug, Clone, Default)]
 pub struct ProposeFields {
     pub concept_id: Option<i64>,
@@ -669,6 +1089,7 @@ pub struct ProposeFields {
     pub semantic_tags: Vec<String>,
     pub story_scopes: Vec<String>,
     pub language_tags: Vec<String>,
+    pub notes: String,
 }
 
 fn finding_ambiguous(surface: &str, candidates: &[&TermRule]) -> ValidationFinding {

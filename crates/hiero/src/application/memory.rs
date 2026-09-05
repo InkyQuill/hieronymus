@@ -70,8 +70,11 @@ fn workspace(application: &Application) -> Result<WorkspaceStore, AppError> {
 }
 
 /// The Python `_series_context` rule: the registry is opened per request and
-/// an unknown slug is a domain rejection.
-fn series_context(application: &Application, series_slug: &str) -> Result<Series, AppError> {
+/// an unknown slug is a domain rejection. Shared with the terms family.
+pub(crate) fn series_context(
+    application: &Application,
+    series_slug: &str,
+) -> Result<Series, AppError> {
     let registry = Registry::open(application.config()).map_err(domain)?;
     registry.get_series(series_slug).map_err(domain)
 }

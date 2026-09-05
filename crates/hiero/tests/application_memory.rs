@@ -129,6 +129,7 @@ fn seed_approved_rule(config: &HieronymusConfig, source: &str, canonical: &str) 
                 semantic_tags: Vec::new(),
                 story_scopes: Vec::new(),
                 language_tags: Vec::new(),
+                notes: String::new(),
             },
         )
         .unwrap();

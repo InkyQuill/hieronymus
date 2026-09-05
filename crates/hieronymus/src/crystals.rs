@@ -21,6 +21,12 @@ pub const ALLOWED_STATUSES: [&str; 5] =
     ["active", "candidate", "archived", "rejected", "superseded"];
 const MAX_SEARCH_LIMIT: usize = 50;
 
+/// Deterministic rule-crystal thresholds (Python `rule_crystals.py`): below
+/// either threshold an active rule crystal stays advisory and is never
+/// deterministically enforceable.
+pub const DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD: f64 = 0.8;
+pub const DETERMINISTIC_RULE_STRENGTH_THRESHOLD: f64 = 0.8;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CrystalError {
     #[error("unknown crystal: {0}")]
@@ -60,6 +66,27 @@ pub fn weighted_search_score(
     let fts_component = (-raw_bm25).max(0.0);
     let scope_bonus = f64::from(scope_type == "series");
     fts_component + (strength * 0.35) + (confidence * 0.20) + (scope_bonus * 0.05)
+}
+
+/// The parsed canonical rule sentence; the serde projection is the
+/// `parsed_rule` member of the `hieronymus_rule_crystal_validate` payload.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RuleCrystalParsed {
+    pub source_text: String,
+    pub canonical_translation: String,
+    pub forbidden_variants: Vec<String>,
+}
+
+/// One rule-crystal validation report; the serde projection is the
+/// `hieronymus_rule_crystal_validate` payload (the Python dict shape).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct RuleCrystalValidation {
+    pub crystal_id: i64,
+    pub valid: bool,
+    pub enforceable: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+    pub parsed_rule: Option<RuleCrystalParsed>,
 }
 
 /// Parameters for [`CrystalStore::add_crystal`]; text and crystal_type are
@@ -305,32 +332,93 @@ impl CrystalStore {
         Ok(records)
     }
 
-    /// Archive a rule crystal; non-rule crystals are rejected.
+    /// Archive a rule crystal; non-rule crystals are rejected. Standalone
+    /// maintenance entry (Python parity); the audited rule lifecycle uses
+    /// [`archive_rule_crystal_in_transaction`] so authority and projection
+    /// archive in ONE transaction.
     pub fn archive_rule_crystal(&self, crystal_id: i64) -> Result<CrystalRecord, CrystalError> {
         let now = now_iso8601();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let crystal_type: String = transaction
-            .query_row(
-                "select crystal_type from crystals where id = ?1",
-                [crystal_id],
-                |row| row.get(0),
-            )
-            .map_err(|error| match error {
-                rusqlite::Error::QueryReturnedNoRows => CrystalError::UnknownCrystal(crystal_id),
-                other => other.into(),
-            })?;
-        if crystal_type != "rule" {
-            return Err(CrystalError::Invalid(
-                "crystal is not a rule crystal".to_string(),
-            ));
-        }
-        transaction.execute(
-            "update crystals set status = 'archived', updated_at = ?1 where id = ?2",
-            rusqlite::params![now, crystal_id],
-        )?;
+        archive_rule_crystal_in_transaction(&transaction, crystal_id, &now)?;
         transaction.commit()?;
         self.get(crystal_id)
+    }
+
+    /// Validate rule-crystal shape and deterministic enforceability (Python
+    /// `CrystalStore.validate_rule_crystal`): the canonical rule sentence
+    /// must round-trip, and an active, concept-linked crystal above both
+    /// deterministic thresholds is enforceable. Read-only — the projection
+    /// is advisory; enforcement reads the structured authority.
+    pub fn validate_rule_crystal(
+        &self,
+        crystal_id: i64,
+    ) -> Result<RuleCrystalValidation, CrystalError> {
+        let crystal = self.get(crystal_id)?;
+        let connection = self.connection()?;
+        let active_concept_ids: Vec<i64> = {
+            let mut statement = connection.prepare(
+                "select distinct cc.concept_id
+                 from crystal_concepts cc
+                 join concepts c on c.id = cc.concept_id
+                 where cc.crystal_id = ?1
+                   and c.status not in ('archived', 'merged')
+                 order by cc.concept_id",
+            )?;
+            let rows = statement.query_map([crystal_id], |row| row.get::<_, i64>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut errors: Vec<String> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+        let mut parsed_rule: Option<RuleCrystalParsed> = None;
+
+        if crystal.crystal_type != "rule" {
+            errors.push("crystal_type must be 'rule'".to_string());
+        }
+        match crate::terminology::parse_rule_crystal(&crystal.text) {
+            None => errors.push(
+                "rule text must match '<source> is translated as <target>[, not <forbidden>].'"
+                    .to_string(),
+            ),
+            Some((source_text, canonical_translation, forbidden_variants)) => {
+                parsed_rule = Some(RuleCrystalParsed {
+                    source_text,
+                    canonical_translation,
+                    forbidden_variants,
+                });
+            }
+        }
+
+        if crystal.status != "active" {
+            warnings.push("rule crystal is not active".to_string());
+        }
+        if crystal.confidence < DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD {
+            warnings.push("confidence is below deterministic validation threshold".to_string());
+        }
+        if crystal.strength < DETERMINISTIC_RULE_STRENGTH_THRESHOLD {
+            warnings.push("strength is below deterministic validation threshold".to_string());
+        }
+        if crystal.concept_ids.is_empty() {
+            warnings.push("rule crystal is not linked to a concept".to_string());
+        } else if active_concept_ids.is_empty() {
+            warnings.push("rule crystal is not linked to an active concept".to_string());
+        }
+
+        let valid = errors.is_empty();
+        let enforceable = valid
+            && crystal.status == "active"
+            && crystal.confidence >= DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD
+            && crystal.strength >= DETERMINISTIC_RULE_STRENGTH_THRESHOLD
+            && !active_concept_ids.is_empty();
+        Ok(RuleCrystalValidation {
+            crystal_id: crystal.id,
+            valid,
+            enforceable,
+            errors,
+            warnings,
+            parsed_rule,
+        })
     }
 
     pub fn set_story_scopes(
@@ -702,6 +790,42 @@ fn validate_crystal_type(crystal_type: &str) -> Result<(), CrystalError> {
     } else {
         Err(CrystalError::UnknownCrystalType(crystal_type.to_string()))
     }
+}
+
+/// Archive one rule crystal inside an existing transaction. The audited rule
+/// lifecycle (`Termbase::apply_action`) shares this primitive so a linked
+/// rule's authority row and its advisory projection always transition in ONE
+/// SQLite transaction — a projection failure rolls the authority back, and a
+/// committed archive never leaves an active projection behind. Non-rule
+/// crystals and unknown ids are rejected (fail loud, never guess).
+pub(crate) fn archive_rule_crystal_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    crystal_id: i64,
+    now: &str,
+) -> Result<(), CrystalError> {
+    let crystal_type: String = transaction
+        .query_row(
+            "select crystal_type from crystals where id = ?1",
+            [crystal_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => CrystalError::UnknownCrystal(crystal_id),
+            other => other.into(),
+        })?;
+    if crystal_type != "rule" {
+        return Err(CrystalError::Invalid(
+            "crystal is not a rule crystal".to_string(),
+        ));
+    }
+    let updated = transaction.execute(
+        "update crystals set status = 'archived', updated_at = ?1 where id = ?2",
+        rusqlite::params![now, crystal_id],
+    )?;
+    if updated == 0 {
+        return Err(CrystalError::UnknownCrystal(crystal_id));
+    }
+    Ok(())
 }
 
 fn validate_status(status: &str) -> Result<(), CrystalError> {

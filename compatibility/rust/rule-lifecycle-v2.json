@@ -1,0 +1,168 @@
+{
+  "expectation_set": "rule-lifecycle-v2",
+  "adr": "0011",
+  "rule": "Versioned Rust expectation, separate from the frozen Python fixtures. Pins the M3 explicit structured-rule lifecycle over MCP: a proposed term is a candidate and is neither enforced by hieronymus_termbase_contract nor validated by hieronymus_termbase_validate; the explicit hieronymus_termbase_approve call (authenticated transport actor, no actor argument) activates the rule; archive resolves term_rules.rule_crystal_id and archives authority AND projection in one transaction; retrying a committed archive is safe; re-approving a non-candidate is a transition error. Expectations run sequentially over ONE fresh application (series 'book', ja->ru); ids are pinned because a fresh database numbers term_rules and crystals rows from 1.",
+  "expectations": [
+    {
+      "tool": "hieronymus_termbase_propose",
+      "arguments": {
+        "series_slug": "book",
+        "category": "name",
+        "source_text": "猫",
+        "canonical_translation": "Кот"
+      },
+      "expected": {
+        "subset": {
+          "term_id": 1,
+          "id": 1,
+          "status": "candidate",
+          "revision": 1,
+          "rule_crystal_id": null
+        }
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_contract",
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "猫"
+      },
+      "expected": {
+        "contract_rows": []
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_validate",
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "猫",
+        "translated_text": "котик"
+      },
+      "expected": {
+        "finding_kinds": []
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_approve",
+      "arguments": {
+        "series_slug": "book",
+        "term_id": 1
+      },
+      "expected": {
+        "subset": {
+          "term_id": 1,
+          "approved": true
+        }
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_contract",
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "猫"
+      },
+      "expected": {
+        "contract_rows": [
+          {
+            "source_text": "猫",
+            "canonical_translation": "Кот",
+            "forbidden_variants": [],
+            "tags": [],
+            "notes": "猫 is translated as Кот."
+          }
+        ]
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_validate",
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "猫",
+        "translated_text": "котик"
+      },
+      "expected": {
+        "finding_kinds": ["missing_canonical"]
+      }
+    },
+    {
+      "seed": "active rule crystal linked to term 1",
+      "tool": "hieronymus_rule_crystal_archive",
+      "arguments": {
+        "crystal_id": 1
+      },
+      "expected": {
+        "subset": {
+          "id": 1,
+          "crystal_type": "rule",
+          "status": "archived"
+        }
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_contract",
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "猫"
+      },
+      "expected": {
+        "contract_rows": []
+      }
+    },
+    {
+      "tool": "hieronymus_rule_crystal_archive",
+      "arguments": {
+        "crystal_id": 1
+      },
+      "expected": {
+        "subset": {
+          "id": 1,
+          "status": "archived"
+        }
+      }
+    },
+    {
+      "tool": "hieronymus_termbase_approve",
+      "arguments": {
+        "series_slug": "book",
+        "term_id": 1
+      },
+      "expected": {
+        "error_contains": "only candidate rules"
+      }
+    },
+    {
+      "tool": "hieronymus_rule_crystal_validate",
+      "arguments": {
+        "crystal_id": 1
+      },
+      "expected": {
+        "subset": {
+          "crystal_id": 1,
+          "valid": true,
+          "enforceable": false,
+          "parsed_rule": {
+            "source_text": "猫",
+            "canonical_translation": "Кот",
+            "forbidden_variants": []
+          }
+        }
+      }
+    },
+    {
+      "tool": "hieronymus_rule_crystals_list",
+      "arguments": {
+        "status": "archived",
+        "series_slug": "book",
+        "limit": 50
+      },
+      "expected": {
+        "list_length": 1,
+        "first_row": {
+          "id": 1,
+          "crystal_type": "rule",
+          "status": "archived"
+        }
+      }
+    }
+  ]
+}
