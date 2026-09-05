@@ -39,4 +39,5 @@ pub mod semantic_recall;
 pub mod semantic_store;
 pub mod short_memory;
 pub mod terminology;
+pub mod upgrade;
 pub mod workspace;

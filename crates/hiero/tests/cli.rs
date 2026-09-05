@@ -113,13 +113,99 @@ fn write_legacy_fixture(root: &std::path::Path) {
 }
 
 #[test]
-fn migrate_requires_dry_run_flag() {
+fn migrate_write_mode_refuses_an_empty_root() {
+    // The write-side upgrade (no --dry-run) still fails closed on an empty
+    // data root, before any mutation.
     let root = tempfile::tempdir().unwrap();
     let (stdout, stderr, status) =
         hiero(&["migrate", "--data-root", root.path().to_str().unwrap()]);
     assert_eq!(status.code(), Some(2));
     assert!(stdout.is_empty(), "{stdout}");
-    assert!(stderr.contains("--dry-run"), "{stderr}");
+    assert!(stderr.contains("empty-database"), "{stderr}");
+    assert!(!root.path().join("cutover.json").exists());
+}
+
+#[test]
+fn migrate_write_mode_completes_the_cutover_and_reports_resume() {
+    let root = tempfile::tempdir().unwrap();
+    write_legacy_fixture(root.path());
+    let dream_conf = root.path().join("dream.conf");
+    std::fs::write(
+        &dream_conf,
+        "[providers.openai]\nname = \"Openai\"\ntype = \"openai\"\nurl = \"https://api.openai.example/v1\"\napi_key = \"sk-cli-key\"\ntimeout_seconds = 12\n",
+    )
+    .unwrap();
+    // The legacy payload carries a key, so preflight demands user-only
+    // permissions before anything may be staged.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&dream_conf, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let (stdout, stderr, status) = hiero(&[
+        "migrate",
+        "--json",
+        "--data-root",
+        root.path().to_str().unwrap(),
+    ]);
+    assert!(status.success(), "{stdout} / {stderr}");
+    assert!(stdout.contains("\"outcome\""), "{stdout}");
+    assert!(
+        stdout.contains("\"journal_state\": \"complete\""),
+        "{stdout}"
+    );
+
+    // The database is on the Rust schema now and the config was promoted.
+    let (stdout, _stderr, status) =
+        hiero(&["classify", "--data-root", root.path().to_str().unwrap()]);
+    assert!(status.success());
+    assert!(stdout.contains("database state: rust-schema"), "{stdout}");
+    let dream = std::fs::read_to_string(root.path().join("dream.conf")).unwrap();
+    assert!(!dream.contains("[providers.openai]"), "{dream}");
+    let provider_conf = std::fs::read_to_string(root.path().join("provider.conf")).unwrap();
+    assert!(provider_conf.contains("sk-cli-key"));
+
+    // Rerunning is a no-op that reports the completed cutover.
+    let (stdout, _stderr, status) = hiero(&[
+        "migrate",
+        "--json",
+        "--data-root",
+        root.path().to_str().unwrap(),
+    ]);
+    assert!(status.success(), "{stdout}");
+    assert!(stdout.contains("\"already-complete\""), "{stdout}");
+}
+
+#[test]
+fn recover_subcommand_rebuilds_from_the_backup_after_a_completed_cutover() {
+    let root = tempfile::tempdir().unwrap();
+    write_legacy_fixture(root.path());
+    let (_, stderr, status) = hiero(&["migrate", "--data-root", root.path().to_str().unwrap()]);
+    assert!(status.success(), "{stderr}");
+
+    // Destroy the live database: the scenario recovery exists for.
+    std::fs::write(root.path().join("hieronymus.sqlite"), b"lost").unwrap();
+
+    let (stdout, stderr, status) = hiero(&[
+        "recover",
+        "--json",
+        "--data-root",
+        root.path().to_str().unwrap(),
+    ]);
+    assert!(status.success(), "{stdout} / {stderr}");
+    assert!(stdout.contains("\"recovered_from\""), "{stdout}");
+
+    // The pre-upgrade backup survives and the live database is a converted
+    // Rust database again.
+    let backups = root.path().join("backups");
+    let pre_upgrade: Vec<_> = std::fs::read_dir(&backups)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("pre-upgrade-"))
+        .collect();
+    assert_eq!(pre_upgrade.len(), 1, "{pre_upgrade:?}");
+    let (stdout, _stderr, status) =
+        hiero(&["classify", "--data-root", root.path().to_str().unwrap()]);
+    assert!(status.success());
+    assert!(stdout.contains("database state: rust-schema"), "{stdout}");
 }
 
 #[test]

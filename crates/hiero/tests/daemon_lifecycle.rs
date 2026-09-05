@@ -290,3 +290,86 @@ fn unknown_daemon_database_state_prevents_ready_flag() {
     );
     assert!(!root.path().join("daemon.json").exists());
 }
+
+// ---------------------------------------------------------------------------
+// Cutover journal gate (database-upgrade design: the daemon starts only when
+// the journal is absent or complete)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unfinished_cutover_journal_fails_closed_even_on_a_supported_database() {
+    // A supported Rust database plus an unfinished cutover journal: the
+    // database alone would start, but the middle state must not.
+    for expected in [
+        "prepared",
+        "database_committed",
+        "config_promotion_required",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        hieronymus::db::open_migrated(&root.path().join("hieronymus.sqlite")).unwrap();
+        let journal = hieronymus::upgrade::CutoverJournal {
+            journal_version: 1,
+            state: expected.to_string(),
+            source_state: "python-schema".to_string(),
+            target_schema_version: hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION,
+            staging_dir: ".migrate-staging".to_string(),
+            backup_dir: "backups/pre-upgrade-test".to_string(),
+            staged: Vec::new(),
+            backup_database_sha256: "0".repeat(64),
+            backup_configs: std::collections::BTreeMap::new(),
+            updated_at: "2026-09-04T00:00:00+00:00".to_string(),
+        };
+        std::fs::write(
+            root.path().join("cutover.json"),
+            serde_json::to_string_pretty(&journal).unwrap(),
+        )
+        .unwrap();
+
+        let error = Daemon::start(&DaemonOptions {
+            data_root: Some(root.path().to_path_buf()),
+            port: 0,
+            assets: hiero::daemon::Assets::default(),
+        })
+        .unwrap_err();
+
+        match error {
+            DaemonError::UpgradePending { state } => assert_eq!(state, expected),
+            other => panic!("state {expected}: unexpected error: {other}"),
+        }
+        assert!(
+            !root.path().join("daemon.json").exists(),
+            "a refused start must not publish discovery"
+        );
+    }
+}
+
+#[test]
+fn complete_cutover_journal_allows_daemon_start() {
+    let root = tempfile::tempdir().unwrap();
+    hieronymus::db::open_migrated(&root.path().join("hieronymus.sqlite")).unwrap();
+    let journal = hieronymus::upgrade::CutoverJournal {
+        journal_version: 1,
+        state: "complete".to_string(),
+        source_state: "python-schema".to_string(),
+        target_schema_version: hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION,
+        staging_dir: ".migrate-staging".to_string(),
+        backup_dir: "backups/pre-upgrade-test".to_string(),
+        staged: Vec::new(),
+        backup_database_sha256: "0".repeat(64),
+        backup_configs: std::collections::BTreeMap::new(),
+        updated_at: "2026-09-04T00:00:00+00:00".to_string(),
+    };
+    std::fs::write(
+        root.path().join("cutover.json"),
+        serde_json::to_string_pretty(&journal).unwrap(),
+    )
+    .unwrap();
+
+    let daemon = Daemon::start(&DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap_or_else(|error| panic!("complete journal must not block: {error}"));
+    daemon.shutdown().unwrap();
+}

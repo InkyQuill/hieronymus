@@ -806,3 +806,66 @@ pub(crate) fn sha256_text(text: &str) -> String {
 fn now_iso8601() -> String {
     chrono::Utc::now().to_rfc3339()
 }
+
+/// The upgrade protocol's in-transaction variant of
+/// [`SemanticStore::begin_generation`]: registers the candidate generation
+/// through the caller's connection (a `&Connection` cannot commit), refusing
+/// autocommit so the upgrade transaction owns the commit. The manifest
+/// freezes the authoritative chunk count as seen inside that transaction.
+pub(crate) fn begin_generation_in_transaction(
+    connection: &Connection,
+    generation_id: &str,
+    identity: &EmbeddingIdentity,
+) -> Result<GenerationManifest, SemanticError> {
+    if connection.is_autocommit() {
+        return Err(SemanticError::InvalidState(
+            "generation creation requires a caller-owned transaction".to_string(),
+        ));
+    }
+    validate_slug(generation_id)?;
+    ensure_semantic_schema(connection)?;
+    let expected_count: i64 =
+        connection.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
+    let now = now_iso8601();
+    let existing: i64 = connection.query_row(
+        "select count(*) from semantic_generations where generation_id = ?1",
+        params![generation_id],
+        |row| row.get(0),
+    )?;
+    if existing > 0 {
+        return Err(SemanticError::InvalidState(format!(
+            "generation {generation_id} already has a manifest"
+        )));
+    }
+    connection.execute(
+        "insert into semantic_generations(
+           generation_id, status, provider, model, model_revision, dimensions,
+           normalization, max_input_tokens, max_batch_inputs,
+           expected_count, written_count, last_chunk_id, active, created_at, updated_at
+         )
+         values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, 0, ?10, ?10)",
+        params![
+            generation_id,
+            identity.provider(),
+            identity.model(),
+            identity.revision(),
+            identity.dimensions() as i64,
+            identity.normalization(),
+            identity.max_input_tokens() as i64,
+            identity.max_batch_inputs() as i64,
+            expected_count,
+            now,
+        ],
+    )?;
+    Ok(GenerationManifest {
+        generation_id: generation_id.to_string(),
+        status: "building".to_string(),
+        identity: identity.clone(),
+        expected_count: expected_count as u64,
+        written_count: 0,
+        last_chunk_id: 0,
+        active: false,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}

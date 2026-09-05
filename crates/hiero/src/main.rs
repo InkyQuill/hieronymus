@@ -11,9 +11,10 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|classify|migrate|daemon|mcp|recall-feedback> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|classify|migrate|recover|daemon|mcp|recall-feedback> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>]";
-const MIGRATE_USAGE: &str = "usage: hiero migrate --dry-run [--json] [--data-root <path>]";
+const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
+const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -193,6 +194,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         }
         Some("recall-feedback") => run_recall_feedback(&parsed, data_root),
         Some("migrate") => run_migrate(&parsed, data_root),
+        Some("recover") => run_recover(&parsed, data_root),
         Some(other) => Err(format!("unknown command: {other}; {USAGE}")),
         None => Err(format!("missing command; {USAGE}")),
     }
@@ -230,34 +232,91 @@ fn daemon_is_active(config: &hieronymus::data_root::HieronymusConfig) -> bool {
     false
 }
 
-/// The `migrate` subcommand: read-only preflight plus the disposable dry-run
-/// (part 1 of the upgrade protocol). The write-side upgrade arrives with the
-/// cutover journal; until then `--dry-run` is the only accepted mode.
+/// The `migrate` subcommand. Without `--dry-run` this is the write-side
+/// upgrade protocol: fresh roots run the full cutover, interrupted roots are
+/// resumed through the cutover journal (a `config_promotion_required` state
+/// promotes the staged configs without rerunning the committed converters),
+/// and a `complete` journal is a no-op.
 fn run_migrate(
     parsed: &ParsedArguments,
     data_root: Option<&std::path::Path>,
 ) -> Result<(), String> {
     if parsed.port.is_some() || parsed.start_daemon {
-        return Err("migrate does not accept --port or --start-daemon".to_string());
-    }
-    reject_feedback_flags(parsed, "migrate")?;
-    if !parsed.dry_run {
         return Err(format!(
-            "migrate requires --dry-run; the write-side upgrade is not available yet; {MIGRATE_USAGE}"
+            "migrate does not accept --port or --start-daemon; {MIGRATE_USAGE}"
         ));
     }
+    reject_feedback_flags(parsed, "migrate")?;
     let config = load_config(data_root);
+    if parsed.dry_run {
+        let daemon_active = daemon_is_active(&config);
+        let report = hieronymus::migrate::run_dry_run(&config, daemon_active)
+            .map_err(|error| error.to_string())?;
+        print_migrate_report(&report, parsed.json)?;
+        if let Some(code) = &report.refused {
+            return Err(format!("dry-run refused: {code}"));
+        }
+        return Ok(());
+    }
     let daemon_active = daemon_is_active(&config);
-    let report = hieronymus::migrate::run_dry_run(&config, daemon_active)
-        .map_err(|error| error.to_string())?;
+    let report = hieronymus::upgrade::run_upgrade(
+        &config,
+        daemon_active,
+        &hieronymus::upgrade::UpgradeOptions::default(),
+    )
+    .map_err(|error| error.to_string())?;
     if parsed.json {
         let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         println!("{text}");
     } else {
         print!("{}", report.render_human());
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
     }
-    if let Some(code) = &report.refused {
-        return Err(format!("dry-run refused: {code}"));
+    Ok(())
+}
+
+fn print_migrate_report(
+    report: &hieronymus::migrate::DryRunReport,
+    json: bool,
+) -> Result<(), String> {
+    if json {
+        let text = serde_json::to_string_pretty(report).map_err(|error| error.to_string())?;
+        println!("{text}");
+    } else {
+        print!("{}", report.render_human());
+    }
+    Ok(())
+}
+
+/// The `recover` subcommand: rebuild the live database from the last verified
+/// pre-upgrade backup through the current Rust converter, then promote it
+/// atomically. Never touches the immutable backup and never launches Python.
+fn run_recover(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if parsed.port.is_some() || parsed.start_daemon || parsed.dry_run {
+        return Err(format!(
+            "recover does not accept --port, --start-daemon, or --dry-run; {RECOVER_USAGE}"
+        ));
+    }
+    reject_feedback_flags(parsed, "recover")?;
+    let config = load_config(data_root);
+    let daemon_active = daemon_is_active(&config);
+    let report = hieronymus::upgrade::run_recovery(&config, daemon_active)
+        .map_err(|error| error.to_string())?;
+    if parsed.json {
+        let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+        println!("{text}");
+    } else {
+        println!(
+            "recovery complete: rebuilt from {} ({} terms converted); \
+             the replaced database was moved to {}",
+            report.recovered_from.display(),
+            report.converted_terms,
+            report.replacement_backup_dir.display()
+        );
     }
     Ok(())
 }

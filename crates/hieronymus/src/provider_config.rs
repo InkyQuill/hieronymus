@@ -157,6 +157,17 @@ fn load_provider_catalog_file(
     validate_provider_catalog(&provider_catalog_from_payload(&payload)?)
 }
 
+/// Parse and validate provider.conf text without touching any file: the
+/// upgrade protocol's parse-back for staged provider content.
+pub(crate) fn provider_catalog_from_text(
+    text: &str,
+) -> Result<ProviderCatalog, ProviderCatalogError> {
+    let payload = text.parse::<Table>().map_err(|error| {
+        ProviderCatalogError::new(format!("provider.conf is not valid TOML: {error}"))
+    })?;
+    validate_provider_catalog(&provider_catalog_from_payload(&payload)?)
+}
+
 fn migrate_legacy_dream_providers(
     config: &HieronymusConfig,
     catalog: ProviderCatalog,

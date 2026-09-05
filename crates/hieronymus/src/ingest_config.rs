@@ -116,6 +116,23 @@ pub fn save_ingest_config(
     Ok(())
 }
 
+/// Parse and validate ingest.conf text without touching any file: the
+/// upgrade protocol's typed round-trip for staged ingest content.
+pub(crate) fn ingest_config_from_text(text: &str) -> Result<IngestConfig, IngestConfigError> {
+    let payload = text.parse::<Table>().map_err(|error| {
+        IngestConfigError::new(format!("ingest.conf is not valid TOML: {error}"))
+    })?;
+    validate_ingest_config(&ingest_config_from_payload(&payload)?)
+}
+
+/// Canonical current-format ingest.conf text for a typed config.
+pub(crate) fn ingest_canonical_text(
+    ingest_config: &IngestConfig,
+) -> Result<String, IngestConfigError> {
+    toml::to_string(&to_payload(ingest_config))
+        .map_err(|error| IngestConfigError::new(format!("ingest.conf render failed: {error}")))
+}
+
 pub fn validate_ingest_config(
     ingest_config: &IngestConfig,
 ) -> Result<IngestConfig, IngestConfigError> {

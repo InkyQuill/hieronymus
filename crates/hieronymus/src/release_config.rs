@@ -87,6 +87,22 @@ pub fn save_release_config(
     Ok(())
 }
 
+/// Parse and validate release.conf text without touching any file: the
+/// upgrade protocol's typed round-trip for staged release content. Unknown
+/// channels fail here, which is the design's preflight refusal.
+pub(crate) fn release_config_from_text(text: &str) -> Result<ReleaseConfig, ReleaseConfigError> {
+    let payload = parse_toml(text)?;
+    validate_release_config(&release_config_from_payload(&payload)?)
+}
+
+/// Canonical current-format release.conf text for a typed config.
+pub(crate) fn release_canonical_text(
+    release_config: &ReleaseConfig,
+) -> Result<String, ReleaseConfigError> {
+    toml::to_string(&to_payload(release_config))
+        .map_err(|error| ReleaseConfigError::new(format!("release.conf render failed: {error}")))
+}
+
 pub fn validate_release_config(
     release_config: &ReleaseConfig,
 ) -> Result<ReleaseConfig, ReleaseConfigError> {

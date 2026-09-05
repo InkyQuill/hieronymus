@@ -63,6 +63,188 @@ pub fn rebuild_job_id(generation_id: &str) -> String {
     format!("{JOB_TYPE_REBUILD}:{generation_id}")
 }
 
+/// Ensure the durable-jobs schema exists through the caller's connection
+/// (idempotent, transaction-safe; the upgrade protocol runs this inside its
+/// single transaction).
+pub(crate) fn ensure_jobs_schema(connection: &Connection) -> Result<(), SemanticError> {
+    connection.execute_batch(SEMANTIC_JOBS_SCHEMA_SQL)?;
+    Ok(())
+}
+
+/// The upgrade protocol's in-transaction variant of
+/// [`SemanticJobStore::enqueue_rebuild`]: same manifest checks and row shape,
+/// but through the caller's connection so the durable `queued` (pending)
+/// rebuild job commits with everything else in the upgrade's one transaction.
+pub(crate) fn enqueue_rebuild_in_transaction(
+    connection: &Connection,
+    generation_id: &str,
+    identity: &EmbeddingIdentity,
+) -> Result<JobRecord, SemanticError> {
+    if connection.is_autocommit() {
+        return Err(SemanticError::InvalidState(
+            "job creation requires a caller-owned transaction".to_string(),
+        ));
+    }
+    ensure_jobs_schema(connection)?;
+    let manifest = generation_manifest_in_transaction(connection, generation_id)?;
+    if manifest.status != "building" {
+        return Err(SemanticError::InvalidState(format!(
+            "generation {generation_id} is {} and cannot enqueue a rebuild",
+            manifest.status
+        )));
+    }
+    if manifest.identity != *identity {
+        return Err(SemanticError::IdentityMismatch {
+            expected: describe_identity(&manifest.identity),
+            actual: describe_identity(identity),
+        });
+    }
+
+    let job_id = rebuild_job_id(generation_id);
+    let existing: Option<String> = connection
+        .query_row(
+            "select job_id from semantic_jobs where generation_id = ?1",
+            params![generation_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if existing.is_some() {
+        return Err(SemanticError::InvalidState(format!(
+            "generation {generation_id} already has a rebuild job"
+        )));
+    }
+    let now = now_iso8601();
+    connection.execute(
+        "insert into semantic_jobs(
+           job_id, job_type, generation_id, status, provider, model, model_revision,
+           dimensions, cursor_chunk_id, total_chunks, completed_chunks, completed_batches,
+           failed_batches, attempts, last_error, cancel_requested, lease_owner,
+           lease_expires_unix_ms, created_at, updated_at
+         )
+         values (?1, 'rebuild', ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, 0,
+                 null, 0, null, null, ?10, ?10)",
+        params![
+            job_id,
+            generation_id,
+            identity.provider(),
+            identity.model(),
+            identity.revision(),
+            identity.dimensions() as i64,
+            manifest.last_chunk_id,
+            manifest.expected_count as i64,
+            manifest.written_count as i64,
+            now,
+        ],
+    )?;
+    Ok(JobRecord {
+        job_id,
+        job_type: JOB_TYPE_REBUILD.to_string(),
+        generation_id: generation_id.to_string(),
+        status: "queued".to_string(),
+        identity: JobIdentity::from_embedding(identity),
+        cursor_chunk_id: manifest.last_chunk_id,
+        total_chunks: manifest.expected_count as i64,
+        completed_chunks: manifest.written_count as i64,
+        completed_batches: 0,
+        failed_batches: 0,
+        attempts: 0,
+        last_error: None,
+        cancel_requested: false,
+        lease_owner: None,
+        lease_expires_unix_ms: None,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+/// Reads a generation manifest through an existing connection (the in-
+/// transaction enqueue cannot open its own store).
+fn generation_manifest_in_transaction(
+    connection: &Connection,
+    generation_id: &str,
+) -> Result<GenerationManifest, SemanticError> {
+    let row = connection
+        .query_row(
+            "select generation_id, status, provider, model, model_revision,
+                    dimensions, normalization, max_input_tokens, max_batch_inputs,
+                    expected_count, written_count, last_chunk_id, active,
+                    created_at, updated_at
+             from semantic_generations where generation_id = ?1",
+            params![generation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, String>(13)?,
+                    row.get::<_, String>(14)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        generation_id,
+        status,
+        provider,
+        model,
+        revision,
+        dimensions,
+        normalization,
+        max_input_tokens,
+        max_batch_inputs,
+        expected_count,
+        written_count,
+        last_chunk_id,
+        active,
+        created_at,
+        updated_at,
+    )) = row
+    else {
+        return Err(SemanticError::NotFound(format!(
+            "generation {generation_id}"
+        )));
+    };
+    let dimensions = dimensions
+        .try_into()
+        .map_err(|_| SemanticError::InvalidState("dimensions must be positive".to_string()))?;
+    let max_input_tokens = max_input_tokens.try_into().map_err(|_| {
+        SemanticError::InvalidState("max_input_tokens must be positive".to_string())
+    })?;
+    let max_batch_inputs = max_batch_inputs.try_into().map_err(|_| {
+        SemanticError::InvalidState("max_batch_inputs must be positive".to_string())
+    })?;
+    let identity = EmbeddingIdentity::new(
+        provider,
+        model,
+        revision,
+        dimensions,
+        normalization,
+        max_input_tokens,
+        max_batch_inputs,
+    )?;
+    Ok(GenerationManifest {
+        generation_id,
+        status,
+        identity,
+        expected_count: expected_count.max(0) as u64,
+        written_count: written_count.max(0) as u64,
+        last_chunk_id,
+        active: active != 0,
+        created_at,
+        updated_at,
+    })
+}
+
 const SEMANTIC_JOBS_SCHEMA_SQL: &str = "
 create table if not exists semantic_jobs (
     job_id text primary key,

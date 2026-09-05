@@ -170,6 +170,43 @@ pub fn load_dream_config(config: &HieronymusConfig) -> Result<DreamConfig, Dream
     Ok(dream_config)
 }
 
+/// Parse and validate dream text without touching any file: the upgrade
+/// protocol's parse-back for staged dream content, where the live file must
+/// never be rewritten as a side effect of loading.
+pub(crate) fn dream_config_from_text(text: &str) -> Result<DreamConfig, DreamConfigError> {
+    let payload = text
+        .parse::<Table>()
+        .map_err(|error| DreamConfigError::new(format!("dream.conf is not valid TOML: {error}")))?;
+    let (payload, _) = migrate_workflow_payload(payload);
+    validate_dream_config(&dream_config_from_payload(&payload)?)
+}
+
+/// Whether the payload uses pre-seven-pass legacy workflow names that the
+/// upgrade's staging must migrate into the current format.
+pub(crate) fn payload_has_legacy_workflows(payload: &Table) -> bool {
+    const LEGACY_SOURCES: &[&str] = &[
+        "crystallization",
+        "relation_discovery",
+        "reinforcement_compaction",
+    ];
+    payload
+        .get("workflows")
+        .and_then(|value| value.as_table())
+        .map(|workflows| {
+            workflows
+                .keys()
+                .any(|name| LEGACY_SOURCES.contains(&name.as_str()))
+        })
+        .unwrap_or(false)
+}
+
+/// Canonical current-format dream.conf text for a typed config. The upgrade
+/// stages this when a legacy-shape file needs a structural rewrite.
+pub(crate) fn dream_canonical_text(dream_config: &DreamConfig) -> Result<String, DreamConfigError> {
+    toml::to_string(&dream_payload(dream_config))
+        .map_err(|error| DreamConfigError::new(format!("dream.conf render failed: {error}")))
+}
+
 /// Expand pre-seven-pass workflow configurations before strict validation:
 /// `[workflows.crystallization]` seeds the four crystal/candidate passes,
 /// `relation_discovery` seeds `relations`, and `reinforcement_compaction`

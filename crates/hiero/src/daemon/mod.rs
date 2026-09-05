@@ -80,6 +80,13 @@ pub enum DaemonError {
          run the documented database upgrade path first"
     )]
     UnsupportedDatabase { state: &'static str },
+    #[error(
+        "daemon cannot start: cutover journal state '{state}' is unfinished; \
+         run `hiero migrate` to complete the upgrade"
+    )]
+    UpgradePending { state: String },
+    #[error("daemon cannot read the cutover journal: {0}")]
+    Journal(#[from] hieronymus::migrate::MigrateError),
     #[error("daemon cannot open the database: {0}")]
     Database(#[from] hieronymus::db::OpenMigratedError),
     #[error("daemon cannot bind loopback endpoint {address}: {source}")]
@@ -139,9 +146,19 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Start the daemon: database check, loopback bind, token, discovery.
+    /// Start the daemon: journal gate, database check, loopback bind, token,
+    /// discovery.
     pub fn start(options: &DaemonOptions) -> Result<Daemon, DaemonError> {
         let config = load_config(options.data_root.as_deref());
+
+        // The daemon starts only when the cutover journal is absent or
+        // `complete` (database-upgrade design): a middle state would serve
+        // traffic against mismatched database/config versions. This gate
+        // runs before everything else, so an unfinished cutover refuses even
+        // a database that would classify as supported.
+        if let Some(state) = hieronymus::upgrade::daemon_start_blocker(&config)? {
+            return Err(DaemonError::UpgradePending { state });
+        }
 
         // Fail closed on unsupported database states before binding anything
         // (ADR 0009: startup never publishes readiness for rejected state).

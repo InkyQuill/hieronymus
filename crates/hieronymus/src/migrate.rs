@@ -142,6 +142,37 @@ pub enum MigrateError {
     SourceChanged,
     #[error("dry-run work root must live outside the data root")]
     InvalidWorkRoot,
+    // --- write-side upgrade protocol (part 2) ---
+    #[error("upgrade refused: {0}")]
+    Refused(String),
+    #[error("configuration is invalid: {0}")]
+    ConfigInvalid(String),
+    #[error("credential file has unsafe permissions: {0}")]
+    UnsafeCredentialPermissions(PathBuf),
+    #[error("enabled workflow cannot resolve its provider: {0}")]
+    WorkflowUnresolved(String),
+    #[error(
+        "staged checksum mismatch for {path}: journal expects {expected}, staging holds {actual}"
+    )]
+    StagedChecksumMismatch {
+        path: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("cutover journal is inconsistent: {0}")]
+    JournalInconsistent(String),
+    #[error("an upgrade is already in progress (pid {0})")]
+    UpgradeLockHeld(u32),
+    #[error("an upgrade may already be in progress: the data-root lock has no recorded owner yet")]
+    UpgradeLockHeldOwnerless,
+    #[error("no verified pre-upgrade backup was found")]
+    BackupMissing,
+    #[error("recovery is blocked: {0}")]
+    RecoveryBlocked(String),
+    #[error("the durable semantic rebuild job could not be created: {0}")]
+    SemanticJob(String),
+    #[error("failure injected at protocol step {0:?}")]
+    Injected(crate::upgrade::InjectionPoint),
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +273,105 @@ pub struct VerificationReport {
     pub row_accounting_ok: bool,
     pub fts_equivalent: bool,
     pub fts_probes: u64,
+    /// Domain invariants over the converted target: rule statuses within the
+    /// lifecycle set, parseable forbidden-variant payloads, and every
+    /// converted ledger row resolving to an existing rule.
+    pub domain_invariants_ok: bool,
+}
+
+impl VerificationReport {
+    /// The report is honest for scripting only when every check passed.
+    pub fn all_checks_pass(&self) -> bool {
+        self.row_accounting_ok
+            && self.fts_equivalent
+            && self.domain_invariants_ok
+            && self.foreign_key_violations == 0
+            && self.integrity == "ok"
+    }
+}
+
+/// Full post-conversion verification through one connection handle (the
+/// caller's transaction during the upgrade, a plain connection in the
+/// dry-run): foreign keys, integrity, row accounting, FTS equivalence, and
+/// the domain invariants of the design's step 9.
+pub(crate) fn verify_upgraded_target(
+    connection: &Connection,
+    conversion: &TermConversionReport,
+) -> Result<VerificationReport, MigrateError> {
+    let foreign_key_violations = foreign_key_violation_count(connection)?;
+    let integrity = integrity_result(connection)?;
+
+    // Row accounting: every preserved and converted row is exactly where the
+    // ledger says it is.
+    let row_accounting_ok = conversion.ledger_rows
+        == conversion.source_terms + conversion.source_aliases + conversion.source_tags
+        && connection.query_row("select count(*) from term_rules", [], |row| {
+            row.get::<_, i64>(0)
+        })? as u64
+            == conversion.converted
+        && connection.query_row("select count(*) from term_rule_forms", [], |row| {
+            row.get::<_, i64>(0)
+        })? as u64
+            == conversion.forms_inserted
+        && connection.query_row("select count(*) from term_rule_semantic_tags", [], |row| {
+            row.get::<_, i64>(0)
+        })? as u64
+            == conversion.tags_inserted;
+
+    let (fts_equivalent, fts_probes) = verify_fts_equivalence(connection, conversion)?;
+    let domain_invariants_ok = domain_invariants_hold(connection)?;
+
+    Ok(VerificationReport {
+        foreign_key_violations,
+        integrity,
+        row_accounting_ok,
+        fts_equivalent,
+        fts_probes,
+        domain_invariants_ok,
+    })
+}
+
+/// The design's domain invariants: lifecycle statuses stay inside the typed
+/// set, every forbidden-variants payload parses as a string array, and every
+/// converted strict-term ledger row resolves to an existing rule.
+fn domain_invariants_hold(connection: &Connection) -> Result<bool, MigrateError> {
+    let bad_status: i64 = connection.query_row(
+        "select count(*) from term_rules
+         where status not in ('candidate', 'active', 'superseded', 'archived')",
+        [],
+        |row| row.get(0),
+    )?;
+    if bad_status > 0 {
+        return Ok(false);
+    }
+    let mut statement = connection.prepare(
+        "select forbidden_variants_json from term_rules
+         where forbidden_variants_json != '[]'",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let payload: String = row.get(0)?;
+        let parsed = match serde_json::from_str::<serde_json::Value>(&payload) {
+            Ok(parsed) => parsed,
+            Err(_) => return Ok(false),
+        };
+        let valid = parsed
+            .as_array()
+            .map(|items| items.iter().all(|item| item.is_string()))
+            .unwrap_or(false);
+        if !valid {
+            return Ok(false);
+        }
+    }
+    let unresolved: i64 = connection.query_row(
+        "select count(*) from term_migration_ledger
+         where source_table = 'strict_terms' and outcome = 'converted'
+           and (target_rule_id is null
+                or not exists (select 1 from term_rules where id = target_rule_id))",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(unresolved == 0)
 }
 
 impl DryRunReport {
@@ -412,7 +542,7 @@ fn inspect_legacy_database(
 /// Open a source strictly read-only and switch on `query_only` before any
 /// statement runs. No source transaction or write pragma is ever issued
 /// (the qualified import harness's proven approach).
-fn open_read_only(path: &Path) -> rusqlite::Result<Connection> {
+pub(crate) fn open_read_only(path: &Path) -> rusqlite::Result<Connection> {
     let connection = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -421,7 +551,7 @@ fn open_read_only(path: &Path) -> rusqlite::Result<Connection> {
     Ok(connection)
 }
 
-fn integrity_result(connection: &Connection) -> rusqlite::Result<String> {
+pub(crate) fn integrity_result(connection: &Connection) -> rusqlite::Result<String> {
     let mut statement = connection.prepare("pragma integrity_check")?;
     let mut rows = statement.query([])?;
     let mut first = String::new();
@@ -439,7 +569,7 @@ fn integrity_result(connection: &Connection) -> rusqlite::Result<String> {
     }
 }
 
-fn foreign_key_violation_count(connection: &Connection) -> rusqlite::Result<u64> {
+pub(crate) fn foreign_key_violation_count(connection: &Connection) -> rusqlite::Result<u64> {
     let mut statement = connection.prepare("pragma foreign_key_check")?;
     let mut rows = statement.query([])?;
     let mut violations = 0_u64;
@@ -1419,7 +1549,7 @@ pub fn rebuild_strict_terms_fts(connection: &Connection) -> Result<(), MigrateEr
     Ok(())
 }
 
-fn sha256_file(path: &Path) -> Result<String, MigrateError> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, MigrateError> {
     use sha2::Digest;
     let bytes = std::fs::read(path)?;
     Ok(format!("{:x}", sha2::Sha256::digest(&bytes)))
@@ -1428,7 +1558,7 @@ fn sha256_file(path: &Path) -> Result<String, MigrateError> {
 /// Verify FTS query equivalence on the converted target: every converted
 /// term's source surface resolves its own row, and the projection covers
 /// exactly the preserved rows.
-fn verify_fts_equivalence(
+pub(crate) fn verify_fts_equivalence(
     connection: &Connection,
     conversion: &TermConversionReport,
 ) -> Result<(bool, u64), MigrateError> {
@@ -1568,53 +1698,27 @@ pub fn run_dry_run_in(
         transaction.commit()?;
     }
 
-    // Rehearse the typed conversion, the FTS rebuild, and the in-transaction
-    // verification through one transaction handle.
-    let (conversion, foreign_key_violations, integrity) = {
+    // Rehearse the typed conversion and the FTS rebuild through one
+    // transaction handle; verification then runs over the committed shape
+    // exactly as the upgrade verifies its committed target.
+    let conversion = {
         let transaction = connection.transaction()?;
         let conversion = convert_strict_terms(&transaction)?;
         rebuild_strict_terms_fts(&transaction)?;
-        let foreign_key_violations = foreign_key_violation_count(&transaction)?;
-        let integrity = integrity_result(&transaction)?;
         transaction.commit()?;
-        (conversion, foreign_key_violations, integrity)
+        conversion
     };
 
-    // Row accounting: every preserved and converted row is exactly where the
-    // ledger says it is.
-    let row_accounting_ok = conversion.ledger_rows
-        == conversion.source_terms + conversion.source_aliases + conversion.source_tags
-        && connection.query_row("select count(*) from term_rules", [], |row| {
-            row.get::<_, i64>(0)
-        })? as u64
-            == conversion.converted
-        && connection.query_row("select count(*) from term_rule_forms", [], |row| {
-            row.get::<_, i64>(0)
-        })? as u64
-            == conversion.forms_inserted
-        && connection.query_row("select count(*) from term_rule_semantic_tags", [], |row| {
-            row.get::<_, i64>(0)
-        })? as u64
-            == conversion.tags_inserted;
-
-    let (fts_equivalent, fts_probes) = verify_fts_equivalence(&connection, &conversion)?;
+    let verification = verify_upgraded_target(&connection, &conversion)?;
+    let verification_ok = verification.all_checks_pass();
 
     report.conversion = Some(conversion);
-    report.verification = Some(VerificationReport {
-        foreign_key_violations,
-        integrity: integrity.clone(),
-        row_accounting_ok,
-        fts_equivalent,
-        fts_probes,
-    });
-
+    report.verification = Some(verification);
     // The conversion-safe verdict is only trustworthy after verification: a
     // dry-run whose verification fails is refused (`verification-failed`) and
     // its verdict flips to unsafe, so scripting gets both a nonzero exit and
     // an honest report. Per-row ledger outcomes (skips/blocking) stay
     // reported data — the write-side protocol owns the upgrade gate.
-    let verification_ok =
-        row_accounting_ok && fts_equivalent && foreign_key_violations == 0 && integrity == "ok";
     if !verification_ok {
         report.preflight.conversion_safe = false;
         report.preflight.refusal_code = Some(REFUSAL_VERIFICATION_FAILED.to_string());

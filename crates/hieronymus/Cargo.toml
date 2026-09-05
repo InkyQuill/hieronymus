@@ -12,6 +12,7 @@ home.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 serde = { version = "1", features = ["derive"] }
 indexmap.workspace = true
 rusqlite.workspace = true
