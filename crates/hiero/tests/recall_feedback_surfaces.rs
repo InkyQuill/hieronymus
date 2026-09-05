@@ -144,6 +144,16 @@ fn cli_applies_feedback_and_replays_noop() {
     let (_config, recall_id, activation_id) = recall_fixture(root.path());
     let data_root = root.path().to_str().unwrap();
 
+    // Since plan M5 the CLI writes nothing itself: it posts to the daemon's
+    // `POST /recall/feedback` route, so a daemon must be running over the
+    // data root (the command reports the fact honestly otherwise).
+    let daemon = Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap();
+
     let run = |extra: &[&str]| {
         let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
             .args(["recall-feedback", "--data-root", data_root])
@@ -202,12 +212,49 @@ fn cli_applies_feedback_and_replays_noop() {
     let (_stdout, stderr, status) = run(&["--recall-id", &recall_id, "--useful", &useful]);
     assert_eq!(status.code(), Some(2));
     assert!(stderr.contains("recall-feedback"), "{stderr}");
+
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn cli_without_a_running_daemon_reports_how_to_start_one() {
+    let root = tempfile::tempdir().unwrap();
+    let (_config, recall_id, _activation_id) = recall_fixture(root.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "recall-feedback",
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--json",
+            "--recall-id",
+            &recall_id,
+            "--idempotency-key",
+            "offline-k",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("no running local service discovered"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("hiero daemon"), "{stderr}");
 }
 
 #[test]
 fn cli_and_rest_share_the_at_most_once_ledger() {
     let root = tempfile::tempdir().unwrap();
     let (config, recall_id, activation_id) = recall_fixture(root.path());
+    // The CLI posts to the daemon (plan M5), so one must be running; the
+    // independent read-back below then verifies the shared ledger.
+    let daemon = Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        assets: hiero::daemon::Assets::default(),
+    })
+    .unwrap();
 
     // The CLI applies first; the same key through the store (as the REST
     // route would) must stay a no-op.
@@ -242,4 +289,6 @@ fn cli_and_rest_share_the_at_most_once_ledger() {
         })
         .unwrap();
     assert!(!replay.applied);
+
+    daemon.shutdown().unwrap();
 }

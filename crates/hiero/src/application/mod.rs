@@ -6,9 +6,13 @@
 //!
 //! [`Application::call`] takes the tool name, the raw JSON arguments, and the
 //! authenticated actor, fans out across the tool families (see
-//! [`series_sessions`], [`memory`], [`terms`], and [`graph`]), and reports
-//! every tool that no family claims as [`AppError::NotImplemented`].
+//! [`series_sessions`], [`memory`], [`terms`], [`graph`], and [`dream`]), and
+//! reports every tool that no family claims as [`AppError::NotImplemented`].
+//! Since plan M5 no advertised tool falls through: [`Application::implemented_tools`]
+//! lists the concrete handlers and the `tool_completeness` regression pins it
+//! to the frozen registry snapshot.
 
+pub mod dream;
 pub mod graph;
 pub mod memory;
 pub mod series_sessions;
@@ -86,7 +90,65 @@ impl Application {
             .or_else(|| memory::dispatch(self, tool, arguments, actor))
             .or_else(|| terms::dispatch(self, tool, arguments, actor))
             .or_else(|| graph::dispatch(self, tool, arguments, actor))
+            .or_else(|| dream::dispatch(self, tool, arguments, actor))
             .unwrap_or_else(|| Err(AppError::NotImplemented(tool.to_string())))
+    }
+
+    /// Every advertised tool this application serves with a concrete handler,
+    /// listed by name. This is the completeness surface (plan M5): the
+    /// `tool_completeness` regression compares it against the frozen registry
+    /// snapshot, so a newly advertised tool without a handler fails the gate
+    /// instead of answering `NotImplemented` at runtime. `hieronymus_status`
+    /// is included: its handler is the registry-backed frozen contract rather
+    /// than a [`Self::call`] family member, but it is concrete daemon code.
+    pub fn implemented_tools() -> &'static [&'static str] {
+        &[
+            // series/sessions family (M1).
+            "hieronymus_series_create",
+            "hieronymus_series_init",
+            "hieronymus_series_list",
+            "hieronymus_series_set_language_tags",
+            "hieronymus_session_start",
+            "hieronymus_session_complete",
+            // memory family (M2).
+            "hieronymus_memory_add",
+            "hieronymus_memory_search",
+            "hieronymus_short_term_add",
+            "hieronymus_short_term_add_batch",
+            "hieronymus_feedback",
+            "hieronymus_recall",
+            "hieronymus_rag_import",
+            "hieronymus_rag_search",
+            // terms/rule-lifecycle family (M3).
+            "hieronymus_termbase_propose",
+            "hieronymus_termbase_approve",
+            "hieronymus_termbase_contract",
+            "hieronymus_termbase_validate",
+            "hieronymus_rule_crystal_archive",
+            "hieronymus_rule_crystal_validate",
+            "hieronymus_rule_crystals_list",
+            // graph family (M4).
+            "hieronymus_concept_create",
+            "hieronymus_concept_get",
+            "hieronymus_concept_list",
+            "hieronymus_concept_update",
+            "hieronymus_concept_archive",
+            "hieronymus_concept_merge",
+            "hieronymus_concept_rename",
+            "hieronymus_concept_semantic_tags_set",
+            "hieronymus_concept_facet_add",
+            "hieronymus_concept_facet_update",
+            "hieronymus_concept_facet_list",
+            "hieronymus_concept_facet_set_canonical",
+            "hieronymus_crystal_link_concept",
+            "hieronymus_crystal_story_scopes_set",
+            "hieronymus_crystal_semantic_tags_set",
+            "hieronymus_concept_proposals_list",
+            // dream family (M5).
+            "hieronymus_dream",
+            // registry-backed frozen status contract.
+            "hieronymus_status",
+        ]
     }
 }
 

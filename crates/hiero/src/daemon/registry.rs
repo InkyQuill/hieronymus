@@ -228,17 +228,34 @@ mod tests {
     fn unported_tools_report_not_ported() {
         let registry = McpRegistry::embedded();
         let (_root, application) = test_application();
-        // The memory family (including hieronymus_recall) is ported; the
-        // dream dispatch is still outstanding.
+        // Every advertised tool dispatches since M5 (hieronymus_dream runs
+        // the DreamService seam); a name no family claims is the honest
+        // leftover that still reports NotPorted.
         let error = registry
+            .call(
+                &application,
+                "hieronymus_nonexistent",
+                &serde_json::json!({}),
+                "local-user",
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("hieronymus_nonexistent"));
+
+        // The dream dispatch runs for real: on a fresh root the workflow
+        // gate passes and the run completes with nothing pending.
+        let result = registry
             .call(
                 &application,
                 "hieronymus_dream",
                 &serde_json::json!({}),
                 "local-user",
             )
-            .unwrap_err();
-        assert!(error.to_string().contains("hieronymus_dream"));
+            .unwrap();
+        assert_eq!(result["isError"], serde_json::json!(false));
+        assert_eq!(
+            result["structuredContent"]["provider"],
+            serde_json::json!("deterministic")
+        );
     }
 
     #[test]

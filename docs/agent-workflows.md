@@ -8,6 +8,32 @@ material casually.
 Installers write the asset bundle under the global Hieronymus config root, patch host config files
 with backups, and report installed status only when both assets and host config entries are present.
 
+## Generated plugin bundle (Rust daemon)
+
+The Rust daemon renders the same bundle deterministically with
+`hiero plugins generate` (use `--dry-run` to preview, `--json` for
+machine-readable output). It writes installation-owned files under the
+config root's `agent-plugins/<target>/` directory — one full bundle per
+supported target (`codex`, `claude`, `gemini`, `opencode`, `openclaw`) — and
+nothing else. It never patches a host configuration file: registering the
+plugin with a host stays an explicit, user-owned step.
+
+The generated MCP configuration invokes the stable `hieronymus-mcp` entry
+point (the `hiero mcp` stdio adapter). The adapter discovers the local daemon
+through the data root's discovery record, so generated configuration carries
+no fixed port and no baked-in bearer token, and the daemon can restart or
+move ports freely. Codex session hooks invoke the stable
+`hieronymus-agent-hook` entry point (`session-start` / `session-end`).
+
+The generated skills keep the workflow contract: English-first memory
+writes, `source_role` as optional provenance only, candidate-only ingestion
+(agents record proposals and corrections but never approve terminology;
+dreaming crystallizes and a human approves), and strict concept contracts as
+mandatory while crystals and lessons stay advisory. Hieronymus-owned
+integration files live in the Hieronymus config root; no source code or
+plugin files belong in book workspaces. Regenerating the bundle rewrites the
+same bytes (idempotent), and `hiero uninstall` removes it.
+
 ## Integrations
 
 The common bundle includes:

@@ -423,13 +423,35 @@ fn session_complete_marks_the_session_completed() {
 #[test]
 fn unclaimed_tools_report_not_implemented() {
     let (_root, app) = test_application();
-    // `hieronymus_recall` and the memory family are claimed since M2; the
-    // dream dispatch (D5) is still outstanding.
-    let error = app.call("hieronymus_dream", &json!({}), ACTOR).unwrap_err();
+    // Every advertised tool has a concrete handler since M5 (see the
+    // tool_completeness regression); a name no family claims is the honest
+    // leftover.
+    let error = app
+        .call("hieronymus_nonexistent", &json!({}), ACTOR)
+        .unwrap_err();
     match error {
-        AppError::NotImplemented(name) => assert!(name.contains("hieronymus_dream")),
+        AppError::NotImplemented(name) => assert!(name.contains("hieronymus_nonexistent")),
         other => panic!("expected NotImplemented, got: {other}"),
     }
+}
+
+#[test]
+fn dream_dispatch_runs_the_deterministic_fail_closed_path() {
+    let (_root, app) = test_application();
+    // M5: hieronymus_dream executes the DreamService seam (the same path the
+    // REST manual-dreaming route uses). On a fresh root the workflow gate
+    // passes with the default disabled wiring and the run completes with
+    // nothing pending.
+    let payload = app.call("hieronymus_dream", &json!({}), ACTOR).unwrap();
+    assert_eq!(payload["status"], json!("completed"));
+    assert_eq!(payload["provider"], json!("deterministic"));
+    assert_eq!(payload["input_count"], json!(0));
+    // A named non-deterministic provider is a domain rejection (D5 upgrades
+    // this dispatch), never a silent deterministic substitution.
+    let error = app
+        .call("hieronymus_dream", &json!({"provider": "openai"}), ACTOR)
+        .unwrap_err();
+    assert!(error.to_string().contains("not available"), "{error}");
 }
 
 // ------------------------------------------------- real HTTP + stdio workflow

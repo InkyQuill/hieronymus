@@ -19,8 +19,11 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
-const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>]";
+const USAGE: &str = "usage: hiero <version|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
+const TOOL_CALL_USAGE: &str = "usage: hiero tool-call <tool> [--args <json>] [--json] [--data-root <path>] [--start-daemon] (calls the advertised MCP tool through the local daemon's authenticated /mcp route)";
+const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy)";
+const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
@@ -77,6 +80,8 @@ struct ParsedArguments {
     app_dir: Option<String>,
     yes: bool,
     delete_data: bool,
+    args_json: Option<String>,
+    output: Option<String>,
 }
 
 fn parse_arguments(
@@ -107,6 +112,8 @@ fn parse_arguments(
         app_dir: None,
         yes: false,
         delete_data: false,
+        args_json: None,
+        output: None,
     };
     let mut positionals: Vec<String> = Vec::new();
     let mut index = 0;
@@ -255,6 +262,24 @@ fn parse_arguments(
             "--no-activate" => parsed.no_activate = true,
             "--yes" => parsed.yes = true,
             "--delete-data" => parsed.delete_data = true,
+            "--args" => {
+                index += 1;
+                parsed.args_json = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--args requires a JSON object argument".to_string())?
+                        .clone(),
+                );
+            }
+            "--output" => {
+                index += 1;
+                parsed.output = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--output requires a path argument".to_string())?
+                        .clone(),
+                );
+            }
             value if value.starts_with('-') => {
                 return Err(format!("unknown option: {value}"));
             }
@@ -309,6 +334,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             }
             reject_subcommand(&parsed, "classify")?;
             reject_feedback_flags(&parsed, "classify")?;
+            reject_headless_flags(&parsed, "classify")?;
             let config = load_config(data_root);
             let state = hieronymus::db::classify_database(&config.database_path());
             if parsed.json {
@@ -350,6 +376,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             }
             reject_subcommand(&parsed, "mcp")?;
             reject_feedback_flags(&parsed, "mcp")?;
+            reject_headless_flags(&parsed, "mcp")?;
             let options = StdioOptions {
                 data_root: parsed.data_root.clone().map(std::path::PathBuf::from),
                 start_daemon: parsed.start_daemon,
@@ -361,6 +388,9 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some("semantic") => run_semantic(&parsed, data_root),
         Some("agent-hook") => run_agent_hook(&parsed, data_root),
         Some("recall-feedback") => run_recall_feedback(&parsed, data_root),
+        Some("tool-call") => run_tool_call(&parsed, data_root),
+        Some("export") => run_export(&parsed, data_root),
+        Some("plugins") => run_plugins(&parsed, data_root),
         Some("migrate") => run_migrate(&parsed, data_root),
         Some("recover") => run_recover(&parsed, data_root),
         Some("service") => run_service(&parsed, data_root),
@@ -387,6 +417,32 @@ fn reject_feedback_flags(parsed: &ParsedArguments, command: &str) -> Result<(), 
         || parsed.idempotency_key.is_some();
     if feedback_flag_used {
         return Err(format!("{command} does not accept recall-feedback options"));
+    }
+    Ok(())
+}
+
+/// `--args` and `--output` belong to the headless adapters (`tool-call`,
+/// `export`); other commands reject them instead of silently ignoring a flag
+/// the user may believe took effect.
+fn reject_headless_flags(parsed: &ParsedArguments, command: &str) -> Result<(), String> {
+    reject_args_flag(parsed, command)?;
+    reject_output_flag(parsed, command)
+}
+
+/// Each headless command also rejects the OTHER adapters' flags: `tool-call`
+/// takes `--args` but not `--output`, `export` takes `--output` but not
+/// `--args`, and `plugins` takes neither — no headless flag is ever silently
+/// ignored.
+fn reject_args_flag(parsed: &ParsedArguments, command: &str) -> Result<(), String> {
+    if parsed.args_json.is_some() {
+        return Err(format!("{command} does not accept --args (see tool-call)"));
+    }
+    Ok(())
+}
+
+fn reject_output_flag(parsed: &ParsedArguments, command: &str) -> Result<(), String> {
+    if parsed.output.is_some() {
+        return Err(format!("{command} does not accept --output (see export)"));
     }
     Ok(())
 }
@@ -426,6 +482,7 @@ fn run_doctor(
     }
     reject_subcommand(parsed, "doctor")?;
     reject_feedback_flags(parsed, "doctor")?;
+    reject_headless_flags(parsed, "doctor")?;
     let config = load_config(data_root);
     let report = doctor::run_with_service(&config, None);
     if parsed.json {
@@ -451,6 +508,7 @@ fn run_semantic(
         ));
     }
     reject_feedback_flags(parsed, "semantic")?;
+    reject_headless_flags(parsed, "semantic")?;
     let config = load_config(data_root);
     match parsed.subcommand.as_deref() {
         Some("status") => {
@@ -682,6 +740,7 @@ fn run_agent_hook(
         ));
     }
     reject_feedback_flags(parsed, "agent-hook")?;
+    reject_headless_flags(parsed, "agent-hook")?;
     let config = load_config(data_root);
     let output = match parsed.subcommand.as_deref() {
         Some("session-start") => {
@@ -733,6 +792,7 @@ fn run_migrate(
     }
     reject_subcommand(parsed, "migrate")?;
     reject_feedback_flags(parsed, "migrate")?;
+    reject_headless_flags(parsed, "migrate")?;
     let config = load_config(data_root);
     if parsed.dry_run {
         let daemon_active = daemon_is_active(&config);
@@ -789,6 +849,7 @@ fn run_recover(
     }
     reject_subcommand(parsed, "recover")?;
     reject_feedback_flags(parsed, "recover")?;
+    reject_headless_flags(parsed, "recover")?;
     let config = load_config(data_root);
     let daemon_active = daemon_is_active(&config);
     let report = hieronymus::upgrade::run_recovery(&config, daemon_active)
@@ -809,7 +870,11 @@ fn run_recover(
 }
 
 /// The `recall-feedback` subcommand: apply one feedback request through the
-/// store and print the outcome (human or JSON).
+/// local daemon's `POST /recall/feedback` route (the audited write path) and
+/// print the outcome (human or JSON). This path contains no
+/// `FeedbackStore::open` and no direct database connection — when the daemon
+/// is not running the command reports that honestly instead of writing
+/// around it.
 fn run_recall_feedback(
     parsed: &ParsedArguments,
     data_root: Option<&std::path::Path>,
@@ -818,6 +883,7 @@ fn run_recall_feedback(
         return Err("recall-feedback does not accept --port or --start-daemon".to_string());
     }
     reject_subcommand(parsed, "recall-feedback")?;
+    reject_headless_flags(parsed, "recall-feedback")?;
     let recall_id = parsed
         .recall_id
         .clone()
@@ -843,29 +909,218 @@ fn run_recall_feedback(
     let miss = parse_ids("miss", &parsed.miss)?;
 
     let config = load_config(data_root);
-    let store =
-        hieronymus::feedback::FeedbackStore::open(&config).map_err(|error| error.to_string())?;
-    let outcome = store
-        .record_recall_outcome(&hieronymus::feedback::RecallFeedback {
-            recall_id: recall_id.clone(),
-            useful_activation_ids: useful,
-            missed_activation_ids: miss,
-            idempotency_key,
-        })
+    // The daemon boundary (plan M5; the runtime plan's `lifecycle::DaemonClient`
+    // swaps in behind the same seam): the same at-most-once contract the REST
+    // route enforces, so the CLI and daemon share one audit ledger.
+    let client =
+        hiero::daemon_client::DaemonClient::connect(&config).map_err(|error| error.to_string())?;
+    let payload = serde_json::json!({
+        "recall_id": recall_id,
+        "useful": useful,
+        "miss": miss,
+        "idempotency_key": idempotency_key,
+    });
+    let reply = client
+        .post("/recall/feedback", &payload)
         .map_err(|error| error.to_string())?;
+    let applied = reply
+        .get("applied")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let useful_count = reply
+        .get("useful")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let miss_count = reply
+        .get("miss")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
 
     if parsed.json {
         println!(
             "{{\"recall_id\": {:?}, \"applied\": {}, \"useful\": {}, \"miss\": {}}}",
-            recall_id, outcome.applied, outcome.useful_count, outcome.miss_count
+            recall_id, applied, useful_count, miss_count
         );
-    } else if outcome.applied {
+    } else if applied {
         println!(
             "recall feedback applied: {} useful, {} miss (recall {recall_id})",
-            outcome.useful_count, outcome.miss_count
+            useful_count, miss_count
         );
     } else {
         println!("recall feedback already applied: {recall_id}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The `tool-call` subcommand: the headless adapter for every advertised MCP
+/// tool (series/session, recall, dream, RAG import/search, termbase
+/// validation, graph) over the daemon's authenticated `/mcp` route. No
+/// database access happens in this process.
+fn run_tool_call(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
+    if parsed.dry_run {
+        return Err(format!(
+            "tool-call does not accept --dry-run; {TOOL_CALL_USAGE}"
+        ));
+    }
+    reject_output_flag(parsed, "tool-call")?;
+    let tool = parsed
+        .subcommand
+        .clone()
+        .ok_or_else(|| format!("tool-call requires a tool name; {TOOL_CALL_USAGE}"))?;
+    let arguments: serde_json::Value = match &parsed.args_json {
+        Some(text) => serde_json::from_str(text)
+            .map_err(|error| format!("--args must be a JSON object: {error}"))?,
+        None => serde_json::json!({}),
+    };
+    if !arguments.is_object() {
+        return Err(format!("--args must be a JSON object; {TOOL_CALL_USAGE}"));
+    }
+    let config = load_config(data_root);
+    let client = hiero::daemon_client::DaemonClient::connect_opt_in(&config, parsed.start_daemon)
+        .map_err(|error| error.to_string())?;
+    let reply = client
+        .call_tool(&tool, &arguments)
+        .map_err(|error| error.to_string())?;
+
+    let Some(result) = reply.get("result") else {
+        // A JSON-RPC protocol error (unknown tool, invalid params): surface
+        // the daemon's message and fail.
+        let message = reply
+            .pointer("/error/message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("the daemon returned no result");
+        return Err(message.to_string());
+    };
+    let is_error = result
+        .get("isError")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if parsed.json {
+        let text = serde_json::to_string_pretty(&reply).map_err(|error| error.to_string())?;
+        println!("{text}");
+    } else {
+        // Human output prints the payload: the structured content when the
+        // tool completed, the diagnostic text on a tool error.
+        let payload = match result.get("structuredContent") {
+            Some(structured) => {
+                serde_json::to_string_pretty(structured).map_err(|error| error.to_string())?
+            }
+            None => result
+                .pointer("/content/0/text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("no content")
+                .to_string(),
+        };
+        println!("{payload}");
+    }
+    if is_error {
+        // Domain rejection: the request executed, the work was refused.
+        return Ok(ExitCode::from(1));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The `export` subcommand: serialize the memory content tables to JSON at an
+/// explicit destination. Read-only by design — never a live database copy.
+fn run_export(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
+    if parsed.dry_run || parsed.start_daemon || parsed.port.is_some() {
+        return Err(format!(
+            "export does not accept --dry-run, --start-daemon, or --port; {EXPORT_USAGE}"
+        ));
+    }
+    reject_args_flag(parsed, "export")?;
+    let output = parsed
+        .output
+        .as_deref()
+        .ok_or_else(|| format!("export requires --output <path>; {EXPORT_USAGE}"))?;
+    let destination = absolute_path(output);
+    let config = load_config(data_root);
+    let report = hiero::export::run(&config, &destination).map_err(|error| error.to_string())?;
+    if parsed.json {
+        let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+        println!("{text}");
+    } else {
+        let rows: usize = report.tables.iter().map(|(_, count)| count).sum();
+        println!(
+            "exported {} rows across {} tables to {}",
+            rows,
+            report.tables.len(),
+            report.output.display()
+        );
+        for (table, count) in &report.tables {
+            println!("  {table}: {count}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The `plugins generate` subcommand: write the installation-owned agent
+/// plugin bundle under the config root. Generated host configuration uses the
+/// stable stdio entry point (stdio discovery — no fixed port, no baked-in
+/// bearer) and is a copy/paste source for the user's manual host setup; user
+/// host configuration is never rewritten automatically.
+fn run_plugins(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
+    if parsed.port.is_some() || parsed.start_daemon {
+        return Err(format!(
+            "plugins does not accept --port or --start-daemon; {PLUGINS_USAGE}"
+        ));
+    }
+    if parsed.subcommand.as_deref() != Some("generate") {
+        return Err(format!(
+            "plugins requires the 'generate' subcommand; {PLUGINS_USAGE}"
+        ));
+    }
+    reject_args_flag(parsed, "plugins")?;
+    reject_output_flag(parsed, "plugins")?;
+    let config = load_config(data_root);
+    if parsed.dry_run {
+        let rendered = hiero::agent_plugins::render(&config)?;
+        if parsed.json {
+            let paths: Vec<String> = rendered
+                .iter()
+                .map(|(path, _)| path.display().to_string())
+                .collect();
+            println!("{}", serde_json::json!({ "files": paths, "dry_run": true }));
+        } else {
+            println!(
+                "would write {} files under {}:",
+                rendered.len(),
+                config.agent_plugins_root().display()
+            );
+            for (path, _) in &rendered {
+                println!("  {}", path.display());
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let written = hiero::agent_plugins::generate(&config)?;
+    if parsed.json {
+        let paths: Vec<String> = written
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({ "files": paths, "written": paths.len() })
+        );
+    } else {
+        println!(
+            "wrote {} files under {}:",
+            written.len(),
+            config.agent_plugins_root().display()
+        );
+        for path in &written {
+            println!("  {}", path.display());
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

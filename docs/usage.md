@@ -380,16 +380,117 @@ active session after session `1` has been completed and dreamed.
 Corrections enter the workflow as short-term memories and become rule crystals
 through dreaming.
 
+## Headless CLI
+
+Every headless command goes through the local daemon (ADR 0009): the CLI
+process never opens the database directly. Start the daemon with
+`hiero daemon` (or `hiero service start`) first; when the daemon is not
+running, commands report that honestly with the exact remediation instead of
+writing around it. The one exception is `hiero export`, which is read-only.
+
+### Call any advertised MCP tool
+
+`hiero tool-call <tool> --args '<json>'` posts one stateless `tools/call` to
+the daemon's authenticated `/mcp` route, so scripts can drive every tool an
+MCP host can. `--start-daemon` opts into spawning the daemon; `--json` prints
+the full MCP envelope.
+
+Start or complete a session:
+
+```bash
+hiero tool-call hieronymus_series_create --args '{"slug":"oso","title":"Only Sense Online","source_language":"ja","target_language":"en"}'
+hiero tool-call hieronymus_session_start --args '{"series_slug":"oso","volume":"01","chapter":"002"}'
+hiero tool-call hieronymus_session_complete --args '{"session_id":1}'
+```
+
+Recall:
+
+```bash
+hiero tool-call hieronymus_recall --args '{"session_id":2,"series_slug":"oso","query":"cultural terms"}'
+```
+
+Dream over pending completed-session memories:
+
+```bash
+hiero tool-call hieronymus_dream --args '{}'
+```
+
+Dreaming through the tool runs the deterministic provider behind the
+fail-closed workflow gate (the same path as the console's manual dreaming
+action). Configured LLM provider lanes — the scheduler, draining, and
+per-workflow providers — arrive with the dreaming plan; passing a named
+provider is rejected instead of silently substituted.
+
+RAG import and search:
+
+```bash
+hiero tool-call hieronymus_rag_import --args '{"series_slug":"oso","path":"/path/chapter-005.txt","source_ref":"book:5/chapter:5"}'
+hiero tool-call hieronymus_rag_search --args '{"series_slug":"oso","query":"Cooking Talent"}'
+```
+
+Termbase validation (candidate rules stay advisory until an explicit
+approval):
+
+```bash
+hiero tool-call hieronymus_termbase_propose --args '{"series_slug":"oso","category":"person_name","source_text":"ユン","canonical_translation":"Юн"}'
+hiero tool-call hieronymus_termbase_approve --args '{"series_slug":"oso","term_id":1}'
+hiero tool-call hieronymus_termbase_validate --args '{"series_slug":"oso","raw_text":"ユン stands up.","translated_text":"Юна встаёт."}'
+```
+
+### Export memory content as JSON
+
+```bash
+hiero export --output /path/hieronymus-memory.json [--json]
+```
+
+Export serializes the documented content tables (series, sessions,
+short-term memories, crystals, concepts, facets, terminology rules, RAG
+sources and chunks, dream runs) to one deterministic JSON document at the
+explicit destination. It is a read operation: it opens the database
+read-only and never copies a live SQLite file, so it is safe next to a
+running daemon.
+
+### Generate the agent plugin bundle
+
+```bash
+hiero plugins generate [--dry-run] [--json] [--data-root <path>]
+```
+
+Writes the installation-owned bundle under the config root's
+`agent-plugins/` directory: the eight workflow skills, the MCP registration,
+Codex hooks, and one manifest per supported host (`codex`, `claude`,
+`gemini`, `opencode`, `openclaw`). The MCP registration uses the stable
+`hieronymus-mcp` entry point, which discovers the local daemon through the
+data root's discovery record — generated configuration never contains a
+fixed port or a bearer token. The command only writes Hieronymus-owned
+files; it never rewrites your host configuration. Use `hiero uninstall` to
+remove the bundle.
+
+### Record recall feedback through the daemon
+
+```bash
+hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <ids>] [--miss <ids>]
+```
+
+The CLI posts to the daemon's `POST /recall/feedback` route, so CLI, REST,
+and MCP clients share one at-most-once feedback ledger and audit trail. It
+requires the local daemon to be running and rejects `--start-daemon`
+explicitly.
+
 ## Service Commands
 
 ```bash
-hiero
+hiero daemon
 hiero status --json
 hiero doctor
 hiero admin
 hiero admin --json
 hiero install codex --dry-run
 hiero skills install --target agents --target claude
+hiero tool-call hieronymus_series_list --args '{}'
+hiero export --output ./memory.json
+hiero plugins generate
+hiero recall-feedback --recall-id <id> --idempotency-key <key>
 hiero stop
 ```
 

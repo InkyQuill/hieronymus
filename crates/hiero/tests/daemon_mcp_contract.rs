@@ -291,9 +291,10 @@ fn not_yet_ported_tool_returns_clean_jsonrpc_error() {
     let protocol = mcp_protocol();
     let mut request = protocol["target"]["tools_call"]["request"].clone();
     request["id"] = json!(77);
-    // The memory family (including hieronymus_recall) is ported; the dream
-    // dispatch is still outstanding.
-    request["params"]["name"] = json!("hieronymus_dream");
+    // Every advertised tool has a concrete handler since M5; an unknown name
+    // is the honest leftover that must still fail with a clean JSON-RPC
+    // error (never a panic, never a leaked diagnostic).
+    request["params"]["name"] = json!("hieronymus_nonexistent");
 
     let response = post_mcp(
         &daemon,
@@ -301,7 +302,7 @@ fn not_yet_ported_tool_returns_clean_jsonrpc_error() {
             &daemon,
             &[
                 ("Mcp-Method", "tools/call"),
-                ("Mcp-Name", "hieronymus_dream"),
+                ("Mcp-Name", "hieronymus_nonexistent"),
             ],
         ),
         &request,
@@ -313,7 +314,7 @@ fn not_yet_ported_tool_returns_clean_jsonrpc_error() {
     let error = &response.body()["error"];
     assert_eq!(error["code"], json!(-32603));
     let message = error["message"].as_str().unwrap();
-    assert!(message.contains("hieronymus_dream"), "{message}");
+    assert!(message.contains("hieronymus_nonexistent"), "{message}");
     assert!(
         !message.contains("Bearer"),
         "diagnostics must not leak credentials"
