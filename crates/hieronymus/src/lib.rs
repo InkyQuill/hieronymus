@@ -21,6 +21,7 @@ pub mod dreaming;
 pub mod feedback;
 pub mod ingest_config;
 pub mod memory_models;
+pub mod migrate;
 pub mod provider_config;
 pub mod provider_http;
 pub mod rag;

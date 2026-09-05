@@ -11,8 +11,9 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|classify|daemon|mcp|recall-feedback> [--json] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|classify|migrate|daemon|mcp|recall-feedback> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>]";
+const MIGRATE_USAGE: &str = "usage: hiero migrate --dry-run [--json] [--data-root <path>]";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +31,7 @@ struct ParsedArguments {
     data_root: Option<String>,
     port: Option<u16>,
     start_daemon: bool,
+    dry_run: bool,
     command: Option<String>,
     recall_id: Option<String>,
     useful: Option<String>,
@@ -43,6 +45,7 @@ fn parse_arguments(arguments: &[String]) -> Result<ParsedArguments, String> {
         data_root: None,
         port: None,
         start_daemon: false,
+        dry_run: false,
         command: None,
         recall_id: None,
         useful: None,
@@ -74,6 +77,7 @@ fn parse_arguments(arguments: &[String]) -> Result<ParsedArguments, String> {
                     })?);
             }
             "--start-daemon" => parsed.start_daemon = true,
+            "--dry-run" => parsed.dry_run = true,
             "--recall-id" => {
                 index += 1;
                 parsed.recall_id = Some(
@@ -188,6 +192,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             run_stdio_adapter(&options).map_err(|error| error.to_string())
         }
         Some("recall-feedback") => run_recall_feedback(&parsed, data_root),
+        Some("migrate") => run_migrate(&parsed, data_root),
         Some(other) => Err(format!("unknown command: {other}; {USAGE}")),
         None => Err(format!("missing command; {USAGE}")),
     }
@@ -200,6 +205,59 @@ fn reject_feedback_flags(parsed: &ParsedArguments, command: &str) -> Result<(), 
         || parsed.idempotency_key.is_some();
     if feedback_flag_used {
         return Err(format!("{command} does not accept recall-feedback options"));
+    }
+    Ok(())
+}
+
+/// Whether a live local daemon is reachable per its discovery record. Read
+/// only: preflight reports the fact; locking the daemon is the write-side
+/// upgrade protocol's job.
+fn daemon_is_active(config: &hieronymus::data_root::HieronymusConfig) -> bool {
+    use std::net::ToSocketAddrs;
+    let Ok(record) = hiero::daemon::discovery::read_discovery(config) else {
+        return false;
+    };
+    let Ok(addresses) = (record.host.as_str(), record.port).to_socket_addrs() else {
+        return false;
+    };
+    for address in addresses {
+        if std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(250))
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `migrate` subcommand: read-only preflight plus the disposable dry-run
+/// (part 1 of the upgrade protocol). The write-side upgrade arrives with the
+/// cutover journal; until then `--dry-run` is the only accepted mode.
+fn run_migrate(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if parsed.port.is_some() || parsed.start_daemon {
+        return Err("migrate does not accept --port or --start-daemon".to_string());
+    }
+    reject_feedback_flags(parsed, "migrate")?;
+    if !parsed.dry_run {
+        return Err(format!(
+            "migrate requires --dry-run; the write-side upgrade is not available yet; {MIGRATE_USAGE}"
+        ));
+    }
+    let config = load_config(data_root);
+    let daemon_active = daemon_is_active(&config);
+    let report = hieronymus::migrate::run_dry_run(&config, daemon_active)
+        .map_err(|error| error.to_string())?;
+    if parsed.json {
+        let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+        println!("{text}");
+    } else {
+        print!("{}", report.render_human());
+    }
+    if let Some(code) = &report.refused {
+        return Err(format!("dry-run refused: {code}"));
     }
     Ok(())
 }

@@ -89,7 +89,9 @@ fn now_iso8601() -> String {
 
 /// The canonical rule sentence: also the round-trip shape enforced on
 /// propose (`<source> is translated as <target>[, not <forbidden>].`).
-fn rule_text(
+/// The upgrade converter builds the same sentence when linking legacy rule
+/// crystals, so the format lives in exactly one place.
+pub(crate) fn rule_text(
     source_text: &str,
     canonical_translation: &str,
     forbidden_variants: &[String],

@@ -114,6 +114,24 @@ pub enum OpenMigratedError {
     UnsupportedState(DatabaseState),
 }
 
+/// Apply the target-schema SQL steps of an upgrade to `connection`: the
+/// terminology rule tables plus the schema-version metadata. Idempotent, and
+/// safe inside the caller's transaction — the upgrade protocol owns the
+/// commit. This is the same statement set a fresh Rust database receives.
+pub(crate) fn apply_terminology_schema_steps(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<()> {
+    connection.execute_batch(TERMINOLOGY_MIGRATION_SQL)?;
+    connection.execute_batch(&format!(
+        "create table if not exists {RUST_META_TABLE} (
+             schema_version integer not null unique
+         );
+         insert or ignore into {RUST_META_TABLE} (schema_version)
+         values ({SUPPORTED_RUST_SCHEMA_VERSION});"
+    ))?;
+    connection.pragma_update(None, "user_version", SUPPORTED_RUST_SCHEMA_VERSION)
+}
+
 /// Classify the database at `path` without writing to it.
 pub fn classify_database(path: &Path) -> DatabaseState {
     if !path.exists() {

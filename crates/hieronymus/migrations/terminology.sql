@@ -13,6 +13,7 @@ create table if not exists term_rules (
   matching_policy text not null default 'surface',
   status text not null check (status in ('candidate', 'active', 'superseded', 'archived')),
   provenance text not null default '',
+  notes text not null default '',
   revision integer not null default 1,
   rule_crystal_id integer,
   created_at text not null,
