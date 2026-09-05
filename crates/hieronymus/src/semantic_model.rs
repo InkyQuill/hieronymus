@@ -1,20 +1,22 @@
 //! Embedding model acquisition: the pinned qualification model's constants, a
-//! streaming download transport seam (loopback-testable, `http://` only), and
+//! streaming download transport seam (loopback-testable, `http`/`https`), and
 //! the temp-file + checksum + atomic-promotion acquisition flow.
 //!
 //! Acquisition runs only when a caller invokes it explicitly (the store's
 //! `acquire_model` API); config load, store open, and doctor-style checks
 //! never touch the network and never download anything. An incomplete or
-//! incompatible model leaves FTS retrieval fully functional.
+//! incompatible model leaves FTS retrieval fully functional. `https://`
+//! downloads run over rustls (see the `tls` module); other schemes fail
+//! closed.
 
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 use crate::semantic_error::SemanticError;
+use crate::tls::{self, TlsError, TlsRoots};
 
 /// Embedding model pinned by the qualification record
 /// (`qualification/records/semantic-native.json`, decision `semantic-enabled`).
@@ -64,16 +66,27 @@ pub trait ModelTransport: Send + Sync {
     ) -> Result<u64, SemanticError>;
 }
 
-/// Production transport: one blocking streaming HTTP/1.1 GET per call, `http://`
-/// only (TLS is out of scope for this slice, like `provider_http`), read-bounded
-/// by `max_bytes`.
+/// Production transport: one blocking streaming HTTP/1.1 GET per call
+/// (`http://` plain, `https://` over rustls with the configured roots),
+/// read-bounded by `max_bytes`.
 pub struct HttpModelTransport {
     timeout: Duration,
+    tls_roots: TlsRoots,
 }
 
 impl HttpModelTransport {
     pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
+        Self {
+            timeout,
+            tls_roots: TlsRoots::default(),
+        }
+    }
+
+    /// Overrides the trust anchors (loopback tests inject the locally
+    /// generated certificate; nothing else is trusted then).
+    pub fn with_tls_roots(mut self, roots: TlsRoots) -> Self {
+        self.tls_roots = roots;
+        self
     }
 }
 
@@ -84,21 +97,21 @@ impl ModelTransport for HttpModelTransport {
         destination: &Path,
         max_bytes: u64,
     ) -> Result<u64, SemanticError> {
-        let (host, port, path) = parse_http_url(url)?;
-        let address = (host.as_str(), port)
-            .to_socket_addrs()
-            .map_err(|error| SemanticError::Download(format!("could not resolve {host}: {error}")))?
-            .next()
-            .ok_or_else(|| {
-                SemanticError::Download(format!("host resolved to no addresses: {host}"))
-            })?;
-        let mut stream = TcpStream::connect_timeout(&address, self.timeout)
-            .map_err(|error| SemanticError::Download(format!("connect failed: {error}")))?;
-        let _ = stream.set_write_timeout(Some(self.timeout));
-        let _ = stream.set_read_timeout(Some(self.timeout));
+        let parsed = tls::parse_outbound_url(url).map_err(SemanticError::UnsupportedUrl)?;
+        let mut stream: Box<dyn ReadWrite> = if parsed.secure {
+            Box::new(
+                tls::https_stream(&parsed.host, parsed.port, &self.tls_roots, self.timeout)
+                    .map_err(tls_error)?,
+            )
+        } else {
+            Box::new(self.connect_plain(&parsed)?)
+        };
 
         let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+            path = parsed.path,
+            host = parsed.host,
+            port = parsed.port,
         );
         stream
             .write_all(request.as_bytes())
@@ -115,52 +128,58 @@ impl ModelTransport for HttpModelTransport {
     }
 }
 
-fn parse_http_url(url: &str) -> Result<(String, u16, String), SemanticError> {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return Err(SemanticError::UnsupportedUrl(format!(
-            "model url has no scheme: {url}"
-        )));
-    };
-    if !scheme.eq_ignore_ascii_case("http") {
-        return Err(SemanticError::UnsupportedUrl(format!(
-            "{scheme}:// (only http:// endpoints are supported)"
-        )));
-    }
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, "/".to_string()),
-    };
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => {
-            let port = port.parse::<u16>().map_err(|_| {
-                SemanticError::UnsupportedUrl(format!("model url has an invalid port: {url}"))
+impl HttpModelTransport {
+    fn connect_plain(
+        &self,
+        parsed: &tls::OutboundUrl,
+    ) -> Result<std::net::TcpStream, SemanticError> {
+        use std::net::{TcpStream, ToSocketAddrs};
+        let address = (parsed.host.as_str(), parsed.port)
+            .to_socket_addrs()
+            .map_err(|error| {
+                SemanticError::Download(format!("could not resolve {}: {error}", parsed.host))
+            })?
+            .next()
+            .ok_or_else(|| {
+                SemanticError::Download(format!("host resolved to no addresses: {}", parsed.host))
             })?;
-            (host.to_string(), port)
-        }
-        None => (authority.to_string(), 80),
-    };
-    if host.is_empty() {
-        return Err(SemanticError::UnsupportedUrl(format!(
-            "model url has no host: {url}"
-        )));
+        let stream = TcpStream::connect_timeout(&address, self.timeout)
+            .map_err(|error| SemanticError::Download(format!("connect failed: {error}")))?;
+        let _ = stream.set_write_timeout(Some(self.timeout));
+        let _ = stream.set_read_timeout(Some(self.timeout));
+        Ok(stream)
     }
-    Ok((host, port, path))
+}
+
+trait ReadWrite: Read + Write {}
+impl<T: Read + Write> ReadWrite for T {}
+
+/// TLS handshake/configuration failures are download failures; certificate
+/// verification failures get their own typed variant (never retry, never
+/// fall back to plain text).
+fn tls_error(error: TlsError) -> SemanticError {
+    match error {
+        TlsError::Verification(reason) => SemanticError::Verification(reason),
+        other => SemanticError::Download(other.to_string()),
+    }
 }
 
 /// Reads the status line and headers, rejecting non-200 responses, and returns
 /// the advertised `Content-Length` when present plus the body bytes already
 /// buffered past the header separator (head and body can arrive in one TCP
 /// segment, and discarding them would truncate the artifact).
-fn read_response_head(stream: &mut TcpStream) -> Result<(Option<u64>, Vec<u8>), SemanticError> {
+fn read_response_head(stream: &mut impl Read) -> Result<(Option<u64>, Vec<u8>), SemanticError> {
     let mut raw: Vec<u8> = Vec::with_capacity(1024);
     let mut buffer = [0_u8; 1024];
     let separator = loop {
         if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
             break position;
         }
-        let count = stream
-            .read(&mut buffer)
-            .map_err(|error| SemanticError::Download(format!("read failed: {error}")))?;
+        let count = match stream.read(&mut buffer) {
+            Ok(count) => count,
+            Err(error) if tls::is_peer_closed_without_close_notify(&error) => 0,
+            Err(error) => return Err(SemanticError::Download(format!("read failed: {error}"))),
+        };
         if count == 0 {
             return Err(SemanticError::Download(
                 "response ended before the header separator".to_string(),
@@ -207,7 +226,7 @@ fn read_response_head(stream: &mut TcpStream) -> Result<(Option<u64>, Vec<u8>), 
 /// the response head, refusing to buffer more than `max_bytes`, and treating
 /// a short body as a truncated download.
 fn stream_body(
-    stream: &mut TcpStream,
+    stream: &mut impl Read,
     destination: &Path,
     buffered: &[u8],
     content_length: Option<u64>,
@@ -221,6 +240,9 @@ fn stream_body(
         let count = if buffered.is_empty() {
             match stream.read(&mut buffer) {
                 Ok(count) => count,
+                // A TLS peer that closes TCP without close_notify after a
+                // complete body is an EOF, not a read failure.
+                Err(error) if tls::is_peer_closed_without_close_notify(&error) => 0,
                 Err(error) => {
                     return Err(SemanticError::Download(format!(
                         "body read failed: {error}"
@@ -272,26 +294,4 @@ pub fn sha256_file(path: &Path) -> Result<String, SemanticError> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn url_parsing_accepts_only_http() {
-        assert!(parse_http_url("http://127.0.0.1:9/x").is_ok());
-        assert!(matches!(
-            parse_http_url("https://example.invalid/x"),
-            Err(SemanticError::UnsupportedUrl(_))
-        ));
-        assert!(matches!(
-            parse_http_url("ftp://example.invalid/x"),
-            Err(SemanticError::UnsupportedUrl(_))
-        ));
-        assert!(matches!(
-            parse_http_url("http://host:notaport/x"),
-            Err(SemanticError::UnsupportedUrl(_))
-        ));
-    }
 }

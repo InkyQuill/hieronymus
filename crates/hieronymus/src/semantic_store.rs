@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
@@ -40,8 +40,13 @@ const MODEL_FILE_NAME: &str = "model.onnx";
 
 /// Ensures the derived semantic schema (generation manifests) exists. The
 /// durable-jobs module extends the database with its own table on top of this.
+/// `tokenizer` is added by an idempotent `alter table` for databases created
+/// before the tokenizer joined the embedding identity (Task 9 review
+/// follow-up): every manifest row records the tokenization its vectors were
+/// built under.
 pub(crate) fn ensure_semantic_schema(connection: &Connection) -> Result<(), SemanticError> {
     connection.execute_batch(SEMANTIC_SCHEMA_SQL)?;
+    ensure_tokenizer_column(connection)?;
     Ok(())
 }
 
@@ -54,6 +59,7 @@ create table if not exists semantic_generations (
     model_revision text not null,
     dimensions integer not null,
     normalization text not null,
+    tokenizer text not null default 'byte-fold-v1',
     max_input_tokens integer not null,
     max_batch_inputs integer not null,
     expected_count integer not null,
@@ -66,6 +72,26 @@ create table if not exists semantic_generations (
 create unique index if not exists one_active_semantic_generation
     on semantic_generations(active) where active = 1;
 ";
+
+/// Adds the `tokenizer` column when it is missing (pre-identity databases).
+/// The default backfills every existing manifest with the tokenizer this port
+/// line has always used, so old identities stay comparable.
+fn ensure_tokenizer_column(connection: &Connection) -> Result<(), SemanticError> {
+    let has_column: bool = connection
+        .prepare("pragma table_info(semantic_generations)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .any(|name| name.as_deref() == Ok("tokenizer"));
+    if !has_column {
+        connection.execute(
+            &format!(
+                "alter table semantic_generations add column tokenizer text not null default '{}'",
+                crate::semantic_embeddings::BYTE_FOLD_TOKENIZER_ID
+            ),
+            [],
+        )?;
+    }
+    Ok(())
+}
 
 /// A generation manifest row: expected versus written counts plus validation
 /// state. The authoritative chunks stay in `rag_chunks`; this table is the
@@ -125,7 +151,13 @@ impl SemanticStore {
 
     /// Path of the acquired embedding model file.
     pub fn model_path(&self) -> PathBuf {
-        self.config
+        Self::model_path_for(&self.config)
+    }
+
+    /// The model path for a data root, without opening any store (report-only
+    /// surfaces).
+    pub fn model_path_for(config: &HieronymusConfig) -> PathBuf {
+        config
             .semantic_root()
             .join("models")
             .join(MODEL_NAME)
@@ -135,8 +167,16 @@ impl SemanticStore {
     /// Cheap availability verdict over the local model file (presence and
     /// pinned size; cryptographic verification happens at provider load).
     pub fn model_status(&self) -> ModelStatus {
-        let path = self.model_path();
-        match std::fs::metadata(&path) {
+        Self::model_status_at(&self.model_path())
+    }
+
+    /// The same verdict for a data root, without opening any store.
+    pub fn model_status_for(config: &HieronymusConfig) -> ModelStatus {
+        Self::model_status_at(&Self::model_path_for(config))
+    }
+
+    fn model_status_at(path: &Path) -> ModelStatus {
+        match std::fs::metadata(path) {
             Err(_) => ModelStatus::Missing,
             Ok(metadata) => {
                 if metadata.is_dir() {
@@ -272,10 +312,10 @@ impl SemanticStore {
         transaction.execute(
             "insert into semantic_generations(
                generation_id, status, provider, model, model_revision, dimensions,
-               normalization, max_input_tokens, max_batch_inputs,
+               normalization, tokenizer, max_input_tokens, max_batch_inputs,
                expected_count, written_count, last_chunk_id, active, created_at, updated_at
              )
-             values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, 0, ?10, ?10)",
+             values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)",
             params![
                 generation_id,
                 identity.provider(),
@@ -283,6 +323,7 @@ impl SemanticStore {
                 identity.revision(),
                 identity.dimensions() as i64,
                 identity.normalization(),
+                identity.tokenizer(),
                 identity.max_input_tokens() as i64,
                 identity.max_batch_inputs() as i64,
                 expected_count,
@@ -680,7 +721,7 @@ impl SemanticStore {
         let mut statement = connection.prepare(
             "select generation_id, status, provider, model, model_revision, dimensions,
                     expected_count, written_count, last_chunk_id, active, created_at, updated_at,
-                    normalization, max_input_tokens, max_batch_inputs
+                    normalization, tokenizer, max_input_tokens, max_batch_inputs
              from semantic_generations
              where active = 1",
         )?;
@@ -689,6 +730,53 @@ impl SemanticStore {
             Some(row) => Ok(Some(manifest_from_row(row)?)),
             None => Ok(None),
         }
+    }
+
+    /// Read-only active-generation probe for report-only surfaces (doctor):
+    /// never creates the database, never ensures the derived schema. A missing
+    /// database or missing table reads as "no active generation, intact".
+    /// Returns the active manifest (if any) plus whether its index survived on
+    /// disk.
+    pub fn probe_active_generation(
+        config: &HieronymusConfig,
+    ) -> Result<(Option<GenerationManifest>, bool), SemanticError> {
+        let path = config.database_path();
+        if !path.exists() {
+            return Ok((None, true));
+        }
+        let connection = Connection::open_with_flags(
+            &path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let table_present: i64 = connection.query_row(
+            "select count(*) from sqlite_master where type = 'table'
+                 and name = 'semantic_generations'",
+            [],
+            |row| row.get(0),
+        )?;
+        if table_present == 0 {
+            return Ok((None, true));
+        }
+        let mut statement = connection.prepare(
+            "select generation_id, status, provider, model, model_revision, dimensions,
+                    expected_count, written_count, last_chunk_id, active, created_at, updated_at,
+                    normalization, tokenizer, max_input_tokens, max_batch_inputs
+             from semantic_generations
+             where active = 1",
+        )?;
+        let mut rows = statement.query([])?;
+        let manifest = match rows.next()? {
+            Some(row) => Some(manifest_from_row(row)?),
+            None => None,
+        };
+        let intact = match &manifest {
+            Some(active) => generation_table_exists(
+                &config.semantic_root().join("lancedb"),
+                &active.generation_id,
+            ),
+            None => true,
+        };
+        Ok((manifest, intact))
     }
 
     /// The manifest of one generation, if present.
@@ -700,7 +788,7 @@ impl SemanticStore {
         let mut statement = connection.prepare(
             "select generation_id, status, provider, model, model_revision, dimensions,
                     expected_count, written_count, last_chunk_id, active, created_at, updated_at,
-                    normalization, max_input_tokens, max_batch_inputs
+                    normalization, tokenizer, max_input_tokens, max_batch_inputs
              from semantic_generations
              where generation_id = ?1",
         )?;
@@ -778,8 +866,9 @@ fn manifest_from_row(row: &rusqlite::Row<'_>) -> Result<GenerationManifest, Sema
             row.get::<_, String>(4)?,
             row.get::<_, i64>(5)? as usize,
             row.get::<_, String>(12)?,
-            row.get::<_, i64>(13)? as usize,
+            row.get::<_, String>(13)?,
             row.get::<_, i64>(14)? as usize,
+            row.get::<_, i64>(15)? as usize,
         )?,
         expected_count: row.get::<_, i64>(6)? as u64,
         written_count: row.get::<_, i64>(7)? as u64,
@@ -840,10 +929,10 @@ pub(crate) fn begin_generation_in_transaction(
     connection.execute(
         "insert into semantic_generations(
            generation_id, status, provider, model, model_revision, dimensions,
-           normalization, max_input_tokens, max_batch_inputs,
+           normalization, tokenizer, max_input_tokens, max_batch_inputs,
            expected_count, written_count, last_chunk_id, active, created_at, updated_at
          )
-         values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, 0, ?10, ?10)",
+         values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)",
         params![
             generation_id,
             identity.provider(),
@@ -851,6 +940,7 @@ pub(crate) fn begin_generation_in_transaction(
             identity.revision(),
             identity.dimensions() as i64,
             identity.normalization(),
+            identity.tokenizer(),
             identity.max_input_tokens() as i64,
             identity.max_batch_inputs() as i64,
             expected_count,

@@ -92,15 +92,19 @@ pub fn conflicting_rule_ids(text: &str, contract: &[ContractTerm]) -> Vec<i64> {
 /// position-dependent token stream. Rebuild jobs tokenize documents with it
 /// and the recall lane tokenizes queries with it, which keeps document and
 /// query embeddings comparable (an exact text match is an exact vector match).
-/// The real WordPiece tokenizer lands with the model-acquisition UX slice;
-/// swapping it in means rebuilding every generation, which the manifest
-/// identity change enforces.
+/// The mapping's stable id is part of every [`crate::semantic_embeddings::
+/// EmbeddingIdentity`]: swapping it in for another tokenizer changes the
+/// identity and forces a full rebuild.
 pub fn byte_fold_tokens(text: &str) -> Vec<u32> {
     text.bytes()
         .enumerate()
         .map(|(index, byte)| ((u32::from(byte) * 31 + index as u32) % 30_000) + 1)
         .collect()
 }
+
+/// Re-exported at the lane level: the tokenizer id this module's lane pairs
+/// with [`byte_fold_tokens`].
+pub use crate::semantic_embeddings::BYTE_FOLD_TOKENIZER_ID;
 
 /// [`ChunkTokenizer`] over [`byte_fold_tokens`].
 pub struct ByteFoldTokenizer;

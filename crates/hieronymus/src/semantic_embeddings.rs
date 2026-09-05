@@ -15,6 +15,12 @@ use crate::semantic_model::{MODEL_NAME, MODEL_REVISION, MODEL_SHA256};
 /// Embedding width of the pinned qualification model
 /// (`sentence-transformers/all-MiniLM-L6-v2`, ONNX export).
 pub const EMBEDDING_DIMENSIONS: usize = 384;
+/// Identifier of the shared deterministic token mapping (the byte-fold
+/// tokenizer) that produced every generation of this port line. It is part of
+/// every [`EmbeddingIdentity`]: swapping the tokenization changes the
+/// embeddings, so it must change the identity and force a rebuild (Task 9
+/// review follow-up).
+pub const BYTE_FOLD_TOKENIZER_ID: &str = "byte-fold-v1";
 /// WordPiece vocabulary size of the pinned model; token streams are folded
 /// into this range so the ONNX graph always gathers in-bounds rows.
 const MODEL_VOCABULARY_SIZE: u32 = 30_522;
@@ -30,7 +36,10 @@ const PREFERRED_OUTPUT: &str = "last_hidden_state";
 ///
 /// Document and query embeddings must resolve to the same identity: every
 /// generation records the identity it was built with and every later request
-/// is rejected unless the identities are equal.
+/// is rejected unless the identities are equal. The identity encodes
+/// everything that can change an embedding — model, revision, width,
+/// normalization, input limits, and the tokenizer — so any of those changes
+/// invalidates the persisted generations instead of silently mixing vectors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmbeddingIdentity {
     provider: String,
@@ -38,13 +47,15 @@ pub struct EmbeddingIdentity {
     revision: String,
     dimensions: usize,
     normalization: String,
+    tokenizer: String,
     max_input_tokens: usize,
     max_batch_inputs: usize,
 }
 
 impl EmbeddingIdentity {
     /// Creates a validated identity. Every field participates in equality, so
-    /// a changed model, revision, width, or limit is a different identity.
+    /// a changed model, revision, width, limit, or tokenizer is a different
+    /// identity.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: impl Into<String>,
@@ -52,6 +63,7 @@ impl EmbeddingIdentity {
         revision: impl Into<String>,
         dimensions: usize,
         normalization: impl Into<String>,
+        tokenizer: impl Into<String>,
         max_input_tokens: usize,
         max_batch_inputs: usize,
     ) -> Result<Self, SemanticError> {
@@ -59,6 +71,7 @@ impl EmbeddingIdentity {
         let model = model.into();
         let revision = revision.into();
         let normalization = normalization.into();
+        let tokenizer = tokenizer.into();
         if provider.is_empty() {
             return Err(SemanticError::InvalidEmbedding(
                 "provider name must not be empty".to_string(),
@@ -84,6 +97,12 @@ impl EmbeddingIdentity {
                 "normalization must be named".to_string(),
             ));
         }
+        if tokenizer.is_empty() {
+            return Err(SemanticError::InvalidEmbedding(
+                "tokenizer must be named: it changes the embeddings and is part of the identity"
+                    .to_string(),
+            ));
+        }
         if max_input_tokens == 0 || max_batch_inputs == 0 {
             return Err(SemanticError::InvalidEmbedding(
                 "provider limits must be positive".to_string(),
@@ -95,6 +114,7 @@ impl EmbeddingIdentity {
             revision,
             dimensions,
             normalization,
+            tokenizer,
             max_input_tokens,
             max_batch_inputs,
         })
@@ -118,6 +138,10 @@ impl EmbeddingIdentity {
 
     pub fn normalization(&self) -> &str {
         &self.normalization
+    }
+
+    pub fn tokenizer(&self) -> &str {
+        &self.tokenizer
     }
 
     pub fn max_input_tokens(&self) -> usize {
@@ -179,6 +203,7 @@ impl FakeEmbeddingProvider {
                 "fake-revision",
                 dimensions,
                 "l2",
+                BYTE_FOLD_TOKENIZER_ID,
                 MODEL_MAX_SEQUENCE,
                 MODEL_MAX_BATCH_INPUTS,
             )
@@ -259,6 +284,7 @@ impl OnnxEmbeddingProvider {
             MODEL_REVISION,
             EMBEDDING_DIMENSIONS,
             "l2",
+            BYTE_FOLD_TOKENIZER_ID,
             MODEL_MAX_SEQUENCE,
             MODEL_MAX_BATCH_INPUTS,
         )
@@ -463,7 +489,9 @@ mod tests {
 
     #[test]
     fn identity_rejects_over_limit_batch_requests() {
-        let identity = EmbeddingIdentity::new("fake", "m", "r", 4, "l2", 4, 2).unwrap();
+        let identity =
+            EmbeddingIdentity::new("fake", "m", "r", 4, "l2", BYTE_FOLD_TOKENIZER_ID, 4, 2)
+                .unwrap();
         assert_eq!(identity.max_batch_inputs(), 2);
         assert!(identity.check_tokens(4).is_ok());
         assert!(matches!(

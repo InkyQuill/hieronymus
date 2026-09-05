@@ -22,6 +22,8 @@ pub enum SemanticError {
     ChecksumMismatch { expected: String, actual: String },
     #[error("model download failed: {0}")]
     Download(String),
+    #[error("tls certificate verification failed: {0}")]
+    Verification(String),
     #[error("unsupported model url: {0}")]
     UnsupportedUrl(String),
     #[error("semantic artifact not found: {0}")]

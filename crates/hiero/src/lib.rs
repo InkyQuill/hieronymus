@@ -3,6 +3,8 @@
 //! binary is a thin CLI shell over these modules; domain storage primitives
 //! live in the `hieronymus` library.
 
+pub mod agent_hook;
 pub mod client;
 pub mod daemon;
+pub mod doctor;
 pub mod stdio;

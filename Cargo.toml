@@ -29,4 +29,15 @@ getrandom = "0.4"
 ctrlc = "3"
 base64 = "0.22"
 sha1 = "0.10"
+# Outbound TLS (rustls, no dynamic OpenSSL): pinned static root store, ring as
+# the crypto backend (the lightest hermetic build for the linux-only target).
+rustls = { version = "0.23", default-features = false, features = [
+  "logging",
+  "ring",
+  "std",
+  "tls12",
+] }
+webpki-roots = "0.26"
+# Dev-only certificate generation for loopback TLS tests.
+rcgen = "0.13"
 

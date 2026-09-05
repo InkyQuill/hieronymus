@@ -166,7 +166,7 @@ fn generation_manifest_in_transaction(
     let row = connection
         .query_row(
             "select generation_id, status, provider, model, model_revision,
-                    dimensions, normalization, max_input_tokens, max_batch_inputs,
+                    dimensions, normalization, tokenizer, max_input_tokens, max_batch_inputs,
                     expected_count, written_count, last_chunk_id, active,
                     created_at, updated_at
              from semantic_generations where generation_id = ?1",
@@ -180,14 +180,15 @@ fn generation_manifest_in_transaction(
                     row.get::<_, String>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, String>(6)?,
-                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(7)?,
                     row.get::<_, i64>(8)?,
                     row.get::<_, i64>(9)?,
                     row.get::<_, i64>(10)?,
                     row.get::<_, i64>(11)?,
                     row.get::<_, i64>(12)?,
-                    row.get::<_, String>(13)?,
+                    row.get::<_, i64>(13)?,
                     row.get::<_, String>(14)?,
+                    row.get::<_, String>(15)?,
                 ))
             },
         )
@@ -200,6 +201,7 @@ fn generation_manifest_in_transaction(
         revision,
         dimensions,
         normalization,
+        tokenizer,
         max_input_tokens,
         max_batch_inputs,
         expected_count,
@@ -229,6 +231,7 @@ fn generation_manifest_in_transaction(
         revision,
         dimensions,
         normalization,
+        tokenizer,
         max_input_tokens,
         max_batch_inputs,
     )?;

@@ -7,6 +7,7 @@
 //! client (`dream_providers` over `provider_http`), which stays behind a
 //! transport seam so tests run on in-process loopback servers.
 
+pub mod agent_context;
 pub mod atomic;
 pub mod concept_models;
 pub mod concepts;
@@ -30,6 +31,7 @@ pub mod recall;
 pub mod registry;
 pub mod release_config;
 pub mod secret;
+pub mod semantic_arming;
 pub mod semantic_embeddings;
 pub mod semantic_error;
 pub mod semantic_index;
@@ -39,5 +41,6 @@ pub mod semantic_recall;
 pub mod semantic_store;
 pub mod short_memory;
 pub mod terminology;
+pub mod tls;
 pub mod upgrade;
 pub mod workspace;

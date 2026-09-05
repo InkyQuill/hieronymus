@@ -144,6 +144,16 @@ pub fn load_and_resave_dream_config(
 fn load_provider_catalog_file(
     config: &HieronymusConfig,
 ) -> Result<ProviderCatalog, ProviderCatalogError> {
+    resolve_provider_catalog_readonly(config)
+}
+
+/// Parse and validate provider.conf without touching any file: unlike
+/// [`load_provider_catalog`] this never performs the legacy-dream-providers
+/// or legacy-gemini migration writes, so read-only surfaces (doctor) resolve
+/// through here.
+pub fn resolve_provider_catalog_readonly(
+    config: &HieronymusConfig,
+) -> Result<ProviderCatalog, ProviderCatalogError> {
     let path = config.provider_config_path();
     if !path.exists() {
         return validate_provider_catalog(&default_provider_catalog());
@@ -151,10 +161,7 @@ fn load_provider_catalog_file(
     let text = std::fs::read_to_string(&path).map_err(|error| {
         ProviderCatalogError::new(format!("provider.conf could not be read: {error}"))
     })?;
-    let payload = text.parse::<Table>().map_err(|error| {
-        ProviderCatalogError::new(format!("provider.conf is not valid TOML: {error}"))
-    })?;
-    validate_provider_catalog(&provider_catalog_from_payload(&payload)?)
+    provider_catalog_from_text(&text)
 }
 
 /// Parse and validate provider.conf text without touching any file: the

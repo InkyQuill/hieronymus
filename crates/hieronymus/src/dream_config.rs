@@ -170,6 +170,21 @@ pub fn load_dream_config(config: &HieronymusConfig) -> Result<DreamConfig, Dream
     Ok(dream_config)
 }
 
+/// Parse and validate dream.conf without touching any file: unlike
+/// [`load_dream_config`] this never persists a legacy-payload migration, so
+/// read-only surfaces (doctor) resolve through here.
+pub fn resolve_dream_config_readonly(
+    config: &HieronymusConfig,
+) -> Result<DreamConfig, DreamConfigError> {
+    let path = config.dream_config_path();
+    if !path.exists() {
+        return validate_dream_config(&default_dream_config());
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| DreamConfigError::new(format!("dream.conf could not be read: {error}")))?;
+    dream_config_from_text(&text)
+}
+
 /// Parse and validate dream text without touching any file: the upgrade
 /// protocol's parse-back for staged dream content, where the live file must
 /// never be rewritten as a side effect of loading.

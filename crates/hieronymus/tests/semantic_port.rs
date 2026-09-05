@@ -289,15 +289,18 @@ fn onnx_provider_load_rejects_missing_runtime_and_checksum_mismatch() {
 
 #[test]
 fn identities_with_different_models_or_dimensions_are_not_equal() {
-    let a = EmbeddingIdentity::new("fake", "model-a", "rev-1", 4, "l2", 8, 2).unwrap();
-    let b = EmbeddingIdentity::new("fake", "model-b", "rev-1", 4, "l2", 8, 2).unwrap();
-    let c = EmbeddingIdentity::new("fake", "model-a", "rev-1", 8, "l2", 8, 2).unwrap();
+    let a =
+        EmbeddingIdentity::new("fake", "model-a", "rev-1", 4, "l2", "byte-fold-v1", 8, 2).unwrap();
+    let b =
+        EmbeddingIdentity::new("fake", "model-b", "rev-1", 4, "l2", "byte-fold-v1", 8, 2).unwrap();
+    let c =
+        EmbeddingIdentity::new("fake", "model-a", "rev-1", 8, "l2", "byte-fold-v1", 8, 2).unwrap();
     assert_eq!(a, a.clone());
     assert_ne!(a, b);
     assert_ne!(a, c);
-    assert!(EmbeddingIdentity::new("fake", "", "rev", 4, "l2", 8, 2).is_err());
-    assert!(EmbeddingIdentity::new("fake", "m", "rev", 0, "l2", 8, 2).is_err());
-    assert!(EmbeddingIdentity::new("fake", "m", "rev", 4, "", 8, 2).is_err());
+    assert!(EmbeddingIdentity::new("fake", "", "rev", 4, "l2", "byte-fold-v1", 8, 2).is_err());
+    assert!(EmbeddingIdentity::new("fake", "m", "rev", 0, "l2", "byte-fold-v1", 8, 2).is_err());
+    assert!(EmbeddingIdentity::new("fake", "m", "rev", 4, "", "byte-fold-v1", 8, 2).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -418,14 +421,21 @@ fn download_transport_fails_closed_on_non_http_urls() {
     let fixture = fixture();
     let _store = SemanticStore::open(&fixture.config).unwrap();
     let transport = hieronymus::semantic_model::HttpModelTransport::new(Duration::from_secs(10));
-    let error = transport
-        .download_to(
-            "https://example.invalid/model.onnx",
-            &fixture.root.path().join("out.bin"),
-            1024,
-        )
-        .expect_err("https is out of scope for this slice and must fail closed");
-    assert!(matches!(error, SemanticError::UnsupportedUrl(_)));
+    // https is supported since the TLS slice (see tests/tls_transport.rs);
+    // genuinely unsupported schemes still fail closed without dialing.
+    for url in [
+        "ftp://example.invalid/model.onnx",
+        "gopher://example.invalid/model.onnx",
+        "example.invalid/model.onnx",
+    ] {
+        let error = transport
+            .download_to(url, &fixture.root.path().join("out.bin"), 1024)
+            .expect_err("unsupported schemes must fail closed");
+        assert!(
+            matches!(error, SemanticError::UnsupportedUrl(_)),
+            "{url}: {error}"
+        );
+    }
     assert!(!fixture.root.path().join("out.bin").exists());
 }
 
