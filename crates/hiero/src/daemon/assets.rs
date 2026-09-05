@@ -1,14 +1,14 @@
 //! The embedded console asset abstraction (spec §HTTP And Frontend
 //! Contracts): static SPA assets are served from a lookup over a fixed asset
-//! set, never a live filesystem `ServeDir`. Per the controller ruling, the
-//! release-time `rust-embed` compile-time backend lands with the
-//! console-build slice (when `frontend/dist` is produced by the build
-//! pipeline); until then two backends exist:
+//! set, never a live filesystem `ServeDir`. Three backends exist:
 //!
 //! - [`Assets::Memory`] — an injected in-memory set (tests and the fixture
 //!   world);
 //! - [`Assets::Dist`] — an explicit `frontend/dist` filesystem override
-//!   (development).
+//!   (development);
+//! - the release backend (module [`embedded`], feature `console-embed`) —
+//!   `frontend/dist` embedded at compile time via `rust-embed`, served in
+//!   the same fixed-set shape by [`Assets::release`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +39,20 @@ impl Default for Assets {
 }
 
 impl Assets {
+    /// The asset set a shipping binary serves: the compile-time embedded
+    /// console bundle when built with the `console-embed` feature, otherwise
+    /// the empty set (`web_console_not_built`). A frontend-free developer
+    /// build with the feature enabled (debug profile, no bundle) also falls
+    /// back to the empty set; release-profile builds fail at compile time in
+    /// `build.rs` instead.
+    pub fn release() -> Assets {
+        #[cfg(feature = "console-embed")]
+        if let Some(assets) = embedded::embedded_assets() {
+            return assets;
+        }
+        Assets::default()
+    }
+
     /// Build an in-memory set from `(path, body)` entries; content types
     /// derive from the path extensions.
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Assets {
@@ -98,6 +112,55 @@ pub(crate) fn content_type_for(path: &str) -> &'static str {
         "json" | "map" => "application/json",
         "svg" => "image/svg+xml",
         _ => "application/octet-stream",
+    }
+}
+
+/// The release backend: the production console bundle embedded at compile
+/// time via `rust-embed` (security spec §HTTP And Frontend Contracts:
+/// lookup/iteration over the embedded set, never a filesystem `ServeDir`).
+/// It exists only when the `console-embed` feature is on AND `build.rs`
+/// verified the bundle (its `hiero_dist_embeddable` cfg): a release-profile
+/// build without `frontend/dist` already failed there, and a frontend-free
+/// developer build simply has no embedded backend.
+#[cfg(feature = "console-embed")]
+mod embedded {
+    use super::Assets;
+
+    #[cfg(hiero_dist_embeddable)]
+    #[derive(rust_embed::RustEmbed)]
+    #[folder = "$CARGO_MANIFEST_DIR/../../frontend/dist"]
+    struct ConsoleDist;
+
+    /// Materialize the embedded bundle into the fixed in-memory set the
+    /// daemon serves. Source maps never ship: `.map` entries are dropped
+    /// from the set even if a build configuration emits them.
+    #[cfg(hiero_dist_embeddable)]
+    pub(super) fn embedded_assets() -> Option<Assets> {
+        use super::Asset;
+        use std::collections::BTreeMap;
+
+        let entries: BTreeMap<String, Asset> = ConsoleDist::iter()
+            .filter_map(|path| {
+                if path.ends_with(".map") {
+                    return None;
+                }
+                let file = ConsoleDist::get(path.as_ref())?;
+                let content_type = super::content_type_for(&path);
+                Some((
+                    path.into_owned(),
+                    Asset {
+                        content_type,
+                        body: file.data.into_owned(),
+                    },
+                ))
+            })
+            .collect();
+        Some(Assets::Memory(entries))
+    }
+
+    #[cfg(not(hiero_dist_embeddable))]
+    pub(super) fn embedded_assets() -> Option<Assets> {
+        None
     }
 }
 

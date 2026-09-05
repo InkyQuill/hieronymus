@@ -1,0 +1,96 @@
+# Rust-era release pipeline (distribution spec §Build Ownership, ADR 0006).
+#
+# Transition: the Python-era `release.yml` (uv + semantic-release + Hatch)
+# remains the release authority on `main` until the distribution cutover
+# completes; this workflow publishes the Rust archives for the first Rust
+# release line. Retire `release.yml` in the cutover task.
+#
+# Protection: the job declares the GitHub Environment `release`. The
+# owner-approval gate (required reviewer: Pavel Obruchnikov <me@inkyquill.net>,
+# ADR 0006) is a repository-settings rule (Settings → Environments → release →
+# Required reviewers); a workflow can declare the environment but not create
+# the reviewer rule. Tag pushes alone are therefore NOT sufficient to publish.
+#
+# Signing/SBOM/provenance are WAIVED for the initial Rust line (spec amendment
+# 2026-09-03); the release ships SHA-256 checksums only.
+
+name: release-rust
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-rust-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # oven-sh/setup-bun v2 pinned to commit SHA for reproducibility.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+
+      # The repository pins Rust 1.96.0 and the x86_64-unknown-linux-gnu
+      # target in rust-toolchain.toml; rustup on the runner installs it
+      # before the build.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --target x86_64-unknown-linux-gnu
+
+      # Full orchestration: console bundle (bun install --frozen-lockfile +
+      # vite build), embedded-asset tests, release binary with the
+      # `console-embed` feature, archive, SHA-256 checksums, round-trip
+      # verification. Uses the repository lockfiles (bun.lock, Cargo.lock).
+      - name: Build the release artifacts
+        run: ./scripts/release-build.sh
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          archive="$(ls target/release-dist/*.tar.gz)"
+          checksums="${archive}.sha256"
+          test -f "$checksums"
+          {
+            cat <<'NOTES'
+          ## Support matrix
+
+          | Property | Value |
+          | --- | --- |
+          | Target | `x86_64-unknown-linux-gnu` |
+          | Semantic retrieval | enabled — qualified (`qualification/records/semantic-native.json`, decision `semantic-enabled`) |
+          | Fallback mode | FTS5-only |
+          | Rust | 1.96.0 |
+          | Bun (console build) | 1.4.0 |
+
+          ## Contents
+
+          - The `hiero` binary plus the `hieronymus`, `hieronymus-agent-hook`,
+            and `hieronymus-mcp` argv[0] command links.
+          - SHA-256 checksums for the archive.
+
+          Signing, SBOM, and provenance are waived for the initial Rust line
+          (spec amendment 2026-09-03); publishing required the owner's
+          `release` environment approval.
+          NOTES
+            echo
+            echo "## Checksums"
+            echo
+            echo '```'
+            cat "$checksums"
+            echo '```'
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "hiero $GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$archive" "$checksums"
