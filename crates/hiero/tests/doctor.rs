@@ -209,7 +209,10 @@ fn strict_token_permissions_are_healthy() {
 fn stale_discovery_record_is_degraded() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
-    // Port 1 on loopback: nothing listens there.
+    // A live daemon always has its credential next to the record, so the
+    // authenticated probe gets as far as the transport. Port 1 on loopback:
+    // nothing listens there.
+    discovery::write_token(&config, &discovery::generate_bearer_token().unwrap()).unwrap();
     seed_discovery(&config, 1, PROTOCOL_REVISION);
     let report = run_doctor(&config);
     let finding = report
@@ -218,6 +221,23 @@ fn stale_discovery_record_is_degraded() {
         .find(|finding| finding.code == "daemon-unreachable")
         .expect("reachability finding");
     assert_eq!(finding.level, Level::Warning);
+    assert_eq!(report.status, Health::Degraded);
+}
+
+#[test]
+fn a_discovery_record_without_a_credential_cannot_be_verified() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_discovery(&config, 1, PROTOCOL_REVISION);
+    let report = run_doctor(&config);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "daemon-unverifiable" && finding.level == Level::Warning),
+        "{:?}",
+        report.findings
+    );
     assert_eq!(report.status, Health::Degraded);
 }
 
@@ -264,21 +284,17 @@ fn non_loopback_discovery_is_unhealthy() {
 
 #[test]
 fn reachable_daemon_is_healthy() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            // Hold each connection briefly so the probe's connect is never
-            // beaten by a reset.
-            let _socket = stream;
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-    });
+    // ADR 0009: reachability is decided by an *authenticated* probe and a
+    // process-instance comparison, so this needs a real daemon — a bare
+    // listener on the recorded port is no longer evidence of anything.
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
-    // A live daemon always has its credential next to the record.
-    discovery::write_token(&config, &discovery::generate_bearer_token().unwrap()).unwrap();
-    seed_discovery(&config, port, PROTOCOL_REVISION);
+    let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().to_path_buf()),
+        port: 0,
+        ..Default::default()
+    })
+    .unwrap();
     let report = run_doctor(&config);
     assert!(
         report
@@ -289,6 +305,37 @@ fn reachable_daemon_is_healthy() {
         report.findings
     );
     assert_eq!(report.status, Health::Healthy);
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn a_foreign_listener_on_the_recorded_port_is_not_a_reachable_daemon() {
+    // Stale-port reuse: the record survives, an unrelated process now owns
+    // the port. A bare TCP connect would call this healthy.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            drop(stream);
+        }
+    });
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    discovery::write_token(&config, &discovery::generate_bearer_token().unwrap()).unwrap();
+    seed_discovery(&config, port, PROTOCOL_REVISION);
+    let report = run_doctor(&config);
+    assert!(
+        !report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "daemon-reachable"),
+        "{:?}",
+        report.findings
+    );
+    assert_ne!(report.status, Health::Healthy);
+    // Read-only: doctor never repairs the record it just disproved.
+    assert!(config.daemon_discovery_path().exists());
 }
 
 #[test]

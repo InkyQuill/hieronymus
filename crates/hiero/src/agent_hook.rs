@@ -12,10 +12,7 @@ use std::path::Path;
 use hieronymus::agent_context::discover_project_context;
 use hieronymus::data_root::HieronymusConfig;
 
-use crate::daemon::discovery::read_discovery;
-
-/// How long the service availability probe waits per candidate address.
-const SERVICE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+use crate::lifecycle::{self, DiscoveryHealth};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HookError {
@@ -146,25 +143,23 @@ fn write_escaped(out: &mut String, text: &str) {
     out.push('"');
 }
 
-/// The local service availability payload (mirrors the Python
-/// `discover_local_service`, including its stale-state semantics): a missing
-/// or stale discovery record means "direct-local, unavailable" with the
-/// frozen reason; a record whose port answers means "local-http, available".
-/// This is a reachability probe only — the hook never authenticates and,
-/// unlike Python's `cleanup_stale_state`, never deletes a stale record.
+/// The local service availability payload (the Python
+/// `discover_local_service` shape): a missing discovery record means
+/// "direct-local, unavailable" with the frozen reason; a record whose endpoint
+/// passes the authenticated probe means "local-http, available"; anything else
+/// is "health check failed" with the verdict.
+///
+/// The liveness judgement is ADR 0009's, not Python's: the record counts as
+/// live only when the endpoint answers the authenticated `GET /status` **and**
+/// reports the same process instance the record claims. The old PID check is
+/// gone — ADR 0009 forbids deciding this by "PID existence alone", and a
+/// recycled PID or a foreign listener on the port would both pass it.
+///
+/// The hook stays strictly read-only: unlike Python's `cleanup_stale_state` it
+/// never deletes a stale record, and it never starts anything.
 fn service_field(config: &HieronymusConfig) -> Field {
-    let record = match read_discovery(config) {
-        Ok(record) => record,
-        Err(_) => return unavailable_service(),
-    };
-    // Python cleans a stale record up and then reports "no running local
-    // service discovered"; the hook stays read-only and just reports the
-    // same verdict for a record whose pid is gone.
-    if !pid_alive(record.pid) {
-        return unavailable_service();
-    }
-    match probe(&record.host, record.port) {
-        Ok(()) => Field::object(vec![
+    match lifecycle::probe(config) {
+        DiscoveryHealth::Live { record, .. } => Field::object(vec![
             ("available", Field::flag(true)),
             (
                 "base_url",
@@ -173,13 +168,18 @@ fn service_field(config: &HieronymusConfig) -> Field {
             ("mode", Field::text("local-http")),
             ("pid", Field::Count(i64::from(record.pid))),
         ]),
-        Err(detail) => Field::object(vec![
+        // No record at all: the frozen "nothing is running" payload.
+        DiscoveryHealth::NoRecord { .. } | DiscoveryHealth::Unreadable { .. } => {
+            unavailable_service()
+        }
+        health => Field::object(vec![
             ("available", Field::flag(false)),
             ("mode", Field::text("direct-local")),
             (
                 "reason",
                 Field::text(format!(
-                    "local service state exists but health check failed: {detail}"
+                    "local service state exists but health check failed: {}",
+                    health.detail()
                 )),
             ),
         ]),
@@ -192,31 +192,6 @@ fn unavailable_service() -> Field {
         ("mode", Field::text("direct-local")),
         ("reason", Field::text("no running local service discovered")),
     ])
-}
-
-/// Whether the recorded daemon pid is still running (linux-only target per
-/// ADR 0013; our own pid counts as alive).
-fn pid_alive(pid: u32) -> bool {
-    if pid == std::process::id() {
-        return true;
-    }
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
-}
-
-fn probe(host: &str, port: u16) -> Result<(), String> {
-    use std::net::ToSocketAddrs;
-    let addresses = match (host, port).to_socket_addrs() {
-        Ok(addresses) => addresses,
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut last_error = String::from("no addresses resolved");
-    for address in addresses {
-        match std::net::TcpStream::connect_timeout(&address, SERVICE_PROBE_TIMEOUT) {
-            Ok(_) => return Ok(()),
-            Err(error) => last_error = error.to_string(),
-        }
-    }
-    Err(last_error)
 }
 
 #[cfg(test)]
@@ -237,23 +212,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn service_payload_rejects_a_stale_record_as_no_running_service() {
-        let root = tempfile::tempdir().unwrap();
-        let config = HieronymusConfig::new(root.path());
-        let record = crate::daemon::discovery::DiscoveryRecord {
+    fn seeded_record(port: u16) -> crate::daemon::discovery::DiscoveryRecord {
+        crate::daemon::discovery::DiscoveryRecord {
             discovery_version: crate::daemon::discovery::DISCOVERY_VERSION,
             protocol_version: crate::daemon::registry::PROTOCOL_REVISION.to_string(),
             host: "127.0.0.1".to_string(),
-            port: 1,
-            // A pid no process can have any more: Python's cleanup_stale_state
-            // would have deleted this record, so the verdict is "no running
-            // local service discovered" — not "health check failed".
-            pid: 4_000_000_000,
+            port,
+            // A live pid on purpose: ADR 0009 forbids deciding liveness by pid
+            // existence, so the hook's verdict must not depend on this value.
+            pid: std::process::id(),
             instance_id: "ab".repeat(16),
             started_at: "2026-09-04T00:00:00+00:00".to_string(),
-        };
-        crate::daemon::discovery::write_discovery(&config, &record).unwrap();
+        }
+    }
+
+    #[test]
+    fn service_payload_without_a_record_is_no_running_service() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
         let rendered = render(&service_field(&config));
         assert!(
             rendered.contains("no running local service discovered"),
@@ -266,18 +242,13 @@ mod tests {
     fn service_payload_failure_reason_carries_the_probe_error() {
         let root = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(root.path());
-        // The test process itself is alive, so the record is not stale; port 1
-        // refuses connections, which is the Python `{exc}` branch.
-        let record = crate::daemon::discovery::DiscoveryRecord {
-            discovery_version: crate::daemon::discovery::DISCOVERY_VERSION,
-            protocol_version: crate::daemon::registry::PROTOCOL_REVISION.to_string(),
-            host: "127.0.0.1".to_string(),
-            port: 1,
-            pid: std::process::id(),
-            instance_id: "ab".repeat(16),
-            started_at: "2026-09-04T00:00:00+00:00".to_string(),
-        };
-        crate::daemon::discovery::write_discovery(&config, &record).unwrap();
+        crate::daemon::discovery::write_token(
+            &config,
+            &crate::daemon::discovery::generate_bearer_token().unwrap(),
+        )
+        .unwrap();
+        // Port 1 refuses connections: the record exists but nothing answers.
+        crate::daemon::discovery::write_discovery(&config, &seeded_record(1)).unwrap();
         let rendered = render(&service_field(&config));
         assert!(
             rendered.starts_with(
@@ -286,5 +257,35 @@ mod tests {
             ),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn a_foreign_listener_on_the_recorded_port_is_never_reported_available() {
+        // The stale-port-reuse case ADR 0009 names: an unrelated process now
+        // owns the port the record advertises. A bare TCP connect (and the
+        // old pid check) would both call this "available"; the authenticated
+        // probe must not.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                // Accept and say nothing: not an HTTP daemon.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                drop(stream);
+            }
+        });
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        crate::daemon::discovery::write_token(
+            &config,
+            &crate::daemon::discovery::generate_bearer_token().unwrap(),
+        )
+        .unwrap();
+        crate::daemon::discovery::write_discovery(&config, &seeded_record(port)).unwrap();
+        let rendered = render(&service_field(&config));
+        assert!(rendered.contains("\"available\": false"), "{rendered}");
+        assert!(!rendered.contains("local-http"), "{rendered}");
+        // Read-only: the hook never repairs the record it just disproved.
+        assert!(config.daemon_discovery_path().exists());
     }
 }

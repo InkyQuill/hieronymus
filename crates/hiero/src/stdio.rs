@@ -4,29 +4,29 @@
 //! SQLite and never invents protocol behavior; the daemon is the contract
 //! enforcement point. Diagnostics go to stderr and are bounded.
 //!
-//! Startup: read the discovery record and the token from the data root. If
-//! discovery is missing and `--start-daemon` was given, the adapter starts
-//! `hiero daemon` in the background and waits for its record; the flag
-//! defaults to false (an MCP host that wants autostart opts in explicitly).
+//! Startup: run the shared authenticated discovery probe (ADR 0009 — a live
+//! endpoint is one that answers the authenticated `GET /status` with the same
+//! process instance the record claims, never a PID or a bare TCP connect). If
+//! no live daemon answers and `--start-daemon` was given, the adapter starts
+//! the per-user **service** — not a raw `hiero daemon` child — and waits for a
+//! live endpoint; the flag defaults to false (an MCP host that wants autostart
+//! opts in explicitly). A discovery record the probe proved stale is repaired
+//! on that path only, and only after that proof.
 
 use std::io::{BufRead, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{Duration, Instant};
 
 use hieronymus::data_root::load_config;
 use hieronymus::secret::Secret;
 
 use crate::client;
-use crate::daemon::discovery::{
-    CredentialError, DiscoveryError, DiscoveryRecord, read_discovery, read_token,
-};
+use crate::daemon::discovery::{CredentialError, DiscoveryError, DiscoveryRecord};
 use crate::daemon::registry::PROTOCOL_REVISION;
+use crate::lifecycle::{self, DiscoveryHealth};
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 480;
-const AUTOSTART_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Default)]
 pub struct StdioOptions {
@@ -47,25 +47,42 @@ pub enum StdioError {
     NotLoopback(String),
     #[error("discovery record is malformed: {0}")]
     Malformed(&'static str),
-    #[error("daemon is not running and --start-daemon is not allowed")]
-    DaemonNotRunning,
-    #[error("cannot start the daemon: {0}")]
+    /// Keeps the historical wording: MCP hosts and the frozen CLI behavior
+    /// match on this prefix.
+    #[error("no running local service discovered: {0} (start it with `hiero start`)")]
+    DaemonNotRunning(String),
+    #[error("cannot start the local service: {0}")]
     Spawn(String),
-    #[error("timed out waiting for the daemon discovery record")]
-    AutostartTimeout,
 }
 
 pub fn run_stdio_adapter(options: &StdioOptions) -> Result<(), StdioError> {
     let config = load_config(options.data_root.as_deref());
-    let record = match read_discovery(&config) {
-        Ok(record) => record,
-        Err(DiscoveryError::Missing { .. }) if options.start_daemon => {
-            start_daemon_and_wait(&config)?
-        }
-        Err(error) => return Err(error.into()),
+    let health = lifecycle::probe(&config);
+    let record = match health {
+        // The endpoint answered the authenticated probe as the instance the
+        // record claims: proxy to it.
+        DiscoveryHealth::Live { record, .. } => record,
+        // Autostart is the only path allowed to change anything. `connect`
+        // repairs a record the probe *proved* stale and then starts the
+        // per-user service (never a raw `hiero daemon` child: ADR 0009 makes
+        // the service integration the managed role).
+        _ if options.start_daemon => lifecycle::connect(&config, true)
+            .map_err(|error| StdioError::Spawn(error.to_string()))?
+            .record()
+            .clone(),
+        // No autostart. A record that exists but did not pass the probe is
+        // still proxied to: the adapter's contract is that every failure
+        // reaches the host as a JSON-RPC error on stdout, not as a startup
+        // exit. Only a root with nothing to connect to fails closed.
+        _ => match health.record() {
+            Some(record) => record.clone(),
+            None => {
+                return Err(StdioError::DaemonNotRunning(health.detail()));
+            }
+        },
     };
-    let token = read_token(&config)?;
     let address = endpoint_address(&record)?;
+    let token = crate::daemon::discovery::read_token(&config)?;
     proxy_stdin(&address, &token)
 }
 
@@ -78,41 +95,6 @@ fn endpoint_address(record: &DiscoveryRecord) -> Result<SocketAddr, StdioError> 
         return Err(StdioError::NotLoopback(record.host.clone()));
     }
     Ok(SocketAddr::new(ip, record.port))
-}
-
-fn start_daemon_and_wait(
-    config: &hieronymus::data_root::HieronymusConfig,
-) -> Result<DiscoveryRecord, StdioError> {
-    let executable =
-        std::env::current_exe().map_err(|error| StdioError::Spawn(error.to_string()))?;
-    let data_root = config.data_root().to_path_buf();
-    let mut command = Command::new(&executable);
-    command
-        .arg("daemon")
-        .arg("--data-root")
-        .arg(&data_root)
-        .arg("--port")
-        .arg("0")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    command
-        .spawn()
-        .map_err(|error| StdioError::Spawn(error.to_string()))?;
-
-    let deadline = Instant::now() + AUTOSTART_TIMEOUT;
-    loop {
-        match read_discovery(config) {
-            Ok(record) => return Ok(record),
-            Err(DiscoveryError::Missing { .. }) if Instant::now() >= deadline => {
-                return Err(StdioError::AutostartTimeout);
-            }
-            Err(DiscoveryError::Missing { .. }) => {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
 }
 
 fn proxy_stdin(address: &SocketAddr, token: &Secret<String>) -> Result<(), StdioError> {

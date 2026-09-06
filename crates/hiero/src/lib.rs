@@ -12,6 +12,7 @@ pub mod daemon;
 pub mod daemon_client;
 pub mod doctor;
 pub mod export;
+pub mod lifecycle;
 pub mod service;
 pub mod stdio;
 pub mod uninstall;

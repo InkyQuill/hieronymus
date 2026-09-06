@@ -584,6 +584,118 @@ fn update_over_a_python_schema_completes_but_keeps_the_daemon_stopped() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn update_rolls_back_when_the_candidate_doctor_returns_an_unexpected_exit() {
+    // Astra finding 10: `unwrap_or(2)` used to let a code like 42 fall through
+    // every branch to the healthy path. An unexpected exit must roll back.
+    let temp = tempfile::tempdir().unwrap();
+    let payload = temp.path().join("payload-9.9.0");
+    stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
+    write_fake_binary(
+        &payload.join("hiero"),
+        "9.9.0",
+        &protocol_revision(),
+        supported_schema(),
+        42,
+    );
+    let release = package(&payload, "9.9.0");
+    let app = seed_install(temp.path(), "0.9.0");
+    let data_root = temp.path().join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let unit_dir = temp.path().join("units");
+
+    let (stdout, stderr, status) =
+        run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
+    assert_eq!(status.code(), Some(1), "{stdout}{stderr}");
+    assert!(stderr.contains("health check failed"), "{stderr}");
+    assert!(stderr.contains("Some(42)"), "{stderr}");
+    assert!(stderr.contains("rolled back"), "{stderr}");
+    // The prior binary is back, the failed candidate is gone.
+    assert_eq!(
+        stable_target(&app, "hiero"),
+        PathBuf::from("../versions/0.9.0/hiero")
+    );
+    assert!(!app.join("versions/9.9.0").exists());
+    assert!(app.join("versions/0.9.0/hiero").exists());
+}
+
+#[test]
+fn update_rolls_back_a_degraded_candidate_when_no_daemon_confirms_it() {
+    // doctor exit 1 with no started daemon: authenticated readiness cannot
+    // confirm the intended version, so a degraded candidate is not activated.
+    let temp = tempfile::tempdir().unwrap();
+    let payload = temp.path().join("payload-9.9.0");
+    stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
+    write_fake_binary(
+        &payload.join("hiero"),
+        "9.9.0",
+        &protocol_revision(),
+        supported_schema(),
+        1,
+    );
+    let release = package(&payload, "9.9.0");
+    let app = seed_install(temp.path(), "0.9.0");
+    let data_root = temp.path().join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let unit_dir = temp.path().join("units");
+
+    let (stdout, stderr, status) =
+        run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
+    assert_eq!(status.code(), Some(1), "{stdout}{stderr}");
+    assert!(stderr.contains("degraded"), "{stderr}");
+    assert!(stderr.contains("rolled back"), "{stderr}");
+    assert_eq!(
+        stable_target(&app, "hiero"),
+        PathBuf::from("../versions/0.9.0/hiero")
+    );
+    assert!(!app.join("versions/9.9.0").exists());
+}
+
+#[test]
+fn update_over_an_older_rust_schema_reports_migration_pending_and_never_rolls_back() {
+    // Sonnet 3.3: a v1-on-disk / v2-candidate update completes the install and
+    // reports `migration-pending`; it must NOT roll back for that reason
+    // (R3 behaviour preserved by R4).
+    let temp = tempfile::tempdir().unwrap();
+    let payload = temp.path().join("payload-9.9.0");
+    stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
+    // Candidate supports a schema newer than the disk.
+    write_fake_binary(
+        &payload.join("hiero"),
+        "9.9.0",
+        &protocol_revision(),
+        supported_schema() + 1,
+        // doctor would say "unhealthy" here, but the daemon stays stopped for
+        // the migration so the health gate is never reached.
+        2,
+    );
+    let release = package(&payload, "9.9.0");
+    let app = seed_install(temp.path(), "0.9.0");
+    let data_root = temp.path().join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let connection = rusqlite::Connection::open(data_root.join("hieronymus.sqlite")).unwrap();
+    connection
+        .execute_batch(&format!(
+            "create table hieronymus_meta (schema_version integer not null unique);
+             insert into hieronymus_meta values ({});",
+            supported_schema()
+        ))
+        .unwrap();
+    drop(connection);
+    let unit_dir = temp.path().join("units");
+
+    let (stdout, stderr, status) =
+        run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
+    assert!(status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("migration-pending"), "{stdout}");
+    // The install completed and links serve the new version — no rollback.
+    assert_eq!(
+        stable_target(&app, "hiero"),
+        PathBuf::from("../versions/9.9.0/hiero")
+    );
+    assert!(app.join("versions/0.9.0/hiero").exists());
+}
+
+#[test]
 fn update_rolls_back_when_the_new_binary_fails_its_health_check() {
     let temp = tempfile::tempdir().unwrap();
     let payload = temp.path().join("payload-9.9.0");

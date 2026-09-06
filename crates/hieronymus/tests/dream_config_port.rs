@@ -95,12 +95,12 @@ fn load_save_dream_config_round_trips_workflows_without_providers() {
 }
 
 #[test]
-fn load_dream_config_migrates_legacy_workflows_to_disk() {
+fn load_dream_config_rejects_legacy_workflows_without_migrating() {
+    // ADR 0009/0010: a pre-seven-pass layout is `config_migration_required`,
+    // not a silent rewrite on read. Only `hiero migrate` converts it.
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
-    write_dream_config(
-        &config,
-        r#"
+    let raw = r#"
 [dreaming]
 enabled = false
 
@@ -118,25 +118,14 @@ enabled = true
 provider = "maintenance_provider"
 model = "maintenance-model"
 enabled = true
-"#,
-    );
+"#;
+    write_dream_config(&config, raw);
 
-    let loaded = load_dream_config(&config).unwrap();
+    let error = load_dream_config(&config).unwrap_err();
 
-    let names: Vec<&str> = loaded.workflows.keys().map(String::as_str).collect();
-    assert_eq!(names.len(), 7);
-    assert_eq!(
-        loaded.workflows["knowledge_crystals"].provider,
-        "legacy_provider"
-    );
-    assert_eq!(loaded.workflows["relations"].model, "relations-model");
-    assert_eq!(
-        loaded.workflows["coverage_audit"].provider,
-        "maintenance_provider"
-    );
-    let saved = fs::read_to_string(config.dream_config_path()).unwrap();
-    assert!(saved.contains("[workflows.coverage_audit]"), "{saved}");
-    assert!(!saved.contains("[workflows.crystallization]"), "{saved}");
+    assert!(error.is_migration_required(), "{error}");
+    assert!(error.to_string().contains("hiero migrate"), "{error}");
+    assert_eq!(fs::read_to_string(config.dream_config_path()).unwrap(), raw);
 }
 
 #[test]
@@ -304,13 +293,10 @@ fn load_dream_config_rejects_toml_type_mismatches() {
 }
 
 #[test]
-fn load_dream_config_migrates_removed_workflow_names() {
+fn load_dream_config_rejects_removed_workflow_names_without_migrating() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
-    fs::create_dir_all(config.config_root()).unwrap();
-    fs::write(
-        config.dream_config_path(),
-        r#"
+    let raw = r#"
 [providers.openai]
 type = "openai"
 endpoint = "https://api.deepseek.com"
@@ -320,11 +306,12 @@ api_key = "secret"
 provider = "openai"
 model = "deepseek-v4-flash"
 enabled = true
-"#,
-    )
-    .unwrap();
+"#;
+    fs::create_dir_all(config.config_root()).unwrap();
+    fs::write(config.dream_config_path(), raw).unwrap();
 
-    let loaded = load_dream_config(&config).unwrap();
+    let error = load_dream_config(&config).unwrap_err();
 
-    assert_eq!(loaded.workflows["knowledge_crystals"].provider, "openai");
+    assert!(error.is_migration_required(), "{error}");
+    assert_eq!(fs::read_to_string(config.dream_config_path()).unwrap(), raw);
 }

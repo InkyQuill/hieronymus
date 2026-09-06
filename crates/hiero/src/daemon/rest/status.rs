@@ -24,7 +24,19 @@ pub(super) fn handle(request: &Request, runtime: &DaemonRuntime) -> Response {
     Response::json(200, &status_payload(runtime))
 }
 
-/// The frozen `/status` contract: exactly these top-level keys.
+/// The authenticated status contract: the frozen Python `status_payload` keys
+/// plus the ADR 0009 process-identity fields.
+///
+/// `instance_id` and `protocol_revision` are the Rust delta (recorded in
+/// `daemon_rest_routes::status_route_matches_frozen_target` as an explicit
+/// addition, never a change to the frozen keys). ADR 0009 requires stale
+/// discovery to be detected "by authenticated health probing and
+/// process-instance comparison, never by PID existence alone", which needs the
+/// live instance id and protocol revision to be readable from an authenticated
+/// endpoint — `GET /health` stays minimal and unauthenticated.
+///
+/// The bearer token appears nowhere in this payload; the sentinel-secret rule
+/// holds for every field here and for every error this route can return.
 pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
     let (providers, providers_error) = provider_statuses(&runtime.config);
     let dreaming = dreaming_payload(&runtime.config);
@@ -37,6 +49,8 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
         "host": runtime.bound_address.ip().to_string(),
         "port": runtime.bound_address.port(),
         "version": daemon_version(),
+        "instance_id": runtime.record.instance_id,
+        "protocol_revision": crate::daemon::registry::PROTOCOL_REVISION,
         "started_at": runtime.record.started_at,
         "data_root": runtime.config.data_root().to_string_lossy(),
         "database_path": runtime.config.database_path().to_string_lossy(),

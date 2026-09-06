@@ -24,13 +24,32 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use hieronymus::data_root::{HieronymusConfig, load_config};
 
 use crate::app::{AppLayout, LINK_NAMES, TARGET_TRIPLE, compare_versions};
 use crate::daemon::discovery;
 use crate::daemon::registry::PROTOCOL_REVISION;
-use crate::service::{self, ServiceOptions};
+use crate::lifecycle::{self, DiscoveryHealth};
+use crate::service::{self, ServiceManager, ServiceOptions, SystemdManager};
+
+/// How often the post-activation readiness poll re-probes. Tighter under
+/// `cfg(test)` so the unit suite that drives the poll loops stays snappy.
+#[cfg(not(test))]
+const READY_POLL: Duration = Duration::from_millis(100);
+#[cfg(test)]
+const READY_POLL: Duration = Duration::from_millis(20);
+
+/// How long the updater waits for the started candidate to publish a live,
+/// authenticated endpoint that reports the expected version, and how long a
+/// rollback waits for the restored previous version to come back. Shortened
+/// under `cfg(test)` so the unit tests that drive the rollback state machine
+/// with no real daemon do not stall.
+#[cfg(not(test))]
+const READY_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(test)]
+const READY_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// What one update run concluded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,10 +78,29 @@ pub enum UpdateError {
     /// A gate refused the update before anything was modified.
     #[error("update refused (nothing was changed): {0}")]
     Refused(String),
-    /// The update was applied but failed afterwards; rollback ran. The steps
-    /// recorded before the failure are carried for the CLI to report.
+    /// The update failed. If the failure was after the link switch, the ordered
+    /// rollback ran and was verified — the previous version is restored. If it
+    /// failed before any mutation (a pre-switch `stop` that could not stop the
+    /// running service), nothing on disk was changed. The `message` is precise
+    /// about which happened; the steps recorded before the failure are carried
+    /// for the CLI to report.
     #[error("update failed: {message}")]
     Failed { message: String, steps: Vec<String> },
+    /// The update failed AND the rollback that followed also failed. Both
+    /// causes are carried; NOTHING was deleted, so the candidate and the
+    /// previous version directories are still on disk for a human to recover
+    /// from. The message never claims the previous version was restored,
+    /// because it was not.
+    #[error(
+        "update failed ({original}) and the rollback did not complete ({rollback}); \
+         the previous version was NOT fully restored — no artifacts were deleted, \
+         recover manually"
+    )]
+    FailedAndRollbackFailed {
+        original: String,
+        rollback: String,
+        steps: Vec<String>,
+    },
     /// The release feed is missing or malformed.
     #[error("release source error: {0}")]
     Source(String),
@@ -76,7 +114,19 @@ impl UpdateError {
     pub fn exit_code(&self) -> u8 {
         match self {
             UpdateError::Refused(_) | UpdateError::Source(_) => 2,
-            UpdateError::Failed { .. } | UpdateError::Io(_) => 1,
+            UpdateError::Failed { .. }
+            | UpdateError::FailedAndRollbackFailed { .. }
+            | UpdateError::Io(_) => 1,
+        }
+    }
+
+    /// The step trace recorded before the failure, when the variant carries
+    /// one (for the CLI to print).
+    pub fn steps(&self) -> &[String] {
+        match self {
+            UpdateError::Failed { steps, .. }
+            | UpdateError::FailedAndRollbackFailed { steps, .. } => steps,
+            _ => &[],
         }
     }
 }
@@ -149,9 +199,70 @@ impl UpdateReport {
     }
 }
 
-/// The full update flow. On refusal nothing on disk has changed; on a health
-/// failure after the switch the prior links (and service unit) are restored.
+/// The full update flow. On refusal nothing on disk has changed; on a failure
+/// after the switch every fallible step routes through the same ordered
+/// rollback state machine, which restores the prior links, unit, and (when the
+/// update had stopped one) the previous daemon — or, if the rollback itself
+/// fails, leaves every artifact in place and reports both causes without
+/// claiming a restoration that did not happen.
 pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> {
+    run_update_impl(options, None)
+}
+
+/// Doctor exit-code contract for a started candidate: `0` is healthy, `1` is an
+/// accepted non-semantic warning (degraded), and **everything else** — an
+/// unexpected code like `42`, a process killed by a signal (`None`), a
+/// negative code — rejects the candidate. `unwrap_or(2)` used to fold a
+/// missing code into "unhealthy" but let `Some(42)` fall through every branch
+/// to the healthy path (Astra finding 10); this is exhaustive instead.
+///
+/// `Ok(false)` = healthy, `Ok(true)` = accepted degraded, `Err` = reject.
+pub fn accepted_doctor_exit(code: Option<i32>) -> Result<bool, String> {
+    match code {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        other => Err(format!("candidate doctor failed: {other:?}")),
+    }
+}
+
+/// Seam for S2: assert the candidate's semantic lane (working memory + real
+/// semantic RAG) is armed and answering before an update is allowed to keep
+/// the new binary.
+///
+// TODO(S2): assert the candidate's semantic lane is armed and ready; a
+// missing/disarmed lane must reject here even when doctor exit is an accepted
+// degraded code (coordinator R4<->S2, owner: no FTS-only completion).
+///
+/// Until S2 lands this is a documented near-no-op that always returns
+/// `Ok(())`. It is called in the activation path *after* authenticated
+/// expected-instance readiness. It is deliberately not a hard reject yet:
+/// that would refuse every update until S2 exists. S2 replaces the body.
+pub fn require_semantic_ready(_config: &HieronymusConfig) -> Result<(), String> {
+    Ok(())
+}
+
+/// Everything the rollback state machine needs to restore, captured before any
+/// mutation. Holds *what* to restore, not *where* — the caller passes the
+/// layout and config.
+struct RestoreSnapshot {
+    /// The version the stable links pointed at before this run (`None` when
+    /// there was no prior install).
+    previous_version: Option<String>,
+    /// The exact service-unit bytes before this run (`None` = no unit).
+    unit_before: Option<String>,
+    unit_path: PathBuf,
+    /// Whether the update stopped a daemon that was running; a rollback
+    /// restarts the previous version only in that case.
+    daemon_was_running: bool,
+    /// The version being installed — pruned (with its staging) only after a
+    /// rollback is verified, never during one.
+    candidate_version: String,
+}
+
+fn run_update_impl(
+    options: &UpdateOptions,
+    manager_override: Option<&dyn ServiceManager>,
+) -> Result<UpdateReport, UpdateError> {
     let mut lines: Vec<String> = Vec::new();
 
     let root = match &options.app_dir {
@@ -259,7 +370,11 @@ pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> 
         use_manager: true,
     };
     let unit_installed = service_options.unit_path().exists();
-    let manager_engaged = unit_installed && service::manager_enabled(&service_options);
+    // An injected manager (tests) is by definition engaged; in production the
+    // systemd user manager is engaged only for a default-location unit with
+    // `systemctl` on PATH.
+    let manager_engaged = manager_override.is_some()
+        || (unit_installed && service::manager_enabled(&service_options));
     // The exact unit content before this run: rollback restores it verbatim
     // instead of guessing what a pre-existing unit pointed at.
     let unit_before = if unit_installed {
@@ -276,144 +391,176 @@ pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> 
                 .to_string(),
         ));
     }
+
+    // Snapshot the restore target before ANY mutation, and pick the service
+    // manager. Every rollback below drives this one `&dyn ServiceManager`, so
+    // tests can assert the exact call sequence.
+    let systemd_manager = SystemdManager::new(service_options.clone());
+    let manager: &dyn ServiceManager = manager_override.unwrap_or(&systemd_manager);
+    let snapshot = RestoreSnapshot {
+        previous_version: previous_version.clone(),
+        unit_before,
+        unit_path: service_options.unit_path(),
+        daemon_was_running,
+        candidate_version: release.version.clone(),
+    };
+
+    // Pre-switch: a `stop` that cannot stop the running service means nothing
+    // on disk changed, so it is a plain failure — there is no rollback to run.
     if daemon_was_running {
-        service::stop(&service_options).map_err(|error| UpdateError::Failed {
+        manager.stop().map_err(|error| UpdateError::Failed {
             message: format!("could not stop the running service: {error}"),
             steps: lines.clone(),
         })?;
         lines.push("running daemon stopped".to_string());
     }
 
-    // Promote the staged directory and switch the stable links.
     let version_dir = layout.version_dir(&release.version);
-    // The daemon is already down here, so an I/O failure in the promote or
-    // switch must not strand the user half-switched: it goes through the
-    // same rollback machinery as the health gate.
-    let promote = (|| -> std::io::Result<()> {
-        if version_dir.exists() {
-            // A leftover from an interrupted attempt — the up-to-date check
-            // above guarantees this is never the currently linked version.
-            std::fs::remove_dir_all(&version_dir)?;
+
+    /// What the post-switch region concluded.
+    enum PostSwitch {
+        Activated {
+            daemon_started: bool,
+            degraded: bool,
+        },
+        MigrationPending,
+    }
+
+    // Everything from the link switch to a kept update is post-switch: one
+    // fallible closure whose ONLY `Err` exit funnels through the rollback state
+    // machine. A maintainer adding a step here cannot bypass rollback with a
+    // stray `?` — "every post-switch failure rolls back" is a property of this
+    // control flow, not of reviewer diligence.
+    let outcome = (|| -> Result<PostSwitch, String> {
+        // Promote the staged directory and switch the stable links.
+        (|| -> std::io::Result<()> {
+            if version_dir.exists() {
+                // A leftover from an interrupted attempt — the up-to-date
+                // check guarantees this is never the currently linked version.
+                std::fs::remove_dir_all(&version_dir)?;
+            }
+            std::fs::rename(&staging, &version_dir)?;
+            layout.switch_stable_links(&release.version)
+        })()
+        .map_err(|error| format!("install/link switch failed ({error})"))?;
+        lines.push(format!(
+            "installed into {} and switched the stable links",
+            version_dir.display()
+        ));
+
+        // The unit execs an absolute path: re-render it so a start launches
+        // the new binary, never the old one.
+        if unit_installed {
+            service_options.binary = version_dir.join("hiero");
+            service::install(&service_options)
+                .map_err(|error| format!("service unit update failed ({error})"))?;
+            lines.push("service unit updated to the new binary".to_string());
         }
-        std::fs::rename(&staging, &version_dir)?;
-        layout.switch_stable_links(&release.version)
+
+        if migration_required {
+            return Ok(PostSwitch::MigrationPending);
+        }
+
+        let daemon_started = if manager_engaged {
+            manager
+                .start()
+                .map_err(|error| format!("service start failed ({error})"))?;
+            lines.push("daemon started through the service manager".to_string());
+            true
+        } else {
+            lines.push(format!(
+                "no manager integration; start the daemon manually with `{hiero} daemon \
+                 --data-root {}` (or `hiero service install`)",
+                config.data_root().display(),
+                hiero = layout.stable_link("hiero").display(),
+            ));
+            false
+        };
+
+        // Health gate: the candidate's non-mutating doctor. A `Command` that
+        // will not even spawn (missing/non-executable candidate) is a failure
+        // like any other here — it cannot escape this closure as a bare `?`.
+        let doctor_code = Command::new(version_dir.join("hiero"))
+            .arg("doctor")
+            .arg("--data-root")
+            .arg(config.data_root())
+            .output()
+            .map(|output| output.status.code())
+            .map_err(|error| {
+                format!("health check failed (could not run the candidate's doctor: {error})")
+            })?;
+        let degraded = accepted_doctor_exit(doctor_code)
+            .map_err(|reason| format!("health check failed ({reason})"))?;
+
+        // Doctor exit 0/1 is necessary but never sufficient. A started
+        // candidate must publish a live, authenticated endpoint that reports
+        // the version we just installed (ADR 0009 — never a bare TCP connect
+        // or a diagnostic warning); a degraded (exit 1) candidate with no
+        // started daemon to authenticate is not activated.
+        if daemon_started {
+            poll_until_live(&config, Some(&release.version))
+                .map_err(|reason| format!("candidate readiness check failed ({reason})"))?;
+            lines.push(
+                "candidate published a live, authenticated endpoint at the new version".to_string(),
+            );
+            // S2 seam: the semantic lane must be armed and answering. A
+            // near-no-op until S2 wires it (see `require_semantic_ready`).
+            require_semantic_ready(&config)
+                .map_err(|reason| format!("candidate semantic lane not ready ({reason})"))?;
+        } else if degraded {
+            return Err(
+                "candidate doctor reported degraded (exit 1) and no daemon was \
+                        started, so authenticated readiness could not confirm the intended \
+                        version — a degraded candidate is not activated without that proof"
+                    .to_string(),
+            );
+        }
+
+        Ok(PostSwitch::Activated {
+            daemon_started,
+            degraded,
+        })
     })();
-    if let Err(error) = promote {
-        rollback(
-            &layout,
-            &release.version,
-            previous_version.as_deref(),
-            &service_options,
-            daemon_was_running,
-            unit_before.as_deref(),
-        );
-        return Err(UpdateError::Failed {
-            message: format!("install/link switch failed ({error}); rolled back"),
-            steps: lines,
-        });
-    }
-    lines.push(format!(
-        "installed into {} and switched the stable links",
-        version_dir.display()
-    ));
 
-    // The unit execs an absolute path: re-render it so a start launches the
-    // new binary, never the old one.
-    if unit_installed {
-        service_options.binary = version_dir.join("hiero");
-        if let Err(error) = service::install(&service_options) {
-            rollback(
-                &layout,
-                &release.version,
-                previous_version.as_deref(),
-                &service_options,
-                daemon_was_running,
-                unit_before.as_deref(),
+    let (daemon_started, degraded) = match outcome {
+        Err(cause) => {
+            return Err(activation_failed(
+                manager, &layout, &config, &snapshot, &lines, cause,
+            ));
+        }
+        Ok(PostSwitch::MigrationPending) => {
+            let hiero = layout.stable_link("hiero");
+            lines.push(
+                "database upgrade required: installation completed but the daemon stays \
+                 stopped"
+                    .to_string(),
             );
-            return Err(UpdateError::Failed {
-                message: format!("service unit update failed ({error}); rolled back"),
+            lines.push(format!(
+                "run `{} migrate --data-root {}` (it reports and backs up everything), \
+                 then `{} service start`",
+                hiero.display(),
+                config.data_root().display(),
+                hiero.display()
+            ));
+            return Ok(UpdateReport {
+                outcome: UpdateOutcome::MigrationPending,
+                version: release.version,
+                previous_version,
+                daemon_started: false,
+                migration_required: true,
                 steps: lines,
             });
         }
-        lines.push("service unit updated to the new binary".to_string());
-    }
-
-    if migration_required {
-        let hiero = layout.stable_link("hiero");
-        lines.push(
-            "database upgrade required: installation completed but the daemon stays \
-             stopped"
-                .to_string(),
-        );
-        lines.push(format!(
-            "run `{} migrate --data-root {}` (it reports and backs up everything), \
-             then `{} service start`",
-            hiero.display(),
-            config.data_root().display(),
-            hiero.display()
-        ));
-        return Ok(UpdateReport {
-            outcome: UpdateOutcome::MigrationPending,
-            version: release.version,
-            previous_version,
-            daemon_started: false,
-            migration_required: true,
-            steps: lines,
-        });
-    }
-
-    let daemon_started = if manager_engaged {
-        if let Err(error) = service::start(&service_options) {
-            rollback(
-                &layout,
-                &release.version,
-                previous_version.as_deref(),
-                &service_options,
-                daemon_was_running,
-                unit_before.as_deref(),
-            );
-            return Err(UpdateError::Failed {
-                message: format!("service start failed; rolled back: {error}"),
-                steps: lines,
-            });
-        }
-        lines.push("daemon started through the service manager".to_string());
-        true
-    } else {
-        lines.push(format!(
-            "no manager integration; start the daemon manually with `{hiero} daemon \
-             --data-root {}` (or `hiero service install`)",
-            config.data_root().display(),
-            hiero = layout.stable_link("hiero").display(),
-        ));
-        false
+        Ok(PostSwitch::Activated {
+            daemon_started,
+            degraded,
+        }) => (daemon_started, degraded),
     };
 
-    // Health gate: the candidate binary's non-mutating doctor. Exit 0/1
-    // (healthy/degraded) keeps the update; exit 2 (unhealthy) rolls back.
-    let health = Command::new(version_dir.join("hiero"))
-        .arg("doctor")
-        .arg("--data-root")
-        .arg(config.data_root())
-        .output()?;
-    let health_code = health.status.code().unwrap_or(2);
-    if health_code == 2 {
-        rollback(
-            &layout,
-            &release.version,
-            previous_version.as_deref(),
-            &service_options,
-            daemon_was_running,
-            unit_before.as_deref(),
-        );
-        let previous = previous_version.as_deref().unwrap_or("no previous version");
-        return Err(UpdateError::Failed {
-            message: format!("health check failed (doctor exited 2); restored {previous}"),
-            steps: lines,
-        });
-    }
-    lines.push(if health_code == 1 {
-        "health check: degraded (doctor warnings); update kept".to_string()
+    lines.push(if degraded {
+        "health check: degraded (doctor warnings) but the candidate confirmed ready; \
+         update kept"
+            .to_string()
     } else {
         "health check: healthy".to_string()
     });
@@ -434,8 +581,17 @@ pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> 
 }
 
 /// The schema-compatibility gate (database-upgrade spec): the candidate must
-/// support what is on disk. Returns whether a migration is required before
-/// the daemon may start; refusals abort the update before any change.
+/// support what is on disk. The comparison is against the ACTUAL on-disk
+/// schema version, not a label — a candidate that supports a newer schema than
+/// the database carries is a routine upgrade (install completes, the daemon
+/// stays stopped until `hiero migrate`), while a candidate that supports less
+/// than the disk holds is refused outright. A `NewerSchema` verdict is refused
+/// unconditionally: this binary cannot validate a schema it does not know, so
+/// it will not hand the root to another binary on the strength of a version
+/// number it cannot interpret.
+///
+/// Returns whether a migration is required before the daemon may start;
+/// refusals abort the update before any change.
 fn schema_gate(
     config: &HieronymusConfig,
     candidate: &CandidateIdentity,
@@ -468,63 +624,190 @@ fn schema_gate(
     }
 }
 
-/// Restore the previous version after a failed apply: links, unit, and (when
-/// the update stopped a running daemon) the daemon itself. Best effort — the
-/// caller reports the original failure either way.
-fn rollback(
+/// Run the ordered rollback state machine and turn its result into the right
+/// error. On a verified rollback the previous version is restored and the
+/// candidate (plus any staging leftover) is pruned; on a rollback that itself
+/// failed BOTH causes are carried and nothing is deleted, and the message
+/// never claims a restoration that did not happen.
+fn activation_failed(
+    manager: &dyn ServiceManager,
     layout: &AppLayout,
-    new_version: &str,
-    previous_version: Option<&str>,
-    service_options: &ServiceOptions,
-    daemon_was_running: bool,
-    unit_before: Option<&str>,
-) {
-    match previous_version {
-        Some(previous) => {
-            let _ = layout.switch_stable_links(previous);
-            let restore = ServiceOptions {
-                binary: layout.version_dir(previous).join("hiero"),
-                ..service_options.clone()
-            };
-            match unit_before {
-                Some(content) => {
-                    let _ = hieronymus::atomic::atomic_write_text(
-                        &service_options.unit_path(),
-                        content,
-                    );
-                }
-                None => {
-                    let _ = std::fs::remove_file(service_options.unit_path());
-                }
+    config: &HieronymusConfig,
+    snapshot: &RestoreSnapshot,
+    steps: &[String],
+    cause: String,
+) -> UpdateError {
+    match rollback(manager, layout, config, snapshot) {
+        Ok(()) => {
+            // Only now — after the rollback verified — may the candidate go.
+            prune_candidate(layout, &snapshot.candidate_version);
+            let restored = snapshot
+                .previous_version
+                .as_deref()
+                .unwrap_or("no previous version");
+            UpdateError::Failed {
+                message: format!("{cause}; rolled back — restored {restored}"),
+                steps: steps.to_vec(),
             }
-            if daemon_was_running {
-                let _ = service::start(&restore);
+        }
+        Err(rollback_error) => UpdateError::FailedAndRollbackFailed {
+            original: cause,
+            rollback: rollback_error,
+            steps: steps.to_vec(),
+        },
+    }
+}
+
+/// The ordered rollback: stop the candidate, restore the links and unit,
+/// reload the manager, and — only when the update had stopped a running
+/// daemon — restart the previous version and confirm it is authentically
+/// back. Each step propagates its error as a `String`; NO artifact is deleted
+/// here, so a rollback that fails midway leaves everything on disk.
+fn rollback(
+    manager: &dyn ServiceManager,
+    layout: &AppLayout,
+    config: &HieronymusConfig,
+    snapshot: &RestoreSnapshot,
+) -> Result<(), String> {
+    manager
+        .stop()
+        .map_err(|error| format!("stop the candidate: {error}"))?;
+    restore_links_and_unit(layout, snapshot)?;
+    manager
+        .reload()
+        .map_err(|error| format!("reload the service manager: {error}"))?;
+    if snapshot.daemon_was_running {
+        manager
+            .start()
+            .map_err(|error| format!("restart the previous version: {error}"))?;
+        // Confirm the previous version is genuinely back — and that it is the
+        // PREVIOUS version, not the candidate still winding down after a `stop`
+        // that returned before its process exited.
+        poll_until_live(config, snapshot.previous_version.as_deref())
+            .map_err(|detail| format!("restarted the previous version but {detail}"))?;
+    }
+    Ok(())
+}
+
+/// Restore the stable links and the service unit to their pre-run state,
+/// verbatim. Honest about the achieved state: it verifies where EVERY stable
+/// link points rather than trusting the switch operation, so a promote that
+/// failed on its very first link (state already correct) is a success, and a
+/// switch that leaves any of the four links pointing at the wrong version is a
+/// reported failure — never a silent `Ok` that then lets the candidate be
+/// pruned out from under a dangling link.
+fn restore_links_and_unit(layout: &AppLayout, snapshot: &RestoreSnapshot) -> Result<(), String> {
+    match &snapshot.previous_version {
+        Some(previous) => {
+            if all_links_point_at(layout, previous).is_err() {
+                let switched = layout.switch_stable_links(previous);
+                if let Err(mismatch) = all_links_point_at(layout, previous) {
+                    return Err(format!(
+                        "restore links to {previous}: {}",
+                        switched
+                            .err()
+                            .map(|error| error.to_string())
+                            .unwrap_or(mismatch)
+                    ));
+                }
             }
         }
         None => {
             for name in LINK_NAMES {
-                let _ = std::fs::remove_file(layout.stable_link(name));
-            }
-            match unit_before {
-                Some(content) => {
-                    let _ = hieronymus::atomic::atomic_write_text(
-                        &service_options.unit_path(),
-                        content,
-                    );
-                }
-                None => {
-                    let _ = std::fs::remove_file(service_options.unit_path());
-                }
+                remove_if_present(&layout.stable_link(name))
+                    .map_err(|error| format!("remove stale link {name}: {error}"))?;
             }
         }
     }
-    let _ = std::fs::remove_dir_all(layout.version_dir(new_version));
-    // A promote-stage failure leaves the staged copy behind; after a rename
-    // this path no longer exists and the removal is a no-op.
+    match &snapshot.unit_before {
+        Some(content) => hieronymus::atomic::atomic_write_text(&snapshot.unit_path, content)
+            .map_err(|error| format!("restore service unit: {error}"))?,
+        None => remove_if_present(&snapshot.unit_path)
+            .map_err(|error| format!("remove service unit: {error}"))?,
+    }
+    Ok(())
+}
+
+/// Whether every stable command link (`switch_stable_links` renames the four
+/// one at a time) resolves to `../versions/<version>/<name>`.
+fn all_links_point_at(layout: &AppLayout, version: &str) -> Result<(), String> {
+    for name in LINK_NAMES {
+        let want = PathBuf::from(format!("../versions/{version}/{name}"));
+        match std::fs::read_link(layout.stable_link(name)) {
+            Ok(target) if target == want => {}
+            Ok(target) => {
+                return Err(format!(
+                    "link {name} points at {} instead of {}",
+                    target.display(),
+                    want.display()
+                ));
+            }
+            Err(error) => return Err(format!("link {name} is unreadable: {error}")),
+        }
+    }
+    Ok(())
+}
+
+fn remove_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Poll `lifecycle::probe` until it reports a live, authenticated endpoint —
+/// and, when `expected_version` is given, one whose `GET /status` payload
+/// serves exactly that version. A bare TCP connect, a diagnostic warning, or a
+/// daemon lingering at the wrong version is never accepted. Bounded by
+/// `READY_TIMEOUT`. Shared by the post-activation readiness gate (expects the
+/// candidate's version) and rollback verification (expects the previous
+/// version).
+fn poll_until_live(
+    config: &HieronymusConfig,
+    expected_version: Option<&str>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + READY_TIMEOUT;
+    loop {
+        let detail = match lifecycle::probe(config) {
+            DiscoveryHealth::Live { status, .. } => match expected_version {
+                None => return Ok(()),
+                Some(expected) => {
+                    let live_version = status
+                        .get("version")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<absent>");
+                    if live_version == expected {
+                        return Ok(());
+                    }
+                    format!(
+                        "the endpoint is live but serves version {live_version:?}, \
+                         not the expected {expected}"
+                    )
+                }
+            },
+            other => other.detail(),
+        };
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "no live authenticated endpoint{} within {READY_TIMEOUT:?} ({detail})",
+                expected_version
+                    .map(|version| format!(" at version {version}"))
+                    .unwrap_or_default()
+            ));
+        }
+        std::thread::sleep(READY_POLL);
+    }
+}
+
+/// Remove a rolled-back candidate and any staging leftover. Called only after
+/// a rollback has been verified.
+fn prune_candidate(layout: &AppLayout, candidate_version: &str) {
+    let _ = std::fs::remove_dir_all(layout.version_dir(candidate_version));
     let _ = std::fs::remove_dir_all(
         layout
             .versions_dir()
-            .join(format!(".staging-{new_version}")),
+            .join(format!(".staging-{candidate_version}")),
     );
 }
 
@@ -846,6 +1129,75 @@ mod tests {
         assert_eq!(error.exit_code(), 2);
     }
 
+    /// A data root whose database carries `version` as its Rust schema marker.
+    fn root_at_schema_version(version: i64) -> (tempfile::TempDir, HieronymusConfig) {
+        let temp = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(temp.path());
+        let connection = rusqlite::Connection::open(config.database_path()).unwrap();
+        connection
+            .execute_batch(&format!(
+                "create table hieronymus_meta (schema_version integer not null unique);
+                 insert into hieronymus_meta values ({version});"
+            ))
+            .unwrap();
+        drop(connection);
+        (temp, config)
+    }
+
+    fn candidate_supporting(version: i64) -> CandidateIdentity {
+        CandidateIdentity {
+            version: "9.9.9".to_string(),
+            protocol_revision: PROTOCOL_REVISION.to_string(),
+            supported_schema_version: version,
+        }
+    }
+
+    /// The gate compares the candidate against the ACTUAL on-disk version, in
+    /// both directions.
+    #[test]
+    fn schema_gate_is_directional_about_the_on_disk_version() {
+        let current = hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION;
+
+        // Candidate supports the current schema, the disk is one behind: a
+        // routine upgrade. The install completes and `hiero migrate` is
+        // reported — never a refusal.
+        let (_temp, config) = root_at_schema_version(current - 1);
+        assert!(
+            schema_gate(&config, &candidate_supporting(current)).unwrap(),
+            "an older database with a newer candidate must require migration"
+        );
+
+        // Candidate supports only the older schema, the disk is current:
+        // refused outright. The updater never launches an older binary against
+        // a newer schema.
+        let (_temp, config) = root_at_schema_version(current);
+        let error = schema_gate(&config, &candidate_supporting(current - 1)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("database is at Rust schema {current}")),
+            "{error}"
+        );
+        assert_eq!(error.exit_code(), 2);
+
+        // Same version on both sides: nothing to migrate.
+        assert!(!schema_gate(&config, &candidate_supporting(current)).unwrap());
+    }
+
+    #[test]
+    fn schema_gate_refuses_a_database_written_by_a_newer_binary() {
+        let current = hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION;
+        let (_temp, config) = root_at_schema_version(current + 1);
+        // Even a candidate that claims to support it: this binary cannot
+        // validate a schema it does not know, so it fails closed.
+        let error = schema_gate(&config, &candidate_supporting(current + 1)).unwrap_err();
+        assert!(
+            error.to_string().contains("written by a newer binary"),
+            "{error}"
+        );
+        assert_eq!(error.exit_code(), 2);
+    }
+
     #[test]
     fn schema_gate_treats_the_python_schema_as_an_explicit_upgrade() {
         let temp = tempfile::tempdir().unwrap();
@@ -871,5 +1223,438 @@ mod tests {
             supported_schema_version: 1,
         };
         assert!(schema_gate(&config, &candidate).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // Doctor exit-code contract (Astra finding 10)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unexpected_doctor_exit_is_not_healthy() {
+        assert!(super::accepted_doctor_exit(Some(42)).is_err());
+        assert!(super::accepted_doctor_exit(None).is_err());
+        assert!(super::accepted_doctor_exit(Some(-1)).is_err());
+        assert!(
+            !super::accepted_doctor_exit(Some(0)).unwrap(),
+            "exit 0 is healthy"
+        );
+        assert!(
+            super::accepted_doctor_exit(Some(1)).unwrap(),
+            "exit 1 is degraded"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Rollback state machine, with a scripted fake ServiceManager
+    // -----------------------------------------------------------------------
+
+    #[derive(Default)]
+    struct FakeManager {
+        calls: std::cell::RefCell<Vec<&'static str>>,
+        fail_on: Option<&'static str>,
+    }
+
+    impl FakeManager {
+        fn failing(call: &'static str) -> Self {
+            Self {
+                fail_on: Some(call),
+                ..Self::default()
+            }
+        }
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.borrow().clone()
+        }
+        fn record(&self, call: &'static str) -> Result<(), crate::service::ServiceError> {
+            self.calls.borrow_mut().push(call);
+            if self.fail_on == Some(call) {
+                return Err(crate::service::ServiceError::Manager(format!(
+                    "scripted {call} failure"
+                )));
+            }
+            Ok(())
+        }
+    }
+
+    impl crate::service::ServiceManager for FakeManager {
+        fn stop(&self) -> Result<(), crate::service::ServiceError> {
+            self.record("stop")
+        }
+        fn reload(&self) -> Result<(), crate::service::ServiceError> {
+            self.record("reload")
+        }
+        fn start(&self) -> Result<(), crate::service::ServiceError> {
+            self.record("start")
+        }
+    }
+
+    /// A managed app layout with two installed versions, links at `current`.
+    fn seeded_layout(temp: &Path, versions: &[&str], current: &str) -> AppLayout {
+        let app = temp.join("app");
+        let layout = AppLayout::new(&app);
+        for version in versions {
+            let dir = layout.version_dir(version);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("hiero"), b"binary").unwrap();
+            for name in LINK_NAMES.iter().skip(1) {
+                std::os::unix::fs::symlink("hiero", dir.join(name)).unwrap();
+            }
+        }
+        layout.switch_stable_links(current).unwrap();
+        layout
+    }
+
+    fn snapshot_for(
+        unit_path: PathBuf,
+        previous: Option<&str>,
+        was_running: bool,
+    ) -> RestoreSnapshot {
+        RestoreSnapshot {
+            previous_version: previous.map(str::to_string),
+            unit_before: None,
+            unit_path,
+            daemon_was_running: was_running,
+            candidate_version: "2.0.0".to_string(),
+        }
+    }
+
+    #[test]
+    fn rollback_stops_then_restores_then_reloads_and_preserves_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+        let config = HieronymusConfig::new(temp.path().join("data"));
+        let manager = FakeManager::default();
+        let snapshot = snapshot_for(
+            temp.path().join("units/hieronymus.service"),
+            Some("1.0.0"),
+            false,
+        );
+
+        rollback(&manager, &layout, &config, &snapshot).unwrap();
+
+        assert_eq!(manager.calls(), vec!["stop", "reload"]);
+        assert_eq!(layout.current_version().as_deref(), Some("1.0.0"));
+        // Neither the candidate nor the previous version dir was deleted.
+        assert!(layout.version_dir("2.0.0").join("hiero").exists());
+        assert!(layout.version_dir("1.0.0").join("hiero").exists());
+    }
+
+    #[test]
+    fn rollback_restarts_the_previous_only_when_a_daemon_was_running() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+        let config = HieronymusConfig::new(temp.path().join("data"));
+        let manager = FakeManager::default();
+        let snapshot = snapshot_for(
+            temp.path().join("units/hieronymus.service"),
+            Some("1.0.0"),
+            true,
+        );
+
+        // No real daemon, so `poll_until_live` times out (short under
+        // cfg(test)) and the rollback reports itself as incomplete.
+        let error = rollback(&manager, &layout, &config, &snapshot).unwrap_err();
+        assert_eq!(manager.calls(), vec!["stop", "reload", "start"]);
+        assert!(
+            error.contains("restarted the previous version but")
+                && error.contains("no live authenticated endpoint at version 1.0.0"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_failed_rollback_step_surfaces_both_causes_and_deletes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+        let config = HieronymusConfig::new(temp.path().join("data"));
+        let manager = FakeManager::failing("reload");
+        let snapshot = snapshot_for(
+            temp.path().join("units/hieronymus.service"),
+            Some("1.0.0"),
+            false,
+        );
+
+        let error = activation_failed(
+            &manager,
+            &layout,
+            &config,
+            &snapshot,
+            &["step one".to_string()],
+            "health check failed (candidate doctor failed: Some(42))".to_string(),
+        );
+        assert_eq!(error.exit_code(), 1);
+        match &error {
+            UpdateError::FailedAndRollbackFailed {
+                original,
+                rollback,
+                steps,
+            } => {
+                assert!(original.contains("Some(42)"), "{original}");
+                assert!(rollback.contains("reload"), "{rollback}");
+                assert_eq!(steps, &vec!["step one".to_string()]);
+            }
+            other => panic!("expected FailedAndRollbackFailed, got {other:?}"),
+        }
+        // The message must not claim a restoration that did not happen.
+        let rendered = error.to_string();
+        assert!(!rendered.contains("rolled back — restored"), "{rendered}");
+        assert!(rendered.contains("NOT fully restored"), "{rendered}");
+        // The candidate was NOT pruned because the rollback did not verify.
+        assert!(layout.version_dir("2.0.0").join("hiero").exists());
+        assert!(layout.version_dir("1.0.0").join("hiero").exists());
+    }
+
+    #[test]
+    fn a_verified_rollback_prunes_the_candidate() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+        let config = HieronymusConfig::new(temp.path().join("data"));
+        let manager = FakeManager::default();
+        let snapshot = snapshot_for(
+            temp.path().join("units/hieronymus.service"),
+            Some("1.0.0"),
+            false,
+        );
+
+        let error = activation_failed(
+            &manager,
+            &layout,
+            &config,
+            &snapshot,
+            &[],
+            "boom".to_string(),
+        );
+        assert!(matches!(error, UpdateError::Failed { .. }));
+        assert!(
+            error.to_string().contains("rolled back — restored 1.0.0"),
+            "{error}"
+        );
+        assert!(
+            !layout.version_dir("2.0.0").exists(),
+            "candidate pruned after verified rollback"
+        );
+        assert!(layout.version_dir("1.0.0").join("hiero").exists());
+    }
+
+    #[test]
+    fn require_semantic_ready_is_a_documented_seam_until_s2() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(temp.path());
+        assert!(super::require_semantic_ready(&config).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Full `run_update_impl` flow driving a fake ServiceManager so the
+    // started-candidate branch (readiness probe, semantic seam, degraded
+    // acceptance) is exercised — no test hits it via the real systemd path.
+    // -----------------------------------------------------------------------
+
+    use std::io::{Read as _, Write as _};
+
+    fn fake_hiero(path: &Path, version: &str, doctor_exit: i32) {
+        let json = format!(
+            "{{\"version\":\"{version}\",\"protocol_revision\":\"{PROTOCOL_REVISION}\",\
+             \"supported_schema_version\":{}}}",
+            hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION
+        );
+        let script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  \
+             doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
+        );
+        std::fs::write(path, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Install a prior version, build a release archive for `candidate`, and
+    /// return options wired to a tempdir unit-dir with a unit file present.
+    fn staged_update(
+        temp: &Path,
+        prior: &str,
+        candidate: &str,
+        doctor_exit: i32,
+    ) -> (UpdateOptions, AppLayout) {
+        let app = temp.join("app");
+        let layout = AppLayout::new(&app);
+        let prior_dir = layout.version_dir(prior);
+        std::fs::create_dir_all(&prior_dir).unwrap();
+        fake_hiero(&prior_dir.join("hiero"), prior, 0);
+        for name in LINK_NAMES.iter().skip(1) {
+            std::os::unix::fs::symlink("hiero", prior_dir.join(name)).unwrap();
+        }
+        layout.switch_stable_links(prior).unwrap();
+
+        let payload = temp.join("payload");
+        std::fs::create_dir_all(&payload).unwrap();
+        fake_hiero(&payload.join("hiero"), candidate, doctor_exit);
+        for name in LINK_NAMES.iter().skip(1) {
+            std::os::unix::fs::symlink("hiero", payload.join(name)).unwrap();
+        }
+        let release_dir = temp.join("release");
+        std::fs::create_dir_all(&release_dir).unwrap();
+        let archive_name = format!("hieronymus-{candidate}-{TARGET_TRIPLE}.tar.gz");
+        let archive = release_dir.join(&archive_name);
+        let status = Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&payload)
+            .args([
+                "hiero",
+                "hieronymus",
+                "hieronymus-agent-hook",
+                "hieronymus-mcp",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "tar failed");
+        let digest = sha256_file(&archive).unwrap();
+        std::fs::write(
+            release_dir.join(format!("{archive_name}.sha256")),
+            format!("{digest}  {archive_name}\n"),
+        )
+        .unwrap();
+
+        let data_root = temp.join("data");
+        std::fs::create_dir_all(&data_root).unwrap();
+        let unit_dir = temp.join("units");
+        std::fs::create_dir_all(&unit_dir).unwrap();
+        std::fs::write(
+            unit_dir.join("hieronymus.service"),
+            format!(
+                "[Service]\nExecStart=\"{}\" daemon --data-root \"{}\"\n",
+                prior_dir.join("hiero").display(),
+                data_root.display()
+            ),
+        )
+        .unwrap();
+
+        (
+            UpdateOptions {
+                release_dir,
+                app_dir: Some(app),
+                data_root: Some(data_root),
+                unit_dir: Some(unit_dir),
+            },
+            layout,
+        )
+    }
+
+    /// A minimal live daemon for `lifecycle::probe`: an HTTP thread that answers
+    /// `GET /status` with the given identity, plus the discovery record and
+    /// token the probe needs. The thread outlives the test (blocked on
+    /// `accept`), matching the pattern in `agent_hook`/`runtime_shutdown` tests.
+    fn fake_live_daemon(config: &HieronymusConfig, instance_id: &str, version: &str) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = format!(
+            "{{\"instance_id\":\"{instance_id}\",\"protocol_revision\":\"{PROTOCOL_REVISION}\",\
+             \"version\":\"{version}\"}}"
+        );
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                let mut scratch = [0_u8; 2048];
+                let _ = stream.read(&mut scratch);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        discovery::write_token(config, &discovery::generate_bearer_token().unwrap()).unwrap();
+        discovery::write_discovery(
+            config,
+            &discovery::DiscoveryRecord {
+                discovery_version: discovery::DISCOVERY_VERSION,
+                protocol_version: PROTOCOL_REVISION.to_string(),
+                host: "127.0.0.1".to_string(),
+                port,
+                pid: std::process::id(),
+                instance_id: instance_id.to_string(),
+                started_at: "2026-09-05T00:00:00+00:00".to_string(),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn started_candidate_that_never_publishes_an_endpoint_is_rolled_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
+        let manager = FakeManager::default();
+
+        // Manager starts the candidate, but nothing ever publishes discovery.
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+
+        assert_eq!(error.exit_code(), 1);
+        assert!(
+            error
+                .to_string()
+                .contains("candidate readiness check failed"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("rolled back — restored 1.0.0"),
+            "{error}"
+        );
+        assert_eq!(manager.calls(), vec!["start", "stop", "reload"]);
+        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
+        assert!(!layout.version_dir("9.9.0").exists(), "candidate pruned");
+    }
+
+    #[test]
+    fn started_candidate_serving_the_wrong_version_is_rolled_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "0.9.0", "9.9.0", 0);
+        let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+        // A live endpoint that authenticates but still serves the OLD version:
+        // the candidate is not proved ready, and the rollback's own readiness
+        // check (expecting 0.9.0) then passes against it.
+        fake_live_daemon(&config, &"ab".repeat(16), "0.9.0");
+        let manager = FakeManager::default();
+
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+
+        assert!(
+            error.to_string().contains("serves version \"0.9.0\"")
+                && error.to_string().contains("not the expected 9.9.0"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("rolled back — restored 0.9.0"),
+            "{error}"
+        );
+        assert!(all_links_point_at(&layout, "0.9.0").is_ok());
+        assert!(!layout.version_dir("9.9.0").exists(), "candidate pruned");
+    }
+
+    #[test]
+    fn degraded_candidate_that_confirms_ready_is_kept() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "0.9.0", "9.9.0", 1);
+        let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+        // Doctor exit 1, but the candidate publishes a live authenticated
+        // endpoint at the expected version — the "accepted degraded" path.
+        fake_live_daemon(&config, &"cd".repeat(16), "9.9.0");
+        let manager = FakeManager::default();
+
+        let report = run_update_impl(&options, Some(&manager)).unwrap();
+
+        assert_eq!(report.outcome, UpdateOutcome::Updated);
+        assert!(report.daemon_started);
+        assert!(
+            report
+                .steps
+                .iter()
+                .any(|line| line.contains("degraded") && line.contains("update kept")),
+            "{:?}",
+            report.steps
+        );
+        assert!(all_links_point_at(&layout, "9.9.0").is_ok());
+        assert!(layout.version_dir("9.9.0").join("hiero").exists());
     }
 }

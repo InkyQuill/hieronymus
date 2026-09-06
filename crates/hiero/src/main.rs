@@ -14,12 +14,13 @@ use hiero::agent_hook;
 use hiero::daemon::{DaemonOptions, run_foreground};
 use hiero::doctor;
 use hiero::stdio::{StdioOptions, run_stdio_adapter};
-use hiero::{service, uninstall, update};
+use hiero::{lifecycle, service, uninstall, update};
 use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|start|stop|restart|status|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
 const TOOL_CALL_USAGE: &str = "usage: hiero tool-call <tool> [--args <json>] [--json] [--data-root <path>] [--start-daemon] (calls the advertised MCP tool through the local daemon's authenticated /mcp route)";
 const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy)";
@@ -383,6 +384,12 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             };
             run_stdio_adapter(&options).map_err(|error| error.to_string())?;
             Ok(ExitCode::SUCCESS)
+        }
+        // The top-level lifecycle commands (ADR 0009). They operate through
+        // the per-user service integration and the authenticated discovery
+        // record; `hiero service <...>` remains the lower-level unit surface.
+        Some(command @ ("start" | "stop" | "restart" | "status")) => {
+            run_lifecycle(command, &parsed, data_root)
         }
         Some("doctor") => run_doctor(&parsed, data_root),
         Some("semantic") => run_semantic(&parsed, data_root),
@@ -1125,6 +1132,83 @@ fn run_plugins(
     Ok(ExitCode::SUCCESS)
 }
 
+/// The per-user service definition these arguments describe. Shared by the
+/// top-level lifecycle commands and the `service` subcommands so both address
+/// exactly the same unit.
+fn service_options(
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<service::ServiceOptions, String> {
+    let binary = match &parsed.binary {
+        Some(path) => absolute_path(path),
+        None => std::env::current_exe()
+            .map_err(|error| format!("could not locate the running binary: {error}"))?,
+    };
+    Ok(service::ServiceOptions {
+        data_root: absolute_path(load_config(data_root).data_root()),
+        unit_dir: parsed
+            .unit_dir
+            .as_deref()
+            .map(absolute_path)
+            .unwrap_or_else(service::default_unit_dir),
+        binary,
+        use_manager: !parsed.no_activate,
+    })
+}
+
+/// `hiero start | stop | restart | status` (ADR 0009 §Decision).
+///
+/// `start` installs/starts the per-user service; `stop` requests an
+/// authenticated graceful shutdown through the discovered endpoint and only
+/// falls back to the service manager when no daemon answers that probe;
+/// `restart` is the two in order; `status` reports the authenticated status of
+/// the discovered daemon. None of these ever print the bearer token.
+fn run_lifecycle(
+    command: &str,
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
+    if parsed.port.is_some() || parsed.start_daemon || parsed.dry_run {
+        return Err(format!(
+            "{command} does not accept --port, --start-daemon, or --dry-run; {LIFECYCLE_USAGE}"
+        ));
+    }
+    reject_subcommand(parsed, command)?;
+    reject_feedback_flags(parsed, command)?;
+    let config = load_config(data_root);
+
+    if command == "status" {
+        let report = lifecycle::status(&config);
+        if parsed.json {
+            let text = serde_json::to_string_pretty(&report.to_json())
+                .map_err(|error| error.to_string())?;
+            println!("{text}");
+        } else {
+            print!("{}", report.render_human());
+        }
+        // A stopped daemon is a reportable fact, not a CLI failure.
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if parsed.json {
+        return Err(format!(
+            "{command} does not accept --json; {LIFECYCLE_USAGE}"
+        ));
+    }
+    let options = service_options(parsed, data_root)?;
+    let lines = match command {
+        "start" => lifecycle::start(&options),
+        "stop" => lifecycle::stop(&config, &options),
+        "restart" => lifecycle::restart(&config, &options),
+        other => return Err(format!("unknown lifecycle command: {other}")),
+    }
+    .map_err(|error| error.to_string())?;
+    for line in lines {
+        println!("{line}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// The `service` subcommand: install (idempotent unit render + optional
 /// manager enable), uninstall (unit removal only), status, start, stop. The
 /// systemd user manager is only contacted for the default unit location;
@@ -1143,21 +1227,7 @@ fn run_service(
         .subcommand
         .as_deref()
         .ok_or_else(|| format!("service requires a subcommand (install, uninstall, status, start, or stop); {SERVICE_USAGE}"))?;
-    let binary = match &parsed.binary {
-        Some(path) => absolute_path(path),
-        None => std::env::current_exe()
-            .map_err(|error| format!("could not locate the running binary: {error}"))?,
-    };
-    let options = service::ServiceOptions {
-        data_root: absolute_path(load_config(data_root).data_root()),
-        unit_dir: parsed
-            .unit_dir
-            .as_deref()
-            .map(absolute_path)
-            .unwrap_or_else(service::default_unit_dir),
-        binary,
-        use_manager: !parsed.no_activate,
-    };
+    let options = service_options(parsed, data_root)?;
     match subcommand {
         "install" => {
             for line in service::install(&options).map_err(|error| error.to_string())? {
@@ -1231,10 +1301,8 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Err(error) => {
-            if let update::UpdateError::Failed { steps, .. } = &error {
-                for step in steps {
-                    eprintln!("  {step}");
-                }
+            for step in error.steps() {
+                eprintln!("  {step}");
             }
             eprintln!("hiero update: {error}");
             Ok(ExitCode::from(error.exit_code()))

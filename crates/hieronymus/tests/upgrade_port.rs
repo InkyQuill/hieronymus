@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use hieronymus::data_root::HieronymusConfig;
+use hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION;
 use hieronymus::migrate::{MigrateError, REFUSAL_DAEMON_ACTIVE, run_dry_run_in};
+use hieronymus::ownership::RootOwnership;
 use hieronymus::upgrade::{
     CutoverJournal, InjectionPoint, StagedFileRecord, UpgradeOptions, daemon_start_blocker,
     read_cutover_journal, run_recovery, run_upgrade,
@@ -21,8 +23,11 @@ const GLOBAL_SQL: &str = include_str!("../migrations/global.sql");
 const PROVIDER_SENTINEL: &str = "sk-sentinel-upgrade-key-9b2c";
 const MEMORY_SENTINEL: &str = "сентинель-память-кристалл";
 
-/// Every protocol step boundary that accepts failure injection, in protocol
-/// order.
+/// Every protocol step boundary that aborts the run like a crashed process,
+/// in protocol order. `InjectionPoint::VerificationFailed` is deliberately
+/// absent: it takes the real `verification-failed` refusal path rather than
+/// returning `MigrateError::Injected`, so it has its own test
+/// (`rust_upgrade.rs::a_failed_verification_refuses_the_upgrade_and_rolls_back`).
 const ALL_INJECTION_POINTS: &[InjectionPoint] = &[
     InjectionPoint::AfterPreflight,
     InjectionPoint::AfterStaging,
@@ -32,6 +37,7 @@ const ALL_INJECTION_POINTS: &[InjectionPoint] = &[
     InjectionPoint::AfterCommit,
     InjectionPoint::AfterDatabaseCommitted,
     InjectionPoint::MidPromotion,
+    InjectionPoint::AfterReceipt,
     InjectionPoint::AfterComplete,
 ];
 
@@ -160,7 +166,13 @@ fn file_tree_digest(root: &Path) -> String {
             let path = entry.path();
             if path.is_dir() {
                 walk(&path, entries);
-            } else {
+            } else if path.file_name().and_then(|name| name.to_str())
+                != Some(hieronymus::ownership::OWNER_LOCK_FILE)
+            {
+                // The shared ownership lock is test infrastructure, not data:
+                // it is created on every `run_upgrade` and left in place
+                // (its inode is never unlinked), so exclude it from the
+                // "nothing changed" digest.
                 entries.push(path);
             }
         }
@@ -212,7 +224,7 @@ fn write_journal_file(root: &Path, state: &str) {
         journal_version: 1,
         state: state.to_string(),
         source_state: "python-schema".to_string(),
-        target_schema_version: 1,
+        target_schema_version: SUPPORTED_RUST_SCHEMA_VERSION,
         staging_dir: ".migrate-staging".to_string(),
         backup_dir: "backups/pre-upgrade-test".to_string(),
         staged: Vec::<StagedFileRecord>::new(),
@@ -263,7 +275,10 @@ fn upgrade_completes_the_full_cutover() {
 
     // Database side: converted rules, ledger, FTS, schema version, job row.
     let connection = open(&root.path().join("hieronymus.sqlite"));
-    assert_eq!(query_scalar(&connection, "pragma user_version"), 1);
+    assert_eq!(
+        query_scalar(&connection, "pragma user_version"),
+        SUPPORTED_RUST_SCHEMA_VERSION
+    );
     assert_eq!(
         query_scalar(&connection, "select count(*) from term_rules"),
         expected_converted()
@@ -289,7 +304,7 @@ fn upgrade_completes_the_full_cutover() {
     let journal = read_cutover_journal(&config(root.path())).unwrap().unwrap();
     assert_eq!(journal.state, "complete");
     assert_eq!(journal.source_state, "python-schema");
-    assert_eq!(journal.target_schema_version, 1);
+    assert_eq!(journal.target_schema_version, SUPPORTED_RUST_SCHEMA_VERSION);
     assert!(journal.backup_database_sha256.len() == 64);
     assert!(
         journal
@@ -314,7 +329,9 @@ fn upgrade_completes_the_full_cutover() {
     assert_eq!(report.receipt_path.as_deref(), Some(receipt_path.as_path()));
     let receipt = std::fs::read_to_string(&receipt_path).unwrap();
     assert!(
-        receipt.contains("\"target_schema_version\": 1"),
+        receipt.contains(&format!(
+            "\"target_schema_version\": {SUPPORTED_RUST_SCHEMA_VERSION}"
+        )),
         "{receipt}"
     );
     assert!(receipt.contains("backup_database_sha256"), "{receipt}");
@@ -348,8 +365,9 @@ fn upgrade_completes_the_full_cutover() {
     // Staging is cleaned up; the derived cache was invalidated.
     assert!(!root.path().join(".migrate-staging").exists());
     assert!(!root.path().join("llmcache.tmp").exists());
-    // The upgrade lock is released.
-    assert!(!root.path().join(".migrate.lock").exists());
+    // Ownership is released (the OS lock, not the inode): another owner can
+    // take it now.
+    assert!(RootOwnership::acquire(&config(root.path()), "test").is_ok());
     // The daemon may start again.
     assert_eq!(daemon_start_blocker(&config(root.path())).unwrap(), None);
 
@@ -359,6 +377,98 @@ fn upgrade_completes_the_full_cutover() {
         .unwrap();
     assert_eq!(rerun.outcome.as_str(), "already-complete");
     assert_eq!(backup_sets(root.path()).len(), 1, "no second backup");
+}
+
+#[test]
+fn already_complete_reconstructs_a_missing_receipt_from_the_journal() {
+    // Astra receipt/finalization follow-up: the receipt is now written before
+    // the terminal `complete` transition, but an older `complete` journal that
+    // LACKS a receipt (the previous step order crashed between them) must be
+    // finalized idempotently from the journal's stored checksums, never
+    // accepted as-is.
+    let root = fresh_fixture();
+    let report = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    let receipt = report.receipt_path.unwrap();
+    assert!(receipt.exists());
+    let original = std::fs::read_to_string(&receipt).unwrap();
+
+    // Simulate the crash window: a `complete` journal with no receipt.
+    std::fs::remove_file(&receipt).unwrap();
+    assert_eq!(journal_state(root.path()).as_deref(), Some("complete"));
+
+    let rerun = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    assert_eq!(rerun.outcome.as_str(), "already-complete");
+    assert_eq!(rerun.receipt_path.as_deref(), Some(receipt.as_path()));
+    assert!(receipt.exists(), "the receipt was reconstructed");
+
+    let rebuilt = std::fs::read_to_string(&receipt).unwrap();
+    assert!(
+        rebuilt.contains(&format!(
+            "\"target_schema_version\": {SUPPORTED_RUST_SCHEMA_VERSION}"
+        )),
+        "{rebuilt}"
+    );
+    assert!(rebuilt.contains("backup_database_sha256"), "{rebuilt}");
+    assert!(rebuilt.contains("migration_report_checksum"), "{rebuilt}");
+    // Same durable checksums as the original receipt.
+    for field in ["backup_database_sha256", "migration_report_checksum"] {
+        let value = |text: &str| {
+            text.lines()
+                .find(|line| line.contains(field))
+                .map(|line| line.to_string())
+                .unwrap()
+        };
+        assert_eq!(value(&original), value(&rebuilt), "{field}");
+    }
+    // No key material leaked into the reconstruction.
+    assert!(!rebuilt.contains(PROVIDER_SENTINEL), "{rebuilt}");
+
+    // Reconstruction is idempotent.
+    let third = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    assert_eq!(third.outcome.as_str(), "already-complete");
+    assert_eq!(
+        std::fs::read_to_string(&receipt).unwrap(),
+        rebuilt,
+        "a present receipt is left untouched"
+    );
+}
+
+#[test]
+fn a_resume_after_the_receipt_write_never_rewrites_the_receipt() {
+    // The receipt is written before the journal's `complete` transition. A
+    // crash in that window leaves `config_promotion_required`; the resume must
+    // finish the journal WITHOUT overwriting the good receipt with a fresh
+    // `completed_at` and possibly-different derived fields.
+    let root = fresh_fixture();
+    let options = UpgradeOptions {
+        injection: Some(InjectionPoint::AfterReceipt),
+    };
+    run_upgrade(&config(root.path()), false, &options).unwrap_err();
+    assert_eq!(
+        journal_state(root.path()).as_deref(),
+        Some("config_promotion_required")
+    );
+    let sets = backup_sets(root.path());
+    let receipt = sets[0].join("receipt.json");
+    let original = std::fs::read(&receipt).unwrap();
+
+    let report = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    assert_eq!(report.outcome.as_str(), "complete");
+    assert!(report.resumed);
+    assert_eq!(journal_state(root.path()).as_deref(), Some("complete"));
+    assert_eq!(
+        std::fs::read(&receipt).unwrap(),
+        original,
+        "the resume rewrote a receipt that was already durable"
+    );
 }
 
 #[test]
@@ -550,7 +660,10 @@ fn failure_injection_leaves_only_safe_end_states_and_resume_completes() {
         let dream = std::fs::read_to_string(root.path().join("dream.conf")).unwrap();
         assert!(!dream.contains("[providers.openai]"), "{point:?}: {dream}");
         assert!(!root.path().join(".migrate-staging").exists(), "{point:?}");
-        assert!(!root.path().join(".migrate.lock").exists(), "{point:?}");
+        assert!(
+            RootOwnership::acquire(&config(root.path()), "test").is_ok(),
+            "{point:?}: ownership must be released after a resumed cutover"
+        );
     }
 }
 
@@ -673,7 +786,10 @@ fn recovery_rebuilds_a_new_database_from_the_immutable_backup() {
     );
     // The rebuilt database is a verified Rust database with converted rules.
     let connection = open(&root.path().join("hieronymus.sqlite"));
-    assert_eq!(query_scalar(&connection, "pragma user_version"), 1);
+    assert_eq!(
+        query_scalar(&connection, "pragma user_version"),
+        SUPPORTED_RUST_SCHEMA_VERSION
+    );
     assert_eq!(
         query_scalar(&connection, "select count(*) from term_rules"),
         expected_converted()
@@ -775,51 +891,52 @@ fn recovery_secures_the_live_database_with_its_wal_sidecars() {
     // And the live database file itself is present and converted (the
     // promotion is a single rename, never a remove-then-rename window).
     let connection = open(&root.path().join("hieronymus.sqlite"));
-    assert_eq!(query_scalar(&connection, "pragma user_version"), 1);
+    assert_eq!(
+        query_scalar(&connection, "pragma user_version"),
+        SUPPORTED_RUST_SCHEMA_VERSION
+    );
     drop(connection);
 }
 
 // ---------------------------------------------------------------------------
-// Data-root ownership lock
+// Data-root ownership guard (shared OS lock; see tests/ownership.rs for the
+// primitive's own coverage, including the SIGKILL-release case)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_data_root_lock_fails_closed_on_an_ownerless_lock_file() {
-    // An empty lock file is the window between another process's exclusive
-    // create and its pid write; stealing it would let two runs proceed.
+fn upgrade_refuses_a_root_another_owner_holds() {
     let root = fresh_fixture();
-    std::fs::write(root.path().join(".migrate.lock"), "").unwrap();
+    let held = RootOwnership::acquire(&config(root.path()), "daemon").unwrap();
     let before = file_tree_digest(root.path());
 
     let error = run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap_err();
+    assert!(matches!(error, MigrateError::RootOwnership(_)), "{error}");
+    let message = error.to_string();
     assert!(
-        matches!(error, MigrateError::UpgradeLockHeldOwnerless),
-        "{error}"
+        message.contains("daemon"),
+        "diagnostic names the owner: {message}"
     );
-    // The foreign lock file is left exactly as it was found.
-    assert_eq!(
-        std::fs::read_to_string(root.path().join(".migrate.lock")).unwrap(),
-        ""
-    );
+    // The upgrade touched nothing.
     assert_eq!(file_tree_digest(root.path()), before);
-}
 
-#[test]
-fn the_data_root_lock_steals_only_a_verifiably_dead_owner() {
-    let root = fresh_fixture();
-    let dead_pid = 4194303_u32;
-    assert!(
-        !std::path::Path::new(&format!("/proc/{dead_pid}")).exists(),
-        "test precondition: {dead_pid} must not be a live pid"
-    );
-    std::fs::write(root.path().join(".migrate.lock"), format!("{dead_pid}\n")).unwrap();
-
-    // A dead owner's lock is stale: the run steals it and completes.
+    // Releasing the guard lets the upgrade proceed.
+    drop(held);
     let report = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
         .map_err(|error| error.to_string())
         .unwrap();
     assert_eq!(report.outcome.as_str(), "complete");
-    assert!(!root.path().join(".migrate.lock").exists());
+}
+
+#[test]
+fn recovery_refuses_a_root_another_owner_holds() {
+    let root = fresh_fixture();
+    // A completed cutover so recovery gets past the journal gate.
+    run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap();
+    let held = RootOwnership::acquire(&config(root.path()), "daemon").unwrap();
+
+    let error = run_recovery(&config(root.path()), false).unwrap_err();
+    assert!(matches!(error, MigrateError::RootOwnership(_)), "{error}");
+    drop(held);
 }
 
 // ---------------------------------------------------------------------------

@@ -227,61 +227,55 @@ fn stdio_adapter_derives_mirrored_headers_from_the_body() {
 }
 
 #[test]
-fn stdio_adapter_start_daemon_flag_boots_the_daemon_it_proxies_to() {
-    // Explicit opt-in: with an empty data root and --start-daemon, the adapter
-    // spawns a daemon, waits for its discovery record, and proxies normally.
-    // (Without the flag the same setup fails closed — covered above.)
+fn stdio_adapter_start_daemon_flag_goes_through_the_service_integration() {
+    // Explicit opt-in autostart now starts the per-user SERVICE, never a raw
+    // `hiero daemon` child (ADR 0009: the managed role is the service; the
+    // foreground `hiero daemon` is for supervisors and debugging).
+    //
+    // The test isolates the service integration completely: HOME points at a
+    // temp directory (so `default_unit_dir` resolves there) and PATH is
+    // emptied (so `manager_enabled` is false and systemd is never contacted).
+    // The install step still runs, which is exactly the evidence we want.
     let root = tempfile::tempdir().unwrap();
-    let mut adapter = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args([
             "mcp",
             "--data-root",
             root.path().to_str().unwrap(),
             "--start-daemon",
         ])
-        .stdin(Stdio::piped())
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .unwrap();
 
-    let exchanges = frozen_exchanges();
-    let (request_line, expected_line) = exchanges[0].clone();
-    adapter
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(request_line.as_bytes())
-        .unwrap();
-    let mut line = String::new();
-    BufReader::new(adapter.stdout.as_mut().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    assert_eq!(
-        line, expected_line,
-        "autostart path must proxy the wire line"
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("local service"),
+        "autostart must report the service integration: {stderr}"
     );
-
-    adapter.kill().unwrap();
-    let _ = adapter.wait();
-
-    // The autostarted daemon outlives its parent; stop it via the pid it
-    // published so no stray listener survives the test run.
-    let record: Value =
-        serde_json::from_slice(&std::fs::read(root.path().join("daemon.json")).unwrap()).unwrap();
-    let pid = record["pid"].as_u64().unwrap().to_string();
-    Command::new("kill")
-        .arg(&pid)
-        .status()
-        .expect("kill must be available");
+    // The unit was rendered through the service integration ...
+    let unit = home.path().join(".config/systemd/user/hieronymus.service");
+    assert!(unit.exists(), "autostart must install the per-user unit");
+    // ... and no raw daemon was ever spawned behind the host's back.
+    assert!(
+        !root.path().join("daemon.json").exists(),
+        "autostart must not spawn a raw `hiero daemon` child"
+    );
 }
 
 #[test]
 fn stdio_adapter_wraps_route_level_daemon_errors_as_jsonrpc() {
-    // A daemon restart regenerates the bearer token, so an adapter holding the
-    // stale credential receives the daemon's route-level
-    // `401 {"error":"unauthorized"}` — not a JSON-RPC envelope. The adapter
-    // must wrap it so the NDJSON stream stays protocol-clean.
+    // The installation token is stable across restarts (ADR 0012 as amended),
+    // so the 401 path is reached by a deliberately rewritten credential file
+    // rather than by restarting. An adapter holding a credential the daemon
+    // does not accept receives the route-level `401 {"error":"unauthorized"}`
+    // — not a JSON-RPC envelope — and must wrap it so the NDJSON stream stays
+    // protocol-clean (ADR 0012's 401-and-reconnect rewrite).
     let root = tempfile::tempdir().unwrap();
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args([

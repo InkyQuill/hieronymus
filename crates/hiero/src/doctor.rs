@@ -9,16 +9,13 @@
 //! read over existing state.
 
 use std::path::Path;
-use std::time::Duration;
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::semantic_model::ModelStatus;
 
 use crate::daemon::discovery::{self, DiscoveryError};
 use crate::daemon::registry::PROTOCOL_REVISION;
-
-/// How long the reachability probe waits per candidate address.
-const DAEMON_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+use crate::lifecycle::{self, DiscoveryHealth};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Health {
@@ -436,40 +433,57 @@ fn check_discovery(config: &HieronymusConfig, report: &mut DoctorReport) {
         );
         return;
     }
-    match probe(&record.host, record.port) {
-        true => report.push(
+
+    // ADR 0009: "stale discovery state is detected by authenticated health
+    // probing and process-instance comparison, never by PID existence alone."
+    // A bare TCP connect is not enough either — an unrelated listener that
+    // inherited the port would otherwise be reported as a healthy daemon.
+    // Doctor is read-only, so it reports the verdict and repairs nothing.
+    match lifecycle::probe(config) {
+        DiscoveryHealth::Live { record, .. } => report.push(
             Level::Ok,
             "daemon-reachable",
             format!(
-                "daemon is reachable at {}:{} (pid {})",
-                record.host, record.port, record.pid
+                "daemon answered the authenticated probe at {}:{} (instance {}, pid {})",
+                record.host, record.port, record.instance_id, record.pid
             ),
         ),
-        false => report.push(
+        DiscoveryHealth::NoCredential { detail, .. } => report.push(
+            Level::Warning,
+            "daemon-unverifiable",
+            format!("the daemon's health cannot be verified: {detail}"),
+        ),
+        // Authenticated but unintelligible: our daemon answered badly. Report
+        // it, but never as a stale record — nothing here disproves the record.
+        health @ DiscoveryHealth::Unparseable { .. } => report.push(
+            Level::Warning,
+            "daemon-unverifiable",
+            format!(
+                "the daemon's health cannot be verified: {}",
+                health.detail()
+            ),
+        ),
+        health @ (DiscoveryHealth::Unauthenticated { .. }
+        | DiscoveryHealth::InstanceMismatch { .. }) => report.push(
+            Level::Warning,
+            "discovery-stale",
+            format!(
+                "{} — the discovery record does not describe a live daemon; \
+                 restart the daemon to republish it",
+                health.detail()
+            ),
+        ),
+        health @ DiscoveryHealth::ProtocolMismatch { .. } => report.push(
+            Level::Warning,
+            "protocol-mismatch",
+            format!("{} — restart the daemon", health.detail()),
+        ),
+        health => report.push(
             Level::Warning,
             "daemon-unreachable",
-            format!(
-                "discovery record points at {}:{} but nothing answered within {} ms (stale record or stopped daemon)",
-                record.host,
-                record.port,
-                DAEMON_PROBE_TIMEOUT.as_millis()
-            ),
+            format!("{} (stale record or stopped daemon)", health.detail()),
         ),
     }
-}
-
-/// Whether anything accepts TCP connections at `host:port` right now.
-fn probe(host: &str, port: u16) -> bool {
-    use std::net::ToSocketAddrs;
-    let Ok(addresses) = (host, port).to_socket_addrs() else {
-        return false;
-    };
-    for address in addresses {
-        if std::net::TcpStream::connect_timeout(&address, DAEMON_PROBE_TIMEOUT).is_ok() {
-            return true;
-        }
-    }
-    false
 }
 
 /// Semantic health without any download: model presence verdict (missing is

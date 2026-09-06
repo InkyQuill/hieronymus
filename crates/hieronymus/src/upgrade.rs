@@ -3,6 +3,13 @@
 //! cutover for an explicit data root, over the read-only preflight and typed
 //! strict-terms converter in [`crate::migrate`].
 //!
+//! The same thirteen steps also carry an ordered Rust→Rust schema upgrade: a
+//! database at an older supported version runs the identical ownership,
+//! preflight, staging, backup, journal, FTS-rebuild, verification, durable
+//! semantic-job and single-commit protocol, with the ordered SQL steps of
+//! [`crate::schema_upgrade`] in place of the Python converter. Only the plan
+//! inside the one transaction differs; every crash-safety property is shared.
+//!
 //! The thirteen protocol steps, in order: resolve + lock the data root and
 //! refuse an active daemon; joint database/config preflight requiring a safe
 //! result; render, parse back, cross-validate, fsync, and checksum staged
@@ -45,10 +52,12 @@ use crate::db::{
     DatabaseState, SUPPORTED_RUST_SCHEMA_VERSION, apply_terminology_schema_steps, classify_database,
 };
 use crate::migrate::{
-    MigrateError, REFUSAL_DAEMON_ACTIVE, REFUSAL_VERIFICATION_FAILED, TermConversionReport,
-    VerificationReport, convert_strict_terms, integrity_result, open_read_only, run_preflight,
-    sha256_file, verify_upgraded_target,
+    MigrateError, REFUSAL_DAEMON_ACTIVE, REFUSAL_VERIFICATION_FAILED, STATE_RUST_SCHEMA_UPGRADABLE,
+    TermConversionReport, VerificationReport, authoritative_row_counts, convert_strict_terms,
+    integrity_result, open_read_only, rebuild_external_content_fts, run_preflight, sha256_file,
+    verify_rust_upgraded_target, verify_upgraded_target,
 };
+use crate::ownership::RootOwnership;
 use crate::provider_config::{
     ProviderCatalog, ProviderProfile, default_provider_catalog, migrate_dream_provider_payload,
     provider_catalog_from_text,
@@ -62,8 +71,6 @@ use crate::provider_config::{
 pub const JOURNAL_FILE: &str = "cutover.json";
 /// Sibling staging directory for rendered current-format config files.
 pub const STAGING_DIR: &str = ".migrate-staging";
-/// Data-root ownership lock held for the whole protocol, including promotion.
-pub const LOCK_FILE: &str = ".migrate.lock";
 
 pub const JOURNAL_STATE_PREPARED: &str = "prepared";
 pub const JOURNAL_STATE_DATABASE_COMMITTED: &str = "database_committed";
@@ -78,16 +85,6 @@ const RECEIPT_VERSION: u32 = 1;
 /// configuration.
 const CONFIG_FILE_NAMES: [&str; 4] = ["provider.conf", "dream.conf", "ingest.conf", "release.conf"];
 
-/// External-content FTS projections rebuilt from authoritative rows (step 8).
-const EXTERNAL_CONTENT_FTS_TABLES: [&str; 6] = [
-    "short_term_memories_fts",
-    "crystals_fts",
-    "strict_terms_fts",
-    "concepts_fts",
-    "concept_facet_fts",
-    "rag_chunks_fts",
-];
-
 // ---------------------------------------------------------------------------
 // Options and reports
 // ---------------------------------------------------------------------------
@@ -95,15 +92,22 @@ const EXTERNAL_CONTENT_FTS_TABLES: [&str; 6] = [
 /// Protocol step boundaries that accept fault injection. This is the
 /// acceptance seam for the design's failure-injection requirement: an
 /// injected failure aborts the run exactly like a crashed process — no
-/// cleanup, the data-root lock left behind — so tests can assert the three
-/// possible end states (original intact / resumable
-/// `config_promotion_required` / complete). Never set by the CLI.
+/// cleanup — so tests can assert the three possible end states (original
+/// intact / resumable `config_promotion_required` / complete). The ownership
+/// guard drops as the run unwinds, exactly as the kernel would release it on
+/// a crash, so a same-process resume reacquires cleanly. Never set by the CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InjectionPoint {
     AfterPreflight,
     AfterStaging,
     AfterBackup,
     AfterJournalPrepared,
+    /// Inside the transaction, at the verification gate: forces
+    /// `all_checks_pass()` to false so the run takes the real
+    /// `verification-failed` refusal path rather than an injected error. The
+    /// transaction rolls back exactly as it would on a genuine foreign-key,
+    /// integrity, row-accounting, or FTS-coverage failure.
+    VerificationFailed,
     /// After every in-transaction write, immediately before the single
     /// commit: the transaction is dropped without committing and rolls back.
     BeforeCommit,
@@ -112,6 +116,10 @@ pub enum InjectionPoint {
     AfterDatabaseCommitted,
     /// After the first staged file was promoted, mid-promotion.
     MidPromotion,
+    /// After the receipt was written, before the journal's terminal `complete`
+    /// transition. A resume must finish the journal without rewriting the
+    /// receipt that already exists.
+    AfterReceipt,
     AfterComplete,
 }
 
@@ -298,7 +306,7 @@ fn write_journal(
 }
 
 // ---------------------------------------------------------------------------
-// Small primitives: fsync, ownership lock
+// Small primitives: fsync
 // ---------------------------------------------------------------------------
 
 fn fsync_dir(path: &Path) -> std::io::Result<()> {
@@ -358,66 +366,21 @@ fn require_user_only(_path: &Path) -> Result<(), MigrateError> {
     Ok(())
 }
 
-/// The data-root ownership lock (design: resolve and lock the data root;
-/// promotion takes the same lock). The lock file records the owning pid; a
-/// lock from a dead pid is stale and stolen, a lock from this process is
-/// re-acquired (the failure-injection tests resume in-process), and a lock
-/// from another live pid refuses the run. An ownerless lock file — the
-/// window between another process's exclusive create and its pid write — is
-/// held, never stolen: stealing it would let two runs proceed. A crashed run
-/// leaves the file behind on purpose; a dead owner's file is the stale case
-/// the next run steals, and an ownerless file needs the documented manual
-/// `rm` (fail closed beats mutual exclusion lost).
-struct DataRootLock {
-    path: PathBuf,
-}
-
-impl DataRootLock {
-    fn acquire(config: &HieronymusConfig) -> Result<Self, MigrateError> {
-        let path = config.data_root().join(LOCK_FILE);
-        if Self::try_create(&path).is_ok() {
-            return Ok(Self { path });
-        }
-        let owner = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| text.trim().parse::<u32>().ok());
-        match owner {
-            Some(pid) if pid == std::process::id() => Ok(Self { path }),
-            Some(pid) if process_is_alive(pid) => Err(MigrateError::UpgradeLockHeld(pid)),
-            // Unreadable or ownerless: another process may be inside the
-            // create-to-write window right now, so the lock is held.
-            None => Err(MigrateError::UpgradeLockHeldOwnerless),
-            Some(_) => {
-                std::fs::remove_file(&path).ok();
-                Self::try_create(&path)?;
-                Ok(Self { path })
-            }
-        }
-    }
-
-    fn try_create(path: &Path) -> std::io::Result<()> {
-        use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
-        writeln!(file, "{}", std::process::id())?;
-        file.sync_all()
-    }
-
-    fn release(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-#[cfg(unix)]
-fn process_is_alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
-}
-
-#[cfg(not(unix))]
-fn process_is_alive(_pid: u32) -> bool {
-    true
+/// Take the shared data-root ownership guard for a maintenance run (ADR
+/// 0009). One nonblocking OS `try_lock`: a root the daemon (or another
+/// maintenance run) already owns refuses as [`MigrateError::RootOwnership`]
+/// with a diagnostic that names the current owner (`WouldBlock`); any other
+/// io error (permissions, a read-only mount, ENOSPC creating the root)
+/// surfaces as [`MigrateError::Io`] so it reads as what actually failed. The
+/// guard is held for the whole call and released when it drops — including as
+/// the stack unwinds on a failure injection, which is exactly how the kernel
+/// would release it after a crash, so a same-process resume reacquires
+/// cleanly.
+fn acquire_ownership(config: &HieronymusConfig, role: &str) -> Result<RootOwnership, MigrateError> {
+    RootOwnership::acquire(config, role).map_err(|error| match error.kind() {
+        std::io::ErrorKind::WouldBlock => MigrateError::RootOwnership(error.to_string()),
+        _ => MigrateError::Io(error),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -858,36 +821,39 @@ fn nanos() -> u128 {
         .unwrap_or(0)
 }
 
-/// Rebuild every present external-content FTS projection from its
-/// authoritative rows (design step 8).
-fn rebuild_external_content_fts(connection: &Connection) -> Result<(), MigrateError> {
-    for table in EXTERNAL_CONTENT_FTS_TABLES {
-        let present: i64 = connection.query_row(
-            "select count(*) from sqlite_master where type = 'table' and name = ?1",
-            [table],
-            |row| row.get(0),
-        )?;
-        if present > 0 {
-            let quoted = table.replace('"', "\"\"");
-            connection.execute(
-                &format!("insert into \"{0}\"(\"{0}\") values ('rebuild')", quoted),
-                [],
-            )?;
-        }
-    }
-    Ok(())
+/// Which transformation the one transaction runs. Both plans share every
+/// other protocol step — ownership, preflight, staging, backup, journal, FTS
+/// rebuild, verification, the durable semantic job, and the single commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpgradePlan {
+    /// Python→Rust: the target-schema SQL steps (which reach the current
+    /// version) plus the typed strict-terms converter.
+    PythonCutover,
+    /// Rust→Rust: the ordered schema steps from `from` to the current
+    /// supported version. No converter, no legacy source rows.
+    OrderedSteps { from: i64 },
+}
+
+/// What one transaction produced. The Rust→Rust plan converts nothing, so its
+/// conversion report is absent rather than an empty lie.
+struct TransactionOutcome {
+    conversion: Option<TermConversionReport>,
+    verification: VerificationReport,
+    job: SemanticJobSummary,
 }
 
 /// Steps 6-11 as one exclusive transaction on the live database: schema
-/// version metadata, the ordered SQL steps and the typed converter, the FTS
-/// rebuild, verification (foreign keys, integrity, domain invariants, row
-/// accounting), and the durable semantic-rebuild job — committed once, after
-/// verification. Any error (including the failure injection) drops the
-/// transaction and rolls everything back.
+/// version metadata, the ordered SQL steps and (for a Python cutover) the
+/// typed converter, the FTS rebuild, verification (foreign keys, integrity,
+/// domain invariants, row accounting), and the durable semantic-rebuild job —
+/// committed once, after verification. Any error (including the failure
+/// injection) drops the transaction and rolls everything back, so the
+/// target-schema version is never published by a run that did not verify.
 fn upgrade_database_transaction(
     config: &HieronymusConfig,
+    plan: UpgradePlan,
     options: &UpgradeOptions,
-) -> Result<(TermConversionReport, VerificationReport, SemanticJobSummary), MigrateError> {
+) -> Result<TransactionOutcome, MigrateError> {
     let mut connection = Connection::open(config.database_path())?;
     connection.execute_batch("pragma foreign_keys = on;")?;
     // Matches every Rust-opened database (`open_migrated`); a pragma, so it
@@ -897,11 +863,39 @@ fn upgrade_database_transaction(
     })?;
 
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-    apply_terminology_schema_steps(&transaction)?;
-    let conversion = convert_strict_terms(&transaction)?;
+    // The pre-step row census, taken INSIDE the exclusive transaction so the
+    // rows it counts are exactly the rows the steps then run against: there is
+    // no window in which a writer could change the count the accounting is
+    // later compared with.
+    let baseline = match plan {
+        UpgradePlan::OrderedSteps { .. } => Some(authoritative_row_counts(&transaction)?),
+        UpgradePlan::PythonCutover => None,
+    };
+    let conversion = match plan {
+        UpgradePlan::PythonCutover => {
+            apply_terminology_schema_steps(&transaction)?;
+            Some(convert_strict_terms(&transaction)?)
+        }
+        UpgradePlan::OrderedSteps { from } => {
+            crate::schema_upgrade::apply_steps(&transaction, from, SUPPORTED_RUST_SCHEMA_VERSION)?;
+            None
+        }
+    };
     rebuild_external_content_fts(&transaction)?;
-    let verification = verify_upgraded_target(&transaction, &conversion)?;
-    if !verification.all_checks_pass() {
+    let verification = match (&conversion, &baseline) {
+        (Some(conversion), _) => verify_upgraded_target(&transaction, conversion)?,
+        (None, Some(baseline)) => verify_rust_upgraded_target(&transaction, Some(baseline))?,
+        (None, None) => {
+            return Err(MigrateError::JournalInconsistent(
+                "an ordered upgrade ran without a row-accounting baseline".to_string(),
+            ));
+        }
+    };
+    // The injected case takes the SAME path a genuine check failure takes:
+    // rollback plus the `verification-failed` refusal, never a distinct
+    // error, so the test exercises the real gate.
+    let injected_failure = options.injection == Some(InjectionPoint::VerificationFailed);
+    if injected_failure || !verification.all_checks_pass() {
         // Rollback + explicit error; the original database is intact.
         return Err(MigrateError::Refused(
             REFUSAL_VERIFICATION_FAILED.to_string(),
@@ -912,7 +906,11 @@ fn upgrade_database_transaction(
         return Err(MigrateError::Injected(InjectionPoint::BeforeCommit));
     }
     transaction.commit()?;
-    Ok((conversion, verification, job))
+    Ok(TransactionOutcome {
+        conversion,
+        verification,
+        job,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1130,6 +1128,77 @@ fn write_receipt(
     Ok(path)
 }
 
+/// The receipt path for a journal's backup set, written idempotently: an
+/// existing receipt (a resume that re-reached this step after a crash between
+/// the receipt write and the journal's `complete` transition) is left exactly
+/// as it was rather than overwritten with a fresh `completed_at` and
+/// possibly-different derived fields. `promotion` supplies the values only when
+/// the receipt is being written for the first time.
+fn persist_receipt(
+    config: &HieronymusConfig,
+    journal: &CutoverJournal,
+    promotion: &PromotionOutcome,
+) -> Result<PathBuf, MigrateError> {
+    let path = config
+        .data_root()
+        .join(&journal.backup_dir)
+        .join("receipt.json");
+    if path.exists() {
+        return Ok(path);
+    }
+    write_receipt(config, journal, promotion)
+}
+
+/// Rebuild a missing receipt for an already-`complete` cutover from durable
+/// state alone: the journal records the source state, target schema version,
+/// backup checksum, and every promoted file's before/after checksum, and the
+/// conversion ledger (when there was one) still lives in the committed
+/// database. Nothing here reruns a converter — it reconstructs the artifact a
+/// crash between `complete` and the receipt write (the old step order) never
+/// got to persist. Idempotent: written atomically, a no-op once present.
+fn reconstruct_receipt(
+    config: &HieronymusConfig,
+    journal: &CutoverJournal,
+) -> Result<PathBuf, MigrateError> {
+    let backup_dir = config.data_root().join(&journal.backup_dir);
+    let path = backup_dir.join("receipt.json");
+    if path.exists() {
+        return Ok(path);
+    }
+    let promoted = journal
+        .staged
+        .iter()
+        .map(|file| PromotedFileRecord {
+            path: file.path.clone(),
+            old_sha256: journal.backup_configs.get(&file.path).cloned(),
+            new_sha256: file.sha256.clone(),
+        })
+        .collect();
+    let receipt = UpgradeReceipt {
+        receipt_version: RECEIPT_VERSION,
+        completed_at: now_rfc3339(),
+        upgraded_by: env!("CARGO_PKG_VERSION").to_string(),
+        prior_app_version: None,
+        source_state: journal.source_state.clone(),
+        backup_database_sha256: journal.backup_database_sha256.clone(),
+        target_schema_version: journal.target_schema_version,
+        migration_report_checksum: ledger_checksum(config)?,
+        promoted,
+        // Best-effort: the journal does not record whether a derived model
+        // cache existed at cutover time. The cutover removes it when present,
+        // so "absent now" is reported as invalidated; a root that never had a
+        // cache is indistinguishable here and also reads as `true`. The
+        // durable-checksum fields above are exact; this one is not.
+        cache_invalidated: !config.llm_cache_path().exists(),
+    };
+    let text = serde_json::to_string_pretty(&receipt).map_err(|error| {
+        MigrateError::JournalInconsistent(format!("receipt render failed: {error}"))
+    })?;
+    crate::atomic::atomic_write_text(&path, &text)?;
+    fsync_dir(&backup_dir)?;
+    Ok(path)
+}
+
 // ---------------------------------------------------------------------------
 // The protocol
 // ---------------------------------------------------------------------------
@@ -1138,7 +1207,9 @@ fn write_receipt(
 /// interrupted runs are detected through the journal and resumed (a
 /// `config_promotion_required` state verifies the staged checksums and
 /// promotes without ever rerunning the committed converters); a `complete`
-/// journal is a no-op.
+/// journal is a no-op only while the database it produced is still at this
+/// binary's schema — a completed OLDER cutover under a newer binary begins a
+/// new attempt beside the preserved receipt and backup.
 pub fn run_upgrade(
     config: &HieronymusConfig,
     daemon_active: bool,
@@ -1148,23 +1219,53 @@ pub fn run_upgrade(
     if daemon_active {
         return Err(MigrateError::Refused(REFUSAL_DAEMON_ACTIVE.to_string()));
     }
-    // Step 1b: resolve and lock the explicit data root.
-    let lock = DataRootLock::acquire(config)?;
+    // Step 1b: resolve and take exclusive ownership of the explicit data
+    // root. Held for the whole protocol, promotion included; released on
+    // drop (normal return or unwind).
+    let _ownership = acquire_ownership(config, "migrate")?;
     let had_staging = config.data_root().join(STAGING_DIR).exists();
     let existing = read_cutover_journal(config)?;
 
-    let result = match existing {
+    match existing {
+        // A `complete` journal is only terminal when the cutover it describes
+        // actually reached THIS binary's schema. A completed older cutover
+        // under a newer binary is history, not an answer: its receipt and
+        // backup are preserved untouched, and a new attempt starts with its
+        // own backup set and journal. As everywhere else in this module the
+        // database is the authority — the journal's recorded target is a
+        // label written by whichever binary ran that attempt.
         Some(journal) if journal.state == JOURNAL_STATE_COMPLETE => {
-            already_complete_report(config, &journal)
+            if database_is_current(config) {
+                already_complete_report(config, &journal)
+            } else {
+                // Retire the finished journal before the new attempt begins,
+                // so the daemon gate never reads a `complete` state that
+                // describes a cutover this run has already moved past. The new
+                // attempt writes its own `prepared` journal at step 5; the old
+                // receipt and backup set are left exactly where they are.
+                std::fs::remove_file(config.data_root().join(JOURNAL_FILE))?;
+                fsync_dir(config.data_root())?;
+                run_fresh(config, options, false)
+            }
         }
         Some(journal) if journal.state == JOURNAL_STATE_PREPARED => {
             // The transaction never committed (or its commit outran the
-            // journal write). Inspect the database, never the journal alone.
+            // journal write). Inspect the database, never the journal alone:
+            // the attempt's own target version decides, so a Rust→Rust
+            // attempt interrupted before its commit (database still at the
+            // OLD version) restarts instead of trying to promote.
             let state = classify_database(&config.database_path());
-            if matches!(
-                state,
-                DatabaseState::RustSchema { .. } | DatabaseState::NewerSchema { .. }
-            ) {
+            if let DatabaseState::NewerSchema { version } = state {
+                // A newer database under an interrupted attempt: this binary
+                // can neither promote nor rebuild it, and must not guess.
+                return Err(MigrateError::JournalInconsistent(format!(
+                    "an interrupted upgrade left a database at schema {version}, \
+                     newer than this binary supports ({SUPPORTED_RUST_SCHEMA_VERSION})"
+                )));
+            }
+            if matches!(state, DatabaseState::RustSchema { version }
+                    if version == journal.target_schema_version)
+            {
                 resume_promotion(config, &journal, options)
             } else {
                 // Step 5 artifact only: the pre-commit failure restored the
@@ -1185,15 +1286,14 @@ pub fn run_upgrade(
             journal.state
         ))),
         None => run_fresh(config, options, had_staging),
-    };
-
-    match &result {
-        // An injected failure simulates a crashed process: the lock file
-        // stays behind for the stale-steal on the next run.
-        Err(MigrateError::Injected(_)) => {}
-        Ok(_) | Err(_) => lock.release(),
     }
-    result
+}
+
+/// Whether the live database is a Rust database at this binary's supported
+/// schema version — the only state in which there is nothing left to upgrade.
+fn database_is_current(config: &HieronymusConfig) -> bool {
+    matches!(classify_database(&config.database_path()),
+        DatabaseState::RustSchema { version } if version == SUPPORTED_RUST_SCHEMA_VERSION)
 }
 
 fn already_complete_report(
@@ -1202,6 +1302,15 @@ fn already_complete_report(
 ) -> Result<UpgradeReport, MigrateError> {
     let backup_dir = config.data_root().join(&journal.backup_dir);
     let receipt = backup_dir.join("receipt.json");
+    // A `complete` journal that carries no receipt — a crash between the
+    // terminal transition and the receipt write under the old step order —
+    // is finalized idempotently from the journal's stored checksums rather
+    // than accepting its absence.
+    let receipt_path = if receipt.exists() {
+        Some(receipt)
+    } else {
+        Some(reconstruct_receipt(config, journal)?)
+    };
     Ok(UpgradeReport {
         outcome: UpgradeOutcome::AlreadyComplete,
         resumed: false,
@@ -1213,11 +1322,13 @@ fn already_complete_report(
         semantic_job: None,
         backup_dir: Some(backup_dir),
         backup_database_sha256: Some(journal.backup_database_sha256.clone()),
-        receipt_path: receipt.exists().then_some(receipt),
+        receipt_path,
     })
 }
 
 /// A fresh full protocol run over a data root without an unfinished journal.
+/// The same thirteen steps serve both a Python cutover and an ordered
+/// Rust→Rust schema upgrade; only the plan the one transaction runs differs.
 fn run_fresh(
     config: &HieronymusConfig,
     options: &UpgradeOptions,
@@ -1231,6 +1342,17 @@ fn run_fresh(
     if !preflight.conversion_safe {
         return Err(MigrateError::Refused("conversion-unsafe".to_string()));
     }
+    let plan = if preflight.detected_state == STATE_RUST_SCHEMA_UPGRADABLE {
+        UpgradePlan::OrderedSteps {
+            from: preflight.detected_schema_version.ok_or_else(|| {
+                MigrateError::JournalInconsistent(
+                    "an upgradable Rust database reported no schema version".to_string(),
+                )
+            })?,
+        }
+    } else {
+        UpgradePlan::PythonCutover
+    };
     let inventory = config_preflight(config)?;
     if options.injection == Some(InjectionPoint::AfterPreflight) {
         return Err(MigrateError::Injected(InjectionPoint::AfterPreflight));
@@ -1267,7 +1389,7 @@ fn run_fresh(
     }
 
     // Steps 6-11: the one transaction, committed once.
-    let (conversion, verification, job) = upgrade_database_transaction(config, options)?;
+    let outcome = upgrade_database_transaction(config, plan, options)?;
     if options.injection == Some(InjectionPoint::AfterCommit) {
         return Err(MigrateError::Injected(InjectionPoint::AfterCommit));
     }
@@ -1285,12 +1407,16 @@ fn run_fresh(
         JOURNAL_STATE_CONFIG_PROMOTION_REQUIRED,
     )?;
 
-    // Step 12: atomic promotion, then `complete`.
+    // Step 12: atomic promotion. The receipt is written BEFORE the journal's
+    // terminal `complete` transition (Astra receipt/finalization follow-up):
+    // a crash between them then leaves `config_promotion_required`, which the
+    // resume path finishes — never a `complete` journal with no receipt.
     let promotion = promote_staged(config, &journal, options)?;
+    let receipt_path = persist_receipt(config, &journal, &promotion)?;
+    if options.injection == Some(InjectionPoint::AfterReceipt) {
+        return Err(MigrateError::Injected(InjectionPoint::AfterReceipt));
+    }
     write_journal(config, &mut journal, JOURNAL_STATE_COMPLETE)?;
-
-    // Step 13: the receipt.
-    let receipt_path = write_receipt(config, &journal, &promotion)?;
     if options.injection == Some(InjectionPoint::AfterComplete) {
         return Err(MigrateError::Injected(InjectionPoint::AfterComplete));
     }
@@ -1301,9 +1427,9 @@ fn run_fresh(
         journal_state: journal.state.clone(),
         source_state: journal.source_state.clone(),
         target_schema_version: journal.target_schema_version,
-        conversion: Some(conversion),
-        verification: Some(verification),
-        semantic_job: Some(job),
+        conversion: outcome.conversion,
+        verification: Some(outcome.verification),
+        semantic_job: Some(outcome.job),
         backup_dir: Some(config.data_root().join(&journal.backup_dir)),
         backup_database_sha256: Some(journal.backup_database_sha256.clone()),
         receipt_path: Some(receipt_path),
@@ -1329,19 +1455,25 @@ fn resume_promotion(
             state.as_str()
         )));
     }
-    // The conversion ledger is the marker that the non-idempotent conversion
-    // really committed; without it the journal lies about the database.
-    let connection = open_read_only(&config.database_path())?;
-    let ledger_present: i64 = connection.query_row(
-        "select count(*) from sqlite_master where type = 'table' and name = 'term_migration_ledger'",
-        [],
-        |row| row.get(0),
-    )?;
-    drop(connection);
-    if ledger_present == 0 {
-        return Err(MigrateError::JournalInconsistent(
-            "committed target carries no conversion ledger".to_string(),
-        ));
+    // The conversion ledger is the marker that the non-idempotent Python
+    // conversion really committed; without it the journal lies about the
+    // database. An ordered Rust→Rust upgrade runs no converter and produces
+    // no ledger, so its marker is the committed schema version alone (checked
+    // above) — demanding a ledger there would reject a perfectly good resume.
+    if journal.source_state != STATE_RUST_SCHEMA_UPGRADABLE {
+        let connection = open_read_only(&config.database_path())?;
+        let ledger_present: i64 = connection.query_row(
+            "select count(*) from sqlite_master
+             where type = 'table' and name = 'term_migration_ledger'",
+            [],
+            |row| row.get(0),
+        )?;
+        drop(connection);
+        if ledger_present == 0 {
+            return Err(MigrateError::JournalInconsistent(
+                "committed target carries no conversion ledger".to_string(),
+            ));
+        }
     }
 
     let mut journal = journal.clone();
@@ -1357,8 +1489,11 @@ fn resume_promotion(
     }
 
     let promotion = promote_staged(config, &journal, options)?;
+    let receipt_path = persist_receipt(config, &journal, &promotion)?;
+    if options.injection == Some(InjectionPoint::AfterReceipt) {
+        return Err(MigrateError::Injected(InjectionPoint::AfterReceipt));
+    }
     write_journal(config, &mut journal, JOURNAL_STATE_COMPLETE)?;
-    let receipt_path = write_receipt(config, &journal, &promotion)?;
 
     Ok(UpgradeReport {
         outcome: UpgradeOutcome::Complete,
@@ -1398,6 +1533,13 @@ pub fn run_recovery(
     if daemon_active {
         return Err(MigrateError::Refused(REFUSAL_DAEMON_ACTIVE.to_string()));
     }
+    // Take exclusive ownership before any preflight copy or staging. Held for
+    // the whole recovery, promotion included; released on drop. The internal
+    // helpers reused below (`config_preflight`, `stage_configs`,
+    // `upgrade_database_transaction`) all operate on a throwaway work root
+    // outside the data root and never lock, so there is no re-acquisition and
+    // no deadlock.
+    let _ownership = acquire_ownership(config, "recover")?;
     if let Some(journal) = read_cutover_journal(config)?
         && journal.state != JOURNAL_STATE_COMPLETE
     {
@@ -1459,11 +1601,37 @@ pub fn run_recovery(
     let inventory = config_preflight(&work_config)?;
     stage_configs(&work_config, &inventory)?;
     let options = UpgradeOptions::default();
-    let (conversion, _verification, _job) = upgrade_database_transaction(&work_config, &options)?;
+    // The backup may hold either a Python database or an older Rust one; both
+    // are imported by rerunning the CURRENT importer, so a version-1 Rust
+    // backup lands at the current schema exactly like a fresh upgrade.
+    let plan = if preflight.detected_state == STATE_RUST_SCHEMA_UPGRADABLE {
+        UpgradePlan::OrderedSteps {
+            from: preflight.detected_schema_version.ok_or_else(|| {
+                MigrateError::JournalInconsistent(
+                    "an upgradable Rust backup reported no schema version".to_string(),
+                )
+            })?,
+        }
+    } else {
+        UpgradePlan::PythonCutover
+    };
+    let outcome = upgrade_database_transaction(&work_config, plan, &options)?;
 
     // Verify the rebuilt database before anything in the data root moves.
     let connection = open_read_only(&work_root.join("hieronymus.sqlite"))?;
-    let verification = verify_upgraded_target(&connection, &conversion)?;
+    let verification = match &outcome.conversion {
+        Some(conversion) => verify_upgraded_target(&connection, conversion)?,
+        None => {
+            let mut report = verify_rust_upgraded_target(&connection, None)?;
+            // Row accounting was proved inside the transaction against the
+            // census of the copied backup, taken before the durable rebuild
+            // job added its own bookkeeping rows. Re-running that census here
+            // would read those legitimate rows as drift, so the transaction's
+            // verdict — which is the one that gated the commit — stands.
+            report.row_accounting_ok = outcome.verification.row_accounting_ok;
+            report
+        }
+    };
     drop(connection);
     if !verification.all_checks_pass() {
         return Err(MigrateError::Refused(
@@ -1472,14 +1640,13 @@ pub fn run_recovery(
     }
     let new_database_sha256 = sha256_file(&work_root.join("hieronymus.sqlite"))?;
 
-    // Atomically promote: ownership lock; the live database secured into a
-    // fresh backup directory (main file plus WAL sidecars, never deleted);
-    // the rebuilt database copied next to its destination and swapped in
-    // with ONE plain rename — POSIX rename replaces the existing file
-    // atomically, so there is no moment at which the data root has no
+    // Atomically promote (ownership already held): the live database secured
+    // into a fresh backup directory (main file plus WAL sidecars, never
+    // deleted); the rebuilt database copied next to its destination and
+    // swapped in with ONE plain rename — POSIX rename replaces the existing
+    // file atomically, so there is no moment at which the data root has no
     // database (a crash before the rename leaves the old database and the
     // staging copy; a crash after it leaves the new one).
-    let lock = DataRootLock::acquire(config)?;
     let root = config.data_root();
     let backups_dir = config.backups_root();
     std::fs::create_dir_all(&backups_dir)?;
@@ -1522,12 +1689,15 @@ pub fn run_recovery(
     std::fs::rename(&staging_path, &live)?;
     fsync_dir(root)?;
     fsync_dir(&backups_dir)?;
-    lock.release();
 
     Ok(RecoveryReport {
         recovered_from: source,
         replacement_backup_dir: replacement_dir,
         new_database_sha256,
-        converted_terms: conversion.converted,
+        converted_terms: outcome
+            .conversion
+            .as_ref()
+            .map(|conversion| conversion.converted)
+            .unwrap_or(0),
     })
 }

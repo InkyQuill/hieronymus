@@ -177,36 +177,36 @@ fn now_iso8601() -> String {
     Utc::now().to_rfc3339()
 }
 
-/// Code-side ensure for the audited lifecycle ledger (`term_rule_actions`),
-/// following the code-side pattern of
-/// `semantic_store::ensure_semantic_schema`/`SEMANTIC_SCHEMA_SQL`: every
-/// writer creates the derived table it needs with `if not exists`, so fresh
-/// and upgraded databases converge without a schema-version bump.
+/// Defensive `if not exists` ensure for the audited lifecycle ledger
+/// (`term_rule_actions`), following the code-side pattern of
+/// `semantic_store::ensure_semantic_schema`/`SEMANTIC_SCHEMA_SQL`.
 ///
-/// COORDINATION POINT: the canonical schema-v2 definition of this table is
-/// owned by the runtime plan (R1-R5), implemented by another agent in a
-/// separate worktree. Once R3's migration lands, this `if not exists` ensure
-/// becomes a deliberate no-op against the migrated table. Every column here
-/// is NULLable or defaulted so the v2 definition can widen the table without
-/// a rewrite; the partial unique index on `idempotency_key` is the only
-/// constraint [`Termbase::apply_action`] relies on (partial, so future
-/// writers may still store rows without a key).
+/// The canonical definition of this table is now the runtime plan's schema-v2
+/// migration (`migrations/002-durable-work.sql`): every database opened
+/// through `db::open_migrated` already carries it, so this ensure is a
+/// deliberate no-op there. The column set, the `rule_id` foreign key, and the
+/// partial unique index on `idempotency_key` are kept byte-consistent with
+/// that migration so the two never diverge; [`Termbase::apply_action`] writes
+/// `expected_revision` / `request_canonical` and reads back by
+/// `idempotency_key`.
 const TERM_RULE_ACTIONS_SCHEMA_SQL: &str = "
 create table if not exists term_rule_actions (
   id integer primary key,
-  rule_id integer,
-  action text not null default '',
-  actor text not null default '',
-  reason text not null default '',
-  expected_revision integer,
-  resulting_revision integer,
   idempotency_key text not null default '',
-  request_canonical text not null default '',
-  result_json text not null default '',
-  created_at text not null default ''
+  rule_id integer not null references term_rules(id),
+  actor text not null,
+  reason text not null,
+  action text not null,
+  expected_revision integer not null,
+  resulting_revision integer not null,
+  request_canonical text not null,
+  result_json text not null,
+  created_at text not null
 );
 create unique index if not exists term_rule_actions_idempotency_key_idx
   on term_rule_actions(idempotency_key) where idempotency_key <> '';
+create index if not exists term_rule_actions_rule_idx
+  on term_rule_actions(rule_id, id);
 ";
 
 fn ensure_term_rule_actions_schema(connection: &Connection) -> Result<(), TermbaseError> {

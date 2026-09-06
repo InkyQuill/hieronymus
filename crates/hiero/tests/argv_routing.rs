@@ -285,13 +285,9 @@ fn seed_discovery(config: &hieronymus::data_root::HieronymusConfig, port: u16, p
 }
 
 #[test]
-fn stale_discovery_record_reports_no_running_service() {
-    // Python's discover_local_service runs cleanup_stale_state first, so a
-    // record whose pid is dead yields "no running local service discovered" —
-    // not the health-check-failure verdict.
+fn no_discovery_record_reports_no_running_service() {
+    // The frozen payload for a root no daemon ever ran in.
     let root = tempfile::tempdir().unwrap();
-    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
-    seed_discovery(&config, 1, 4_000_000_000);
     let (stdout, _, status) = run_as(
         "hieronymus-agent-hook",
         &[
@@ -308,6 +304,31 @@ fn stale_discovery_record_reports_no_running_service() {
         payload["service"]["reason"],
         "no running local service discovered"
     );
+}
+
+#[test]
+fn a_record_with_a_live_pid_but_no_daemon_is_still_unavailable() {
+    // ADR 0009: liveness is never decided by PID existence. This record
+    // carries a pid that IS alive (our own) and a port nothing serves, so the
+    // old pid check would have called it live. The authenticated probe does
+    // not.
+    let root = tempfile::tempdir().unwrap();
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    seed_discovery(&config, 1, std::process::id());
+    let (stdout, _, status) = run_as(
+        "hieronymus-agent-hook",
+        &[
+            "session-end",
+            "--json",
+            "--data-root",
+            root.path().to_str().unwrap(),
+        ],
+        "",
+    );
+    assert!(status.success(), "{stdout}");
+    let payload: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(payload["service"]["available"], serde_json::json!(false));
+    assert_eq!(payload["service"]["mode"], "direct-local");
 }
 
 #[test]

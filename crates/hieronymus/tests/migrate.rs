@@ -325,7 +325,10 @@ fn preflight_reports_supported_legacy_schema_and_counts() {
     assert_eq!(report.pending_conversions.strict_terms, 2);
     assert_eq!(report.pending_conversions.strict_term_aliases, 1);
     assert_eq!(report.pending_conversions.strict_term_tags, 1);
-    assert_eq!(report.target_schema_version, 1);
+    assert_eq!(
+        report.target_schema_version,
+        hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION
+    );
     assert!(report.backup_path.is_none());
     assert!(report.database_size_bytes > 0);
     assert!(report.required_free_space_bytes >= report.database_size_bytes);
@@ -517,8 +520,15 @@ fn prepared_copy(source_data_root: &Path, work: &Path) -> (tempfile::TempDir, Co
     let target = tempfile::tempdir_in(work).unwrap();
     let path = target.path().join("hieronymus.sqlite");
     std::fs::copy(source_data_root.join("hieronymus.sqlite"), &path).unwrap();
-    let connection = open(&path);
-    prepare_upgrade_target(&connection).unwrap();
+    let mut connection = open(&path);
+    // The target-schema steps run inside the caller's transaction, exactly as
+    // the upgrade protocol runs them: the ordered runner refuses an
+    // autocommit connection so a step set can never land half-applied.
+    {
+        let transaction = connection.transaction().unwrap();
+        prepare_upgrade_target(&transaction).unwrap();
+        transaction.commit().unwrap();
+    }
     (target, connection)
 }
 
@@ -1164,7 +1174,13 @@ fn validation_findings_are_equivalent_before_and_after_conversion() {
     let target_path = target.path().join("hieronymus.sqlite");
     std::fs::copy(&legacy_path, &target_path).unwrap();
     let mut connection = open(&target_path);
-    prepare_upgrade_target(&connection).unwrap();
+    // The ordered step runner refuses autocommit, so the target-schema steps
+    // run inside a caller-owned transaction exactly as the protocol runs them.
+    {
+        let transaction = connection.transaction().unwrap();
+        prepare_upgrade_target(&transaction).unwrap();
+        transaction.commit().unwrap();
+    }
     let report = {
         let transaction = connection.transaction().unwrap();
         let report = convert_strict_terms(&transaction).unwrap();
@@ -1264,7 +1280,13 @@ fn fts_queries_are_equivalent_before_and_after_conversion() {
     let target_path = target.path().join("hieronymus.sqlite");
     std::fs::copy(&legacy_path, &target_path).unwrap();
     let mut connection = open(&target_path);
-    prepare_upgrade_target(&connection).unwrap();
+    // The ordered step runner refuses autocommit, so the target-schema steps
+    // run inside a caller-owned transaction exactly as the protocol runs them.
+    {
+        let transaction = connection.transaction().unwrap();
+        prepare_upgrade_target(&transaction).unwrap();
+        transaction.commit().unwrap();
+    }
     let transaction = connection.transaction().unwrap();
     let report = convert_strict_terms(&transaction).unwrap();
     // The converter rebuild is part of the write path, like the upgrade's
