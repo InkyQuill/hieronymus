@@ -194,12 +194,15 @@ pub fn drain_batches(
     Ok(total)
 }
 
-/// The scheduled-tick decision (ADR 0005 §Scheduling And Drain Behavior): a
-/// backlog at the urgent maximum runs immediately, a backlog at the minimum
-/// runs on the elapsed interval, a smaller backlog is skipped honestly
-/// (`not_enough_memories`) until `not_enough_memories_cycle_threshold`
-/// consecutive skips arm the backlog escape that processes the small
-/// leftover.
+/// The scheduled-tick decision (ADR 0005 §Scheduling And Drain Behavior).
+/// The urgent maximum backlog is a trigger in its own right: the host
+/// evaluates it at every scheduler gate, independently of the interval, so a
+/// backlog at `max_pending_short_term_memories` never waits for the next
+/// scheduled firing. With the urgent trigger absent, a backlog at the
+/// minimum runs on the elapsed interval, a smaller backlog is skipped
+/// honestly (`not_enough_memories`) until
+/// `not_enough_memories_cycle_threshold` consecutive skips arm the backlog
+/// escape that processes the small leftover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScheduledDecision {
     /// Nothing eligible: no run and no skip row.
@@ -208,7 +211,8 @@ pub enum ScheduledDecision {
     NotEnoughMemories,
     /// The interval fired with the minimum met.
     Scheduled,
-    /// The urgent maximum backlog: run now, ignoring the minimum.
+    /// The urgent maximum backlog: run now (evaluated at every scheduler
+    /// gate, independent of the interval), ignoring the minimum.
     Urgent,
     /// Enough consecutive skips: process the small leftover batch.
     BacklogEscape,

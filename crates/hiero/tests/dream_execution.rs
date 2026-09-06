@@ -804,6 +804,74 @@ fn concurrent_requests_coalesce_into_one_active_run() {
     workers.stop_and_join().unwrap();
 }
 
+/// The urgent backlog trigger fires at the scheduler gate, independent of
+/// the interval: with the anchor freshly set and a long configured interval,
+/// a backlog crossing `max_pending_short_term_memories` is drained within a
+/// couple of gate slices, while a backlog below the maximum still waits for
+/// the interval (ADR 0005's urgent trigger is not vacuous).
+#[test]
+fn urgent_backlog_fires_at_the_gate_without_waiting_for_the_interval() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    let llm = LoopbackLlm::start();
+    // min 1, max 2 (the batch cap doubles as the urgent maximum), interval
+    // at its 30-minute default.
+    wire_lane(&config, &llm.url(), true, 1, 2, 5.0);
+
+    let (workers, _controller) = start_controller(config.clone());
+
+    // Let the worker's first gate pass with nothing pending: the interval
+    // anchor is now freshly set, so no scheduled decision is due for the
+    // configured interval.
+    std::thread::sleep(Duration::from_millis(2_500));
+    assert_eq!(
+        scalar(root.path(), "select count(*) from dream_runs"),
+        0,
+        "an empty backlog records neither runs nor skips"
+    );
+
+    // Cross the urgent maximum: pending 2 >= max 2.
+    seed_backlog(&config, 1, 2);
+    wait_for(
+        || {
+            scalar(
+                root.path(),
+                "select count(*) from dream_runs where status = 'completed'",
+            ) >= 1
+        },
+        Duration::from_secs(10),
+    );
+    assert!(
+        scalar(
+            root.path(),
+            "select count(*) from dream_runs where status = 'completed' and input_count = 2"
+        ) >= 1,
+        "the urgent run drained the maximum backlog"
+    );
+    assert_eq!(
+        llm.request_count(),
+        2,
+        "one urgent batch, two passes — fired within the gate window, not the interval"
+    );
+
+    // A backlog below the maximum does not re-trigger: it waits for the
+    // (30-minute-away) interval. Several gate slices prove the absence.
+    seed_backlog(&config, 1, 1);
+    std::thread::sleep(Duration::from_millis(5_500));
+    assert_eq!(
+        llm.request_count(),
+        2,
+        "a sub-maximum backlog waits for the interval"
+    );
+    assert_eq!(
+        scalar(root.path(), "select count(*) from dream_runs"),
+        1,
+        "no additional run below the urgent maximum"
+    );
+
+    workers.stop_and_join().unwrap();
+}
+
 /// Scheduled ticks read the actual config state: below the minimum they
 /// record honest `not_enough_memories` skip rows, and after enough
 /// consecutive skips the backlog escape processes the small leftover

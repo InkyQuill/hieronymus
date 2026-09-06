@@ -461,11 +461,19 @@ impl DreamController {
         }
     }
 
-    /// The interval gate around [`Self::run_scheduled_tick`]: read the
-    /// actual config state, and only decide when the configured interval
-    /// has elapsed since the last decision (a decision is a run, a skip
-    /// record, or an urgent run — all re-anchor the schedule).
+    /// The scheduler gate: the urgent backlog trigger (ADR 0005) is
+    /// evaluated at every gate independently of the interval — a backlog at
+    /// `max_pending_short_term_memories` must never wait for the next
+    /// scheduled firing. Scheduled and backlog-escape decisions run only
+    /// when the configured interval has elapsed since the last decision (a
+    /// decision is a run, a skip record, or an urgent run — all re-anchor
+    /// the schedule); the urgent check leaves that anchor untouched. Urgent
+    /// rides the same coalescing, OS lock, enabled state, and per-workflow
+    /// rules as every other trigger.
     fn scheduled_gate(&self, anchor: Option<Instant>) -> Option<Instant> {
+        if self.urgent_backlog_due() {
+            self.submit_scheduled("urgent", true);
+        }
         let now = Instant::now();
         let due = match anchor {
             None => true,
@@ -486,6 +494,21 @@ impl DreamController {
         } else {
             anchor
         }
+    }
+
+    /// Whether the urgent maximum-backlog trigger holds right now: automatic
+    /// dreaming enabled and crystallization-eligible pending at the
+    /// configured maximum.
+    fn urgent_backlog_due(&self) -> bool {
+        let Ok(dream_config) = load_dream_config(&self.inner.config) else {
+            return false;
+        };
+        if !dream_config.enabled {
+            return false;
+        }
+        pending_short_term_memory_count(&self.inner.config)
+            .map(|pending| pending >= dream_config.max_pending_short_term_memories)
+            .unwrap_or(false)
     }
 
     fn take_pending(&self) -> Option<(String, RunPlan, Arc<RunSlot>)> {
@@ -523,14 +546,23 @@ impl DreamController {
             .publish("dream_started", json!({ "trigger": trigger }));
 
         // A panic must never strand a waiter (the serve thread blocking on
-        // this slot would hang the shutdown join): catch it and fail the
-        // run honestly. The durable rows of completed batches stay.
+        // this slot would hang the shutdown join): catch it, log what
+        // panicked, and fail the run honestly. The durable rows of completed
+        // batches stay.
         let outcome = match std::panic::catch_unwind(AssertUnwindSafe(|| self.run_plan(plan, stop)))
         {
             Ok(outcome) => outcome,
-            Err(_) => Err("dream worker panicked; the run stopped at the current \
-                           batch boundary"
-                .to_string()),
+            Err(payload) => {
+                let detail = payload
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "non-string panic payload".to_string());
+                eprintln!("hiero dream worker panicked during a {trigger} run: {detail}");
+                Err("dream worker panicked; the run stopped at the current \
+                     batch boundary"
+                    .to_string())
+            }
         };
 
         // The wait answer and the events tell the same story: a drain the
