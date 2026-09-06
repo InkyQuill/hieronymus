@@ -182,10 +182,6 @@ const ADMIN_COMMANDS: [AdminCommand; 13] = [
     ),
 ];
 
-/// Immediate user-feedback deltas: `confirmed_by_user` moves a crystal by
-/// (+0.15 strength, +0.20 confidence), clamped to [0, 1].
-const REINFORCE_DELTAS: (f64, f64) = (0.15, 0.20);
-
 /// `GET /api/admin/dashboard` — the full admin bootstrap payload.
 pub(super) fn dashboard(_request: &Request, runtime: &DaemonRuntime) -> Response {
     let config = &runtime.config;
@@ -235,11 +231,52 @@ pub(super) fn snapshot(_request: &Request, runtime: &DaemonRuntime, query: &str)
     Response::json(200, &payload)
 }
 
-/// `POST /api/admin/actions/{action}`.
+/// `POST /api/admin/actions/{action}` — the typed, audited admin write
+/// surface (plan W3). The domain logic and the audit row live in
+/// [`crate::application::admin::run_action`]; this handler decodes the body,
+/// passes the transport-authenticated actor (never a JSON field), and wraps
+/// the outcome with the refreshed `stats`/`snapshot`/status projections
+/// (frozen `reinforce_crystal` envelope preserved).
 pub(super) fn action(request: &Request, runtime: &DaemonRuntime, action: &str) -> Response {
-    match action {
-        "reinforce_crystal" => reinforce_crystal(request, runtime),
-        _ => Response::json(404, &json!({"error": "unknown_admin_action"})),
+    let body = request_body(request).unwrap_or_else(|| json!({}));
+    match crate::application::admin::run_action(
+        &runtime.application,
+        crate::daemon::BEARER_ACTOR,
+        action,
+        &body,
+    ) {
+        Ok(outcome) => {
+            let config = &runtime.config;
+            let view = outcome
+                .get("view")
+                .and_then(Value::as_str)
+                .unwrap_or("Crystals");
+            let selected_id = outcome
+                .get("selected_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let mut payload = json!({
+                "result": outcome.get("result").cloned().unwrap_or_else(|| json!({})),
+                "stats": stats_payload(config),
+                "snapshot": snapshot_value(config, view, selected_id),
+            });
+            for extra in ["provenance", "reasons", "review", "run"] {
+                if let Some(value) = outcome.get(extra) {
+                    payload[extra] = value.clone();
+                }
+            }
+            for (key, value) in dashboard_status_payload(config) {
+                payload[key] = value;
+            }
+            Response::json(200, &payload)
+        }
+        Err(crate::application::AppError::NotImplemented(_)) => {
+            Response::json(404, &json!({"error": "unknown_admin_action"}))
+        }
+        Err(
+            crate::application::AppError::Invalid(message)
+            | crate::application::AppError::Domain(message),
+        ) => Response::json(400, &json!({"error": message})),
     }
 }
 
@@ -388,108 +425,6 @@ fn redacted_error(config: &HieronymusConfig, error: &DreamError) -> String {
             hieronymus::secret::redact_values(&message, &keys)
         })
         .unwrap_or(message)
-}
-
-/// `POST /api/admin/actions/reinforce_crystal` — one `confirmed_by_user`
-/// feedback event plus an audit entry, then the refreshed payload.
-fn reinforce_crystal(request: &Request, runtime: &DaemonRuntime) -> Response {
-    let Some(body) = request_body(request) else {
-        return action_error("id must be an integer");
-    };
-    let Some(crystal_id) = body.get("id").and_then(Value::as_i64) else {
-        return action_error("id must be an integer");
-    };
-    let evidence = body
-        .get("evidence")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .unwrap_or("Reinforced from admin bridge");
-    let config = &runtime.config;
-    if let Err(error) = apply_reinforcement(config, crystal_id, evidence) {
-        return action_error(&error);
-    }
-    let mut payload = json!({
-        "result": json!({
-            "entity_type": "crystal",
-            "entity_id": crystal_id,
-            "action": "reinforce",
-            "message": "Crystal reinforced",
-        }),
-        "stats": stats_payload(config),
-        "snapshot": snapshot_value(config, "Crystals", &crystal_id.to_string()),
-    });
-    for (key, value) in dashboard_status_payload(config) {
-        payload[key] = value;
-    }
-    Response::json(200, &payload)
-}
-
-fn action_error(message: &str) -> Response {
-    Response::json(400, &json!({"error": message}))
-}
-
-/// The reinforce transaction: feedback event, clamped score update, audit
-/// entry. `confirmed_by_user` raises strength by 0.15 and confidence by 0.20.
-fn apply_reinforcement(
-    config: &HieronymusConfig,
-    crystal_id: i64,
-    evidence: &str,
-) -> Result<(), String> {
-    let mut connection = open_migrated(&config.database_path()).map_err(|e| e.to_string())?;
-    let transaction = connection.transaction().map_err(|e| e.to_string())?;
-    let existing: Option<(f64, f64, String)> = transaction
-        .query_row(
-            "select strength, confidence, status from crystals where id = ?1",
-            [crystal_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map(Some)
-        .or_else(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })
-        .map_err(|e| e.to_string())?;
-    let Some((strength, confidence, status)) = existing else {
-        return Err(format!("unknown crystal: {crystal_id}"));
-    };
-    let (strength_delta, confidence_delta) = REINFORCE_DELTAS;
-    let now = now();
-    transaction
-        .execute(
-            "insert into memory_events(
-               crystal_id, session_id, event_type, source_role, evidence,
-               strength_delta, confidence_delta, applied, created_at
-             )
-             values (?1, null, 'confirmed_by_user', 'user', ?2, ?3, ?4, 1, ?5)",
-            rusqlite::params![crystal_id, evidence, strength_delta, confidence_delta, now],
-        )
-        .map_err(|e| e.to_string())?;
-    transaction
-        .execute(
-            "update crystals set strength = ?1, confidence = ?2, status = ?3, updated_at = ?4
-             where id = ?5",
-            rusqlite::params![
-                clamp_score(strength + strength_delta),
-                clamp_score(confidence + confidence_delta),
-                status,
-                now,
-                crystal_id
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    transaction
-        .execute(
-            "insert into audit_log(action, entity_type, entity_id, note, created_at)
-             values ('reinforce', 'crystal', ?1, ?2, ?3)",
-            rusqlite::params![crystal_id.to_string(), evidence, now],
-        )
-        .map_err(|e| e.to_string())?;
-    transaction.commit().map_err(|e| e.to_string())
-}
-
-fn clamp_score(value: f64) -> f64 {
-    value.clamp(0.0, 1.0)
 }
 
 fn now() -> String {

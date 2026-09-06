@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
 
-use super::AppError;
+use crate::application::AppError;
 
 /// The ten advertised admin views, in navigation order (Python `ADMIN_VIEWS`).
 pub const VIEW_NAMES: [&str; 10] = [
@@ -1110,7 +1110,7 @@ fn percent(value: f64) -> String {
     format!("{:.0}%", value * 100.0)
 }
 
-fn excerpt(text: &str) -> String {
+pub(super) fn excerpt(text: &str) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     const LIMIT: usize = 80;
     if normalized.chars().count() <= LIMIT {

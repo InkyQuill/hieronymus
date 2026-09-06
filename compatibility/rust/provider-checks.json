@@ -1,0 +1,53 @@
+{
+  "expectation_set": "provider-checks-v1",
+  "adr": "0012",
+  "astra_finding": 12,
+  "supersedes": [
+    "compatibility/fixtures/http/route-cases.json :: http.route.post.api.providers.id.check (success)",
+    "compatibility/fixtures/http/route-cases.json :: http.route.get.api.providers.id.models (success)"
+  ],
+  "rule": "Versioned Rust expectation, separate from the frozen Python HTTP route-cases (whose bytes stay unchanged). This file records the reconciled contract for the two route cases above per ADR 0012 / Astra finding 12.\n\nAstra finding 12: the Python/oracle provider `check` and `models` routes short-circuited any host under RFC 2606's reserved `.invalid` TLD and answered `{\"ok\": true, \"models\": [\"synthetic-model\"], \"source\": \"fixture\"}` — a synthetic success derived purely from the hostname. The Rust daemon removes that branch. Production always runs the real probe (`hieronymus::dream_providers::probe_models`) over the injected `ProviderTransport` (`BlockingHttpTransport` in production). A `.invalid` host therefore fails DNS/connection and the route reports the genuine failure: `models` falls back to the deterministic per-type default suggestions with `source: \"defaults\"` and `error: \"model suggestions unavailable\"`, and `check.ok` is `false`. A hostname that merely resembles a fixture is never reported as success. The seam is real: tests inject a mock `ProviderTransport` through `DaemonProviderClient::new` to exercise both a real listing (`source: \"api\"`) and a transport failure — neither path can yield `\"synthetic-model\"` or `source: \"fixture\"`.\n\nUnchanged: the frozen auth/CSRF/host failure cases for both routes (cross-origin 403, invalid-host 400, missing-session 401, and — for `check` — the waived CSRF cases collapsing per ADR 0012); the redacted payloads (the configured key never echoes back); the keyless-profile behaviour (`error: \"API key missing for provider profile\"`, no wire traffic).",
+  "expectations": [
+    {
+      "route": "GET /api/providers/{id}/models",
+      "seed": "a profile whose url host is under .invalid (e.g. https://provider.invalid/v1), with a configured key",
+      "expected": {
+        "status": 200,
+        "body": {
+          "models": ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+          "source": "defaults",
+          "error": "model suggestions unavailable"
+        }
+      }
+    },
+    {
+      "route": "POST /api/providers/{id}/check",
+      "seed": "a profile whose url host is under .invalid, with a configured key",
+      "expected": {
+        "status": 200,
+        "body_matches": {
+          "check.ok": false,
+          "check.source": "defaults",
+          "check.models_excludes": "synthetic-model",
+          "error": ""
+        }
+      }
+    },
+    {
+      "route": "seam: probe_models(profile, mock_transport) — mock returns a valid model listing",
+      "expected": {
+        "ok": true,
+        "source": "api",
+        "note": "models come from the mock body; never [\"synthetic-model\"], never source \"fixture\""
+      }
+    },
+    {
+      "route": "seam: probe_models(profile, mock_transport) — mock returns a network error",
+      "expected": {
+        "ok": false,
+        "source": "defaults",
+        "error": "model suggestions unavailable"
+      }
+    }
+  ]
+}

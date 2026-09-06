@@ -17,6 +17,21 @@ vi.mock("../lib/api", () => ({
 const loadSnapshotMock = vi.mocked(loadAdminSnapshot);
 const runActionMock = vi.mocked(runAdminAction);
 
+const command = (
+  id: string,
+  label: string,
+  views: string[],
+  requires_selection: boolean,
+) => ({
+  id,
+  label,
+  hint: `${label} hint`,
+  key: "",
+  group: "Memory",
+  views,
+  requires_selection,
+});
+
 const dashboard = {
   header: {
     product: "Hieronymus",
@@ -25,6 +40,23 @@ const dashboard = {
   },
   stats: {},
   views: ["Crystals"],
+  command_options: [
+    command(
+      "reinforce_crystal",
+      "Reinforce Crystal",
+      ["Crystals", "Lessons"],
+      true,
+    ),
+    command("decay_crystal", "Decay Crystal", ["Crystals", "Lessons"], true),
+    command(
+      "delete_selected",
+      "Delete Selected",
+      ["Concepts", "Crystals", "Lessons"],
+      true,
+    ),
+    command("split_crystal", "Split Crystal", ["Crystals", "Lessons"], true),
+    command("add_memory", "Add Memory", ["Crystals", "Lessons"], false),
+  ],
   short_term_status: {},
   dream_status: {},
 } satisfies AdminDashboard;
@@ -135,13 +167,17 @@ function snapshotFor(view: string): AdminSnapshot {
 test("every advertised view is selectable and renders its returned rows", async () => {
   const user = userEvent.setup();
   loadSnapshotMock.mockReset();
-  loadSnapshotMock.mockImplementation(async (view: string) => snapshotFor(view));
+  loadSnapshotMock.mockImplementation(async (view: string) =>
+    snapshotFor(view),
+  );
 
   const tenViewDashboard = {
     ...dashboard,
     views: ALL_VIEWS,
   } satisfies AdminDashboard;
-  render(MemoryViews, { props: { dashboard: tenViewDashboard, onNotice: vi.fn() } });
+  render(MemoryViews, {
+    props: { dashboard: tenViewDashboard, onNotice: vi.fn() },
+  });
 
   for (const view of ALL_VIEWS) {
     await user.click(screen.getByRole("button", { name: view }));
@@ -163,7 +199,9 @@ test("selection survives a background dashboard refresh by stable id", async () 
   const { rerender } = render(MemoryViews, {
     props: { dashboard, onNotice: vi.fn() },
   });
-  await user.click(await screen.findByRole("button", { name: /Crystal Alpha/ }));
+  await user.click(
+    await screen.findByRole("button", { name: /Crystal Alpha/ }),
+  );
   await screen.findByText("Evidence");
   expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", 7);
 
@@ -213,24 +251,49 @@ test("a stale snapshot response does not overwrite a newer one", async () => {
   await screen.findByText("Concepts record one");
 });
 
-test("destructive memory actions require confirmation and send the exact payload", async () => {
+test("a non-destructive action posts the canonical id and selected row immediately", async () => {
   const user = userEvent.setup();
-  const actionResult = {
-    result: { message: "Deleted Crystal Alpha." },
+  runActionMock.mockResolvedValue({
+    result: { message: "Crystal reinforced" },
     snapshot: listSnapshot.snapshot,
-  } satisfies AdminActionResult;
-  runActionMock.mockResolvedValue(actionResult);
+  } satisfies AdminActionResult);
 
   render(MemoryViews, { props: { dashboard, onNotice: vi.fn() } });
   await user.click(
     await screen.findByRole("button", { name: /Crystal Alpha/ }),
   );
   await screen.findByText("Evidence");
-  await user.click(screen.getByRole("button", { name: "Delete" }));
-  expect(runActionMock).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Confirm Delete" }));
-  expect(runActionMock).toHaveBeenCalledWith("delete_crystal", {
+  await user.click(screen.getByRole("button", { name: "Reinforce Crystal" }));
+  expect(runActionMock).toHaveBeenCalledWith("reinforce_crystal", {
+    view: "Crystals",
     id: 7,
+  });
+});
+
+test("a destructive action opens a dialog and only posts after explicit confirmation", async () => {
+  const user = userEvent.setup();
+  runActionMock.mockResolvedValue({
+    result: { message: "Crystal deleted" },
+    snapshot: listSnapshot.snapshot,
+  } satisfies AdminActionResult);
+
+  render(MemoryViews, { props: { dashboard, onNotice: vi.fn() } });
+  await user.click(
+    await screen.findByRole("button", { name: /Crystal Alpha/ }),
+  );
+  await screen.findByText("Evidence");
+  await user.click(screen.getByRole("button", { name: "Delete Selected" }));
+  // The dialog is open; nothing posted yet.
+  expect(runActionMock).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByLabelText(/apply this change to the stored memory/i),
+  );
+  await user.click(
+    screen.getAllByRole("button", { name: "Delete Selected" }).at(-1)!,
+  );
+  expect(runActionMock).toHaveBeenCalledWith("delete_selected", {
+    view: "Crystals",
+    ids: [7],
     confirmed: true,
   });
 });

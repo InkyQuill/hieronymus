@@ -1,10 +1,17 @@
 //! Provider routes (`/api/providers*`): browser-authenticated CRUD over the
 //! slice-1 typed `provider.conf` catalog plus connection `check` and
-//! `models` suggestions through a provider-client seam. The synthetic
-//! fixture world (an `.invalid` endpoint that can never resolve) keeps the
-//! frozen oracle semantics (`{"ok":true,"models":["synthetic-model"],
-//! "source":"fixture"}`); every other configured profile is probed through
-//! the real provider client over the blocking transport.
+//! `models` suggestions through a provider-client seam.
+//!
+//! Every configured profile — `.invalid` hosts included — is probed through
+//! the real provider client ([`hieronymus::dream_providers::probe_models`])
+//! over the injected [`ProviderTransport`]. Production wires
+//! [`BlockingHttpTransport`]; a `.invalid` host then yields a real
+//! DNS/connection error and `{"ok": false, "error": "...", "source":
+//! "defaults"}` — never a synthetic success. The old `source: "fixture"`
+//! short-circuit for `*.invalid` hosts was removed per Astra finding 12; the
+//! reconciled Rust contract is `compatibility/rust/provider-checks.json`.
+//! Tests inject a mock `ProviderTransport` through
+//! [`DaemonProviderClient::new`] to exercise both outcomes.
 
 use std::sync::Arc;
 
@@ -40,10 +47,10 @@ pub(crate) trait ProviderClientSeam: Send + Sync {
     fn models(&self, provider_id: &str, profile: &ProviderProfile) -> ProviderProbe;
 }
 
-/// The daemon's seam: the synthetic fixture world keeps the frozen oracle
-/// semantics; every other configured profile is probed through the real
-/// client (`hieronymus::dream_providers::probe_models`) over the blocking
-/// transport.
+/// The daemon's seam: every configured profile is probed through the real
+/// client (`hieronymus::dream_providers::probe_models`) over the injected
+/// transport. There is no hostname-based shortcut — a `.invalid` host
+/// produces a real transport error, not a synthetic success.
 pub(crate) struct DaemonProviderClient {
     transport: Arc<dyn ProviderTransport>,
 }
@@ -58,9 +65,6 @@ impl DaemonProviderClient {
     }
 
     fn probe(&self, profile: &ProviderProfile) -> ProviderProbe {
-        if is_synthetic_world_endpoint(profile.url()) {
-            return fixture_probe();
-        }
         probe_models(profile, Arc::clone(&self.transport))
     }
 }
@@ -73,31 +77,6 @@ impl ProviderClientSeam for DaemonProviderClient {
     fn models(&self, _provider_id: &str, profile: &ProviderProfile) -> ProviderProbe {
         self.probe(profile)
     }
-}
-
-/// The frozen oracle probe: `source: "fixture"` mirrors the oracle, which
-/// ran the routes against a fixture registry instead of the network.
-fn fixture_probe() -> ProviderProbe {
-    ProviderProbe {
-        ok: true,
-        models: vec!["synthetic-model".to_string()],
-        source: "fixture".to_string(),
-        error: String::new(),
-    }
-}
-
-/// RFC 2606 reserves `.invalid` so those hosts can never resolve. The frozen
-/// synthetic world (`https://provider.invalid/v1`) must answer with fixture
-/// semantics rather than a guaranteed-failing network attempt.
-fn is_synthetic_world_endpoint(url: &str) -> bool {
-    let host = url.split("://").nth(1).unwrap_or(url);
-    let host = host.split(['/', '?']).next().unwrap_or(host);
-    let host = host
-        .rsplit_once(':')
-        .map_or(host, |(host, _port)| host)
-        .trim_start_matches('[')
-        .trim_end_matches(']');
-    host == "invalid" || host.to_ascii_lowercase().ends_with(".invalid")
 }
 
 /// `GET /api/providers` — user-created profiles for the web console.
