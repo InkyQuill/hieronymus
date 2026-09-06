@@ -92,6 +92,127 @@ test.each(["{Enter}", " "])(
   },
 );
 
+const ALL_VIEWS = [
+  "Concepts",
+  "Renderings",
+  "Crystals",
+  "Lessons",
+  "Short-Term Memory",
+  "Short-Term Sessions",
+  "Dream Runs",
+  "Proposals",
+  "Dream Audits",
+  "Audit Log",
+];
+
+function snapshotFor(view: string): AdminSnapshot {
+  const viewRow = {
+    id: `${view}-1`,
+    kind: `${view} kind`,
+    label: `${view} record one`,
+    status: "active",
+    scope: "series:main",
+    language_pair: "ja -> en",
+    quality_label: "80% conf",
+    tags: [],
+  };
+  return {
+    snapshot: {
+      view,
+      rows: [viewRow],
+      selected: viewRow,
+      detail: {
+        title: `${view} detail heading`,
+        subtitle: `${view} detail`,
+        body: `${view} body`,
+        fields: [["Scope", "series:main"]],
+      },
+      filters: [],
+    },
+  } satisfies AdminSnapshot;
+}
+
+test("every advertised view is selectable and renders its returned rows", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock.mockReset();
+  loadSnapshotMock.mockImplementation(async (view: string) => snapshotFor(view));
+
+  const tenViewDashboard = {
+    ...dashboard,
+    views: ALL_VIEWS,
+  } satisfies AdminDashboard;
+  render(MemoryViews, { props: { dashboard: tenViewDashboard, onNotice: vi.fn() } });
+
+  for (const view of ALL_VIEWS) {
+    await user.click(screen.getByRole("button", { name: view }));
+    await waitFor(() =>
+      expect(loadSnapshotMock).toHaveBeenCalledWith(view, undefined),
+    );
+    await screen.findByText(`${view} record one`);
+    await screen.findByText(`${view} body`);
+  }
+});
+
+test("selection survives a background dashboard refresh by stable id", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock.mockReset();
+  loadSnapshotMock
+    .mockResolvedValueOnce(listSnapshot)
+    .mockResolvedValue(selectedSnapshot);
+
+  const { rerender } = render(MemoryViews, {
+    props: { dashboard, onNotice: vi.fn() },
+  });
+  await user.click(await screen.findByRole("button", { name: /Crystal Alpha/ }));
+  await screen.findByText("Evidence");
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", 7);
+
+  // A fresh dashboard object (what App.svelte hands down after an admin event)
+  // must trigger a reload that keeps the selected row.
+  await rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", 7),
+  );
+});
+
+test("the dashboard effect does not fetch on first render", async () => {
+  loadSnapshotMock.mockReset();
+  loadSnapshotMock.mockResolvedValue(selectedSnapshot);
+  render(MemoryViews, { props: { dashboard, onNotice: vi.fn() } });
+  await waitFor(() => expect(loadSnapshotMock).toHaveBeenCalledTimes(1));
+  // Give any stray effect run a tick to fire; the count must not move.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(loadSnapshotMock).toHaveBeenCalledTimes(1);
+  expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", undefined);
+});
+
+test("a stale snapshot response does not overwrite a newer one", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock.mockReset();
+  let resolveStale: (value: AdminSnapshot) => void = () => {};
+  const stalePending = new Promise<AdminSnapshot>((resolve) => {
+    resolveStale = resolve;
+  });
+  loadSnapshotMock
+    .mockReturnValueOnce(stalePending) // onMount load (Crystals) — hangs
+    .mockResolvedValueOnce(snapshotFor("Concepts")); // second load — resolves first
+
+  render(MemoryViews, {
+    props: {
+      dashboard: { ...dashboard, views: ["Crystals", "Concepts"] },
+      onNotice: vi.fn(),
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Concepts" }));
+  await screen.findByText("Concepts record one");
+
+  // The earlier, slower Crystals response now lands — it must be dropped.
+  resolveStale(listSnapshot);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(screen.queryByText("Crystal Alpha")).toBeNull();
+  await screen.findByText("Concepts record one");
+});
+
 test("destructive memory actions require confirmation and send the exact payload", async () => {
   const user = userEvent.setup();
   const actionResult = {

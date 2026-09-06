@@ -101,7 +101,23 @@ export type AdminSnapshot = {
     rows: AdminRow[];
     selected: AdminRow | null;
     detail: AdminDetail;
+    /// Active filter labels for the view (empty today; W2 keeps the key so
+    /// the frontend contract already carries it).
+    filters?: string[];
   };
+};
+
+/// Paging and scope inputs for `GET /api/admin/snapshot`. All optional: the
+/// daemon defaults to a bounded page of the current view with no scope.
+export type AdminSnapshotQuery = {
+  view: string;
+  selected_id?: string | number;
+  /// Bounded page size; the daemon clamps this to its own maximum.
+  limit?: number;
+  offset?: number;
+  /// Series slug the projection is scoped to; foreign-context rows are
+  /// filtered out (global concepts/rows still appear).
+  series?: string;
 };
 
 export type AdminActionResult = {

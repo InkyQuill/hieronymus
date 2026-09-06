@@ -23,11 +23,6 @@ use super::parse_query;
 use super::request_body;
 use crate::daemon::daemon_display_version;
 
-/// The views the snapshot serves in this slice. The frozen contracts address
-/// the `Crystals` view; `Lessons` shares its row model. The remaining views
-/// need stores that are ported in later slices and fail closed for now.
-const SUPPORTED_VIEWS: [&str; 2] = ["Crystals", "Lessons"];
-
 const ADMIN_VIEWS: [&str; 10] = [
     "Concepts",
     "Renderings",
@@ -218,21 +213,21 @@ pub(super) fn dashboard(_request: &Request, runtime: &DaemonRuntime) -> Response
 pub(super) fn snapshot(_request: &Request, runtime: &DaemonRuntime, query: &str) -> Response {
     let params: BTreeMap<String, String> = parse_query(query).into_iter().collect();
     let view = view_label(params.get("view").map(String::as_str).unwrap_or("Crystals"));
-    let selected_id = params
-        .get("selected_id")
-        .or_else(|| params.get("id"))
-        .map(String::as_str)
-        .unwrap_or_default();
-    if !SUPPORTED_VIEWS.contains(&view.as_str()) {
-        return Response::json(
-            400,
-            &json!({"error": format!("unsupported admin view: {view}")}),
-        );
-    }
     let config = &runtime.config;
+    let snapshot =
+        match crate::application::admin::snapshot(config, &view, &admin_query_from_params(&params))
+        {
+            Ok(value) => value,
+            Err(crate::application::AppError::Invalid(message)) => {
+                return Response::json(400, &json!({"error": message}));
+            }
+            Err(error) => {
+                return Response::json(500, &json!({"error": error.to_string()}));
+            }
+        };
     let mut payload = json!({
         "stats": stats_payload(config),
-        "snapshot": snapshot_value(config, &view, selected_id),
+        "snapshot": snapshot,
     });
     for (key, value) in dashboard_status_payload(config) {
         payload[key] = value;
@@ -773,175 +768,31 @@ fn stats_payload(config: &HieronymusConfig) -> Value {
     })
 }
 
-/// The Crystals/Lessons snapshot (`AdminBridge._snapshot` semantics: the
-/// detail body is the crystal text).
+/// The admin view projection, delegated to the read-only domain module
+/// [`crate::application::admin`]. Used by the callers that only ever pass a
+/// selection (`dashboard`, `reinforce_crystal`); `Crystals`/`Lessons` stay
+/// byte-identical to the frozen fixture.
 fn snapshot_value(config: &HieronymusConfig, view: &str, selected_id: &str) -> Value {
-    let kind_filter: Option<&'static str> = if view == "Lessons" {
-        Some("lesson")
-    } else {
-        None
-    };
-    let rows = crystal_rows(config, kind_filter);
-    let selected = select_row(&rows, selected_id);
-    let detail = match &selected {
-        Some(row) => {
-            let crystal_id = row["id"].as_i64().unwrap_or_default();
-            let crystal_text = open_migrated(&config.database_path())
-                .ok()
-                .and_then(|connection| {
-                    connection
-                        .query_row(
-                            "select text from crystals where id = ?1",
-                            [crystal_id],
-                            |row| row.get::<_, String>(0),
-                        )
-                        .ok()
-                })
-                .unwrap_or_default();
-            json!({
-                "title": row["label"].clone(),
-                "subtitle": format!(
-                    "{} / {}",
-                    row["kind"].as_str().unwrap_or_default(),
-                    row["status"].as_str().unwrap_or_default()
-                ),
-                "body": crystal_text,
-                "fields": [
-                    ["Series", row["scope"].clone()],
-                    ["Language", row["language_pair"].clone()],
-                    ["Quality", row["quality_label"].clone()],
-                ],
-            })
+    let mut query = serde_json::Map::new();
+    if !selected_id.is_empty() {
+        query.insert("selected_id".to_string(), json!(selected_id));
+    }
+    crate::application::admin::snapshot(config, view, &Value::Object(query))
+        .unwrap_or_else(|error| json!({"error": error.to_string()}))
+}
+
+/// The `GET /api/admin/snapshot` query surface: selection plus the bounded
+/// paging and series scope that [`crate::application::admin::snapshot`] reads
+/// (`AdminSnapshotQuery` in the frontend). Values pass through as strings; the
+/// domain module clamps and parses them.
+fn admin_query_from_params(params: &BTreeMap<String, String>) -> Value {
+    let mut query = serde_json::Map::new();
+    for key in ["selected_id", "id", "limit", "offset", "series", "context"] {
+        if let Some(value) = params.get(key).filter(|value| !value.is_empty()) {
+            query.insert(key.to_string(), json!(value));
         }
-        None => json!({
-            "title": view,
-            "subtitle": "No rows",
-            "body": "",
-            "fields": [],
-        }),
-    };
-    let selected = selected.unwrap_or(Value::Null);
-    json!({
-        "view": view,
-        "rows": rows,
-        "selected": selected,
-        "detail": detail,
-        "filters": [],
-    })
-}
-
-fn crystal_rows(config: &HieronymusConfig, kind: Option<&'static str>) -> Vec<Value> {
-    let Ok(connection) = open_migrated(&config.database_path()) else {
-        return Vec::new();
-    };
-    let Ok(mut statement) = connection.prepare(
-        "select id, crystal_type, title, text, status, series_slug, scope_key, scope_type,
-                source_language, target_language, tags_json, confidence, strength
-         from crystals
-         where (?1 is null or crystal_type = ?1)
-         order by id
-         limit 200",
-    ) else {
-        return Vec::new();
-    };
-    let rows = statement.query_map([kind], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, String>(6)?,
-            row.get::<_, String>(7)?,
-            row.get::<_, String>(8)?,
-            row.get::<_, String>(9)?,
-            row.get::<_, String>(10)?,
-            row.get::<_, f64>(11)?,
-            row.get::<_, f64>(12)?,
-        ))
-    });
-    let Ok(rows) = rows else {
-        return Vec::new();
-    };
-    rows.flatten()
-        .map(
-            |(
-                id,
-                kind,
-                title,
-                text,
-                status,
-                series_slug,
-                scope_key,
-                scope_type,
-                source_language,
-                target_language,
-                tags_json,
-                confidence,
-                strength,
-            )| {
-                let label = if title.is_empty() {
-                    excerpt(&text)
-                } else {
-                    title
-                };
-                let scope = if !series_slug.is_empty() {
-                    series_slug
-                } else if !scope_key.is_empty() {
-                    scope_key
-                } else {
-                    scope_type
-                };
-                json!({
-                    "id": id,
-                    "kind": kind,
-                    "label": label,
-                    "status": status,
-                    "scope": scope,
-                    "language_pair": format!("{source_language} -> {target_language}"),
-                    "quality_label": quality_label(confidence, strength),
-                    "tags": serde_json::from_str::<Vec<String>>(&tags_json)
-                        .unwrap_or_default(),
-                })
-            },
-        )
-        .collect()
-}
-
-fn select_row(rows: &[Value], selected_id: &str) -> Option<Value> {
-    let first = rows.first()?.clone();
-    if selected_id.is_empty() {
-        return Some(first);
     }
-    rows.iter()
-        .find(|row| {
-            row["id"]
-                .as_i64()
-                .is_some_and(|id| id.to_string() == selected_id)
-        })
-        .cloned()
-        .or(Some(first))
-}
-
-fn quality_label(confidence: f64, strength: f64) -> String {
-    format!("{} conf / {} str", percent(confidence), percent(strength))
-}
-
-/// Python `f"{round(float(value) * 100):.0f}%"` (round-half-even over the
-/// binary value, which `{:.0}` formatting reproduces).
-fn percent(value: f64) -> String {
-    format!("{:.0}%", value * 100.0)
-}
-
-fn excerpt(text: &str) -> String {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    const LIMIT: usize = 80;
-    if normalized.chars().count() <= LIMIT {
-        return normalized;
-    }
-    let cut: String = normalized.chars().take(LIMIT - 1).collect();
-    format!("{cut}...")
+    Value::Object(query)
 }
 
 /// Header metadata for the console (port of `header_status_payload`).

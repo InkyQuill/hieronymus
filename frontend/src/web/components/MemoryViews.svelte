@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { loadAdminSnapshot, runAdminAction } from "../lib/api";
   import type {
     AdminDashboard,
@@ -24,6 +24,8 @@
 
   let { dashboard, onNotice }: Props = $props();
 
+  // W3 reconciles action names with the 13 canonical admin actions; W2 only
+  // needs every view to select and render, so the existing buttons stay.
   const actionByView: Partial<Record<string, Action[]>> = {
     Crystals: ["reinforce_crystal", "decay_crystal", "deprecate_crystal", "delete_crystal"],
     Proposals: ["approve_proposal", "reject_proposal"],
@@ -73,19 +75,44 @@
     snapshot = next;
   }
 
+  // Every load() call takes the next sequence number; a response whose number
+  // is no longer current is dropped so a slow earlier fetch can never
+  // overwrite newer state. (Full refresh coalescing is W4.)
+  let loadSequence = 0;
+
   async function load(view: string, selectedId?: string | number) {
+    const sequence = ++loadSequence;
     selectedView = view;
     loading = true;
     error = "";
     pendingAction = null;
     try {
-      applySnapshot((await loadAdminSnapshot(view, selectedId)).snapshot);
+      const next = (await loadAdminSnapshot(view, selectedId)).snapshot;
+      if (sequence !== loadSequence) return;
+      applySnapshot(next);
     } catch (reason) {
+      if (sequence !== loadSequence) return;
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
-      loading = false;
+      if (sequence === loadSequence) loading = false;
     }
   }
+
+  // Re-load the current view when the parent hands down a fresh admin
+  // dashboard object (an admin event, a completed action). The selected row is
+  // preserved by its stable `id` so a background refresh never loses the
+  // reader's place. The first effect run only records the initial prop.
+  let dashboardSeen = false;
+  $effect(() => {
+    void dashboard;
+    if (!dashboardSeen) {
+      dashboardSeen = true;
+      return;
+    }
+    const view = untrack(() => selectedView);
+    const selectedId = untrack(() => snapshot?.selected?.id);
+    if (view) void load(view, selectedId);
+  });
 
   async function perform(action: Action, confirmed = false) {
     const row = snapshot?.selected;
@@ -94,6 +121,9 @@
     error = "";
     try {
       const result = await runAdminAction(action, { id: row.id, confirmed });
+      // The action result is authoritative: invalidate any in-flight load so
+      // it cannot overwrite this snapshot.
+      loadSequence += 1;
       applySnapshot(result.snapshot);
       pendingAction = null;
       onNotice({ message: result.result.message, tone: "success" });
