@@ -962,7 +962,7 @@ fn set_canonical_facet_with_connection(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn add_facet_with_connection(
+pub(crate) fn add_facet_with_connection(
     connection: &Connection,
     concept_id: i64,
     clean_value: &str,
@@ -1779,6 +1779,208 @@ fn facet_by_value_first_id(
             other => Err(other),
         })?;
     Ok(found)
+}
+
+// ----------------------------------------------------------------------
+// Dream graph application (transaction-aware primitives, task D2)
+// ----------------------------------------------------------------------
+
+/// The candidate row a reinforcement delta applies to (Python
+/// `_reinforcement_target_with_connection`): the single active concept with
+/// this identity in scope; among several, tag matching disambiguates.
+struct ReinforcementTarget {
+    id: i64,
+    confidence: f64,
+    status: String,
+}
+
+fn reinforcement_target(
+    connection: &Connection,
+    canonical_name: &str,
+    scope_type: &str,
+    scope_key: &str,
+    tags: &[String],
+) -> Result<Option<ReinforcementTarget>, ConceptError> {
+    let mut statement = connection.prepare(
+        "select id, confidence, status
+         from concepts
+         where scope_type = ?1 and scope_key = ?2 and canonical_name = ?3
+           and status not in (?, ?)
+         order by id",
+    )?;
+    let rows = statement.query_map(
+        rusqlite::params![
+            scope_type,
+            scope_key,
+            canonical_name,
+            CONCEPT_ARCHIVED,
+            CONCEPT_MERGED
+        ],
+        |row| {
+            Ok(ReinforcementTarget {
+                id: row.get(0)?,
+                confidence: row.get(1)?,
+                status: row.get(2)?,
+            })
+        },
+    )?;
+    let mut rows: Vec<ReinforcementTarget> = rows.collect::<Result<Vec<_>, _>>()?;
+    if rows.len() <= 1 {
+        return Ok(rows.pop());
+    }
+    if tags.is_empty() {
+        return Ok(None);
+    }
+    let requested: std::collections::HashSet<&str> = tags.iter().map(String::as_str).collect();
+    let mut tagged: Vec<(ReinforcementTarget, std::collections::HashSet<String>)> =
+        Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut statement = connection
+            .prepare("select tag from concept_semantic_tags where concept_id = ?1 order by tag")?;
+        let tag_rows = statement.query_map([row.id], |tag_row| tag_row.get::<_, String>(0))?;
+        let row_tags: std::collections::HashSet<String> = tag_rows
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .collect();
+        tagged.push((row, row_tags));
+    }
+    let requested_strings: std::collections::HashSet<String> =
+        requested.into_iter().map(String::from).collect();
+    let exact: Vec<usize> = tagged
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, row_tags))| *row_tags == requested_strings)
+        .map(|(index, _)| index)
+        .collect();
+    if exact.len() == 1 {
+        return Ok(Some(tagged.swap_remove(exact[0]).0));
+    }
+    let overlapping: Vec<usize> = tagged
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, row_tags))| row_tags.iter().any(|tag| requested_strings.contains(tag)))
+        .map(|(index, _)| index)
+        .collect();
+    if overlapping.len() == 1 {
+        return Ok(Some(tagged.swap_remove(overlapping[0]).0));
+    }
+    Ok(None)
+}
+
+/// Port of `_create_or_reinforce_with_connection` for dream graph
+/// application: create the concept as a candidate or reinforce the existing
+/// one (confidence delta, non-empty description, tags), refreshing its
+/// established status from linked evidence. Runs inside the caller's
+/// transaction; dream output can only ever create or update candidates.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_or_reinforce_concept_in_transaction(
+    connection: &Connection,
+    canonical_name: &str,
+    description: &str,
+    tags: &[String],
+    confidence_delta: f64,
+    scope_type: &str,
+    scope_key: &str,
+    now: &str,
+) -> Result<i64, ConceptError> {
+    let name = canonical_name.trim();
+    if name.is_empty() {
+        return Err(ConceptError::Invalid(
+            "concept canonical_name must not be empty".to_string(),
+        ));
+    }
+    validate_scope(scope_type, scope_key)?;
+    let clean_description = description.trim();
+    let clean_tags = clean_tags(tags.iter().map(String::as_str));
+
+    let (concept_id, confidence) =
+        match reinforcement_target(connection, name, scope_type, scope_key, &clean_tags)? {
+            None => {
+                let confidence = clamp_confidence(confidence_delta);
+                let status = concept_status(confidence, 0, None);
+                connection.execute(
+                    "insert into concepts(
+                   canonical_name, description, scope_type, scope_key,
+                   status, confidence, created_at, updated_at
+                 )
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    rusqlite::params![
+                        name,
+                        clean_description,
+                        scope_type,
+                        scope_key,
+                        status,
+                        confidence,
+                        now
+                    ],
+                )?;
+                (connection.last_insert_rowid(), confidence)
+            }
+            Some(target) => {
+                let confidence = clamp_confidence(target.confidence + confidence_delta);
+                let evidence = linked_evidence_count(connection, target.id)?;
+                let status = concept_status(confidence, evidence, Some(&target.status));
+                connection.execute(
+                    "update concepts
+                 set description = case when ?2 != '' then ?2 else description end,
+                     confidence = ?3,
+                     status = ?4,
+                     updated_at = ?5
+                 where id = ?1",
+                    rusqlite::params![target.id, clean_description, confidence, status, now],
+                )?;
+                (target.id, confidence)
+            }
+        };
+    for tag in clean_tags {
+        connection.execute(
+            "insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+             values (?1, ?2, ?3, ?4)
+             on conflict(concept_id, tag) do update set
+               confidence = max(concept_semantic_tags.confidence, excluded.confidence)",
+            rusqlite::params![concept_id, tag, confidence, now],
+        )?;
+    }
+    Ok(concept_id)
+}
+
+/// Insert one pending strict concept proposal inside the caller's
+/// transaction (Python `ConceptProposalStore._create_with_connection`).
+/// Proposals are candidates: only the explicit approval operation can act
+/// on them, so dream output can never activate a rule through this path.
+pub(crate) fn create_concept_proposal_in_transaction(
+    connection: &Connection,
+    dream_run_id: i64,
+    proposal: &crate::dream_output::ConceptProposal,
+    now: &str,
+) -> Result<i64, ConceptError> {
+    let approved_variants_json = serde_json::to_string(&proposal.approved_variants)
+        .map_err(|error| ConceptError::Invalid(error.to_string()))?;
+    let forbidden_variants_json = serde_json::to_string(&proposal.forbidden_variants)
+        .map_err(|error| ConceptError::Invalid(error.to_string()))?;
+    connection.execute(
+        "insert into strict_concept_proposals(
+           dream_run_id, series_slug, source_language, target_language,
+           concept_text, source_form, canonical_rendering,
+           approved_variants_json, forbidden_variants_json, rationale,
+           status, created_at, updated_at
+         )
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?11)",
+        rusqlite::params![
+            dream_run_id,
+            proposal.series_slug,
+            proposal.source_language,
+            proposal.target_language,
+            proposal.concept_text,
+            proposal.source_form,
+            proposal.canonical_rendering,
+            approved_variants_json,
+            forbidden_variants_json,
+            proposal.rationale,
+            now
+        ],
+    )?;
+    Ok(connection.last_insert_rowid())
 }
 
 /// Move the source concept's live facets onto the target: identical facets

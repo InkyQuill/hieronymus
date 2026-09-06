@@ -15,18 +15,22 @@
 //! input is processed.
 //!
 //! Real configured LLM clients live in [`crate::dream_providers`] behind the
-//! same [`DreamProvider`] seam. Still out of scope here: concept/facet
-//! application, supersede/reinforce provider actions, passive feedback
-//! events, decay/maintenance, and scheduler timers. Provider output
-//! sections that would feed those slices fail the run closed instead of
-//! being silently dropped.
-//!
-//! Still out of scope: [`DeterministicDreamProvider`] remains an explicit
+//! same [`DreamProvider`] seam. Provider output is normalized through
+//! [`crate::dream_output`]: every section of the Python
+//! `_NormalizedDreamOutput` contract (crystals with concept names, concept
+//! proposals, concepts, facets, supersede actions, reinforce actions) is
+//! parsed with per-entry rejection into durable audit channels, validated
+//! against the selected context, and applied inside the persistence
+//! transaction. Supersede and reinforce targets are authorized against the
+//! selected context and active-rule protection (ADR 0011) before any store
+//! call; rule-related model output can only ever produce candidates and
+//! proposals. Still out of scope: passive feedback events, decay, and
+//! scheduler timers; [`DeterministicDreamProvider`] remains an explicit
 //! test and diagnostic injection via
 //! [`crate::dream_workflows::WorkflowResolver::deterministic`]; production
 //! construction of configured provider lanes is the D5 controller's job.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::Utc;
 use rusqlite::Connection;
@@ -37,6 +41,10 @@ use crate::db::open_migrated;
 use crate::dream_audit::DreamAuditStore;
 use crate::dream_config::{DreamConfig, load_dream_config};
 use crate::dream_locks::{DreamCycleState, DreamLockError, dream_cycle_lock};
+use crate::dream_output::{
+    ConceptProposal, NormalizedConcept, NormalizedFacet, ReinforceAction, SupersedeAction,
+    validate_action_targets, validate_reinforce_targets, validate_supersede_targets,
+};
 use crate::dream_workflows::{WorkflowChoice, WorkflowResolver, enabled_choices};
 use crate::feedback::apply_score_delta;
 use crate::memory_models::{ShortTermMemoryRecord, TranslationContext};
@@ -54,7 +62,7 @@ pub const ALLOWED_CRYSTAL_TYPES: [&str; 7] = [
 
 pub const MALFORMED_CONFIDENCE_PENALTY: f64 = 0.2;
 
-const MIN_NORMALIZED_CONFIDENCE: f64 = 0.05;
+pub(crate) const MIN_NORMALIZED_CONFIDENCE: f64 = 0.05;
 
 /// Token-set Jaccard similarity at or above which two co-activated `useful`
 /// crystals are near-duplicates and combine pairwise (July design
@@ -117,6 +125,10 @@ pub enum DreamError {
     Open(#[from] crate::db::OpenMigratedError),
     #[error(transparent)]
     Workspace(#[from] crate::workspace::WorkspaceError),
+    #[error(transparent)]
+    Concept(#[from] crate::concepts::ConceptError),
+    #[error(transparent)]
+    Crystal(#[from] crate::crystals::CrystalError),
     #[error("{0}")]
     Json(String),
 }
@@ -337,23 +349,38 @@ pub struct NormalizedCrystal {
     pub story_scopes: Vec<String>,
     pub semantic_tags: Vec<String>,
     pub concept_ids: Vec<i64>,
+    /// Concept names the provider attached to this crystal; resolved to
+    /// ids within the applying group's own context (never through another
+    /// pass's resolution map).
+    pub concept_names: Vec<String>,
 }
 
-/// One pass's normalized output (port of `_NormalizedDreamOutput`, reduced to
-/// the sections the dreaming core applies in this slice).
+/// One pass's normalized output (port of `_NormalizedDreamOutput`).
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedOutput {
     pub crystals: Vec<NormalizedCrystal>,
+    pub concept_proposals: Vec<ConceptProposal>,
+    pub concepts: Vec<NormalizedConcept>,
+    pub facets: Vec<NormalizedFacet>,
+    pub supersede_actions: Vec<SupersedeAction>,
+    pub reinforce_actions: Vec<ReinforceAction>,
     pub warnings: Vec<ParseWarning>,
+    /// Durable per-entry rejections (ruling: malformed entries are never
+    /// silently dropped, and one bad entry never drops its whole section).
+    pub rejected_entries: Vec<Value>,
     pub skipped_candidates: Vec<Value>,
 }
 
-/// Provider sections the dreaming core does not apply in this slice.
-const UNSUPPORTED_OUTPUT_SECTIONS: [&str; 4] = ["concepts", "facets", "supersede", "reinforce"];
-
-/// Provider output sections that resolve concepts by name; concept
-/// application is a later slice, so they are ignored with an audited warning.
-const UNSUPPORTED_CONCEPT_NAME_KEYS: [&str; 3] = ["concept_names", "concepts", "concept_name"];
+/// The `_normalized_output_count` port: every applied section counts against
+/// the per-pass and per-run record budgets.
+fn normalized_output_count(output: &NormalizedOutput) -> usize {
+    output.crystals.len()
+        + output.concept_proposals.len()
+        + output.concepts.len()
+        + output.facets.len()
+        + output.supersede_actions.len()
+        + output.reinforce_actions.len()
+}
 
 struct SelectionGroup {
     session_id: i64,
@@ -384,6 +411,11 @@ impl DeterministicSummary {
 
 struct ApplySummary {
     created_crystal_ids: Vec<i64>,
+    created_concept_ids: Vec<i64>,
+    created_facet_ids: Vec<i64>,
+    created_links: Vec<Value>,
+    superseded_crystal_ids: Vec<i64>,
+    reinforced_crystal_ids: Vec<i64>,
     archived_memory_ids: Vec<i64>,
     dreamed_session_ids: Vec<i64>,
     rejected_entries: Vec<Value>,
@@ -596,6 +628,12 @@ impl DreamService {
             .flat_map(|group| group.memories.iter().cloned())
             .collect();
         let valid_concept_ids = self.valid_concept_ids()?;
+        // Same-context authorization sets (ruling: derived from the selected
+        // affected-memory context BEFORE any store call): the crystals scoped
+        // to the selection's series contexts, and the active rules no dream
+        // action may touch (ADR 0011 — dream has no approval authority).
+        let allowed_crystal_ids = self.context_crystal_ids(&groups)?;
+        let active_rule_ids = self.active_rule_crystal_ids()?;
 
         let mut covered_memory_ids: HashSet<i64> = HashSet::new();
         let mut staged: Vec<NormalizedOutput> = Vec::new();
@@ -677,7 +715,21 @@ impl DreamService {
             }
             validate_normalized_output(&output, &selection_context, &allowed_memory_ids)?;
             self.validate_pass_output(&choice.name, &output)?;
-            let output_count = output.crystals.len() as i64;
+            // No normalized action may touch an id outside the selected
+            // context or an active rule: fail closed before anything is
+            // staged (the raw guard sees the contract key; the typed guards
+            // also cover the Python wire keys).
+            validate_action_targets(&raw, &allowed_crystal_ids, &active_rule_ids)
+                .map_err(DreamError::InvalidOutput)?;
+            validate_supersede_targets(
+                &output.supersede_actions,
+                &allowed_crystal_ids,
+                &active_rule_ids,
+            )
+            .map_err(DreamError::InvalidOutput)?;
+            validate_reinforce_targets(&output.reinforce_actions, &allowed_crystal_ids)
+                .map_err(DreamError::InvalidOutput)?;
+            let output_count = normalized_output_count(&output) as i64;
             let response_summary = self.response_summary(std::slice::from_ref(&output));
             staged.push(output);
             self.complete_phase_run(phase_run_id, output_count)?;
@@ -712,7 +764,7 @@ impl DreamService {
             )));
         }
 
-        let staged_record_count: usize = staged.iter().map(|output| output.crystals.len()).sum();
+        let staged_record_count: usize = staged.iter().map(normalized_output_count).sum();
         if staged_record_count as i64 > self.dream_config.max_long_term_records_affected_per_run {
             return Err(DreamError::InvalidOutput(
                 "dream run exceeds max_long_term_records_affected_per_run".to_string(),
@@ -729,7 +781,14 @@ impl DreamService {
             &primary_provider,
         )?;
         phase_run_ids.push(persistence_phase_run_id);
-        let summary = self.apply_outputs(run_id, cycle_id, &groups, &staged, &selection_context)?;
+        let summary = self.apply_outputs(
+            run_id,
+            cycle_id,
+            &groups,
+            &staged,
+            &allowed_crystal_ids,
+            &active_rule_ids,
+        )?;
         self.complete_phase_run(
             persistence_phase_run_id,
             summary.created_crystal_ids.len() as i64,
@@ -758,12 +817,16 @@ impl DreamService {
             summary.created_crystal_ids.len(),
         )?;
 
+        let proposal_count = staged
+            .iter()
+            .map(|output| output.concept_proposals.len())
+            .sum::<usize>() as i64;
         self.complete_run(
             run_id,
             cycle_id,
             selected_memory_ids.len() as i64,
             (summary.created_crystal_ids.len() + deterministic.created_crystal_ids.len()) as i64,
-            0,
+            proposal_count,
         )
     }
 
@@ -855,34 +918,289 @@ impl DreamService {
         Ok(ids)
     }
 
+    /// The crystals inside the run's selected context: series-scoped rows
+    /// matching any selected group's series/language scope. The same-context
+    /// `allowed` set for dream mutation targets, derived before store calls.
+    fn context_crystal_ids(&self, groups: &[SelectionGroup]) -> Result<BTreeSet<i64>, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        let mut statement = connection.prepare(
+            "select id from crystals
+             where scope_type = 'series' and scope_key = ?1
+               and series_slug = ?2 and source_language = ?3 and target_language = ?4",
+        )?;
+        let mut ids = BTreeSet::new();
+        for group in groups {
+            let rows = statement.query_map(
+                rusqlite::params![
+                    group.context.scope_key(),
+                    group.context.series_slug,
+                    group.context.source_language,
+                    group.context.target_language,
+                ],
+                |row| row.get::<_, i64>(0),
+            )?;
+            for row in rows {
+                ids.insert(row?);
+            }
+        }
+        Ok(ids)
+    }
+
+    /// The active-rule protection set (ADR 0011): active rule crystals plus
+    /// the advisory projections of active `term_rules` authority. No dream
+    /// action may touch these ids.
+    fn active_rule_crystal_ids(&self) -> Result<BTreeSet<i64>, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        let mut ids = BTreeSet::new();
+        {
+            let mut statement = connection.prepare(
+                "select id from crystals where crystal_type = 'rule' and status = 'active'",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+            for row in rows {
+                ids.insert(row?);
+            }
+        }
+        {
+            let mut statement = connection.prepare(
+                "select rule_crystal_id from term_rules
+                 where status = 'active' and rule_crystal_id is not null",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+            for row in rows {
+                ids.insert(row?);
+            }
+        }
+        Ok(ids)
+    }
+
     // ------------------------------------------------------------------
     // Persistence
     // ------------------------------------------------------------------
 
-    /// Apply every staged crystal as one validated mutation batch:
-    /// crystals plus their source links, then memory archiving, then session
-    /// marking — all in one transaction, rolled back entirely on failure.
+    /// Apply every staged output as one validated mutation batch in one
+    /// transaction: concepts, facets, crystals (with concept-name resolution
+    /// inside each output's own map), concept proposals, reinforce actions,
+    /// and supersede actions — then memory archiving and session marking.
+    /// Any failure rolls the whole batch back.
     fn apply_outputs(
         &self,
-        _run_id: i64,
+        run_id: i64,
         cycle_id: i64,
         groups: &[SelectionGroup],
         staged: &[NormalizedOutput],
-        context: &TranslationContext,
+        allowed_crystal_ids: &BTreeSet<i64>,
+        active_rule_ids: &BTreeSet<i64>,
     ) -> Result<ApplySummary, DreamError> {
         let outputs = deduplicate_staged_outputs(staged);
         let mut created_crystal_ids: Vec<i64> = Vec::new();
+        let mut created_concept_ids: Vec<i64> = Vec::new();
+        let mut created_facet_ids: Vec<i64> = Vec::new();
+        let mut created_links: Vec<Value> = Vec::new();
+        let mut superseded_crystal_ids: Vec<i64> = Vec::new();
+        let mut reinforced_crystal_ids: Vec<i64> = Vec::new();
+        let mut rejected_entries: Vec<Value> = Vec::new();
         let mut skipped_candidates: Vec<Value> = Vec::new();
+
+        // Memory id -> owning group: each crystal is attributed to the
+        // context of the memories it cites (context isolation: never the
+        // first group's context for another series).
+        let mut group_of_memory: HashMap<i64, usize> = HashMap::new();
+        for (index, group) in groups.iter().enumerate() {
+            for memory in &group.memories {
+                group_of_memory.insert(memory.id, index);
+            }
+        }
 
         let mut connection = open_migrated(&self.config.database_path())?;
         let transaction = connection.transaction()?;
+        let timestamp = now();
         for output in &outputs {
             skipped_candidates.extend(output.skipped_candidates.iter().cloned());
+            rejected_entries.extend(output.rejected_entries.iter().cloned());
+            // Concept-name resolution lives and dies with THIS output's
+            // application: names resolve within the group's own context and
+            // never through another pass's map.
+            let mut concept_ids_by_name: BTreeMap<String, i64> = BTreeMap::new();
+            for concept in &output.concepts {
+                let concept_id = crate::concepts::create_or_reinforce_concept_in_transaction(
+                    &transaction,
+                    &concept.canonical_name,
+                    &concept.description,
+                    &concept.tags,
+                    concept.confidence_delta,
+                    "global",
+                    "",
+                    &timestamp,
+                )?;
+                concept_ids_by_name.insert(concept.canonical_name.to_lowercase(), concept_id);
+                created_concept_ids.push(concept_id);
+            }
+            for facet in &output.facets {
+                let key = facet.concept_name.to_lowercase();
+                let concept_id = match concept_ids_by_name.get(&key) {
+                    Some(concept_id) => *concept_id,
+                    None => {
+                        let concept_id =
+                            crate::concepts::create_or_reinforce_concept_in_transaction(
+                                &transaction,
+                                &facet.concept_name,
+                                "",
+                                &[],
+                                0.2,
+                                "global",
+                                "",
+                                &timestamp,
+                            )?;
+                        concept_ids_by_name.insert(key, concept_id);
+                        concept_id
+                    }
+                };
+                let fields = crate::concepts::FacetFields {
+                    kind: Some(facet.kind.clone()),
+                    language_tags: facet.language_tags.clone(),
+                    story_scopes: facet.story_scopes.clone(),
+                    semantic_tags: facet.semantic_tags.clone(),
+                    ..Default::default()
+                };
+                let facet_id = crate::concepts::add_facet_with_connection(
+                    &transaction,
+                    concept_id,
+                    facet.value.trim(),
+                    &fields,
+                    facet.confidence,
+                    facet.is_canonical,
+                    &timestamp,
+                )?;
+                created_facet_ids.push(facet_id);
+            }
             for candidate in &output.crystals {
-                let crystal_id = insert_dream_crystal(&transaction, context, candidate, cycle_id)?;
+                let Some(group_index) = owning_crystal_group(groups, &group_of_memory, candidate)
+                else {
+                    // A crystal citing memories of several series (or none
+                    // of the selection's contexts) has no honest context;
+                    // it is rejected durably instead of landing in the
+                    // first group's context.
+                    rejected_entries.push(json!({
+                        "stage": "apply",
+                        "reason": "ambiguous_crystal_context",
+                        "title": candidate.title,
+                        "source_memory_ids": candidate.source_memory_ids,
+                    }));
+                    continue;
+                };
+                let candidate = resolve_candidate_concepts(
+                    &transaction,
+                    candidate,
+                    &mut concept_ids_by_name,
+                    &timestamp,
+                )?;
+                let crystal_id = insert_dream_crystal(
+                    &transaction,
+                    &groups[group_index].context,
+                    &candidate,
+                    cycle_id,
+                )?;
                 created_crystal_ids.push(crystal_id);
+                created_links.extend(candidate.concept_ids.iter().map(|concept_id| {
+                    json!({
+                        "crystal_id": crystal_id,
+                        "concept_id": concept_id,
+                        "link_type": "mentions",
+                    })
+                }));
+            }
+            for proposal in &output.concept_proposals {
+                crate::concepts::create_concept_proposal_in_transaction(
+                    &transaction,
+                    run_id,
+                    proposal,
+                    &timestamp,
+                )?;
             }
         }
+
+        // Reinforce actions: at most one per crystal per run, applied
+        // through the event-sourced scoring primitive with the actual
+        // (clamped) deltas recorded on the `dream_reinforce` event.
+        for output in &outputs {
+            validate_reinforce_targets(&output.reinforce_actions, allowed_crystal_ids)
+                .map_err(DreamError::InvalidOutput)?;
+        }
+        let mut reinforced: HashSet<i64> = HashSet::new();
+        for output in &outputs {
+            for action in &output.reinforce_actions {
+                if !reinforced.insert(action.crystal_id) {
+                    continue;
+                }
+                let before: Option<(f64, f64)> = transaction
+                    .query_row(
+                        "select strength, confidence from crystals where id = ?1",
+                        [action.crystal_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map(Some)
+                    .or_else(|error| match error {
+                        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                        other => Err(other),
+                    })?;
+                let Some((before_strength, before_confidence)) = before else {
+                    continue;
+                };
+                apply_score_delta(
+                    &transaction,
+                    action.crystal_id,
+                    action.strength_delta,
+                    action.confidence_delta,
+                    &timestamp,
+                )?;
+                let (after_strength, after_confidence): (f64, f64) = transaction.query_row(
+                    "select strength, confidence from crystals where id = ?1",
+                    [action.crystal_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                transaction.execute(
+                    "insert into memory_events(
+                       crystal_id, session_id, event_type, source_role, evidence,
+                       strength_delta, confidence_delta, applied, cycle_id, created_at
+                     )
+                     values (?1, null, 'dream_reinforce', 'system', ?2, ?3, ?4, 1, ?5, ?6)",
+                    rusqlite::params![
+                        action.crystal_id,
+                        "dream reinforcement",
+                        after_strength - before_strength,
+                        after_confidence - before_confidence,
+                        cycle_id,
+                        timestamp,
+                    ],
+                )?;
+                reinforced_crystal_ids.push(action.crystal_id);
+            }
+        }
+
+        // Supersede actions: authorized against the selected context and the
+        // active-rule protection immediately before the store calls, then
+        // applied through the transaction-aware supersede primitive.
+        for output in &outputs {
+            validate_supersede_targets(
+                &output.supersede_actions,
+                allowed_crystal_ids,
+                active_rule_ids,
+            )
+            .map_err(DreamError::InvalidOutput)?;
+            for action in &output.supersede_actions {
+                crate::crystals::supersede_in_transaction(
+                    &transaction,
+                    action.old_crystal_id,
+                    action.new_crystal_id,
+                    &action.reason,
+                    cycle_id,
+                    &timestamp,
+                )?;
+                superseded_crystal_ids.push(action.old_crystal_id);
+            }
+        }
+
         let archived_memory_ids: Vec<i64> = groups
             .iter()
             .flat_map(|group| group.memories.iter().map(|memory| memory.id))
@@ -911,17 +1229,23 @@ impl DreamService {
         transaction.commit()?;
         drop(connection);
 
-        // Bounded affected-memory set for the audit record. Related
-        // candidates activate when the concept-application slice starts
-        // creating concepts; the caps are part of this contract already.
-        let related_candidates = self.searched_related_candidates(&[])?;
-        let affected_memory_set =
-            self.affected_memory_set(&created_crystal_ids, &related_candidates);
+        // Bounded affected-memory set for the audit record: related
+        // candidates search from the concepts this run created or reinforced.
+        let related_candidates = self.searched_related_candidates(&created_concept_ids)?;
+        let affected_memory_set = self.affected_memory_set(
+            &[created_crystal_ids.clone(), superseded_crystal_ids.clone()].concat(),
+            &related_candidates,
+        );
         Ok(ApplySummary {
             created_crystal_ids,
+            created_concept_ids,
+            created_facet_ids,
+            created_links,
+            superseded_crystal_ids,
+            reinforced_crystal_ids,
             archived_memory_ids,
             dreamed_session_ids,
-            rejected_entries: Vec::new(),
+            rejected_entries,
             skipped_candidates,
             related_candidates,
             affected_memory_set,
@@ -1760,10 +2084,16 @@ impl DreamService {
     fn response_summary(&self, staged: &[NormalizedOutput]) -> Value {
         json!({
             "crystal_count": staged.iter().map(|output| output.crystals.len()).sum::<usize>(),
-            "concept_count": 0,
-            "facet_count": 0,
-            "concept_proposal_count": 0,
-            "supersede_action_count": 0,
+            "concept_count": staged.iter().map(|output| output.concepts.len()).sum::<usize>(),
+            "facet_count": staged.iter().map(|output| output.facets.len()).sum::<usize>(),
+            "concept_proposal_count": staged
+                .iter()
+                .map(|output| output.concept_proposals.len())
+                .sum::<usize>(),
+            "supersede_action_count": staged
+                .iter()
+                .map(|output| output.supersede_actions.len())
+                .sum::<usize>(),
             "parse_warning_count": staged
                 .iter()
                 .map(|output| output.warnings.len())
@@ -1925,10 +2255,16 @@ impl DreamService {
             "accepted_entries".into(),
             json!({
                 "crystals": staged.iter().map(|output| output.crystals.len()).sum::<usize>(),
-                "concepts": 0,
-                "facets": 0,
-                "concept_proposals": 0,
-                "supersede_actions": 0,
+                "concepts": staged.iter().map(|output| output.concepts.len()).sum::<usize>(),
+                "facets": staged.iter().map(|output| output.facets.len()).sum::<usize>(),
+                "concept_proposals": staged
+                    .iter()
+                    .map(|output| output.concept_proposals.len())
+                    .sum::<usize>(),
+                "supersede_actions": staged
+                    .iter()
+                    .map(|output| output.supersede_actions.len())
+                    .sum::<usize>(),
             }),
         );
         payload.insert("rejected_entries".into(), json!(summary.rejected_entries));
@@ -1950,11 +2286,20 @@ impl DreamService {
             "created_crystals".into(),
             json!(summary.created_crystal_ids),
         );
-        payload.insert("created_concepts".into(), json!([]));
-        payload.insert("created_facets".into(), json!([]));
-        payload.insert("created_links".into(), json!([]));
-        payload.insert("superseded_crystals".into(), json!([]));
-        payload.insert("reinforced_crystals".into(), json!([]));
+        payload.insert(
+            "created_concepts".into(),
+            json!(summary.created_concept_ids),
+        );
+        payload.insert("created_facets".into(), json!(summary.created_facet_ids));
+        payload.insert("created_links".into(), json!(summary.created_links));
+        payload.insert(
+            "superseded_crystals".into(),
+            json!(unique_ints(&summary.superseded_crystal_ids)),
+        );
+        payload.insert(
+            "reinforced_crystals".into(),
+            json!(unique_ints(&summary.reinforced_crystal_ids)),
+        );
         payload.insert("decayed_crystals".into(), json!([]));
         payload.insert(
             "archived_short_term_memory_ids".into(),
@@ -2001,7 +2346,7 @@ impl DreamService {
         if pass_name == "relations" {
             limit = limit.min(self.dream_config.max_relation_records_per_pass);
         }
-        if output.crystals.len() as i64 > limit {
+        if normalized_output_count(output) as i64 > limit {
             return Err(DreamError::InvalidOutput(format!(
                 "{pass_name} output exceeds max_records_per_pass"
             )));
@@ -2167,23 +2512,58 @@ const CRYSTAL_BUCKETS: [(&str, &str, &str, bool); 4] = [
     ("inferred_additions", "thought", "thought", true),
 ];
 
-/// Port of `_normalize_dict_output` (reduced to the sections this slice
-/// applies). Unsupported-but-non-empty sections fail the run closed so no
-/// provider data is ever dropped silently.
+/// Port of `_normalize_dict_output` over the complete normalized contract:
+/// concept proposals, concepts, facets, the four crystal buckets (with
+/// concept names), supersede actions, and reinforce actions. Malformed
+/// entries are rejected individually into `rejected_entries` /
+/// `skipped_candidates` with durable details; a bad entry never drops its
+/// whole section.
 pub fn normalize_dict_output(
     payload: &Value,
     allowed_memory_ids: &HashSet<i64>,
     valid_concept_ids: &HashSet<i64>,
 ) -> Result<NormalizedOutput, DreamError> {
-    for section in UNSUPPORTED_OUTPUT_SECTIONS {
-        if !list_from_payload(payload.get(section)).is_empty() {
-            return Err(DreamError::InvalidOutput(format!(
-                "provider output section is not applied by the dreaming core yet: {section}"
-            )));
+    let mut output = NormalizedOutput::default();
+
+    for (index, item) in list_from_payload(payload.get("concept_proposals"))
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(proposal) = crate::dream_output::normalize_concept_proposal_entry(
+            &item,
+            &format!("concept_proposals[{index}]"),
+            &mut output.rejected_entries,
+        ) {
+            output.concept_proposals.push(proposal);
+        }
+    }
+    for (index, item) in list_from_payload(payload.get("concepts"))
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(concept) = crate::dream_output::normalize_concept_entry(
+            &item,
+            &format!("concepts[{index}]"),
+            &mut output.warnings,
+            &mut output.rejected_entries,
+        ) {
+            output.concepts.push(concept);
+        }
+    }
+    for (index, item) in list_from_payload(payload.get("facets"))
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(facet) = crate::dream_output::normalize_facet_entry(
+            &item,
+            &format!("facets[{index}]"),
+            &mut output.warnings,
+            &mut output.rejected_entries,
+        ) {
+            output.facets.push(facet);
         }
     }
 
-    let mut output = NormalizedOutput::default();
     for (bucket, default_crystal_type, default_source_credibility, force_thought) in CRYSTAL_BUCKETS
     {
         for (index, item) in list_from_payload(payload.get(bucket))
@@ -2205,10 +2585,36 @@ pub fn normalize_dict_output(
             }
         }
     }
+
+    // Both the Python wire keys and the contract's long forms are accepted.
+    for key in ["supersede", "supersede_actions"] {
+        for (index, item) in list_from_payload(payload.get(key)).into_iter().enumerate() {
+            match crate::dream_output::normalize_supersede_entry(&item) {
+                Some(action) => output.supersede_actions.push(action),
+                None => output.skipped_candidates.push(json!({
+                    "entry_path": format!("{key}[{index}]"),
+                    "reason": "malformed_supersede_action",
+                    "candidate_type": value_type_name(&item),
+                })),
+            }
+        }
+    }
+    for key in ["reinforce", "reinforce_actions"] {
+        for (index, item) in list_from_payload(payload.get(key)).into_iter().enumerate() {
+            if let Some(action) = crate::dream_output::normalize_reinforce_entry(
+                &item,
+                &format!("{key}[{index}]"),
+                allowed_memory_ids,
+                &mut output.rejected_entries,
+            ) {
+                output.reinforce_actions.push(action);
+            }
+        }
+    }
     Ok(output)
 }
 
-fn list_from_payload(value: Option<&Value>) -> Vec<Value> {
+pub(crate) fn list_from_payload(value: Option<&Value>) -> Vec<Value> {
     match value {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(items)) => items.clone(),
@@ -2216,7 +2622,7 @@ fn list_from_payload(value: Option<&Value>) -> Vec<Value> {
     }
 }
 
-fn value_type_name(value: &Value) -> &'static str {
+pub(crate) fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
@@ -2337,17 +2743,10 @@ fn normalize_dict_crystal(
             concept_id_penalty,
         );
     }
-    let concept_name_penalty = unsupported_concept_name_penalty(&payload);
-    if concept_name_penalty {
-        append_parse_warning(
-            warnings,
-            entry_path,
-            "unsupported_crystal_concept_metadata",
-            "ignored crystal concept names (concept application is a later slice)",
-            0.0,
-        );
-    }
-    penalty += story_scope_penalty + semantic_tag_penalty + concept_id_penalty;
+    let (concept_names, concept_name_penalty) =
+        crate::dream_output::concept_names_from_payload(&payload, entry_path, warnings);
+    penalty +=
+        story_scope_penalty + semantic_tag_penalty + concept_id_penalty + concept_name_penalty;
 
     let confidence = normalized_confidence(&payload, &source_credibility, penalty);
     let title = string_field(payload.get("title")).trim().to_string();
@@ -2371,7 +2770,8 @@ fn normalize_dict_crystal(
         }
     };
 
-    // Reserved for the supersede slice; carried so the schema stays stable.
+    // Provider-supersede metadata (an advisory provenance pointer; the
+    // audited supersede section, not this field, performs mutations).
     let supersedes_crystal_id = optional_int(payload.get("supersedes_crystal_id"));
     Ok(Some(NormalizedCrystal {
         crystal_type,
@@ -2388,10 +2788,11 @@ fn normalize_dict_crystal(
         story_scopes,
         semantic_tags,
         concept_ids,
+        concept_names,
     }))
 }
 
-fn append_parse_warning(
+pub(crate) fn append_parse_warning(
     warnings: &mut Vec<ParseWarning>,
     entry_path: &str,
     code: &str,
@@ -2404,16 +2805,6 @@ fn append_parse_warning(
         message: message.to_string(),
         confidence_penalty,
     });
-}
-
-/// True when a crystal entry carries concept-name metadata this slice cannot
-/// resolve (well-formed or not, it must be surfaced, never dropped silently).
-fn unsupported_concept_name_penalty(payload: &serde_json::Map<String, Value>) -> bool {
-    UNSUPPORTED_CONCEPT_NAME_KEYS.iter().any(|key| {
-        payload
-            .get(*key)
-            .is_some_and(|value| !list_from_payload(Some(value)).is_empty())
-    })
 }
 
 /// Python `_recover_crystal_text`: `text`/`content` are clean; `body` is a
@@ -2438,7 +2829,7 @@ fn recover_crystal_text(
     ))
 }
 
-fn collapse_whitespace(text: &str) -> String {
+pub(crate) fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -2576,7 +2967,7 @@ fn recover_int_tuple(
     (valid, penalty)
 }
 
-fn clean_text_tuple(values: Vec<String>) -> Vec<String> {
+pub(crate) fn clean_text_tuple(values: Vec<String>) -> Vec<String> {
     let mut unique = std::collections::BTreeSet::new();
     for value in values {
         let trimmed = value.trim().to_string();
@@ -2641,14 +3032,14 @@ fn source_memory_ids(
     Some(all)
 }
 
-fn string_field(value: Option<&Value>) -> String {
+pub(crate) fn string_field(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(text)) => text.clone(),
         _ => String::new(),
     }
 }
 
-fn numeric_field(value: Option<&Value>, default: f64) -> f64 {
+pub(crate) fn numeric_field(value: Option<&Value>, default: f64) -> f64 {
     match value {
         Some(Value::Number(number)) => number.as_f64().unwrap_or(default),
         _ => default,
@@ -2662,7 +3053,7 @@ fn bool_field(value: Option<&Value>, default: bool) -> bool {
     }
 }
 
-fn optional_int(value: Option<&Value>) -> Option<i64> {
+pub(crate) fn optional_int(value: Option<&Value>) -> Option<i64> {
     match value {
         Some(Value::Number(number)) => number.as_i64(),
         Some(Value::String(text)) => text.trim().parse::<i64>().ok(),
@@ -2670,10 +3061,12 @@ fn optional_int(value: Option<&Value>) -> Option<i64> {
     }
 }
 
-/// Port of `_validate_normalized_output` (reduced to crystals).
+/// Port of `_validate_normalized_output` (crystals plus the graph sections).
+/// Normalization already rejects malformed entries individually; these are
+/// the fail-closed invariants over the accepted records.
 fn validate_normalized_output(
     output: &NormalizedOutput,
-    _context: &TranslationContext,
+    context: &TranslationContext,
     allowed_memory_ids: &HashSet<i64>,
 ) -> Result<(), DreamError> {
     for candidate in &output.crystals {
@@ -2710,6 +3103,17 @@ fn validate_normalized_output(
             )));
         }
     }
+    crate::dream_output::validate_concepts(&output.concepts).map_err(DreamError::InvalidOutput)?;
+    crate::dream_output::validate_facets(&output.facets).map_err(DreamError::InvalidOutput)?;
+    crate::dream_output::validate_proposal_contexts(
+        &output.concept_proposals,
+        &context.series_slug,
+        &context.source_language,
+        &context.target_language,
+    )
+    .map_err(DreamError::InvalidOutput)?;
+    crate::dream_output::validate_reinforce_actions(&output.reinforce_actions)
+        .map_err(DreamError::InvalidOutput)?;
     Ok(())
 }
 
@@ -2745,9 +3149,11 @@ fn coverage_ids(
 }
 
 /// Port of `_deduplicate_staged_outputs`: passes run over the same selection,
-/// so identical crystals (type + case-insensitive title/text) apply once.
+/// so identical crystals (type + case-insensitive title/text) and identical
+/// concepts (case-insensitive canonical name) apply once.
 fn deduplicate_staged_outputs(staged: &[NormalizedOutput]) -> Vec<NormalizedOutput> {
     let mut seen_crystals: HashSet<(String, String, String)> = HashSet::new();
+    let mut seen_concepts: HashSet<String> = HashSet::new();
     let mut result = Vec::with_capacity(staged.len());
     for output in staged {
         let mut crystals = Vec::with_capacity(output.crystals.len());
@@ -2761,13 +3167,97 @@ fn deduplicate_staged_outputs(staged: &[NormalizedOutput]) -> Vec<NormalizedOutp
                 crystals.push(crystal.clone());
             }
         }
+        let mut concepts = Vec::with_capacity(output.concepts.len());
+        for concept in &output.concepts {
+            if seen_concepts.insert(concept.canonical_name.to_lowercase()) {
+                concepts.push(concept.clone());
+            }
+        }
         result.push(NormalizedOutput {
             crystals,
+            concept_proposals: output.concept_proposals.clone(),
+            concepts,
+            facets: output.facets.clone(),
+            supersede_actions: output.supersede_actions.clone(),
+            reinforce_actions: output.reinforce_actions.clone(),
             warnings: output.warnings.clone(),
+            rejected_entries: output.rejected_entries.clone(),
             skipped_candidates: output.skipped_candidates.clone(),
         });
     }
     result
+}
+
+/// Python `_resolve_candidate_concepts`: resolve the candidate's concept
+/// names within this output's own map, creating or reinforcing missing
+/// concepts as global candidates, and merge the sorted id set.
+fn resolve_candidate_concepts(
+    transaction: &rusqlite::Transaction<'_>,
+    candidate: &NormalizedCrystal,
+    concept_ids_by_name: &mut BTreeMap<String, i64>,
+    timestamp: &str,
+) -> Result<NormalizedCrystal, DreamError> {
+    let mut concept_ids = candidate.concept_ids.clone();
+    for concept_name in &candidate.concept_names {
+        let key = concept_name.to_lowercase();
+        let concept_id = match concept_ids_by_name.get(&key) {
+            Some(concept_id) => *concept_id,
+            None => {
+                let concept_id = crate::concepts::create_or_reinforce_concept_in_transaction(
+                    transaction,
+                    concept_name,
+                    "",
+                    &[],
+                    0.2,
+                    "global",
+                    "",
+                    timestamp,
+                )?;
+                concept_ids_by_name.insert(key, concept_id);
+                concept_id
+            }
+        };
+        concept_ids.push(concept_id);
+    }
+    concept_ids.sort_unstable();
+    concept_ids.dedup();
+    if concept_ids == candidate.concept_ids {
+        return Ok(candidate.clone());
+    }
+    Ok(NormalizedCrystal {
+        concept_ids,
+        ..candidate.clone()
+    })
+}
+
+/// The group whose memories a crystal cites. `None` marks an ambiguous
+/// crystal: its source memories span distinct series contexts (or none), so
+/// it must not silently land in the first group's context. Sessions sharing
+/// one context are the same series — their memories attribute cleanly.
+fn owning_crystal_group(
+    groups: &[SelectionGroup],
+    group_of_memory: &HashMap<i64, usize>,
+    candidate: &NormalizedCrystal,
+) -> Option<usize> {
+    fn same_series_context(left: &TranslationContext, right: &TranslationContext) -> bool {
+        left.scope_key() == right.scope_key()
+            && left.series_slug == right.series_slug
+            && left.source_language == right.source_language
+            && left.target_language == right.target_language
+    }
+    let mut owned: Option<usize> = None;
+    for memory_id in &candidate.source_memory_ids {
+        let group_index = *group_of_memory.get(memory_id)?;
+        match owned {
+            None => owned = Some(group_index),
+            Some(existing) => {
+                if !same_series_context(&groups[existing].context, &groups[group_index].context) {
+                    return None;
+                }
+            }
+        }
+    }
+    owned
 }
 
 /// Insert one dream crystal with FTS row, source links, typed side tables,

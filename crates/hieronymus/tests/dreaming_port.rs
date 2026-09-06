@@ -655,71 +655,65 @@ fn incomplete_coverage_rolls_back_all_dream_mutations() {
 }
 
 #[test]
-fn dreaming_fails_closed_on_unsupported_provider_output_sections() {
+fn dreaming_applies_the_previously_unsupported_concept_section() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
     completed_session(&config, "book", &["Valid input."]);
 
-    // The crystal itself would apply cleanly; only the unsupported
-    // `concepts` section must fail the run closed.
+    // Task D2 closed the gap this run used to fail closed on: the
+    // `concepts` section now normalizes, applies, and audits cleanly
+    // alongside the crystal that was always supported.
     let service = DreamService::open(
         &config,
         WorkflowResolver::serving(|| {
             Box::new(ScriptedProvider::new(
-                "unsupported-sections",
+                "concept-sections",
                 vec![(
                     "knowledge_crystals",
                     json!({
                         "crystals": [{
                             "crystal_type": "observation",
-                            "title": "Would-be crystal",
-                            "text": "This crystal must not be applied.",
+                            "title": "Applied crystal",
+                            "text": "This crystal applies with its concept.",
                             "confidence": 0.8
                         }],
-                        "concepts": [{"name": "Concept application is a later slice"}]
+                        "concepts": [{"name": "Concept application is no longer a later slice"}]
                     }),
                 )],
             ))
         }),
     )
     .unwrap();
-    let error = service.run_cycle("manual", false).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("not applied by the dreaming core yet: concepts"),
-        "{error}"
-    );
+    let run = service.run_cycle("manual", false).unwrap();
 
-    let run_row = query(
+    assert_eq!(run.status, "completed");
+    assert_eq!(run.created_crystal_count, 1);
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
+    let concept = query(
         &config,
-        "select status, error, created_crystal_count from dream_runs",
+        "select canonical_name, status, scope_type from concepts",
         &[],
     )
     .remove(0);
-    assert_eq!(run_row[0], json!("failed"));
-    assert!(run_row[1].as_str().unwrap().contains("concepts"));
-    assert_eq!(run_row[2], json!(0));
-    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
-    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
-    assert_eq!(session_row[0], json!("completed"));
-    assert_eq!(session_row[1], Value::Null);
     assert_eq!(
-        scalar(
-            &config,
-            "select count(*) from short_term_memories where archived_at is not null"
-        ),
-        json!(0)
+        concept[0],
+        json!("Concept application is no longer a later slice")
     );
-    let audited_events = scalar(
+    assert_eq!(concept[1], json!("candidate"));
+    assert_eq!(concept[2], json!("global"));
+    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
+    assert_eq!(session_row[0], json!("dreamed"));
+    let audited_events = query(
         &config,
-        "select count(*) from dream_audit_entries
-         where dream_run_id = (select max(id) from dream_runs)",
-    );
+        "select count(*) from dream_audit_entries where dream_run_id = ?1",
+        &[&run.id],
+    )
+    .remove(0)
+    .remove(0);
     assert!(
         audited_events.as_i64().unwrap() > 0,
-        "the failed run must keep its audit entries"
+        "the completed run must keep its audit entries"
     );
 }
 

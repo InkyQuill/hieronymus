@@ -685,30 +685,16 @@ impl CrystalStore {
         reason: &str,
         cycle_id: i64,
     ) -> Result<(), CrystalError> {
-        if old_crystal_id == new_crystal_id {
-            return Err(CrystalError::SelfSupersede);
-        }
         let now = now_iso8601();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let old_row = crystal_row(&transaction, old_crystal_id)?;
-        let new_row = crystal_row(&transaction, new_crystal_id)?;
-        validate_supersede_rows(&old_row, &new_row)?;
-        transaction.execute(
-            "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",
-            rusqlite::params![now, old_crystal_id],
-        )?;
-        transaction.execute(
-            "update crystals set supersedes_crystal_id = ?1, updated_at = ?2 where id = ?3",
-            rusqlite::params![old_crystal_id, now, new_crystal_id],
-        )?;
-        transaction.execute(
-            "insert into memory_events(
-               crystal_id, session_id, event_type, source_role, evidence,
-               strength_delta, confidence_delta, applied, cycle_id, created_at
-             )
-             values (?1, null, 'supersede', 'system', ?2, 0, 0, 1, ?3, ?4)",
-            rusqlite::params![old_crystal_id, reason, cycle_id, now],
+        supersede_in_transaction(
+            &transaction,
+            old_crystal_id,
+            new_crystal_id,
+            reason,
+            cycle_id,
+            &now,
         )?;
         transaction.commit()?;
         Ok(())
@@ -781,6 +767,46 @@ fn validate_supersede_rows(old_row: &CrystalRow, new_row: &CrystalRow) -> Result
             return Err(CrystalError::SupersedeMismatch(column.to_string()));
         }
     }
+    Ok(())
+}
+
+/// The transaction-aware supersede primitive (Python
+/// `_supersede_with_connection`): the dream graph applies provider supersede
+/// actions through this inside the persistence transaction, so a failing
+/// action rolls the whole batch back. Shape and status validation stay
+/// fail-loud — notably, active rule crystals can never be superseded by a
+/// dream action here (ADR 0011: only an authenticated user may replace
+/// approved authority).
+pub(crate) fn supersede_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    old_crystal_id: i64,
+    new_crystal_id: i64,
+    reason: &str,
+    cycle_id: i64,
+    now: &str,
+) -> Result<(), CrystalError> {
+    if old_crystal_id == new_crystal_id {
+        return Err(CrystalError::SelfSupersede);
+    }
+    let old_row = crystal_row(transaction, old_crystal_id)?;
+    let new_row = crystal_row(transaction, new_crystal_id)?;
+    validate_supersede_rows(&old_row, &new_row)?;
+    transaction.execute(
+        "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",
+        rusqlite::params![now, old_crystal_id],
+    )?;
+    transaction.execute(
+        "update crystals set supersedes_crystal_id = ?1, updated_at = ?2 where id = ?3",
+        rusqlite::params![old_crystal_id, now, new_crystal_id],
+    )?;
+    transaction.execute(
+        "insert into memory_events(
+           crystal_id, session_id, event_type, source_role, evidence,
+           strength_delta, confidence_delta, applied, cycle_id, created_at
+         )
+         values (?1, null, 'supersede', 'system', ?2, 0, 0, 1, ?3, ?4)",
+        rusqlite::params![old_crystal_id, reason, cycle_id, now],
+    )?;
     Ok(())
 }
 

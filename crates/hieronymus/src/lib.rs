@@ -17,6 +17,7 @@ pub mod db;
 pub mod dream_audit;
 pub mod dream_config;
 pub mod dream_locks;
+pub mod dream_output;
 pub mod dream_providers;
 pub mod dream_workflows;
 pub mod dreaming;
