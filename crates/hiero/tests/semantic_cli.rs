@@ -17,8 +17,8 @@ use hieronymus::registry::Registry;
 use hieronymus::semantic_embeddings::{
     EMBEDDING_DIMENSIONS, EmbeddingProvider as _, FakeEmbeddingProvider,
 };
-use hieronymus::semantic_recall::byte_fold_tokens;
 use hieronymus::semantic_store::{SemanticChunk, SemanticSample, SemanticStore};
+use hieronymus::semantic_tokenizer::ModelTokenizer;
 use hieronymus::workspace::WorkspaceStore;
 use sha2::Digest;
 
@@ -115,14 +115,17 @@ fn status_on_a_fresh_root_reports_the_missing_model() {
     assert!(status.success(), "{stdout}{stderr}");
     assert!(stdout.contains("missing"), "{stdout}");
     assert!(stdout.contains("fts-only"), "{stdout}");
-    assert!(stdout.contains("byte-fold-v1"), "{stdout}");
+    assert!(stdout.contains("wordpiece"), "{stdout}");
 
     let (stdout, _, status) = hiero(&["semantic", "status", "--json", "--data-root", data_root]);
     assert!(status.success(), "{stdout}");
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["model"], "missing");
     assert_eq!(payload["generation"], serde_json::Value::Null);
-    assert_eq!(payload["tokenizer"], "byte-fold-v1");
+    assert_eq!(
+        payload["tokenizer"],
+        hieronymus::semantic_tokenizer::MINILM_TOKENIZER_ID
+    );
     assert_eq!(payload["intact"], true);
 }
 
@@ -146,6 +149,10 @@ fn status_reports_an_active_generation_without_touching_the_network() {
         .unwrap();
 
     let store = SemanticStore::open(&config).unwrap();
+    let tokenizer = ModelTokenizer::from_bytes(include_bytes!(
+        "../../hieronymus/tests/fixtures/minilm-tokenizer.json"
+    ))
+    .unwrap();
     let mut provider = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS);
     store
         .begin_generation("gen-a", provider.identity())
@@ -162,7 +169,7 @@ fn status_reports_an_active_generation_without_touching_the_network() {
                 SemanticChunk {
                     chunk_id: *chunk_id,
                     series_slug,
-                    token_ids: byte_fold_tokens(&text),
+                    token_ids: tokenizer.encode(&text).unwrap(),
                 }
             })
             .collect();
@@ -174,7 +181,7 @@ fn status_reports_an_active_generation_without_touching_the_network() {
             &mut provider,
             &SemanticSample {
                 series_slug: "demo".to_string(),
-                token_ids: byte_fold_tokens("probe"),
+                token_ids: tokenizer.encode("probe").unwrap(),
             },
         )
         .unwrap();

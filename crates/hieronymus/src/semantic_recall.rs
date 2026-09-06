@@ -10,9 +10,10 @@
 //! never silently mixed with a half-running lane. Corrupt hits (stale
 //! checksum, deleted chunk, foreign series or generation) are excluded and a
 //! Task 8 rebuild job is scheduled over a fresh generation; one repair runs at
-//! a time. Tokenization is the shared deterministic byte-fold mapping used
-//! identically for documents (rebuild jobs) and queries (this lane), so
-//! document and query embeddings stay one identity.
+//! a time. Tokenization is the pinned WordPiece [`ModelTokenizer`](crate::
+//! semantic_tokenizer::ModelTokenizer) used identically for documents (rebuild
+//! jobs) and queries (this lane), so document and query embeddings stay one
+//! identity.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -88,32 +89,10 @@ pub fn conflicting_rule_ids(text: &str, contract: &[ContractTerm]) -> Vec<i64> {
     ids
 }
 
-/// The shared deterministic token mapping: text bytes folded into a bounded,
-/// position-dependent token stream. Rebuild jobs tokenize documents with it
-/// and the recall lane tokenizes queries with it, which keeps document and
-/// query embeddings comparable (an exact text match is an exact vector match).
-/// The mapping's stable id is part of every [`crate::semantic_embeddings::
-/// EmbeddingIdentity`]: swapping it in for another tokenizer changes the
-/// identity and forces a full rebuild.
-pub fn byte_fold_tokens(text: &str) -> Vec<u32> {
-    text.bytes()
-        .enumerate()
-        .map(|(index, byte)| ((u32::from(byte) * 31 + index as u32) % 30_000) + 1)
-        .collect()
-}
-
-/// Re-exported at the lane level: the tokenizer id this module's lane pairs
-/// with [`byte_fold_tokens`].
+/// Re-exported at the lane level: the retired tokenizer id. Generations
+/// persisted under it predate the pinned WordPiece tokenizer and are rejected
+/// by the identity check until rebuilt.
 pub use crate::semantic_embeddings::BYTE_FOLD_TOKENIZER_ID;
-
-/// [`ChunkTokenizer`] over [`byte_fold_tokens`].
-pub struct ByteFoldTokenizer;
-
-impl ChunkTokenizer for ByteFoldTokenizer {
-    fn tokenize(&mut self, chunk: &AuthoritativeChunk) -> Result<Vec<u32>, SemanticError> {
-        Ok(byte_fold_tokens(&chunk.text))
-    }
-}
 
 /// The armed query-time semantic lane: one embedding provider plus the
 /// tokenizer matching the document-side mapping. Both live behind one mutex
@@ -425,13 +404,5 @@ mod tests {
             contract_term(7, &["sorcery"]),
         ];
         assert_eq!(conflicting_rule_ids("sorcery", &duplicated), vec![7]);
-    }
-
-    #[test]
-    fn byte_fold_tokens_are_deterministic_and_text_bound() {
-        assert_eq!(byte_fold_tokens("abc"), byte_fold_tokens("abc"));
-        assert_ne!(byte_fold_tokens("abc"), byte_fold_tokens("abd"));
-        assert_eq!(byte_fold_tokens("abc").len(), 3);
-        assert_eq!(byte_fold_tokens("").len(), 0);
     }
 }

@@ -45,6 +45,11 @@ tokio = { version = "1", default-features = false, features = [
   "rt-multi-thread",
   "time",
 ] }
+# Pinned WordPiece tokenizer for the pinned MiniLM model (same revision as
+# the ONNX file; identity carried in `semantic_tokenizer`).
+tokenizers = { version = "=0.23.2", default-features = false, features = [
+  "onig",
+] }
 
 # Outbound TLS for provider calls and model downloads (rustls, ring backend,
 # static webpki root store — see ADR 0013 and the tls module docs).
