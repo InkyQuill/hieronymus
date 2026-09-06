@@ -41,6 +41,7 @@ pub mod semantic_jobs;
 pub mod semantic_model;
 pub mod semantic_recall;
 pub mod semantic_store;
+pub mod semantic_tokenizer;
 pub mod short_memory;
 pub mod state_classifier;
 pub mod terminology;

@@ -670,13 +670,35 @@ fn run_semantic_enable(
             .map_err(|error| error.to_string())?;
         downloaded = true;
     }
+    // The tokenizer asset rides the same explicit acquisition with the same
+    // discipline, always pinned: with explicit artifact overrides in play the
+    // caller manages artifacts themselves (and the loopback test harness must
+    // never egress), so the tokenizer is fetched only in pinned-default mode.
+    let pinned_defaults = parsed.url.is_none() && parsed.sha256.is_none() && parsed.bytes.is_none();
+    let mut tokenizer_downloaded = false;
+    if pinned_defaults && store.tokenizer_status() != ModelStatus::Available {
+        let transport = HttpModelTransport::new(std::time::Duration::from_secs(600));
+        store
+            .acquire_tokenizer(
+                &transport,
+                hieronymus::semantic_model::DEFAULT_TOKENIZER_URL,
+            )
+            .map_err(|error| error.to_string())?;
+        tokenizer_downloaded = true;
+    }
     let final_status = local_status();
 
     // Arming verification needs the ONNX runtime library; without it the
-    // model is acquired but the lane verdict stays honestly disarmed.
+    // model is acquired but the lane verdict stays honestly disarmed. A
+    // provided runtime is persisted in the semantic settings file so the
+    // daemon validates and reuses it across restarts (Task S2).
+    let mut runtime_saved = false;
     let verdict = match &parsed.runtime {
         Some(runtime) => {
-            hieronymus::semantic_arming::arming_verdict(config, std::path::Path::new(runtime))
+            let path = std::path::Path::new(runtime);
+            hieronymus::semantic_arming::save_runtime_library(config, path)?;
+            runtime_saved = true;
+            hieronymus::semantic_arming::arming_verdict(config, path)
         }
         None => hieronymus::semantic_arming::LaneState::Disarmed {
             reason: "onnx runtime library not provided; pass --runtime <lib> to verify arming"
@@ -690,8 +712,11 @@ fn run_semantic_enable(
             "model_status": model_status_name(&final_status),
             "model_detail": model_status_detail(&final_status),
             "downloaded": downloaded,
+            "tokenizer_downloaded": tokenizer_downloaded,
+            "tokenizer_path": store.tokenizer_path(),
             "model_path": store.model_path(),
             "runtime_verified": runtime_verified,
+            "runtime_saved": runtime_saved,
             "lane": verdict.as_str(),
             "reason": match &verdict {
                 hieronymus::semantic_arming::LaneState::Armed => serde_json::Value::Null,

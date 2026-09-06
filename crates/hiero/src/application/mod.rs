@@ -19,9 +19,17 @@ pub mod memory;
 pub mod series_sessions;
 pub mod terms;
 
+use std::sync::{Arc, RwLock, RwLockReadGuard};
+
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::memory_models::TranslationContext;
 use hieronymus::recall::RecallService;
+use hieronymus::semantic_recall::SemanticLane;
+
+/// Post-commit rebuild notifier installed by the daemon (Task S2): RAG
+/// import queues a durable semantic rebuild through it. `None` when no
+/// daemon owns this application.
+pub type RebuildHook = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 
 /// Domain-level tool failure modes. `Invalid` covers arguments that do not
 /// decode against the frozen input schema (the protocol maps it to JSON-RPC
@@ -39,10 +47,14 @@ pub enum AppError {
 
 /// The application: selected config plus long-lived services. Stores are
 /// opened per request (short-lived connections by design), so the application
-/// itself holds no database connection.
+/// itself holds no database connection. The recall service sits behind a
+/// read-write lock so the semantic controller (Task S2) can install/refresh
+/// the query-time semantic lane after verified generation activations without
+/// rebuilding the application.
 pub struct Application {
     config: HieronymusConfig,
-    recall: RecallService,
+    recall: RwLock<RecallService>,
+    rebuild_hook: RwLock<Option<RebuildHook>>,
 }
 
 impl std::fmt::Debug for Application {
@@ -65,7 +77,8 @@ impl Application {
             RecallService::open(config).map_err(|error| AppError::Domain(error.to_string()))?;
         Ok(Self {
             config: config.clone(),
-            recall,
+            recall: RwLock::new(recall),
+            rebuild_hook: RwLock::new(None),
         })
     }
 
@@ -74,9 +87,52 @@ impl Application {
         &self.config
     }
 
-    /// The recall service backing the recall tool family.
-    pub fn recall(&self) -> &RecallService {
-        &self.recall
+    /// The recall service backing the recall tool family. The read guard
+    /// derefs to the service; the semantic controller takes the write side
+    /// (rare, on verified activation) to swap in a freshly armed lane.
+    pub fn recall(&self) -> RwLockReadGuard<'_, RecallService> {
+        self.recall
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Installs (or refreshes) the query-time semantic lane. Called by the
+    /// semantic controller on first arming and on every verified generation
+    /// activation, so queries always run on a coherent identity and
+    /// generation. A failed reopen keeps the previous service in place.
+    pub fn install_semantic_lane(&self, lane: SemanticLane) {
+        let Ok(mut guard) = self.recall.write() else {
+            return;
+        };
+        if let Ok(service) = RecallService::open(&self.config) {
+            *guard = service.with_semantic_lane(lane);
+        } else {
+            eprintln!(
+                "hiero daemon: semantic lane install skipped (could not reopen the recall \
+                 service over {})",
+                self.config.database_path().display()
+            );
+        }
+    }
+
+    /// Installs the daemon's post-commit rebuild notifier (Task S2).
+    pub fn set_rebuild_hook(&self, hook: RebuildHook) {
+        *self
+            .rebuild_hook
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(hook);
+    }
+
+    /// Queues a durable semantic rebuild through the installed hook (used by
+    /// RAG import after its authoritative commit). `None` when no daemon
+    /// owns this application; hook failures surface to the caller without
+    /// failing the import — startup/periodic reconciliation recovers.
+    pub(crate) fn request_rebuild(&self, series_slug: &str) -> Option<Result<String, String>> {
+        let guard = self
+            .rebuild_hook
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.as_ref().map(|hook| hook(series_slug))
     }
 
     /// Dispatch one tool call. The final parameter is the authenticated

@@ -1,0 +1,140 @@
+{
+  "adr": "0011",
+  "purpose": "Real-model hybrid relevance corpus for the S3 real semantic suite: semantic-only paraphrases, lexical hits, near-topic distractors, duplicated sources, foreign-series documents, a learned short-term memory, and active terminology that must stay deterministic. Curated against the pinned all-MiniLM-L6-v2 ONNX model (English; observed limits recorded in docs/semantic-validation.md).",
+  "series": [
+    {
+      "slug": "lighthouse-chronicles",
+      "title": "Lighthouse Chronicles",
+      "source_language": "en",
+      "target_language": "ru"
+    },
+    {
+      "slug": "harbour-records",
+      "title": "Harbour Records",
+      "source_language": "en",
+      "target_language": "ru"
+    }
+  ],
+  "documents": [
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "physician",
+      "text": "The physician treated the wounded sailor aboard the vessel."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "physician-duplicate",
+      "text": "The physician treated the wounded sailor aboard the old vessel."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "carpenter",
+      "text": "The carpenter repaired the cabin door."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "lighthouse-keeper",
+      "text": "The lighthouse keeper trimmed the lamp every evening at dusk."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "nurse",
+      "text": "The nurse bandaged the fisherman's hand down on the pier."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "cartographer",
+      "text": "The cartographer drew charts of islands no ship had ever visited."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "storm",
+      "text": "The storm drove the fishing fleet back into the harbour before dawn."
+    },
+    {
+      "series_slug": "harbour-records",
+      "doc_id": "foreign-doctor",
+      "text": "A doctor cared for an injured seaman on a ship in another port."
+    },
+    {
+      "series_slug": "harbour-records",
+      "doc_id": "foreign-vessel",
+      "text": "The physician treated the wounded sailor aboard the vessel of the harbour master."
+    }
+  ],
+  "memories": [
+    {
+      "series_slug": "lighthouse-chronicles",
+      "kind": "note",
+      "text": "The lighthouse lamp was electrified in nineteen hundred and two."
+    }
+  ],
+  "terms": [
+    {
+      "series_slug": "lighthouse-chronicles",
+      "category": "rule",
+      "source_text": "penicillin",
+      "canonical_translation": "пенициллин"
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "physician-paraphrase",
+      "query": "Which doctor cared for the injured seaman on the ship?",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": ["physician", "physician-duplicate"],
+      "require_semantic_provenance": true,
+      "excluded_series": ["harbour-records"]
+    },
+    {
+      "query_id": "cartographer-paraphrase",
+      "query": "Who made maps of lands no vessel had reached?",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": ["cartographer"],
+      "require_semantic_provenance": true,
+      "excluded_series": ["harbour-records"]
+    },
+    {
+      "query_id": "lexical-keeper",
+      "query": "the lighthouse keeper trimmed the lamp at dusk",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": ["lighthouse-keeper"],
+      "require_semantic_provenance": false,
+      "excluded_series": ["harbour-records"]
+    },
+    {
+      "query_id": "distractor-control-carpenter",
+      "query": "Who fixed the door of the cabin?",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": ["carpenter"],
+      "require_semantic_provenance": true,
+      "excluded_series": ["harbour-records"]
+    },
+    {
+      "query_id": "foreign-series-isolation",
+      "query": "A doctor cared for an injured seaman on a ship.",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": ["physician", "physician-duplicate"],
+      "require_semantic_provenance": true,
+      "excluded_series": ["harbour-records"]
+    },
+    {
+      "query_id": "learned-memory-electrification",
+      "query": "the lighthouse lamp was electrified",
+      "series_slug": "lighthouse-chronicles",
+      "expected_memory_text": "The lighthouse lamp was electrified in nineteen hundred and two.",
+      "excluded_series": ["harbour-records"]
+    },
+    {
+      "query_id": "terminology-independence",
+      "query": "The physician stockpiled penicillin before the storm.",
+      "series_slug": "lighthouse-chronicles",
+      "expected_contract_term": {
+        "source_text": "penicillin",
+        "canonical_translation": "пенициллин"
+      },
+      "expected_top3_doc_ids": ["physician", "physician-duplicate"],
+      "excluded_series": ["harbour-records"]
+    }
+  ]
+}

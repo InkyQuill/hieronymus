@@ -10,12 +10,15 @@
 //! never silently mixed with a half-running lane. Corrupt hits (stale
 //! checksum, deleted chunk, foreign series or generation) are excluded and a
 //! Task 8 rebuild job is scheduled over a fresh generation; one repair runs at
-//! a time. Tokenization is the shared deterministic byte-fold mapping used
-//! identically for documents (rebuild jobs) and queries (this lane), so
-//! document and query embeddings stay one identity.
+//! a time. Tokenization is the pinned WordPiece [`ModelTokenizer`](crate::
+//! semantic_tokenizer::ModelTokenizer) used identically for documents (rebuild
+//! jobs) and queries (this lane), so document and query embeddings stay one
+//! identity.
 
 use std::collections::HashMap;
 use std::path::Path;
+
+use rusqlite::OptionalExtension;
 
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
@@ -88,32 +91,10 @@ pub fn conflicting_rule_ids(text: &str, contract: &[ContractTerm]) -> Vec<i64> {
     ids
 }
 
-/// The shared deterministic token mapping: text bytes folded into a bounded,
-/// position-dependent token stream. Rebuild jobs tokenize documents with it
-/// and the recall lane tokenizes queries with it, which keeps document and
-/// query embeddings comparable (an exact text match is an exact vector match).
-/// The mapping's stable id is part of every [`crate::semantic_embeddings::
-/// EmbeddingIdentity`]: swapping it in for another tokenizer changes the
-/// identity and forces a full rebuild.
-pub fn byte_fold_tokens(text: &str) -> Vec<u32> {
-    text.bytes()
-        .enumerate()
-        .map(|(index, byte)| ((u32::from(byte) * 31 + index as u32) % 30_000) + 1)
-        .collect()
-}
-
-/// Re-exported at the lane level: the tokenizer id this module's lane pairs
-/// with [`byte_fold_tokens`].
+/// Re-exported at the lane level: the retired tokenizer id. Generations
+/// persisted under it predate the pinned WordPiece tokenizer and are rejected
+/// by the identity check until rebuilt.
 pub use crate::semantic_embeddings::BYTE_FOLD_TOKENIZER_ID;
-
-/// [`ChunkTokenizer`] over [`byte_fold_tokens`].
-pub struct ByteFoldTokenizer;
-
-impl ChunkTokenizer for ByteFoldTokenizer {
-    fn tokenize(&mut self, chunk: &AuthoritativeChunk) -> Result<Vec<u32>, SemanticError> {
-        Ok(byte_fold_tokens(&chunk.text))
-    }
-}
 
 /// The armed query-time semantic lane: one embedding provider plus the
 /// tokenizer matching the document-side mapping. Both live behind one mutex
@@ -312,6 +293,102 @@ impl SemanticLane {
     }
 }
 
+/// Outcome of queueing a whole-corpus rebuild ([`queue_semantic_rebuild`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueueOutcome {
+    /// A fresh generation was begun and its rebuild job enqueued; the id is
+    /// the durable job id.
+    Enqueued(String),
+    /// A building generation with a live job already covers exactly the
+    /// current authoritative corpus; its job id is returned.
+    AlreadyQueued(String),
+    /// The corpus has no chunks: nothing to index, the lane stays
+    /// ready-for-ingest (never an error).
+    EmptyCorpus,
+}
+
+/// Queues a whole-corpus rebuild generation plus its durable job (Task S2's
+/// post-commit queueing, also the startup recovery path for chunks with no
+/// active generation). One rebuild is in flight at a time:
+///
+/// - a live building job whose frozen `expected_count` matches the current
+///   authoritative count is returned as-is (dedup);
+/// - a live building job whose count went stale (a concurrent import landed
+///   after the generation froze its expectation) is durably cancelled — its
+///   candidate can never cover the new chunks — and a fresh generation is
+///   queued over the whole corpus.
+///
+/// The check, the cancel, the candidate generation, and the job insert all
+/// happen inside ONE `BEGIN IMMEDIATE` transaction, so two imports racing in
+/// this window serialize: the loser re-reads the winner's fresh job and
+/// dedups (or supersedes it) instead of queueing a second generation. Any
+/// failure rolls the whole thing back — no cancelled flag or unqueued
+/// candidate can survive a partial queueing.
+pub fn queue_semantic_rebuild(
+    config: &HieronymusConfig,
+    identity: &crate::semantic_embeddings::EmbeddingIdentity,
+) -> Result<QueueOutcome, SemanticError> {
+    use rusqlite::{TransactionBehavior, params};
+
+    // Schema bootstrap only (idempotent, autocommit); the decision below runs
+    // in its own immediate transaction.
+    SemanticStore::open(config)?;
+    SemanticJobStore::open(config)?;
+    let mut connection = open_migrated(Path::new(&config.database_path()))?;
+    // Two racing importers contend for the same write lock; the busy timeout
+    // lets them serialize instead of failing.
+    connection.pragma_update(None, "busy_timeout", 5_000)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+    let chunk_count: i64 =
+        transaction.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
+    if chunk_count == 0 {
+        return Ok(QueueOutcome::EmptyCorpus);
+    }
+
+    let live: Option<(String, i64)> = transaction
+        .query_row(
+            "select j.job_id, g.expected_count
+             from semantic_jobs j
+             join semantic_generations g on g.generation_id = j.generation_id
+             where j.status in ('queued', 'running')
+               and g.status = 'building'
+             order by j.created_at
+             limit 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    if let Some((job_id, expected_count)) = &live
+        && *expected_count == chunk_count
+    {
+        return Ok(QueueOutcome::AlreadyQueued(job_id.clone()));
+    }
+    if let Some((job_id, _)) = &live {
+        transaction.execute(
+            "update semantic_jobs set cancel_requested = 1, updated_at = ?2 where job_id = ?1",
+            params![job_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+    }
+
+    // Unique across racers and repeated calls: wall-clock nanos plus a
+    // process-local sequence (two serialized racers can share a nanosecond).
+    static QUEUE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let generation_id = format!(
+        "rebuild-{}-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+        QUEUE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    crate::semantic_store::begin_generation_in_transaction(&transaction, &generation_id, identity)?;
+    let record = crate::semantic_jobs::enqueue_rebuild_in_transaction(
+        &transaction,
+        &generation_id,
+        identity,
+    )?;
+    transaction.commit()?;
+    Ok(QueueOutcome::Enqueued(record.job_id))
+}
+
 /// Schedules the repair for corrupt hits: a fresh generation plus the Task 8
 /// rebuild job that drives it to activation. This is the smallest repair path
 /// that reuses the durable job system verbatim — Task 8 jobs attach to a
@@ -425,13 +502,5 @@ mod tests {
             contract_term(7, &["sorcery"]),
         ];
         assert_eq!(conflicting_rule_ids("sorcery", &duplicated), vec![7]);
-    }
-
-    #[test]
-    fn byte_fold_tokens_are_deterministic_and_text_bound() {
-        assert_eq!(byte_fold_tokens("abc"), byte_fold_tokens("abc"));
-        assert_ne!(byte_fold_tokens("abc"), byte_fold_tokens("abd"));
-        assert_eq!(byte_fold_tokens("abc").len(), 3);
-        assert_eq!(byte_fold_tokens("").len(), 0);
     }
 }
