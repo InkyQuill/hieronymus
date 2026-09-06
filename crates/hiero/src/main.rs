@@ -1046,10 +1046,8 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Err(error) => {
-            if let update::UpdateError::Failed { steps, .. } = &error {
-                for step in steps {
-                    eprintln!("  {step}");
-                }
+            for step in error.steps() {
+                eprintln!("  {step}");
             }
             eprintln!("hiero update: {error}");
             Ok(ExitCode::from(error.exit_code()))

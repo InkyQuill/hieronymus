@@ -759,6 +759,7 @@ fn failure_injection_at_every_step_leaves_only_safe_states_for_an_ordered_upgrad
         InjectionPoint::BeforeCommit,
         InjectionPoint::AfterCommit,
         InjectionPoint::AfterDatabaseCommitted,
+        InjectionPoint::AfterReceipt,
         InjectionPoint::AfterComplete,
     ];
     for point in POINTS {

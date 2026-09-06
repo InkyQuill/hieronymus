@@ -37,6 +37,7 @@ const ALL_INJECTION_POINTS: &[InjectionPoint] = &[
     InjectionPoint::AfterCommit,
     InjectionPoint::AfterDatabaseCommitted,
     InjectionPoint::MidPromotion,
+    InjectionPoint::AfterReceipt,
     InjectionPoint::AfterComplete,
 ];
 
@@ -376,6 +377,98 @@ fn upgrade_completes_the_full_cutover() {
         .unwrap();
     assert_eq!(rerun.outcome.as_str(), "already-complete");
     assert_eq!(backup_sets(root.path()).len(), 1, "no second backup");
+}
+
+#[test]
+fn already_complete_reconstructs_a_missing_receipt_from_the_journal() {
+    // Astra receipt/finalization follow-up: the receipt is now written before
+    // the terminal `complete` transition, but an older `complete` journal that
+    // LACKS a receipt (the previous step order crashed between them) must be
+    // finalized idempotently from the journal's stored checksums, never
+    // accepted as-is.
+    let root = fresh_fixture();
+    let report = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    let receipt = report.receipt_path.unwrap();
+    assert!(receipt.exists());
+    let original = std::fs::read_to_string(&receipt).unwrap();
+
+    // Simulate the crash window: a `complete` journal with no receipt.
+    std::fs::remove_file(&receipt).unwrap();
+    assert_eq!(journal_state(root.path()).as_deref(), Some("complete"));
+
+    let rerun = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    assert_eq!(rerun.outcome.as_str(), "already-complete");
+    assert_eq!(rerun.receipt_path.as_deref(), Some(receipt.as_path()));
+    assert!(receipt.exists(), "the receipt was reconstructed");
+
+    let rebuilt = std::fs::read_to_string(&receipt).unwrap();
+    assert!(
+        rebuilt.contains(&format!(
+            "\"target_schema_version\": {SUPPORTED_RUST_SCHEMA_VERSION}"
+        )),
+        "{rebuilt}"
+    );
+    assert!(rebuilt.contains("backup_database_sha256"), "{rebuilt}");
+    assert!(rebuilt.contains("migration_report_checksum"), "{rebuilt}");
+    // Same durable checksums as the original receipt.
+    for field in ["backup_database_sha256", "migration_report_checksum"] {
+        let value = |text: &str| {
+            text.lines()
+                .find(|line| line.contains(field))
+                .map(|line| line.to_string())
+                .unwrap()
+        };
+        assert_eq!(value(&original), value(&rebuilt), "{field}");
+    }
+    // No key material leaked into the reconstruction.
+    assert!(!rebuilt.contains(PROVIDER_SENTINEL), "{rebuilt}");
+
+    // Reconstruction is idempotent.
+    let third = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    assert_eq!(third.outcome.as_str(), "already-complete");
+    assert_eq!(
+        std::fs::read_to_string(&receipt).unwrap(),
+        rebuilt,
+        "a present receipt is left untouched"
+    );
+}
+
+#[test]
+fn a_resume_after_the_receipt_write_never_rewrites_the_receipt() {
+    // The receipt is written before the journal's `complete` transition. A
+    // crash in that window leaves `config_promotion_required`; the resume must
+    // finish the journal WITHOUT overwriting the good receipt with a fresh
+    // `completed_at` and possibly-different derived fields.
+    let root = fresh_fixture();
+    let options = UpgradeOptions {
+        injection: Some(InjectionPoint::AfterReceipt),
+    };
+    run_upgrade(&config(root.path()), false, &options).unwrap_err();
+    assert_eq!(
+        journal_state(root.path()).as_deref(),
+        Some("config_promotion_required")
+    );
+    let sets = backup_sets(root.path());
+    let receipt = sets[0].join("receipt.json");
+    let original = std::fs::read(&receipt).unwrap();
+
+    let report = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
+        .map_err(|error| error.to_string())
+        .unwrap();
+    assert_eq!(report.outcome.as_str(), "complete");
+    assert!(report.resumed);
+    assert_eq!(journal_state(root.path()).as_deref(), Some("complete"));
+    assert_eq!(
+        std::fs::read(&receipt).unwrap(),
+        original,
+        "the resume rewrote a receipt that was already durable"
+    );
 }
 
 #[test]

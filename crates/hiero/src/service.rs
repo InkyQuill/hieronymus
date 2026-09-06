@@ -340,6 +340,59 @@ pub fn stop(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
     lifecycle(options, "stop", &["stop", SERVICE_UNIT_NAME])
 }
 
+/// The three manager lifecycle operations `hiero update`'s rollback state
+/// machine drives, behind a trait so tests can assert the exact call sequence
+/// and script a chosen call to fail. Each operation is all-or-nothing: it
+/// either completes or returns [`ServiceError`], never a partial success the
+/// caller has to interpret.
+pub trait ServiceManager {
+    /// Stop the managed unit (the candidate the failed activation may have
+    /// started). A unit that is already stopped is still `Ok`.
+    fn stop(&self) -> Result<(), ServiceError>;
+    /// Re-read unit files after the on-disk unit was restored.
+    fn reload(&self) -> Result<(), ServiceError>;
+    /// Start the managed unit (the restored previous version).
+    fn start(&self) -> Result<(), ServiceError>;
+}
+
+/// The production [`ServiceManager`]: the systemd **user** manager, contacted
+/// only when [`manager_enabled`] holds for its options. A custom `--unit-dir`
+/// or a host without `systemctl` makes every call a silent `Ok` — the same
+/// rule the rest of this module follows, so the updater's rollback path does
+/// link/unit restoration without ever touching a manager it must not touch.
+pub struct SystemdManager {
+    options: ServiceOptions,
+}
+
+impl SystemdManager {
+    pub fn new(options: ServiceOptions) -> Self {
+        Self { options }
+    }
+}
+
+impl ServiceManager for SystemdManager {
+    fn stop(&self) -> Result<(), ServiceError> {
+        if !manager_enabled(&self.options) {
+            return Ok(());
+        }
+        run_systemctl(&["stop", SERVICE_UNIT_NAME])
+    }
+
+    fn reload(&self) -> Result<(), ServiceError> {
+        if !manager_enabled(&self.options) {
+            return Ok(());
+        }
+        run_systemctl(&["daemon-reload"])
+    }
+
+    fn start(&self) -> Result<(), ServiceError> {
+        if !manager_enabled(&self.options) {
+            return Ok(());
+        }
+        run_systemctl(&["start", SERVICE_UNIT_NAME])
+    }
+}
+
 /// Verdict of comparing the installed unit against the expected definition and
 /// the currently running binary — doctor's service-definition check (security
 /// spec §Service Installation).
@@ -571,6 +624,18 @@ mod tests {
                 .contains("manager integration is disabled"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn systemd_manager_is_a_silent_noop_when_manager_integration_is_disabled() {
+        // A custom `--unit-dir` (as every update test uses) means the caller
+        // owns the manager, so `SystemdManager` never shells out to systemctl
+        // and every lifecycle call is `Ok`.
+        let temp = tempfile::tempdir().unwrap();
+        let manager = SystemdManager::new(options(&temp));
+        assert!(manager.stop().is_ok());
+        assert!(manager.reload().is_ok());
+        assert!(manager.start().is_ok());
     }
 
     #[test]

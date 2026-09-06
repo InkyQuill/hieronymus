@@ -116,6 +116,10 @@ pub enum InjectionPoint {
     AfterDatabaseCommitted,
     /// After the first staged file was promoted, mid-promotion.
     MidPromotion,
+    /// After the receipt was written, before the journal's terminal `complete`
+    /// transition. A resume must finish the journal without rewriting the
+    /// receipt that already exists.
+    AfterReceipt,
     AfterComplete,
 }
 
@@ -1124,6 +1128,77 @@ fn write_receipt(
     Ok(path)
 }
 
+/// The receipt path for a journal's backup set, written idempotently: an
+/// existing receipt (a resume that re-reached this step after a crash between
+/// the receipt write and the journal's `complete` transition) is left exactly
+/// as it was rather than overwritten with a fresh `completed_at` and
+/// possibly-different derived fields. `promotion` supplies the values only when
+/// the receipt is being written for the first time.
+fn persist_receipt(
+    config: &HieronymusConfig,
+    journal: &CutoverJournal,
+    promotion: &PromotionOutcome,
+) -> Result<PathBuf, MigrateError> {
+    let path = config
+        .data_root()
+        .join(&journal.backup_dir)
+        .join("receipt.json");
+    if path.exists() {
+        return Ok(path);
+    }
+    write_receipt(config, journal, promotion)
+}
+
+/// Rebuild a missing receipt for an already-`complete` cutover from durable
+/// state alone: the journal records the source state, target schema version,
+/// backup checksum, and every promoted file's before/after checksum, and the
+/// conversion ledger (when there was one) still lives in the committed
+/// database. Nothing here reruns a converter — it reconstructs the artifact a
+/// crash between `complete` and the receipt write (the old step order) never
+/// got to persist. Idempotent: written atomically, a no-op once present.
+fn reconstruct_receipt(
+    config: &HieronymusConfig,
+    journal: &CutoverJournal,
+) -> Result<PathBuf, MigrateError> {
+    let backup_dir = config.data_root().join(&journal.backup_dir);
+    let path = backup_dir.join("receipt.json");
+    if path.exists() {
+        return Ok(path);
+    }
+    let promoted = journal
+        .staged
+        .iter()
+        .map(|file| PromotedFileRecord {
+            path: file.path.clone(),
+            old_sha256: journal.backup_configs.get(&file.path).cloned(),
+            new_sha256: file.sha256.clone(),
+        })
+        .collect();
+    let receipt = UpgradeReceipt {
+        receipt_version: RECEIPT_VERSION,
+        completed_at: now_rfc3339(),
+        upgraded_by: env!("CARGO_PKG_VERSION").to_string(),
+        prior_app_version: None,
+        source_state: journal.source_state.clone(),
+        backup_database_sha256: journal.backup_database_sha256.clone(),
+        target_schema_version: journal.target_schema_version,
+        migration_report_checksum: ledger_checksum(config)?,
+        promoted,
+        // Best-effort: the journal does not record whether a derived model
+        // cache existed at cutover time. The cutover removes it when present,
+        // so "absent now" is reported as invalidated; a root that never had a
+        // cache is indistinguishable here and also reads as `true`. The
+        // durable-checksum fields above are exact; this one is not.
+        cache_invalidated: !config.llm_cache_path().exists(),
+    };
+    let text = serde_json::to_string_pretty(&receipt).map_err(|error| {
+        MigrateError::JournalInconsistent(format!("receipt render failed: {error}"))
+    })?;
+    crate::atomic::atomic_write_text(&path, &text)?;
+    fsync_dir(&backup_dir)?;
+    Ok(path)
+}
+
 // ---------------------------------------------------------------------------
 // The protocol
 // ---------------------------------------------------------------------------
@@ -1227,6 +1302,15 @@ fn already_complete_report(
 ) -> Result<UpgradeReport, MigrateError> {
     let backup_dir = config.data_root().join(&journal.backup_dir);
     let receipt = backup_dir.join("receipt.json");
+    // A `complete` journal that carries no receipt — a crash between the
+    // terminal transition and the receipt write under the old step order —
+    // is finalized idempotently from the journal's stored checksums rather
+    // than accepting its absence.
+    let receipt_path = if receipt.exists() {
+        Some(receipt)
+    } else {
+        Some(reconstruct_receipt(config, journal)?)
+    };
     Ok(UpgradeReport {
         outcome: UpgradeOutcome::AlreadyComplete,
         resumed: false,
@@ -1238,7 +1322,7 @@ fn already_complete_report(
         semantic_job: None,
         backup_dir: Some(backup_dir),
         backup_database_sha256: Some(journal.backup_database_sha256.clone()),
-        receipt_path: receipt.exists().then_some(receipt),
+        receipt_path,
     })
 }
 
@@ -1323,12 +1407,16 @@ fn run_fresh(
         JOURNAL_STATE_CONFIG_PROMOTION_REQUIRED,
     )?;
 
-    // Step 12: atomic promotion, then `complete`.
+    // Step 12: atomic promotion. The receipt is written BEFORE the journal's
+    // terminal `complete` transition (Astra receipt/finalization follow-up):
+    // a crash between them then leaves `config_promotion_required`, which the
+    // resume path finishes — never a `complete` journal with no receipt.
     let promotion = promote_staged(config, &journal, options)?;
+    let receipt_path = persist_receipt(config, &journal, &promotion)?;
+    if options.injection == Some(InjectionPoint::AfterReceipt) {
+        return Err(MigrateError::Injected(InjectionPoint::AfterReceipt));
+    }
     write_journal(config, &mut journal, JOURNAL_STATE_COMPLETE)?;
-
-    // Step 13: the receipt.
-    let receipt_path = write_receipt(config, &journal, &promotion)?;
     if options.injection == Some(InjectionPoint::AfterComplete) {
         return Err(MigrateError::Injected(InjectionPoint::AfterComplete));
     }
@@ -1401,8 +1489,11 @@ fn resume_promotion(
     }
 
     let promotion = promote_staged(config, &journal, options)?;
+    let receipt_path = persist_receipt(config, &journal, &promotion)?;
+    if options.injection == Some(InjectionPoint::AfterReceipt) {
+        return Err(MigrateError::Injected(InjectionPoint::AfterReceipt));
+    }
     write_journal(config, &mut journal, JOURNAL_STATE_COMPLETE)?;
-    let receipt_path = write_receipt(config, &journal, &promotion)?;
 
     Ok(UpgradeReport {
         outcome: UpgradeOutcome::Complete,
