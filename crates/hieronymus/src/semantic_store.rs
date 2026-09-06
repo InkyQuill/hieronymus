@@ -796,6 +796,34 @@ impl SemanticStore {
         Ok(())
     }
 
+    /// Drops the active generation out of the active slot because it can no
+    /// longer serve: its embedding identity no longer matches the running
+    /// provider, or its index did not survive on disk. The row is marked
+    /// `failed` (terminal, therefore GC-able) with `active = 0`, so the corpus
+    /// reads as uncovered and a rebuild is queued.
+    ///
+    /// Invalidating, not relabelling, is the point: a generation whose
+    /// identity or index no longer holds up must not keep the active slot
+    /// under a friendlier status, because every reader resolves "the current
+    /// index" through that slot. This is never data loss — the authoritative
+    /// chunks never left `rag_chunks`, so the recovery is a rebuild.
+    ///
+    /// Returns the invalidated generation id, or `None` when nothing was
+    /// active.
+    pub fn invalidate_active_generation(&self) -> Result<Option<String>, SemanticError> {
+        let Some(active) = self.active_generation()? else {
+            return Ok(None);
+        };
+        let connection = self.connection()?;
+        connection.execute(
+            "update semantic_generations
+             set status = 'failed', active = 0, updated_at = ?2
+             where generation_id = ?1",
+            params![active.generation_id, now_iso8601()],
+        )?;
+        Ok(Some(active.generation_id))
+    }
+
     /// Garbage collection: drops the LanceDB tables and manifest rows of
     /// terminal generations only (superseded, cancelled, failed). The active
     /// generation and any building generation are never collected — with no

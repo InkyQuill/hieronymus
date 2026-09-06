@@ -22,6 +22,29 @@
 //!   model, or tokenizer is an actionable `Failed`, never a silent
 //!   "semantic enabled"; an empty corpus with everything loaded is `Ready`
 //!   (ready-for-ingest), never an error.
+//!
+//! Readiness discipline (Task C3, review finding A3): `Ready` is a claim
+//! about what a `hieronymus_recall` call would actually get back, so it is
+//! decided in exactly ONE place — [`readiness_from_evidence`] over
+//! [`ReadinessEvidence`] gathered from real service state on every tick. The
+//! worker never publishes `Ready` from whichever branch it happened to reach.
+//! Three concrete ways the pre-C3 loop lied, each now closed by an evidence
+//! field:
+//!
+//! - it armed the indexing lane, dropped the `Err` of the *second* (query)
+//!   arm, and went on to advertise `Ready` with zero query-lane
+//!   installations (`query_installed`);
+//! - it treated a cancelled first rebuild as `Ready` without any older
+//!   generation to serve from (`generation_valid` / `corpus_empty`);
+//! - it accepted a manifest row that merely *existed* — a byte-fold-era
+//!   identity, a model swap, an index directory deleted underneath the
+//!   daemon — as an active generation (`generation_valid`).
+//!
+//! Store, queue, sample and lane-install errors are published as `Failed`
+//! with their cause rather than swallowed: a degraded service reports its
+//! limits truthfully, and both memory and semantic RAG are mandatory, so a
+//! false `Ready` here would defeat the R4 update gate that consumes this very
+//! state through `/status`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -37,6 +60,7 @@ use hieronymus::semantic_jobs::{
 };
 use hieronymus::semantic_recall::{SemanticLane, queue_semantic_rebuild};
 use hieronymus::semantic_store::{SemanticSample, SemanticStore};
+use rusqlite::OptionalExtension;
 
 use super::workers::WorkerGroup;
 
@@ -61,6 +85,58 @@ pub fn require_semantic_ready(state: &RequiredSemanticState) -> Result<(), Strin
         RequiredSemanticState::Failed(reason) => {
             Err(format!("semantic retrieval unavailable: {reason}"))
         }
+    }
+}
+
+/// The four facts the readiness decision consumes, each one read from real
+/// service state rather than inferred from a previous verdict.
+///
+/// Why this exists as a struct plus a pure function: readiness used to be set
+/// from whichever branch of the worker loop ran last, which is how a worker
+/// with a failed query-lane installation, a cancelled first rebuild, or a
+/// stale manifest row all reached `Ready`. Collecting the facts first and
+/// deciding once makes every `Ready` traceable to the evidence that justified
+/// it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReadinessEvidence {
+    /// A query-time [`SemanticLane`] was armed AND accepted by the
+    /// application. Without it there is nothing to answer a query with, no
+    /// matter how healthy the index on disk is.
+    pub query_installed: bool,
+    /// The authoritative corpus holds no chunks, so there is nothing to
+    /// index: ready-for-ingest. Read from the same `rag_chunks` count
+    /// `queue_semantic_rebuild` uses for
+    /// [`hieronymus::semantic_recall::QueueOutcome::EmptyCorpus`] — never
+    /// from a failed read, which is `Failed`, not "empty".
+    pub corpus_empty: bool,
+    /// The active generation exists, was built under the embedding identity
+    /// this controller runs, and its vector index survived on disk. Manifest
+    /// existence alone is explicitly NOT enough.
+    pub generation_valid: bool,
+    /// A durable rebuild job is queued or in flight for the current target,
+    /// so the current corpus is not covered yet.
+    pub rebuild_pending: bool,
+}
+
+/// The pure readiness decision: the single place `Ready` can be produced.
+///
+/// Order matters. A missing query lane dominates every other fact — an index
+/// nobody can query is not a service. A pending rebuild is reported as such
+/// even when an older generation still answers, because strict callers gate
+/// on the *current* corpus being covered. Only then is `Ready` allowed, and
+/// only for the two states that can honestly serve: an empty corpus
+/// (ready-for-ingest) or a verified current generation.
+pub fn readiness_from_evidence(evidence: &ReadinessEvidence) -> RequiredSemanticState {
+    if !evidence.query_installed {
+        return RequiredSemanticState::Failed("query lane is not installed".into());
+    }
+    if evidence.rebuild_pending {
+        return RequiredSemanticState::Rebuilding;
+    }
+    if evidence.corpus_empty || evidence.generation_valid {
+        RequiredSemanticState::Ready
+    } else {
+        RequiredSemanticState::Failed("no valid current semantic generation".into())
     }
 }
 
@@ -262,7 +338,7 @@ impl SemanticController {
             config,
             workers,
             Arc::new(OnnxArm::new(runtime)),
-            Box::new(|_lane| {}),
+            Box::new(|_lane| Ok(())),
         )
     }
 
@@ -271,11 +347,16 @@ impl SemanticController {
     /// the application's recall service. Called once when the lane first arms
     /// and again on every verified generation activation, so queries always
     /// run on a coherent identity and generation.
+    ///
+    /// The callback returns a `Result` because its failure is a readiness
+    /// fact, not a log line: a lane the application refused to accept means
+    /// queries still run on the old (or no) lane, which is
+    /// `ReadinessEvidence::query_installed == false` and therefore `Failed`.
     pub fn start_with(
         config: HieronymusConfig,
         workers: &mut WorkerGroup,
         arm: Arc<dyn SemanticArm>,
-        install: Box<dyn Fn(SemanticLane) + Send>,
+        install: Box<dyn Fn(SemanticLane) -> Result<(), String> + Send>,
     ) -> Result<Self, String> {
         let identity = arm.identity();
         let initial = match arm.precheck(&config) {
@@ -306,6 +387,11 @@ impl SemanticController {
         match outcome {
             hieronymus::semantic_recall::QueueOutcome::Enqueued(job_id)
             | hieronymus::semantic_recall::QueueOutcome::AlreadyQueued(job_id) => {
+                // The queueing itself just made `rebuild_pending` true, so
+                // close the window before the worker's next tick observes
+                // it. This can only ever downgrade `Ready` — it never
+                // upgrades anything, so the worker stays the sole source of
+                // `Ready`.
                 let mut state = self
                     .inner
                     .state
@@ -314,6 +400,7 @@ impl SemanticController {
                 if *state == RequiredSemanticState::Ready {
                     *state = RequiredSemanticState::Rebuilding;
                 }
+                drop(state);
                 let _ = self.inner.wake.send(());
                 Ok(job_id)
             }
@@ -340,10 +427,49 @@ fn set_state(inner: &ControllerInner, state: RequiredSemanticState) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
 }
 
+/// Publish the verdict [`readiness_from_evidence`] reached, optionally
+/// carrying the actionable *cause* instead of the pure function's generic
+/// symptom. `detail` can only ever refine a `Failed` verdict — it can never
+/// turn a non-ready verdict into a ready one, which is what keeps
+/// [`readiness_from_evidence`] the single gate.
+fn publish(inner: &ControllerInner, verdict: RequiredSemanticState, detail: Option<&str>) {
+    let state = match (&verdict, detail) {
+        (RequiredSemanticState::Failed(_), Some(detail)) => {
+            RequiredSemanticState::Failed(detail.to_string())
+        }
+        _ => verdict,
+    };
+    set_state(inner, state);
+}
+
+/// Publish the evidence's verdict and keep the remembered cause honest: a
+/// service that actually serves has no outstanding cause, so `Ready` clears
+/// it. Without that, a long-resolved job error would later be attached to an
+/// unrelated failure.
+fn publish_settling(
+    inner: &ControllerInner,
+    evidence: &ReadinessEvidence,
+    detail: &mut Option<String>,
+) {
+    let verdict = readiness_from_evidence(evidence);
+    if verdict == RequiredSemanticState::Ready {
+        *detail = None;
+    }
+    publish(inner, verdict, detail.as_deref());
+}
+
+/// Publish an actionable failure and remember its cause for the ticks that
+/// follow: the gathered evidence can only ever report the *symptom* ("no
+/// valid current semantic generation"), never why the service got there.
+fn fail(inner: &ControllerInner, detail: &mut Option<String>, reason: String) {
+    set_state(inner, RequiredSemanticState::Failed(reason.clone()));
+    *detail = Some(reason);
+}
+
 struct WorkerContext {
     inner: Arc<ControllerInner>,
     arm: Arc<dyn SemanticArm>,
-    install: Box<dyn Fn(SemanticLane) + Send>,
+    install: Box<dyn Fn(SemanticLane) -> Result<(), String> + Send>,
     wake_rx: std::sync::mpsc::Receiver<()>,
 }
 
@@ -351,7 +477,7 @@ fn run_worker(
     stop: Arc<AtomicBool>,
     inner: Arc<ControllerInner>,
     arm: Arc<dyn SemanticArm>,
-    install: Box<dyn Fn(SemanticLane) + Send>,
+    install: Box<dyn Fn(SemanticLane) -> Result<(), String> + Send>,
     wake_rx: std::sync::mpsc::Receiver<()>,
 ) {
     let context = WorkerContext {
@@ -360,8 +486,25 @@ fn run_worker(
         install,
         wake_rx,
     };
+    // The worker's own facts, i.e. everything a database read cannot see.
+    // `pair` is the indexing pair; `query_installed` records that the *query*
+    // lane armed and was accepted. The two are set together and cleared
+    // together, so a published `Ready` can never outlive the lane that has to
+    // answer for it.
     let mut pair: Option<ArmedPair> = None;
-    let mut announced_ready = false;
+    let mut query_installed = false;
+    // The actionable cause behind the current non-ready verdict, carried
+    // across ticks until the service actually serves.
+    let mut failure_detail: Option<String> = None;
+    // Whether the one-shot startup recovery already ran. The durable queue is
+    // what survives a restart, so re-queueing every tick would undo an
+    // operator's cancellation.
+    let mut recovery_attempted = false;
+    // The exception to that: a generation this worker had to invalidate
+    // uncovers the corpus through no operator action, so a recovery rebuild is
+    // owed. Held until it is actually queued, because the invalidation may be
+    // observed on a tick that cannot queue yet.
+    let mut recovery_owed = false;
     let mut rearm_deadline = std::time::Instant::now();
     let stop_flag = Arc::clone(&stop);
     let rebuild = RebuildConfig {
@@ -376,128 +519,295 @@ fn run_worker(
         // 1. Durable recovery first: reconcile crash residue (expired leases,
         //    terminal generations) before claiming anything new. This is also
         //    what recovers a queued job whose in-memory wakeup was missed.
-        if let Ok(jobs) = SemanticJobStore::open(&context.inner.config) {
-            let _ = jobs.reconcile();
+        //    Opening the store here is what guarantees the `semantic_jobs`
+        //    table the evidence gathering below reads. A store that cannot be
+        //    opened or reconciled is a hard failure, not a quiet `continue`:
+        //    nothing downstream could be trusted anyway.
+        let jobs = match SemanticJobStore::open(&context.inner.config) {
+            Ok(jobs) => jobs,
+            Err(error) => {
+                fail(
+                    &context.inner,
+                    &mut failure_detail,
+                    format!("the durable semantic job store is unusable: {error}"),
+                );
+                wait_for_wakeup(&context, &stop);
+                continue;
+            }
+        };
+        if let Err(error) = jobs.reconcile() {
+            fail(
+                &context.inner,
+                &mut failure_detail,
+                format!("durable semantic job reconciliation failed: {error}"),
+            );
+            wait_for_wakeup(&context, &stop);
+            continue;
         }
 
         // 2. Arming (with periodic retry: acquiring the assets later must
-        //    heal the Failed state without a restart).
+        //    heal the Failed state without a restart). BOTH lanes have to
+        //    load and the query lane has to be accepted — see
+        //    [`arm_both_lanes`].
         if pair.is_none() && rearm_deadline <= std::time::Instant::now() {
             set_state(&context.inner, RequiredSemanticState::Acquiring);
-            match context.arm.arm(&context.inner.config) {
-                Ok(armed) => {
-                    pair = Some(armed);
-                    if let Ok(lane_pair) = context.arm.arm(&context.inner.config) {
-                        (context.install)(SemanticLane::new(
-                            lane_pair.provider,
-                            lane_pair.tokenizer,
-                        ));
-                    }
+            match arm_both_lanes(&context) {
+                Ok(indexing) => {
+                    pair = Some(indexing);
+                    query_installed = true;
+                    failure_detail = None;
                 }
                 Err(reason) => {
-                    set_state(&context.inner, RequiredSemanticState::Failed(reason));
+                    query_installed = false;
+                    fail(&context.inner, &mut failure_detail, reason);
                     rearm_deadline = std::time::Instant::now() + REARM_POLL;
                 }
             }
         }
 
-        // 3. Once armed, decide the ready baseline: an active generation (or
-        //    an empty corpus) is Ready; uncovered chunks queue a rebuild.
-        if let Some(armed) = pair.as_mut() {
-            if !announced_ready {
-                announced_ready = announce_baseline(&context.inner);
+        // 3. Nothing armed: there is no lane to answer a query with, so the
+        //    verdict is the not-installed one with its acquisition cause.
+        //    Retry on the re-arm cadence.
+        if pair.is_none() {
+            publish(
+                &context.inner,
+                readiness_from_evidence(&ReadinessEvidence::default()),
+                failure_detail.as_deref(),
+            );
+            wait_for_wakeup(&context, &stop);
+            continue;
+        }
+
+        // 4. Evidence: what this service could actually answer with right
+        //    now, read fresh every tick so a stale `Ready` cannot survive.
+        let gathered = match gather_evidence(&context.inner, query_installed) {
+            Ok(gathered) => gathered,
+            Err(reason) => {
+                fail(&context.inner, &mut failure_detail, reason);
+                wait_for_wakeup(&context, &stop);
+                continue;
             }
-            // 4. Claim and drive durable jobs one at a time.
-            let jobs = match SemanticJobStore::open(&context.inner.config) {
-                Ok(jobs) => jobs,
-                Err(_) => {
+        };
+        let mut evidence = gathered.evidence;
+        if let Some(reason) = gathered.invalidated {
+            failure_detail = Some(reason);
+            recovery_owed = true;
+        }
+
+        // 5. Recovery queueing: a non-empty corpus with no valid generation
+        //    and nothing queued needs a durable rebuild. Once at startup, and
+        //    again for every generation this worker had to invalidate.
+        if !evidence.corpus_empty
+            && !evidence.generation_valid
+            && !evidence.rebuild_pending
+            && (!recovery_attempted || recovery_owed)
+        {
+            match queue_semantic_rebuild(&context.inner.config, &context.inner.identity) {
+                Ok(
+                    hieronymus::semantic_recall::QueueOutcome::Enqueued(_)
+                    | hieronymus::semantic_recall::QueueOutcome::AlreadyQueued(_),
+                ) => {
+                    evidence.rebuild_pending = true;
+                    recovery_owed = false;
+                }
+                // The corpus emptied between the count and the queueing;
+                // ready-for-ingest, never an error.
+                Ok(hieronymus::semantic_recall::QueueOutcome::EmptyCorpus) => {
+                    evidence.corpus_empty = true;
+                    recovery_owed = false;
+                }
+                Err(error) => {
+                    fail(
+                        &context.inner,
+                        &mut failure_detail,
+                        format!("queueing the semantic recovery rebuild failed: {error}"),
+                    );
                     wait_for_wakeup(&context, &stop);
                     continue;
                 }
-            };
-            let claimable = jobs.claimable_jobs().unwrap_or_default();
-            for job_id in claimable {
-                if stop.load(Ordering::Acquire) {
-                    break;
-                }
-                let is_ready = context
-                    .inner
-                    .state
-                    .lock()
-                    .map(|state| *state == RequiredSemanticState::Ready)
-                    .unwrap_or(false);
-                if is_ready {
-                    set_state(&context.inner, RequiredSemanticState::Rebuilding);
-                }
-                let Some(sample) =
-                    activation_sample(&context.inner.config, armed.tokenizer.as_mut())
-                else {
-                    continue;
-                };
-                let result = jobs.run_rebuild(
-                    &job_id,
-                    RebuildInputs {
-                        provider: armed.provider.as_mut(),
-                        tokenizer: armed.tokenizer.as_mut(),
-                        sample,
-                    },
-                    &rebuild,
-                );
-                match result {
-                    Ok(JobOutcome::Completed { .. }) => {
-                        // Verified activation: refresh the application's
-                        // query lane onto the new generation.
-                        if let Ok(lane_pair) = context.arm.arm(&context.inner.config) {
-                            (context.install)(SemanticLane::new(
-                                lane_pair.provider,
-                                lane_pair.tokenizer,
-                            ));
-                        }
-                        announced_ready = true;
-                        set_state(&context.inner, RequiredSemanticState::Ready);
-                    }
-                    Ok(JobOutcome::Cancelled { .. }) => {
-                        // The previous active generation (if any) keeps
-                        // serving; a later import re-queues.
-                        announced_ready = true;
-                        set_state(&context.inner, RequiredSemanticState::Ready);
-                    }
-                    Ok(JobOutcome::Failed { error, .. }) => {
-                        set_state(&context.inner, RequiredSemanticState::Failed(error));
-                    }
-                    Ok(JobOutcome::Busy { .. } | JobOutcome::LeaseLost { .. }) => {}
-                    Err(error) => {
-                        set_state(
-                            &context.inner,
-                            RequiredSemanticState::Failed(error.to_string()),
-                        );
-                    }
-                }
-                if stop.load(Ordering::Acquire) {
-                    break;
-                }
             }
-            // Nothing left to claim: the durable queue is drained. Never
-            // overwrite an honest Failed verdict with Ready.
-            let currently_rebuilding = context
-                .inner
-                .state
-                .lock()
-                .map(|state| *state == RequiredSemanticState::Rebuilding)
-                .unwrap_or(false);
-            if announced_ready
-                && currently_rebuilding
-                && jobs
-                    .claimable_jobs()
-                    .map(|jobs| jobs.is_empty())
-                    .unwrap_or(true)
-            {
-                set_state(&context.inner, RequiredSemanticState::Ready);
+        }
+        recovery_attempted = true;
+
+        // 6. Publish before the (possibly long) rebuild, then drive whatever
+        //    the durable queue offers.
+        publish_settling(&context.inner, &evidence, &mut failure_detail);
+        let pass = match pair.as_mut() {
+            Some(armed) => drive_claimable_jobs(&context, armed, &jobs, &rebuild, &stop),
+            // Unreachable: step 3 ended the tick when nothing is armed.
+            None => DrivePass::default(),
+        };
+
+        // 7. Fold what the pass learned back into the worker's own facts.
+        if pass.completed {
+            failure_detail = None;
+        }
+        // Kept because step 8 must re-settle for a failure that was raised
+        // *before* any job could be claimed (an unreadable queue), not only
+        // for one raised while driving.
+        let pass_failed = pass.failure.is_some();
+        if let Some(reason) = pass.failure {
+            failure_detail = Some(reason);
+        }
+        if let Some(reason) = pass.lane_lost {
+            // A lane the application would not take means queries run on a
+            // superseded lane (or none). Drop the pair so the next re-arm
+            // rebuilds BOTH lanes rather than calling this ready.
+            pair = None;
+            query_installed = false;
+            failure_detail = Some(reason);
+            rearm_deadline = std::time::Instant::now() + REARM_POLL;
+        }
+
+        // 8. Re-settle from evidence after the pass changed anything: the
+        //    verdict must describe the state the pass actually left behind,
+        //    never the outcome a branch hoped for. (This is where a
+        //    cancellation is judged: an older valid generation or an empty
+        //    corpus is `Ready`, anything else is not.) A failure counts even
+        //    when no job was claimed, so it surfaces on this tick rather than
+        //    waiting out a poll interval behind the step-6 verdict.
+        if !query_installed {
+            // The pass lost the lane; no database read can change that
+            // verdict, so do not spend one.
+            publish(
+                &context.inner,
+                readiness_from_evidence(&ReadinessEvidence::default()),
+                failure_detail.as_deref(),
+            );
+        } else if pass.drove_a_job || pass_failed {
+            match gather_evidence(&context.inner, query_installed) {
+                Ok(gathered) => {
+                    if let Some(reason) = gathered.invalidated {
+                        failure_detail = Some(reason);
+                        recovery_owed = true;
+                    }
+                    publish_settling(&context.inner, &gathered.evidence, &mut failure_detail);
+                }
+                Err(reason) => fail(&context.inner, &mut failure_detail, reason),
             }
         }
 
         wait_for_wakeup(&context, &stop);
     }
+}
+
+/// Arm the indexing pair, arm a second pair for the query lane, and install
+/// that lane into the application. All three steps propagate: readiness is a
+/// claim that a query can be answered, so the *query* pair is what has to
+/// load and be accepted — an armed indexing pair on its own proves nothing.
+///
+/// The pre-C3 code called `arm` a second time inside `if let Ok(..)` and
+/// dropped the `Err`, so a provider that loaded for indexing but not for
+/// querying produced a worker with zero query-lane installations that still
+/// advertised `Ready`.
+fn arm_both_lanes(context: &WorkerContext) -> Result<ArmedPair, String> {
+    let indexing = context.arm.arm(&context.inner.config)?;
+    install_query_lane(context)?;
+    Ok(indexing)
+}
+
+/// Arm a fresh query pair and hand it to the application. Called on first
+/// arming and again on every verified generation activation, so queries never
+/// run against a superseded generation.
+fn install_query_lane(context: &WorkerContext) -> Result<(), String> {
+    let query = context
+        .arm
+        .arm(&context.inner.config)
+        .map_err(|reason| format!("the semantic query lane could not be armed: {reason}"))?;
+    (context.install)(SemanticLane::new(query.provider, query.tokenizer))
+        .map_err(|reason| format!("the semantic query lane could not be installed: {reason}"))
+}
+
+/// What one job-driving pass changed about the worker's own facts. Everything
+/// a database read can see is re-gathered afterwards instead of being
+/// reported from here — this only carries what evidence cannot observe.
+#[derive(Default)]
+struct DrivePass {
+    /// A job was claimed and run, so the tick must re-gather evidence.
+    drove_a_job: bool,
+    /// The actionable reason a job could not finish.
+    failure: Option<String>,
+    /// The query lane could not be replaced onto the freshly activated
+    /// generation.
+    lane_lost: Option<String>,
+    /// A job completed and activated a generation.
+    completed: bool,
+}
+
+/// Claim and drive the durable queue one job at a time. Deliberately silent
+/// about readiness beyond the in-flight `Rebuilding` marker: the caller
+/// re-derives the verdict from evidence once the pass is over.
+fn drive_claimable_jobs(
+    context: &WorkerContext,
+    armed: &mut ArmedPair,
+    jobs: &SemanticJobStore,
+    rebuild: &RebuildConfig,
+    stop: &AtomicBool,
+) -> DrivePass {
+    let mut pass = DrivePass::default();
+    let claimable = match jobs.claimable_jobs() {
+        Ok(claimable) => claimable,
+        Err(error) => {
+            pass.failure = Some(format!(
+                "the durable semantic job queue is unreadable: {error}"
+            ));
+            return pass;
+        }
+    };
+    for job_id in claimable {
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+        // A claimed job is in flight for the whole run; say so rather than
+        // leaving the previous verdict standing over it.
+        set_state(&context.inner, RequiredSemanticState::Rebuilding);
+        pass.drove_a_job = true;
+        let sample = match activation_sample(&context.inner.config, armed.tokenizer.as_mut()) {
+            Ok(Some(sample)) => sample,
+            // The corpus emptied underneath us: there is nothing to activate
+            // against, and reconciliation settles the job on a later tick.
+            Ok(None) => break,
+            Err(reason) => {
+                pass.failure = Some(reason);
+                break;
+            }
+        };
+        let result = jobs.run_rebuild(
+            &job_id,
+            RebuildInputs {
+                provider: armed.provider.as_mut(),
+                tokenizer: armed.tokenizer.as_mut(),
+                sample,
+            },
+            rebuild,
+        );
+        match result {
+            Ok(JobOutcome::Completed { .. }) => {
+                pass.completed = true;
+                pass.failure = None;
+                // Verified activation: the query lane must move onto the new
+                // generation, and failing to move it is a failure — the
+                // pre-C3 code dropped that error and reported `Ready`.
+                if let Err(reason) = install_query_lane(context) {
+                    pass.lane_lost = Some(reason);
+                    break;
+                }
+            }
+            Ok(JobOutcome::Cancelled { .. }) => {
+                // Nothing is fabricated here. Whether the service can still
+                // serve — an older valid generation, or an empty corpus — is
+                // decided by the evidence gathered after this pass, never by
+                // the cancellation itself.
+            }
+            Ok(JobOutcome::Failed { error, .. }) => pass.failure = Some(error),
+            Ok(JobOutcome::Busy { .. } | JobOutcome::LeaseLost { .. }) => {}
+            Err(error) => pass.failure = Some(error.to_string()),
+        }
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    pass
 }
 
 /// Block until a wakeup arrives, the poll tick elapses, or cancellation is
@@ -510,74 +820,164 @@ fn wait_for_wakeup(context: &WorkerContext, _stop: &AtomicBool) {
     }
 }
 
-/// The post-arming baseline: `true` when the state is settled (Ready, or
-/// Rebuilding because a job is queued/in flight). Uncovered chunks queue a
-/// rebuild durably; an empty corpus is ready-for-ingest, never an error.
-fn announce_baseline(inner: &ControllerInner) -> bool {
-    let store = match SemanticStore::open(&inner.config) {
-        Ok(store) => store,
-        Err(error) => {
-            set_state(inner, RequiredSemanticState::Failed(error.to_string()));
-            return false;
-        }
+/// The gathered evidence plus the one thing the evidence itself cannot
+/// express: that an unusable active generation had to be invalidated on this
+/// tick.
+struct GatheredEvidence {
+    evidence: ReadinessEvidence,
+    /// Why the active generation was invalidated, when it was. The corpus is
+    /// now uncovered through no operator action, so the caller owes it a
+    /// recovery rebuild even after the startup one already ran.
+    invalidated: Option<String>,
+}
+
+/// Read the four readiness facts from real state.
+///
+/// Every hard read error is an `Err`, never a convenient `false`: an
+/// unreadable database is not an empty corpus and not a quiet queue, and
+/// papering over it is exactly how a broken store used to read as `Ready`.
+/// The caller publishes the `Err` as `Failed` with its cause.
+fn gather_evidence(
+    inner: &ControllerInner,
+    query_installed: bool,
+) -> Result<GatheredEvidence, String> {
+    let (chunk_count, rebuild_pending) = corpus_and_queue(&inner.config)?;
+    let (generation_valid, invalidated) = assess_and_invalidate_active_generation(inner)?;
+    Ok(GatheredEvidence {
+        evidence: ReadinessEvidence {
+            query_installed,
+            corpus_empty: chunk_count == 0,
+            generation_valid,
+            rebuild_pending,
+        },
+        invalidated,
+    })
+}
+
+/// The authoritative chunk count and whether a rebuild job is queued or in
+/// flight, on one connection. `semantic_jobs` exists because the tick opened
+/// the durable job store before gathering.
+///
+/// Every live job counts, not only one matching the running identity. That is
+/// deliberate: `queue_semantic_rebuild` keeps exactly one rebuild in flight
+/// and reconciliation terminates jobs whose generation went terminal, so a
+/// live row means the current corpus is not covered yet — and over-reporting
+/// `rebuild_pending` errs toward "not ready", which is the only safe
+/// direction here.
+fn corpus_and_queue(config: &HieronymusConfig) -> Result<(i64, bool), String> {
+    let connection = hieronymus::db::open_migrated(&config.database_path())
+        .map_err(|error| format!("the authoritative database is unreadable: {error}"))?;
+    let chunk_count: i64 = connection
+        .query_row("select count(*) from rag_chunks", [], |row| row.get(0))
+        .map_err(|error| format!("the authoritative chunk count is unreadable: {error}"))?;
+    let pending: i64 = connection
+        .query_row(
+            "select count(*) from semantic_jobs where status in ('queued', 'running')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("the durable semantic job queue is unreadable: {error}"))?;
+    Ok((chunk_count, pending > 0))
+}
+
+/// Whether the active generation can actually serve queries right now —
+/// and, when it cannot, INVALIDATE it and return the reason. This mutates
+/// durable state on that path (the generation is driven to a terminal status
+/// and out of the active slot); it is not a pure query.
+///
+/// The existence of a manifest row is explicitly NOT evidence. That row
+/// survives a byte-fold-era identity (the `tokenizer` column was back-filled
+/// with `byte-fold-v1`, which is a different embedding identity), a model or
+/// runtime swap, and an index directory deleted underneath the daemon — every
+/// one of which still answers `active_generation()` with `Ok(Some(_))` while
+/// every query against it is empty or wrong. So the checks are: identity
+/// equality against the arm this controller runs, then index integrity on
+/// disk (both read in one pass by `probe_active_generation`).
+///
+/// An unusable generation is *invalidated*, not relabelled: it leaves the
+/// active slot, so the corpus reads as uncovered and a rebuild is queued.
+/// Never data loss — the authoritative chunks never left `rag_chunks`.
+fn assess_and_invalidate_active_generation(
+    inner: &ControllerInner,
+) -> Result<(bool, Option<String>), String> {
+    let (manifest, intact) = SemanticStore::probe_active_generation(&inner.config)
+        .map_err(|error| format!("the semantic generation manifest is unreadable: {error}"))?;
+    let Some(active) = manifest else {
+        return Ok((false, None));
     };
-    match store.active_generation() {
-        Ok(Some(_)) => {
-            set_state(inner, RequiredSemanticState::Ready);
-            true
-        }
-        Ok(None) => {
-            match queue_semantic_rebuild(&inner.config, &inner.identity) {
-                Ok(hieronymus::semantic_recall::QueueOutcome::Enqueued(_))
-                | Ok(hieronymus::semantic_recall::QueueOutcome::AlreadyQueued(_)) => {
-                    let _ = inner.wake.send(());
-                    set_state(inner, RequiredSemanticState::Rebuilding);
-                    // Rebuilding settles through job outcomes; treat the
-                    // baseline as settled so it is not re-queued every tick.
-                    true
-                }
-                Ok(hieronymus::semantic_recall::QueueOutcome::EmptyCorpus) => {
-                    set_state(inner, RequiredSemanticState::Ready);
-                    true
-                }
-                Err(error) => {
-                    set_state(inner, RequiredSemanticState::Failed(error.to_string()));
-                    false
-                }
-            }
-        }
-        Err(error) => {
-            set_state(inner, RequiredSemanticState::Failed(error.to_string()));
-            false
+    let unusable = if active.identity != inner.identity {
+        Some(format!(
+            "semantic generation {} was built under a different embedding identity ({} {}@{}, {} \
+             dims, {} tokenizer) than the daemon runs; it was invalidated and must be rebuilt",
+            active.generation_id,
+            active.identity.provider(),
+            active.identity.model(),
+            active.identity.revision(),
+            active.identity.dimensions(),
+            active.identity.tokenizer(),
+        ))
+    } else if !intact {
+        Some(format!(
+            "the vector index of semantic generation {} did not survive on disk; it was \
+             invalidated and must be rebuilt",
+            active.generation_id
+        ))
+    } else {
+        // C4: also compare the generation's recorded corpus revision against
+        // the current authoritative revision here — a generation that is
+        // internally intact can still be behind the corpus it claims to
+        // cover.
+        None
+    };
+    match unusable {
+        None => Ok((true, None)),
+        Some(reason) => {
+            let store = SemanticStore::open(&inner.config).map_err(|error| {
+                format!(
+                    "{reason}; the semantic store could not be opened to invalidate it: {error}"
+                )
+            })?;
+            store
+                .invalidate_active_generation()
+                .map_err(|error| format!("{reason}; invalidating it failed: {error}"))?;
+            Ok((false, Some(reason)))
         }
     }
 }
 
 /// Task 7's activation sample: probe the series of the first authoritative
 /// chunk with its own text, so the sample query is guaranteed rows.
+/// `Ok(None)` means the corpus is empty (nothing to sample); a read or
+/// tokenizer error surfaces so the caller can report it instead of silently
+/// skipping the job.
 fn activation_sample(
     config: &HieronymusConfig,
     tokenizer: &mut dyn ChunkTokenizer,
-) -> Option<SemanticSample> {
-    let connection = hieronymus::db::open_migrated(&config.database_path()).ok()?;
+) -> Result<Option<SemanticSample>, String> {
+    let connection = hieronymus::db::open_migrated(&config.database_path())
+        .map_err(|error| format!("the authoritative database is unreadable: {error}"))?;
     let row = connection
         .query_row(
             "select series_slug, text from rag_chunks order by id limit 1",
             [],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
-        .ok()?;
+        .optional()
+        .map_err(|error| format!("the activation sample chunk is unreadable: {error}"))?;
+    let Some((series_slug, text)) = row else {
+        return Ok(None);
+    };
     let token_ids = tokenizer
         .tokenize(&AuthoritativeChunk {
             chunk_id: 0,
-            series_slug: row.0.clone(),
-            text: row.1,
+            series_slug: series_slug.clone(),
+            text,
         })
-        .ok()?;
-    Some(SemanticSample {
-        series_slug: row.0,
+        .map_err(|error| format!("the activation sample could not be tokenized: {error}"))?;
+    Ok(Some(SemanticSample {
+        series_slug,
         token_ids,
-    })
+    }))
 }
 
 #[cfg(test)]

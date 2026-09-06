@@ -236,6 +236,16 @@ pub fn accepted_doctor_exit(code: Option<i32>) -> Result<bool, String> {
 /// disarmed lane as ready. Transient `acquiring`/`rebuilding` states are
 /// retried within `READY_TIMEOUT`, since a freshly started candidate may
 /// still be arming its assets.
+///
+/// The gate deliberately owns no semantic knowledge of its own — no manifest
+/// peek, no index probe, no second opinion. The candidate's `semantic.state`
+/// IS the supervised controller's state, and since Task C3 that state is
+/// derived once per tick from
+/// `daemon::semantic_worker::readiness_from_evidence` over real service
+/// evidence (an installed query lane, a verified current generation or an
+/// empty corpus, no rebuild in flight). So `ready` here means the same
+/// service a `hieronymus_recall` request would reach, and this gate cannot
+/// drift away from what requests actually see.
 pub fn require_semantic_ready(config: &HieronymusConfig) -> Result<(), String> {
     use crate::daemon::semantic_worker::{RequiredSemanticState, require_semantic_ready as gate};
     let deadline = Instant::now() + READY_TIMEOUT;
@@ -551,8 +561,11 @@ fn run_update_impl(
             lines.push(
                 "candidate published a live, authenticated endpoint at the new version".to_string(),
             );
-            // S2 seam: the semantic lane must be armed and answering. A
-            // near-no-op until S2 wires it (see `require_semantic_ready`).
+            // S2/C3 seam: the semantic lane must be armed and answering.
+            // `require_semantic_ready` consumes the candidate controller's
+            // own evidence-derived state — the same one requests see — so a
+            // candidate with an uninstalled query lane, a stale generation,
+            // or a cancelled first rebuild cannot be activated.
             require_semantic_ready(&config)
                 .map_err(|reason| format!("candidate semantic lane not ready ({reason})"))?;
         } else if degraded {
@@ -1727,6 +1740,48 @@ mod tests {
             manager.calls(),
             vec!["stop", "start", "stop", "reload", "start"]
         );
+    }
+
+    /// Every non-ready semantic verdict the C3 controller can publish refuses
+    /// activation, and the two transient ones are *polled* rather than
+    /// hard-failed on sight: a freshly started candidate is allowed to finish
+    /// arming or indexing within `READY_TIMEOUT` before the gate rules.
+    #[test]
+    fn transient_semantic_states_are_polled_then_refused() {
+        for (state, expected) in [
+            ("acquiring", "semantic assets are still being acquired"),
+            ("rebuilding", "semantic indexing is still in progress"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let config = HieronymusConfig::new(temp.path());
+            fake_live_daemon(&config, &"12".repeat(16), "9.9.0", state);
+
+            let started = Instant::now();
+            let error = super::require_semantic_ready(&config).unwrap_err();
+            let waited = started.elapsed();
+
+            assert!(error.contains(expected), "{state}: {error}");
+            assert!(
+                waited >= READY_TIMEOUT,
+                "{state} must be retried for the whole readiness window, waited {waited:?}"
+            );
+        }
+    }
+
+    /// A candidate whose semantic lane is `failed` — since C3 that covers an
+    /// uninstalled query lane, an invalidated generation, and a cancelled
+    /// first rebuild, not only a missing runtime — is refused with the
+    /// controller's own actionable detail.
+    #[test]
+    fn a_failed_semantic_lane_is_refused_with_its_cause() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(temp.path());
+        fake_live_daemon(&config, &"34".repeat(16), "9.9.0", "failed");
+
+        let error = super::require_semantic_ready(&config).unwrap_err();
+
+        assert!(error.contains("semantic retrieval unavailable"), "{error}");
+        assert!(error.contains("no failure detail reported"), "{error}");
     }
 
     #[test]

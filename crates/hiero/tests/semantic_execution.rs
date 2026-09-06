@@ -17,13 +17,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hiero::daemon::semantic_worker::{
-    ArmedPair, EMPTY_CORPUS_JOB_ID, RequiredSemanticState, SemanticArm, SemanticController,
-    install_test_arm, require_semantic_ready,
+    ArmedPair, EMPTY_CORPUS_JOB_ID, ReadinessEvidence, RequiredSemanticState, SemanticArm,
+    SemanticController, install_test_arm, readiness_from_evidence, require_semantic_ready,
 };
+use hiero::daemon::workers::WorkerGroup;
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::semantic_embeddings::{EmbeddingProvider, FakeEmbeddingProvider};
 use hieronymus::semantic_error::SemanticError;
 use hieronymus::semantic_jobs::SemanticJobStore;
+use hieronymus::semantic_recall::SemanticLane;
 use hieronymus::semantic_store::SemanticStore;
 use hieronymus::semantic_tokenizer::ModelTokenizer;
 use serde::Deserialize;
@@ -40,6 +42,66 @@ fn required_semantics_cannot_be_reported_ready_when_disarmed() {
     );
     assert!(require_semantic_ready(&RequiredSemanticState::Rebuilding).is_err());
     assert!(require_semantic_ready(&RequiredSemanticState::Ready).is_ok());
+}
+
+/// Task C3's regression (review finding A3): readiness is a claim that a
+/// query can be answered, so a controller with no installed query lane can
+/// never report `Ready` — not even over an empty corpus, where every other
+/// signal says "nothing to do".
+#[test]
+fn ready_requires_an_installed_query_lane() {
+    let evidence = ReadinessEvidence {
+        query_installed: false,
+        corpus_empty: true,
+        generation_valid: false,
+        rebuild_pending: false,
+    };
+    assert_ne!(
+        readiness_from_evidence(&evidence),
+        RequiredSemanticState::Ready
+    );
+}
+
+/// The whole truth table of the pure decision core: every combination of the
+/// four facts, so no branch can drift into an optimistic default.
+#[test]
+fn readiness_from_evidence_covers_every_combination() {
+    for corpus_empty in [false, true] {
+        for generation_valid in [false, true] {
+            for rebuild_pending in [false, true] {
+                let disarmed = ReadinessEvidence {
+                    query_installed: false,
+                    corpus_empty,
+                    generation_valid,
+                    rebuild_pending,
+                };
+                // No lane installed dominates everything else.
+                assert!(
+                    matches!(
+                        readiness_from_evidence(&disarmed),
+                        RequiredSemanticState::Failed(_)
+                    ),
+                    "{disarmed:?} must not pass"
+                );
+
+                let armed = ReadinessEvidence {
+                    query_installed: true,
+                    ..disarmed
+                };
+                let expected = if rebuild_pending {
+                    // A queued or in-flight rebuild is reported as such even
+                    // when an older generation still serves: strict callers
+                    // must wait for the current target.
+                    RequiredSemanticState::Rebuilding
+                } else if corpus_empty || generation_valid {
+                    RequiredSemanticState::Ready
+                } else {
+                    RequiredSemanticState::Failed("no valid current semantic generation".into())
+                };
+                assert_eq!(readiness_from_evidence(&armed), expected, "{armed:?}");
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------ injection harness
@@ -122,38 +184,56 @@ struct TestArm {
     failures_remaining: usize,
     per_embed_delay: Duration,
     permanent_failure: bool,
+    /// How many `arm()` calls succeed before every later one fails. `None`
+    /// means all of them do. The worker arms twice per attempt — once for the
+    /// indexing pair, once for the query lane — so `Some(1)` is exactly the
+    /// C3 regression: the indexing lane loads, the query lane does not.
+    successful_arms: Option<usize>,
+    arms_seen: AtomicUsize,
 }
 
 impl TestArm {
-    fn fast() -> Arc<dyn SemanticArm> {
-        Arc::new(Self {
+    fn new() -> Self {
+        Self {
             failures_remaining: 0,
             per_embed_delay: Duration::ZERO,
             permanent_failure: false,
-        })
+            successful_arms: None,
+            arms_seen: AtomicUsize::new(0),
+        }
+    }
+
+    fn fast() -> Arc<dyn SemanticArm> {
+        Arc::new(Self::new())
     }
 
     fn delayed(per_embed_delay: Duration) -> Arc<dyn SemanticArm> {
         Arc::new(Self {
-            failures_remaining: 0,
             per_embed_delay,
-            permanent_failure: false,
+            ..Self::new()
         })
     }
 
     fn flaky(failures_remaining: usize) -> Arc<dyn SemanticArm> {
         Arc::new(Self {
             failures_remaining,
-            per_embed_delay: Duration::ZERO,
-            permanent_failure: false,
+            ..Self::new()
         })
     }
 
     fn failing() -> Arc<dyn SemanticArm> {
         Arc::new(Self {
-            failures_remaining: 0,
-            per_embed_delay: Duration::ZERO,
             permanent_failure: true,
+            ..Self::new()
+        })
+    }
+
+    /// Arms exactly `successful_arms` times, then refuses. Used to fail the
+    /// query lane while the indexing lane succeeds.
+    fn arming_only(successful_arms: usize) -> Arc<dyn SemanticArm> {
+        Arc::new(Self {
+            successful_arms: Some(successful_arms),
+            ..Self::new()
         })
     }
 }
@@ -168,6 +248,12 @@ impl SemanticArm for TestArm {
     }
 
     fn arm(&self, _config: &HieronymusConfig) -> Result<ArmedPair, String> {
+        let seen = self.arms_seen.fetch_add(1, Ordering::SeqCst);
+        if let Some(budget) = self.successful_arms
+            && seen >= budget
+        {
+            return Err("scripted arm failure".to_string());
+        }
         let provider = if self.permanent_failure {
             ScriptedProvider::permanently_failing()
         } else {
@@ -187,6 +273,109 @@ impl SemanticArm for TestArm {
 fn start_semantic_daemon(root: &Path, arm: Arc<dyn SemanticArm>) -> hiero::daemon::Daemon {
     install_test_arm(root, arm);
     start_daemon(root)
+}
+
+// ------------------------------------------------- controller-level harness
+
+/// A supervised controller with no HTTP surface, so a test can own the
+/// query-lane install callback (the C3 readiness fact) directly.
+fn start_controller(
+    config: &HieronymusConfig,
+    arm: Arc<dyn SemanticArm>,
+    install: Box<dyn Fn(SemanticLane) -> Result<(), String> + Send>,
+) -> (WorkerGroup, SemanticController) {
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut group = WorkerGroup::new(Arc::clone(&stop));
+    let controller =
+        SemanticController::start_with(config.clone(), &mut group, arm, install).unwrap();
+    (group, controller)
+}
+
+/// An install callback that counts its calls and answers `Ok` for the first
+/// `succeed_for` of them, then `Err`. `succeed_for = usize::MAX` never fails.
+fn counting_install(
+    calls: Arc<AtomicUsize>,
+    succeed_for: usize,
+) -> Box<dyn Fn(SemanticLane) -> Result<(), String> + Send> {
+    Box::new(move |_lane| {
+        let seen = calls.fetch_add(1, Ordering::SeqCst);
+        if seen < succeed_for {
+            Ok(())
+        } else {
+            Err("scripted install failure".to_string())
+        }
+    })
+}
+
+fn wait_for_controller(controller: &SemanticController, wanted: &RequiredSemanticState) -> bool {
+    wait_until(|| &controller.state() == wanted, Duration::from_secs(20))
+}
+
+/// Seed an authoritative corpus (series plus one imported file) with no
+/// daemon: the controller-level tests need real `rag_chunks` rows.
+fn seed_offline_corpus(config: &HieronymusConfig, root: &Path, text: &str) {
+    hieronymus::registry::Registry::open(config)
+        .unwrap()
+        .create_series("demo", "Demo", "ja", "en", None)
+        .unwrap();
+    let source = root.join("offline.txt");
+    std::fs::write(&source, text).unwrap();
+    hieronymus::rag::RagStore::open(config)
+        .unwrap()
+        .import_file("demo", &source, &hieronymus::rag::RagImport::new())
+        .unwrap();
+}
+
+/// Hand-write an ACTIVE generation manifest row under `identity` with no
+/// vector index behind it. This is exactly the shape a byte-fold-era
+/// database, a model swap, or a wiped index directory leaves behind: a row
+/// that exists and answers `active_generation()` while every query against it
+/// is empty or wrong.
+fn forge_active_generation(
+    config: &HieronymusConfig,
+    generation_id: &str,
+    identity: &hieronymus::semantic_embeddings::EmbeddingIdentity,
+) {
+    SemanticStore::open(config)
+        .unwrap()
+        .begin_generation(generation_id, identity)
+        .unwrap();
+    let connection = rusqlite::Connection::open(config.database_path()).unwrap();
+    connection
+        .execute(
+            "update semantic_generations set status = 'active', active = 1
+             where generation_id = ?1",
+            [generation_id],
+        )
+        .unwrap();
+}
+
+/// The identity of a byte-fold-era generation: every field of the running
+/// identity except the tokenizer, which the `semantic_generations` migration
+/// back-fills with `byte-fold-v1`. Different embeddings, same manifest shape.
+fn byte_fold_variant(
+    identity: &hieronymus::semantic_embeddings::EmbeddingIdentity,
+) -> hieronymus::semantic_embeddings::EmbeddingIdentity {
+    hieronymus::semantic_embeddings::EmbeddingIdentity::new(
+        identity.provider(),
+        identity.model(),
+        identity.revision(),
+        identity.dimensions(),
+        identity.normalization(),
+        hieronymus::semantic_embeddings::BYTE_FOLD_TOKENIZER_ID,
+        identity.max_input_tokens(),
+        identity.max_batch_inputs(),
+    )
+    .unwrap()
+}
+
+fn manifest_status(config: &HieronymusConfig, generation_id: &str) -> (String, bool) {
+    let manifest = SemanticStore::open(config)
+        .unwrap()
+        .generation_manifest(generation_id)
+        .unwrap()
+        .expect("the manifest row survives invalidation");
+    (manifest.status, manifest.active)
 }
 
 // -------------------------------------------------------- HTTP helpers
@@ -557,7 +746,19 @@ fn cancel_stops_the_rebuild_and_a_retry_rebuilds() {
         store.active_generation().unwrap().is_none(),
         "a cancelled candidate must never activate"
     );
-    wait_for_state(&daemon, "ready");
+    // C3: a cancelled FIRST rebuild leaves nothing serving — no older
+    // generation, a non-empty corpus — so the honest verdict is `failed`.
+    // The pre-C3 loop reported `ready` here from the cancellation alone.
+    let cancelled = wait_for_state(&daemon, "failed");
+    assert!(
+        cancelled
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("no valid current semantic generation"),
+        "the cancellation must be reported as an uncovered corpus: {cancelled:?}"
+    );
+    assert!(require_semantic_ready(&cancelled.required()).is_err());
 
     // Retry: new authoritative rows queue a fresh rebuild that completes.
     import(
@@ -714,15 +915,7 @@ fn a_stale_foreign_lease_is_taken_over_after_expiry() {
     jobs.claim_lease(&job.job_id, "foreign-worker:1", Duration::from_secs(1))
         .unwrap();
 
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut group = hiero::daemon::workers::WorkerGroup::new(Arc::clone(&stop));
-    let controller = SemanticController::start_with(
-        config.clone(),
-        &mut group,
-        TestArm::fast(),
-        Box::new(|_| {}),
-    )
-    .unwrap();
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
 
     // The takeover completes once the foreign lease lapses.
     assert!(
@@ -757,25 +950,310 @@ fn a_stale_foreign_lease_is_taken_over_after_expiry() {
 fn an_empty_corpus_rebuild_request_is_a_no_op_marker() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut group = hiero::daemon::workers::WorkerGroup::new(Arc::clone(&stop));
-    let controller = SemanticController::start_with(
-        config.clone(),
-        &mut group,
-        TestArm::fast(),
-        Box::new(|_| {}),
-    )
-    .unwrap();
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
     assert!(
-        wait_until(
-            || controller.state() == RequiredSemanticState::Ready,
-            Duration::from_secs(10)
-        ),
+        wait_for_controller(&controller, &RequiredSemanticState::Ready),
         "an armed controller over an empty corpus is ready: {:?}",
         controller.state()
     );
     let job_id = controller.request_rebuild("any-series").unwrap();
     assert_eq!(job_id, EMPTY_CORPUS_JOB_ID);
+    group.stop_and_join().unwrap();
+}
+
+// ------------------------------------------- Task C3: readiness is evidence
+
+/// The A3 regression at controller level: the indexing lane arms, the QUERY
+/// lane does not. The pre-C3 worker dropped that second `Err` and went on to
+/// advertise `Ready` with zero query-lane installations.
+#[test]
+fn a_query_lane_that_cannot_arm_is_never_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let installs = Arc::new(AtomicUsize::new(0));
+    // One successful arm: the indexing pair. The query pair is refused.
+    let (group, controller) = start_controller(
+        &config,
+        TestArm::arming_only(1),
+        counting_install(Arc::clone(&installs), usize::MAX),
+    );
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(10)
+        ),
+        "an uninstalled query lane must fail: {:?}",
+        controller.state()
+    );
+    assert_eq!(
+        installs.load(Ordering::SeqCst),
+        0,
+        "no lane may reach the application when the query pair never armed"
+    );
+    // The corpus is empty, i.e. every other signal says ready-for-ingest.
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "readiness must never be reported without an installed lane: {:?}",
+        controller.state()
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(detail.contains("scripted arm failure"), "{detail}");
+
+    group.stop_and_join().unwrap();
+}
+
+/// The application refusing the lane is the same readiness fact as a lane
+/// that could not be armed: the controller reports its cause, not `Ready`.
+#[test]
+fn an_install_failure_is_never_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let installs = Arc::new(AtomicUsize::new(0));
+    let (group, controller) = start_controller(
+        &config,
+        TestArm::fast(),
+        counting_install(Arc::clone(&installs), 0),
+    );
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(10)
+        ),
+        "a refused lane must fail: {:?}",
+        controller.state()
+    );
+    assert!(
+        installs.load(Ordering::SeqCst) >= 1,
+        "the install was tried"
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(detail.contains("scripted install failure"), "{detail}");
+
+    group.stop_and_join().unwrap();
+}
+
+/// A completed rebuild whose query-lane replacement fails is NOT ready: the
+/// generation activated, but queries would still run on the superseded lane.
+/// The pre-C3 code dropped this error and published `Ready`.
+#[test]
+fn a_failed_query_lane_replacement_after_a_rebuild_is_never_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "The replacement lane must be installed before this generation counts as ready.",
+    );
+    let installs = Arc::new(AtomicUsize::new(0));
+    // The first install (initial arming) succeeds; the post-activation
+    // replacement does not.
+    let (group, controller) = start_controller(
+        &config,
+        TestArm::fast(),
+        counting_install(Arc::clone(&installs), 1),
+    );
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(20)
+        ),
+        "a lost query lane must fail: {:?}",
+        controller.state()
+    );
+    // The rebuild really did finish: this is not a rebuild failure being
+    // mistaken for a lane failure.
+    let store = SemanticStore::open(&config).unwrap();
+    assert!(
+        store.active_generation().unwrap().is_some(),
+        "the rebuild activated a generation"
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(detail.contains("scripted install failure"), "{detail}");
+
+    group.stop_and_join().unwrap();
+}
+
+/// A manifest row is not evidence. A generation whose vector index did not
+/// survive on disk is invalidated (it loses the active slot, it is not
+/// relabelled) and rebuilt from the authoritative rows — which never left
+/// SQLite, so this is recovery, not data loss.
+#[test]
+fn a_generation_whose_index_vanished_is_invalidated_and_rebuilt() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "The index directory vanished, but the authoritative chunks never did.",
+    );
+    forge_active_generation(&config, "stale-gen", &TestArm::fast().identity());
+    assert!(
+        !SemanticStore::open(&config)
+            .unwrap()
+            .active_generation_intact()
+            .unwrap(),
+        "the forged generation has no index behind it"
+    );
+
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_for_controller(&controller, &RequiredSemanticState::Ready),
+        "the recovery rebuild settles ready: {:?}",
+        controller.state()
+    );
+    let active = SemanticStore::open(&config)
+        .unwrap()
+        .active_generation()
+        .unwrap()
+        .expect("a rebuilt generation is active");
+    assert_ne!(
+        active.generation_id, "stale-gen",
+        "the stale generation must be replaced, never relabelled"
+    );
+    assert_eq!(
+        manifest_status(&config, "stale-gen"),
+        ("failed".to_string(), false),
+        "the invalidated generation is terminal and out of the active slot"
+    );
+
+    group.stop_and_join().unwrap();
+}
+
+/// The same invalidation with nothing able to rebuild: the verdict stays
+/// `Failed` with the rebuild's own cause. Proves the stale generation is
+/// never counted as serving while it waits.
+#[test]
+fn a_stale_generation_with_no_usable_rebuild_reports_failed() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "Nothing can rebuild this corpus, so nothing may report it ready.",
+    );
+    forge_active_generation(&config, "stale-gen", &TestArm::fast().identity());
+
+    let (group, controller) = start_controller(&config, TestArm::failing(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(20)
+        ),
+        "an uncovered corpus must fail: {:?}",
+        controller.state()
+    );
+    assert!(
+        SemanticStore::open(&config)
+            .unwrap()
+            .active_generation()
+            .unwrap()
+            .is_none(),
+        "the unusable generation left the active slot"
+    );
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "a stale generation may never be reported ready: {:?}",
+        controller.state()
+    );
+
+    group.stop_and_join().unwrap();
+}
+
+/// A byte-fold-era manifest (the `tokenizer` column back-filled with
+/// `byte-fold-v1`) is a DIFFERENT embedding identity: its vectors cannot
+/// answer this daemon's queries. Startup must not accept it as ready just
+/// because the row exists.
+#[test]
+fn a_byte_fold_manifest_is_never_ready_at_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "Byte-fold vectors cannot answer model-tokenizer queries.",
+    );
+    let byte_fold = byte_fold_variant(&TestArm::fast().identity());
+    forge_active_generation(&config, "byte-fold-gen", &byte_fold);
+    assert_ne!(byte_fold, TestArm::fast().identity());
+
+    let (group, controller) = start_controller(&config, TestArm::failing(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(20)
+        ),
+        "an identity-mismatched generation must fail: {:?}",
+        controller.state()
+    );
+    assert_eq!(
+        manifest_status(&config, "byte-fold-gen"),
+        ("failed".to_string(), false),
+        "the mismatched generation is invalidated, not relabelled"
+    );
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "a foreign-identity generation may never be reported ready: {:?}",
+        controller.state()
+    );
+
+    group.stop_and_join().unwrap();
+}
+
+/// An unreadable authoritative database is not an empty corpus and not a
+/// quiet queue: the controller surfaces the store error instead of settling
+/// on the ready-for-ingest branch.
+#[test]
+fn an_unreadable_store_reports_failed_with_its_cause() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let database = config.database_path();
+    std::fs::create_dir_all(database.parent().unwrap()).unwrap();
+    std::fs::write(&database, b"this is emphatically not a SQLite database").unwrap();
+
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(10)
+        ),
+        "a corrupt store must fail: {:?}",
+        controller.state()
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(!detail.is_empty(), "the store error must be surfaced");
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "a corrupt store may never be reported ready: {:?}",
+        controller.state()
+    );
+
     group.stop_and_join().unwrap();
 }
 

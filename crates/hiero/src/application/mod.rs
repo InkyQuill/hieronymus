@@ -107,20 +107,25 @@ impl Application {
     /// Installs (or refreshes) the query-time semantic lane. Called by the
     /// semantic controller on first arming and on every verified generation
     /// activation, so queries always run on a coherent identity and
-    /// generation. A failed reopen keeps the previous service in place.
-    pub fn install_semantic_lane(&self, lane: SemanticLane) {
-        let Ok(mut guard) = self.recall.write() else {
-            return;
-        };
-        if let Ok(service) = RecallService::open(&self.config) {
-            *guard = service.with_semantic_lane(lane);
-        } else {
-            eprintln!(
-                "hiero daemon: semantic lane install skipped (could not reopen the recall \
-                 service over {})",
+    /// generation.
+    ///
+    /// A failed reopen keeps the previous service in place and is reported to
+    /// the caller: whether a query lane is installed is the load-bearing fact
+    /// behind `RequiredSemanticState::Ready` (Task C3), so swallowing this
+    /// error would let the controller advertise a lane that never arrived.
+    pub fn install_semantic_lane(&self, lane: SemanticLane) -> Result<(), String> {
+        let mut guard = self
+            .recall
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let service = RecallService::open(&self.config).map_err(|error| {
+            format!(
+                "could not reopen the recall service over {}: {error}",
                 self.config.database_path().display()
-            );
-        }
+            )
+        })?;
+        *guard = service.with_semantic_lane(lane);
+        Ok(())
     }
 
     /// Installs the daemon's post-commit rebuild notifier (Task S2).
