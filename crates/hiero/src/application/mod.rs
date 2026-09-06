@@ -105,6 +105,12 @@ impl Application {
         };
         if let Ok(service) = RecallService::open(&self.config) {
             *guard = service.with_semantic_lane(lane);
+        } else {
+            eprintln!(
+                "hiero daemon: semantic lane install skipped (could not reopen the recall \
+                 service over {})",
+                self.config.database_path().display()
+            );
         }
     }
 

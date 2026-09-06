@@ -358,6 +358,20 @@ pub struct RebuildConfig {
     pub stop_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
+/// Manual `Debug` (the `stop_check` closure is not `Debug`); the hook is
+/// represented only by its presence.
+impl std::fmt::Debug for RebuildConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RebuildConfig")
+            .field("batch_size", &self.batch_size)
+            .field("lease_ttl", &self.lease_ttl)
+            .field("max_batch_attempts", &self.max_batch_attempts)
+            .field("stop_check", &self.stop_check.as_ref().map(|_| "<closure>"))
+            .finish()
+    }
+}
+
 impl Default for RebuildConfig {
     fn default() -> Self {
         Self {
