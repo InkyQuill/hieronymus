@@ -14,7 +14,8 @@ use serde_json::{Value, json};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
 use hieronymus::dream_config::{DreamConfig, default_dream_config, load_dream_config};
-use hieronymus::dreaming::{DeterministicDreamProvider, DreamError, DreamRunRecord, DreamService};
+use hieronymus::dream_workflows::WorkflowResolver;
+use hieronymus::dreaming::{DreamError, DreamRunRecord, DreamService};
 
 use super::super::DaemonRuntime;
 use super::super::events;
@@ -274,7 +275,9 @@ pub(super) fn run_manual_dreaming(_request: &Request, runtime: &DaemonRuntime) -
         // The monitor stops when this drops — on completion and on unwind,
         // so it can never outlive the run.
         let _finished = FinishFlag(Arc::clone(&finished));
-        let outcome = DreamService::open(&config, DeterministicDreamProvider)
+        // Explicit deterministic injection (the pre-D5 seam): the configured
+        // provider lanes arrive with the D5 controller.
+        let outcome = DreamService::open(&config, WorkflowResolver::deterministic())
             .and_then(|service| service.run_all("admin", true, false));
         match outcome {
             Ok(record) => {

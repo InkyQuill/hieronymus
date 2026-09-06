@@ -13,6 +13,7 @@ use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
 use hieronymus::dream_config::{default_dream_config, save_dream_config};
 use hieronymus::dream_locks::dream_cycle_lock;
+use hieronymus::dream_workflows::WorkflowResolver;
 use hieronymus::dreaming::{DeterministicDreamProvider, DreamError, DreamProvider, DreamService};
 use hieronymus::memory_models::{ShortTermMemoryRecord, TranslationContext};
 use hieronymus::provider_config::{ProviderCatalog, ProviderProfile, save_provider_catalog};
@@ -167,24 +168,12 @@ fn sha256_hex(input: &str) -> String {
 type CallLog = Arc<Mutex<Vec<(String, Vec<i64>)>>>;
 
 /// Records every pass call; produces one valid crystal on knowledge_crystals
-/// and the coverage list on coverage_audit.
+/// and the coverage list on coverage_audit. Constructed directly around a
+/// shared call log so every fresh instance the resolver creates feeds the
+/// same record.
 struct EvidenceProvider {
     calls: CallLog,
     omit_coverage: bool,
-}
-
-impl EvidenceProvider {
-    fn new() -> Self {
-        Self {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            omit_coverage: false,
-        }
-    }
-
-    /// Clone before the provider moves into the service.
-    fn call_log(&self) -> CallLog {
-        Arc::clone(&self.calls)
-    }
 }
 
 impl DreamProvider for EvidenceProvider {
@@ -358,7 +347,7 @@ fn dreaming_crystallizes_completed_short_term_memory() {
             )]
         });
 
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -398,7 +387,7 @@ fn manual_dream_all_drains_small_batch_even_below_minimum() {
     create_series(&config, "only-sense-online");
     completed_session(&config, "only-sense-online", &["A completed dream input."]);
 
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let run = service.run_all("admin", true, false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -426,7 +415,7 @@ fn dreaming_ignores_active_sessions() {
         "Active notes should wait.",
     );
 
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -447,7 +436,7 @@ fn dreaming_marks_completed_sessions_as_dreamed_with_cycle() {
         &["Keep item crafting notes concise."],
     );
 
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
@@ -462,7 +451,7 @@ fn dreaming_creates_next_cycle_id() {
     create_series(&config, "only-sense-online");
     completed_session(&config, "only-sense-online", &["First note."]);
 
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let first_run = service.run_cycle("manual", false).unwrap();
     completed_session(&config, "only-sense-online", &["Second note."]);
     let second_run = service.run_cycle("manual", false).unwrap();
@@ -482,7 +471,7 @@ fn dreaming_rejects_second_cycle_while_lock_is_active() {
     create_series(&config, "only-sense-online");
 
     let held = dream_cycle_lock(&config, "manual").unwrap();
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     drop(held);
 
@@ -501,15 +490,17 @@ fn dreaming_releases_lock_after_provider_exception() {
 
     let service = DreamService::open(
         &config,
-        FailingProvider {
-            message: "provider failed",
-        },
+        WorkflowResolver::serving(|| {
+            Box::new(FailingProvider {
+                message: "provider failed",
+            })
+        }),
     )
     .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(error.to_string().contains("provider failed"), "{error}");
 
-    let retry = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let retry = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let run = retry.run_cycle("manual", false).unwrap();
     assert_eq!(run.status, "completed");
 }
@@ -522,7 +513,7 @@ fn dreaming_records_locked_skip_without_consuming_cycle_id() {
     completed_session(&config, "only-sense-online", &["A completed dream input."]);
 
     let held = dream_cycle_lock(&config, "manual").unwrap();
-    let service = DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let skipped = service.run_cycle("manual", true).unwrap();
     drop(held);
 
@@ -558,14 +549,19 @@ fn dreaming_records_failed_run_for_unparsable_provider_output() {
     create_series(&config, "only-sense-online");
     completed_session(&config, "only-sense-online", &["Valid input."]);
 
-    let provider = ScriptedProvider::new(
-        "empty-text",
-        vec![(
-            "knowledge_crystals",
-            json!({"crystals": [{"crystal_type": "lesson", "text": ""}]}),
-        )],
-    );
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "empty-text",
+                vec![(
+                    "knowledge_crystals",
+                    json!({"crystals": [{"crystal_type": "lesson", "text": ""}]}),
+                )],
+            ))
+        }),
+    )
+    .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(
         error.to_string().contains("candidate content is required"),
@@ -594,8 +590,16 @@ fn dreaming_records_failed_run_when_provider_returns_non_object() {
     create_series(&config, "only-sense-online");
     completed_session(&config, "only-sense-online", &["Valid input."]);
 
-    let provider = ScriptedProvider::new("null-pass", vec![("knowledge_crystals", json!(null))]);
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "null-pass",
+                vec![("knowledge_crystals", json!(null))],
+            ))
+        }),
+    )
+    .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(
         error.to_string().contains("output must be an object"),
@@ -616,9 +620,20 @@ fn incomplete_coverage_rolls_back_all_dream_mutations() {
     let memory_ids = completed_session(&config, "book", &["Conclusion one.", "Conclusion two."]);
     assert_eq!(memory_ids.len(), 2);
 
-    let mut provider = EvidenceProvider::new();
-    provider.omit_coverage = true;
-    let service = DreamService::open(&config, provider).unwrap();
+    let calls: CallLog = Arc::new(Mutex::new(Vec::new()));
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving({
+            let calls = Arc::clone(&calls);
+            move || {
+                Box::new(EvidenceProvider {
+                    calls: Arc::clone(&calls),
+                    omit_coverage: true,
+                })
+            }
+        }),
+    )
+    .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(error.to_string().contains("coverage_incomplete"), "{error}");
 
@@ -648,22 +663,27 @@ fn dreaming_fails_closed_on_unsupported_provider_output_sections() {
 
     // The crystal itself would apply cleanly; only the unsupported
     // `concepts` section must fail the run closed.
-    let provider = ScriptedProvider::new(
-        "unsupported-sections",
-        vec![(
-            "knowledge_crystals",
-            json!({
-                "crystals": [{
-                    "crystal_type": "observation",
-                    "title": "Would-be crystal",
-                    "text": "This crystal must not be applied.",
-                    "confidence": 0.8
-                }],
-                "concepts": [{"name": "Concept application is a later slice"}]
-            }),
-        )],
-    );
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "unsupported-sections",
+                vec![(
+                    "knowledge_crystals",
+                    json!({
+                        "crystals": [{
+                            "crystal_type": "observation",
+                            "title": "Would-be crystal",
+                            "text": "This crystal must not be applied.",
+                            "confidence": 0.8
+                        }],
+                        "concepts": [{"name": "Concept application is a later slice"}]
+                    }),
+                )],
+            ))
+        }),
+    )
+    .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(
         error
@@ -718,17 +738,22 @@ fn dreaming_fails_closed_when_pass_output_exceeds_max_records_per_pass() {
         .max_records_per_pass = 1;
     save_dream_config(&config, &dream_config).unwrap();
 
-    let provider = ScriptedProvider::new(
-        "over-pass-cap",
-        vec![(
-            "knowledge_crystals",
-            json!({"crystals": [
-                {"crystal_type": "observation", "text": "First conclusion."},
-                {"crystal_type": "observation", "text": "Second conclusion."}
-            ]}),
-        )],
-    );
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "over-pass-cap",
+                vec![(
+                    "knowledge_crystals",
+                    json!({"crystals": [
+                        {"crystal_type": "observation", "text": "First conclusion."},
+                        {"crystal_type": "observation", "text": "Second conclusion."}
+                    ]}),
+                )],
+            ))
+        }),
+    )
+    .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(
         error
@@ -765,25 +790,30 @@ fn dreaming_fails_closed_when_batch_exceeds_max_long_term_records_affected_per_r
     dream_config.max_long_term_records_affected_per_run = 2;
     save_dream_config(&config, &dream_config).unwrap();
 
-    let provider = ScriptedProvider::new(
-        "over-run-cap",
-        vec![
-            (
-                "rule_crystals",
-                json!({"rule_crystals": [
-                    {"crystal_type": "rule", "text": "Rule conclusion."}
-                ]}),
-            ),
-            (
-                "knowledge_crystals",
-                json!({"crystals": [
-                    {"crystal_type": "observation", "text": "First conclusion."},
-                    {"crystal_type": "observation", "text": "Second conclusion."}
-                ]}),
-            ),
-        ],
-    );
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "over-run-cap",
+                vec![
+                    (
+                        "rule_crystals",
+                        json!({"rule_crystals": [
+                            {"crystal_type": "rule", "text": "Rule conclusion."}
+                        ]}),
+                    ),
+                    (
+                        "knowledge_crystals",
+                        json!({"crystals": [
+                            {"crystal_type": "observation", "text": "First conclusion."},
+                            {"crystal_type": "observation", "text": "Second conclusion."}
+                        ]}),
+                    ),
+                ],
+            ))
+        }),
+    )
+    .unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
     assert!(
         error
@@ -818,10 +848,18 @@ fn evidence_dream_runs_all_passes_over_the_same_selection() {
     create_series(&config, "book");
     completed_session(&config, "book", &["Conclusion one.", "Conclusion two."]);
     let extra_ids = completed_session(&config, "book", &["A conclusion from the next session."]);
-    let provider = EvidenceProvider::new();
-    let call_log = provider.call_log();
-
-    let service = DreamService::open(&config, provider).unwrap();
+    let call_log: CallLog = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::clone(&call_log);
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(EvidenceProvider {
+                calls: Arc::clone(&calls),
+                omit_coverage: false,
+            })
+        }),
+    )
+    .unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -891,11 +929,16 @@ fn audit_records_prompt_hash_and_redacted_endpoint_on_request_and_response() {
     completed_session(&config, "book", &["The audited memory is important."]);
 
     const RENDERED_PROMPT: &str = "rendered dream prompt for the audit hash";
-    let provider = PromptAuditProvider {
-        prompt: RENDERED_PROMPT,
-        endpoint: "https://editor:secret@api.example.com:8443/v1?api_key=topsecret#frag",
-    };
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(PromptAuditProvider {
+                prompt: RENDERED_PROMPT,
+                endpoint: "https://editor:secret@api.example.com:8443/v1?api_key=topsecret#frag",
+            })
+        }),
+    )
+    .unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     let expected_hash = sha256_hex(RENDERED_PROMPT);
@@ -946,9 +989,18 @@ fn book_scale_batch_is_covered_by_every_dream_pass() {
             .collect()
     });
 
-    let provider = EvidenceProvider::new();
-    let call_log = provider.call_log();
-    let service = DreamService::open(&config, provider).unwrap();
+    let call_log: CallLog = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::clone(&call_log);
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(EvidenceProvider {
+                calls: Arc::clone(&calls),
+                omit_coverage: false,
+            })
+        }),
+    )
+    .unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -994,9 +1046,18 @@ fn provider_sees_only_the_selection_bounded_by_max_short_term_memories_per_run()
     dream_config.max_short_term_memories_per_run = 2;
     save_dream_config(&config, &dream_config).unwrap();
 
-    let provider = EvidenceProvider::new();
-    let call_log = provider.call_log();
-    let service = DreamService::open(&config, provider).unwrap();
+    let call_log: CallLog = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::clone(&call_log);
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(EvidenceProvider {
+                calls: Arc::clone(&calls),
+                omit_coverage: false,
+            })
+        }),
+    )
+    .unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -1030,22 +1091,27 @@ fn skipped_provider_candidates_are_audited_with_reasons() {
     create_series(&config, "book");
     completed_session(&config, "book", &["A completed dream input."]);
 
-    let provider = ScriptedProvider::new(
-        "invalid-source",
-        vec![(
-            "knowledge_crystals",
-            json!({
-                "crystals": [
-                    {
-                        "content": "This candidate cites an unknown source memory.",
-                        "source_memory_ids": [999999]
-                    },
-                    123
-                ]
-            }),
-        )],
-    );
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "invalid-source",
+                vec![(
+                    "knowledge_crystals",
+                    json!({
+                        "crystals": [
+                            {
+                                "content": "This candidate cites an unknown source memory.",
+                                "source_memory_ids": [999999]
+                            },
+                            123
+                        ]
+                    }),
+                )],
+            ))
+        }),
+    )
+    .unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -1075,22 +1141,27 @@ fn malformed_rule_crystal_gets_penalties_and_parse_warnings() {
     create_series(&config, "book");
     completed_session(&config, "book", &["Cooking term guidance."]);
 
-    let provider = ScriptedProvider::new(
-        "malformed-dict",
-        vec![(
-            "rule_crystals",
-            json!({
-                "rule_crystals": [{
-                    "body": "Keep cooking terminology practical and concrete.",
-                    "kind": "rule_crystal",
-                    "source_credibility": "user_rule",
-                    "rule_intent": "terminology",
-                    "concept_names": ["Cooking"]
-                }]
-            }),
-        )],
-    );
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| {
+            Box::new(ScriptedProvider::new(
+                "malformed-dict",
+                vec![(
+                    "rule_crystals",
+                    json!({
+                        "rule_crystals": [{
+                            "body": "Keep cooking terminology practical and concrete.",
+                            "kind": "rule_crystal",
+                            "source_credibility": "user_rule",
+                            "rule_intent": "terminology",
+                            "concept_names": ["Cooking"]
+                        }]
+                    }),
+                )],
+            ))
+        }),
+    )
+    .unwrap();
     let run = service.run_all("manual", true, false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -1208,9 +1279,11 @@ fn dream_error_records_redact_configured_api_key_value() {
 
     let service = DreamService::open(
         &config,
-        FailingProvider {
-            message: "provider rejected raw-secret-value",
-        },
+        WorkflowResolver::serving(|| {
+            Box::new(FailingProvider {
+                message: "provider rejected raw-secret-value",
+            })
+        }),
     )
     .unwrap();
     assert!(service.run_cycle("manual", false).is_err());

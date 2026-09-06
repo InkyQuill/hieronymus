@@ -17,12 +17,14 @@ use serde_json::{Value, json};
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
-use hieronymus::dream_config::{default_dream_config, save_dream_config};
+use hieronymus::dream_config::{default_dream_config, load_dream_config, save_dream_config};
 use hieronymus::dream_providers::{LlmDreamProvider, probe_models, strip_code_fences};
-use hieronymus::dreaming::{DeterministicDreamProvider, DreamProvider, DreamService};
+use hieronymus::dream_workflows::WorkflowResolver;
+use hieronymus::dreaming::{DreamProvider, DreamService};
 use hieronymus::memory_models::{ShortTermMemoryRecord, TranslationContext};
 use hieronymus::provider_config::{
-    ProviderCatalog, ProviderDefaults, ProviderProfile, save_provider_catalog,
+    ProviderCatalog, ProviderDefaults, ProviderProfile, load_provider_catalog,
+    save_provider_catalog,
 };
 use hieronymus::provider_http::{
     BlockingHttpTransport, HttpError, HttpResponse, ProviderTransport,
@@ -245,31 +247,6 @@ impl ProviderTransport for FakeTransport {
     }
 }
 
-/// A transport that fails the test if the gate or any non-network code path
-/// ever tries to reach a provider.
-struct NeverTransport;
-
-impl ProviderTransport for NeverTransport {
-    fn post_json(
-        &self,
-        _url: &str,
-        _headers: &[(String, String)],
-        _payload: &Value,
-        _timeout: Duration,
-    ) -> Result<HttpResponse, HttpError> {
-        panic!("no provider request may leave the process here")
-    }
-
-    fn get_json(
-        &self,
-        _url: &str,
-        _headers: &[(String, String)],
-        _timeout: Duration,
-    ) -> Result<HttpResponse, HttpError> {
-        panic!("no provider request may leave the process here")
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
@@ -284,6 +261,12 @@ fn openai_profile(url: &str) -> ProviderProfile {
     ProviderProfile::new("Openai Test", "openai", url, SECRET_KEY, 5.0)
 }
 
+/// The production resolver lane: snapshot the config's provider.conf catalog
+/// so enabled workflow assignments resolve and fail closed against it.
+fn catalog_resolver(config: &HieronymusConfig) -> WorkflowResolver {
+    WorkflowResolver::from_catalog(load_provider_catalog(config).unwrap())
+}
+
 fn keyless_openai_profile(url: &str) -> ProviderProfile {
     ProviderProfile::new("Openai Test", "openai", url, "", 5.0)
 }
@@ -296,10 +279,11 @@ fn save_catalog(config: &HieronymusConfig, profiles: Vec<(&str, ProviderProfile)
     save_provider_catalog(config, &catalog).unwrap();
 }
 
-/// Enable exactly one workflow assignment and disable everything else
-/// (default configs are all-disabled, so untouched passes stay off).
+/// Enable one workflow assignment (defaults are all-disabled, so untouched
+/// passes stay off). Loads any dream.conf already saved so successive calls
+/// accumulate, as per-workflow wiring requires.
 fn with_enabled_workflow(config: &HieronymusConfig, name: &str, provider: &str, model: &str) {
-    let mut dream_config = default_dream_config();
+    let mut dream_config = load_dream_config(config).unwrap_or_else(|_| default_dream_config());
     let workflow = dream_config.workflows.get_mut(name).unwrap();
     workflow.provider = provider.to_string();
     workflow.model = model.to_string();
@@ -403,8 +387,8 @@ fn sha256_hex(input: &str) -> String {
 fn gate_open_succeeds_when_no_workflow_is_enabled() {
     let (_root, config) = temp_config();
     // No provider.conf at all and the default all-disabled dream.conf: the
-    // synthetic/test world must keep opening with the deterministic provider.
-    DreamService::open(&config, DeterministicDreamProvider).unwrap();
+    // synthetic/test world must keep opening with the deterministic seam.
+    DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
 }
 
 #[test]
@@ -420,15 +404,8 @@ fn gate_fails_closed_on_missing_profile_for_enabled_workflow() {
         "missing-profile",
         "test-model",
     );
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile("http://127.0.0.1:9/v1"),
-        "test-model",
-    )
-    .unwrap()
-    .with_transport(Arc::new(NeverTransport));
 
-    let error = DreamService::open(&config, provider).unwrap_err();
+    let error = DreamService::open(&config, catalog_resolver(&config)).unwrap_err();
 
     assert!(
         error
@@ -439,7 +416,7 @@ fn gate_fails_closed_on_missing_profile_for_enabled_workflow() {
 }
 
 #[test]
-fn gate_fails_closed_when_deterministic_provider_faces_llm_workflow() {
+fn gate_fails_closed_when_deterministic_seam_faces_llm_workflow() {
     let (_root, config) = temp_config();
     save_catalog(
         &config,
@@ -447,7 +424,7 @@ fn gate_fails_closed_when_deterministic_provider_faces_llm_workflow() {
     );
     with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
 
-    let error = DreamService::open(&config, DeterministicDreamProvider).unwrap_err();
+    let error = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap_err();
 
     assert!(
         error.to_string().contains(
@@ -459,7 +436,7 @@ fn gate_fails_closed_when_deterministic_provider_faces_llm_workflow() {
 }
 
 #[test]
-fn gate_fails_closed_for_llm_provider_on_deterministic_workflow() {
+fn gate_fails_closed_for_deterministic_workflow_without_deterministic_injection() {
     let (_root, config) = temp_config();
     save_catalog(
         &config,
@@ -471,15 +448,11 @@ fn gate_fails_closed_for_llm_provider_on_deterministic_workflow() {
         "deterministic",
         "unused-model",
     );
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile("http://127.0.0.1:9/v1"),
-        "unused-model",
-    )
-    .unwrap()
-    .with_transport(Arc::new(NeverTransport));
 
-    let error = DreamService::open(&config, provider).unwrap_err();
+    // The catalog lane is production: without an explicit deterministic
+    // injection, a workflow assigned to the deterministic profile id fails
+    // closed.
+    let error = DreamService::open(&config, catalog_resolver(&config)).unwrap_err();
 
     assert!(
         error
@@ -500,52 +473,14 @@ fn gate_fails_closed_when_enabled_workflow_profile_has_no_key() {
         ],
     );
     with_enabled_workflow(&config, "knowledge_crystals", "keyless", "test-model");
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile("http://127.0.0.1:9/v1"),
-        "test-model",
-    )
-    .unwrap()
-    .with_transport(Arc::new(NeverTransport));
 
-    let error = DreamService::open(&config, provider).unwrap_err();
+    let error = DreamService::open(&config, catalog_resolver(&config)).unwrap_err();
 
     assert!(
         error
             .to_string()
             .contains("workflow knowledge_crystals: API key missing for provider profile: keyless"),
         "{error}"
-    );
-}
-
-#[test]
-fn gate_fails_closed_when_injected_provider_does_not_match_wiring() {
-    let (_root, config) = temp_config();
-    save_catalog(
-        &config,
-        vec![("local-llm", openai_profile("http://127.0.0.1:9/v1"))],
-    );
-    with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "model-a");
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile("http://127.0.0.1:9/v1"),
-        "model-b",
-    )
-    .unwrap()
-    .with_transport(Arc::new(NeverTransport));
-
-    let error = DreamService::open(&config, provider).unwrap_err();
-
-    let message = error.to_string();
-    assert!(
-        message.contains(
-            "workflow knowledge_crystals is assigned to provider local-llm model model-a"
-        ),
-        "{message}"
-    );
-    assert!(
-        message.contains("serves local-llm model model-b"),
-        "{message}"
     );
 }
 
@@ -568,15 +503,7 @@ fn gate_resolves_missing_workflow_provider_from_catalog_defaults() {
     workflow.enabled = true;
     save_dream_config(&config, &dream_config).unwrap();
 
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile("http://127.0.0.1:9/v1"),
-        "test-model",
-    )
-    .unwrap()
-    .with_transport(Arc::new(NeverTransport));
-
-    DreamService::open(&config, provider).unwrap();
+    DreamService::open(&config, catalog_resolver(&config)).unwrap();
 }
 
 #[test]
@@ -590,15 +517,8 @@ fn gate_allows_keyless_ollama_profiles() {
         )],
     );
     with_enabled_workflow(&config, "knowledge_crystals", "local-ollama", "gemma4-e3b");
-    let provider = LlmDreamProvider::new(
-        "local-ollama",
-        ProviderProfile::new("Ollama", "ollama", "http://127.0.0.1:9", "", 5.0),
-        "gemma4-e3b",
-    )
-    .unwrap()
-    .with_transport(Arc::new(NeverTransport));
 
-    DreamService::open(&config, provider).unwrap();
+    DreamService::open(&config, catalog_resolver(&config)).unwrap();
 }
 
 #[test]
@@ -1015,14 +935,9 @@ fn dream_service_runs_configured_llm_workflow_over_loopback() {
         vec![("local-llm", openai_profile(&server.url("/v1")))],
     );
     with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
+    with_enabled_workflow(&config, "coverage_audit", "local-llm", "test-model");
 
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile(&server.url("/v1")),
-        "test-model",
-    )
-    .unwrap();
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(&config, catalog_resolver(&config)).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
@@ -1030,9 +945,10 @@ fn dream_service_runs_configured_llm_workflow_over_loopback() {
     assert_eq!(run.created_crystal_count, 1);
     let crystal = scalar(&config, "select text from crystals");
     assert_eq!(crystal, json!("The loopback memory is important."));
-    assert!(
-        server.request_count() >= 7,
-        "all seven passes hit the provider"
+    assert_eq!(
+        server.request_count(),
+        2,
+        "only the enabled passes hit the provider; disabled assignments never do"
     );
     // Sentinel: the key traveled only in the outbound Authorization header.
     let sent_key = server
@@ -1059,21 +975,20 @@ fn audit_prompt_hash_and_endpoint_match_the_request_sent_over_the_wire() {
         vec![("local-llm", openai_profile(&server.url("/v1")))],
     );
     with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
+    with_enabled_workflow(&config, "coverage_audit", "local-llm", "test-model");
 
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile(&server.url("/v1")),
-        "test-model",
-    )
-    .unwrap();
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(&config, catalog_resolver(&config)).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
     assert_eq!(run.status, "completed");
 
-    // The prompt that actually left the process, one request per pass, in
-    // pass order (each pass completes before the next starts).
+    // The prompt that actually left the process, one request per enabled
+    // pass, in pass order (each pass completes before the next starts).
     let requests = server.requests.lock().unwrap();
-    assert_eq!(requests.len(), 7, "one wire request per pass");
+    assert_eq!(
+        requests.len(),
+        2,
+        "one wire request per enabled pass; disabled passes send nothing"
+    );
     let wire_hashes: Vec<String> = requests
         .iter()
         .map(|request| {
@@ -1086,9 +1001,9 @@ fn audit_prompt_hash_and_endpoint_match_the_request_sent_over_the_wire() {
 
     let request_payloads = audit_payloads(&config, run.id, "provider_request");
     let response_payloads = audit_payloads(&config, run.id, "provider_response");
-    assert_eq!(request_payloads.len(), 7);
-    assert_eq!(response_payloads.len(), 7);
-    for index in 0..7 {
+    assert_eq!(request_payloads.len(), 2);
+    assert_eq!(response_payloads.len(), 2);
+    for index in 0..2 {
         let expected_hash = &wire_hashes[index];
         assert_eq!(
             request_payloads[index]["prompt_sha256"],
@@ -1120,15 +1035,9 @@ fn failed_llm_run_fails_closed_and_redacts_records() {
         vec![("local-llm", openai_profile(&server.url("/v1")))],
     );
     with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
+    with_enabled_workflow(&config, "coverage_audit", "local-llm", "test-model");
 
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile(&server.url("/v1")),
-        "test-model",
-    )
-    .unwrap()
-    .with_retry_backoff(Duration::ZERO);
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(&config, catalog_resolver(&config)).unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
 
     assert!(
@@ -1185,14 +1094,9 @@ fn malformed_llm_output_is_audited_with_parse_warnings() {
         vec![("local-llm", openai_profile(&server.url("/v1")))],
     );
     with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
+    with_enabled_workflow(&config, "coverage_audit", "local-llm", "test-model");
 
-    let provider = LlmDreamProvider::new(
-        "local-llm",
-        openai_profile(&server.url("/v1")),
-        "test-model",
-    )
-    .unwrap();
-    let service = DreamService::open(&config, provider).unwrap();
+    let service = DreamService::open(&config, catalog_resolver(&config)).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");

@@ -18,6 +18,7 @@ pub mod dream_audit;
 pub mod dream_config;
 pub mod dream_locks;
 pub mod dream_providers;
+pub mod dream_workflows;
 pub mod dreaming;
 pub mod feedback;
 pub mod ingest_config;

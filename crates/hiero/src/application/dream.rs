@@ -15,7 +15,8 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use hieronymus::dreaming::{DeterministicDreamProvider, DreamService};
+use hieronymus::dream_workflows::WorkflowResolver;
+use hieronymus::dreaming::DreamService;
 
 use super::AppError;
 use super::Application;
@@ -65,8 +66,10 @@ fn dream(application: &Application, arguments: &Value) -> Result<Value, AppError
             )));
         }
     }
-    let service =
-        DreamService::open(application.config(), DeterministicDreamProvider).map_err(domain)?;
+    // Explicit deterministic injection (the pre-D5 seam): the configured
+    // provider lanes arrive with the D5 controller.
+    let service = DreamService::open(application.config(), WorkflowResolver::deterministic())
+        .map_err(domain)?;
     // Same seam as the daemon's manual-dreaming route: drain everything
     // pending (ignore the minimum threshold), refuse when another cycle
     // holds the lock.

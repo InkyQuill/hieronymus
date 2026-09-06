@@ -4,13 +4,15 @@
 //!
 //! One cycle: OS lock acquisition (one nonblocking `try_lock`, held for the
 //! whole cycle), a durable run row, a bounded selection of completed-session
-//! short-term memories, the seven evidence passes behind an injected
-//! [`DreamProvider`], one validated mutation batch applied transactionally,
-//! and audit entries covering inputs, outputs, parse decisions, and
-//! mutations with redacted payloads. `open` is the fail-closed workflow
-//! gate: every enabled `dream.conf` workflow assignment must resolve
-//! against the `provider.conf` catalog before any cycle runs (spec
-//! §Provider Policy).
+//! short-term memories, the enabled evidence passes each behind its own
+//! freshly resolved [`crate::dream_workflows::WorkflowResolver`] provider
+//! (ADR 0007), one validated mutation batch applied transactionally, and
+//! audit entries covering inputs, outputs, parse decisions, and mutations
+//! with redacted payloads. `open` is the fail-closed workflow gate: every
+//! enabled `dream.conf` workflow assignment must resolve against the
+//! `provider.conf` catalog before any cycle runs (spec §Provider Policy);
+//! a run whose required coverage audit is disabled is rejected before any
+//! input is processed.
 //!
 //! Real configured LLM clients live in [`crate::dream_providers`] behind the
 //! same [`DreamProvider`] seam. Still out of scope here: concept/facet
@@ -18,6 +20,11 @@
 //! events, decay/maintenance, and scheduler timers. Provider output
 //! sections that would feed those slices fail the run closed instead of
 //! being silently dropped.
+//!
+//! Still out of scope: [`DeterministicDreamProvider`] remains an explicit
+//! test and diagnostic injection via
+//! [`crate::dream_workflows::WorkflowResolver::deterministic`]; production
+//! construction of configured provider lanes is the D5 controller's job.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -28,11 +35,12 @@ use serde_json::{Value, json};
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::dream_audit::DreamAuditStore;
-use crate::dream_config::{DREAM_WORKFLOW_NAMES, DreamConfig, load_dream_config};
+use crate::dream_config::{DreamConfig, load_dream_config};
 use crate::dream_locks::{DreamCycleState, DreamLockError, dream_cycle_lock};
+use crate::dream_workflows::{WorkflowChoice, WorkflowResolver, enabled_choices};
 use crate::feedback::apply_score_delta;
 use crate::memory_models::{ShortTermMemoryRecord, TranslationContext};
-use crate::provider_config::{ProviderCatalog, load_provider_catalog};
+use crate::provider_config::load_provider_catalog;
 
 pub const ALLOWED_CRYSTAL_TYPES: [&str; 7] = [
     "lesson",
@@ -158,9 +166,12 @@ pub trait DreamProvider {
         self.name()
     }
 
-    /// True only for the deterministic provider. The open-time gate uses this
-    /// to refuse deterministic substitution for LLM-declared workflows (spec
-    /// §Provider Policy: it never silently replaces a configured workflow).
+    /// True only for the deterministic provider. The
+    /// [`crate::dream_workflows::WorkflowResolver`] test seam uses this to
+    /// accept a config-enabled workflow assignment that names the
+    /// `deterministic` profile id — while an assignment naming a configured
+    /// provider still refuses deterministic substitution (spec §Provider
+    /// Policy: it never silently replaces a configured workflow).
     fn is_deterministic(&self) -> bool {
         false
     }
@@ -194,6 +205,28 @@ pub trait DreamProvider {
         context: &TranslationContext,
         memories: &[ShortTermMemoryRecord],
     ) -> Result<Value, DreamError>;
+}
+
+/// The provider identity one pass writes into phase rows and audit payloads:
+/// the actual resolved profile id, wire provider name, model, and endpoint
+/// (redacted before storage) — never one injected provider's identity for
+/// every phase.
+#[derive(Debug, Clone)]
+pub(crate) struct ProviderIdentity {
+    pub(crate) profile: String,
+    pub(crate) name: String,
+    pub(crate) model: String,
+    pub(crate) endpoint: String,
+}
+
+/// The identity of the algorithmic, provider-free phases.
+fn deterministic_identity() -> ProviderIdentity {
+    ProviderIdentity {
+        profile: "deterministic".to_string(),
+        name: "deterministic".to_string(),
+        model: "deterministic".to_string(),
+        endpoint: String::new(),
+    }
 }
 
 /// The default prompt projection for providers without a custom prompt
@@ -359,48 +392,45 @@ struct ApplySummary {
     affected_memory_set: Value,
 }
 
-/// The dreaming service: typed phase orchestration over the data root with an
-/// injected provider. One instance may run any number of cycles; each cycle
-/// takes the OS dream-cycle lock.
-pub struct DreamService<P: DreamProvider> {
+/// The dreaming service: typed phase orchestration over the data root with a
+/// [`WorkflowResolver`] serving one fresh provider per selected workflow.
+/// One instance may run any number of cycles; each cycle takes the OS
+/// dream-cycle lock.
+pub struct DreamService {
     config: HieronymusConfig,
     dream_config: DreamConfig,
-    provider: P,
+    resolver: WorkflowResolver,
+    /// The configured ordered workflow assignments as resolved at `open`
+    /// time: the fail-closed gate has already run over the enabled ones.
+    choices: Vec<WorkflowChoice>,
     audit: DreamAuditStore,
 }
 
-/// `Debug` names the provider instead of dumping it, so `unwrap_err` in
+/// `Debug` names the resolver lane instead of dumping it, so `unwrap_err` in
 /// tests and any diagnostic path stay redacted by construction.
-impl<P: DreamProvider> std::fmt::Debug for DreamService<P> {
+impl std::fmt::Debug for DreamService {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DreamService")
-            .field("provider", &self.provider.name())
+            .field("resolver", &self.resolver)
             .finish_non_exhaustive()
     }
 }
 
-impl<P: DreamProvider> DreamService<P> {
-    pub fn open(config: &HieronymusConfig, provider: P) -> Result<Self, DreamError> {
+impl DreamService {
+    pub fn open(config: &HieronymusConfig, resolver: WorkflowResolver) -> Result<Self, DreamError> {
         let dream_config = load_dream_config(config)?;
-        // The fail-closed workflow gate (spec §Provider Policy): every
-        // enabled workflow assignment must resolve against provider.conf and
-        // match the injected provider before the service accepts any run.
-        // There is no run context here, so the precise redacted error text
-        // is the audit record.
-        let catalog = load_provider_catalog(config)?;
-        validate_workflow_wiring(
-            &dream_config,
-            &catalog,
-            provider.is_deterministic(),
-            provider.profile_name(),
-            provider.model(),
-        )?;
+        // The fail-closed workflow gate (ADR 0007): every enabled workflow
+        // assignment must resolve against the provider catalog snapshot
+        // before the service accepts any run. There is no run context here,
+        // so the precise redacted error text is the audit record.
+        let choices = resolver.translate_choices(&dream_config)?;
         let audit = DreamAuditStore::open(config)?;
         Ok(Self {
             config: config.clone(),
             dream_config,
-            provider,
+            resolver,
+            choices,
             audit,
         })
     }
@@ -458,7 +488,7 @@ impl<P: DreamProvider> DreamService<P> {
         connection.execute(
             "insert into dream_runs(cycle_id, status, provider, created_at)
              values (?1, 'running', ?2, ?3)",
-            rusqlite::params![cycle_id, self.provider.name(), now()],
+            rusqlite::params![cycle_id, self.run_provider_label(), now()],
         )?;
         let run_id = connection.last_insert_rowid();
         drop(connection);
@@ -507,6 +537,22 @@ impl<P: DreamProvider> DreamService<P> {
         ignore_minimum: bool,
         phase_run_ids: &mut Vec<i64>,
     ) -> Result<DreamRunRecord, DreamError> {
+        // The coverage audit is required before anything runs: a run whose
+        // required coverage_audit workflow is disabled is rejected here,
+        // before any input is processed. (The deterministic test seam claims
+        // every workflow, so it never trips this gate.)
+        let selected =
+            enabled_choices(self.choices.clone()).map_err(DreamError::InvalidWorkflow)?;
+        // `enabled_choices` guarantees at least the required coverage_audit
+        // pass; the first enabled workflow is the run's primary lane and
+        // lends its identity to the run-level records.
+        let Some(primary_choice) = selected.first() else {
+            return Err(DreamError::InvalidWorkflow(
+                "coverage_audit must be enabled before processing memories".to_string(),
+            ));
+        };
+        let primary_provider = self.resolver.identity(primary_choice)?;
+
         let pending_count = self.pending_short_term_memory_count()?;
         let threshold_state = self.threshold_state(pending_count, ignore_minimum, trigger_type);
         if !ignore_minimum && pending_count < self.dream_config.min_pending_short_term_memories {
@@ -554,14 +600,25 @@ impl<P: DreamProvider> DreamService<P> {
         let mut covered_memory_ids: HashSet<i64> = HashSet::new();
         let mut staged: Vec<NormalizedOutput> = Vec::new();
 
-        for pass_name in DREAM_WORKFLOW_NAMES {
-            let phase_run_id =
-                self.start_phase_run(run_id, pass_name, selected_memory_ids.len() as i64)?;
+        for choice in &selected {
+            // A fresh provider per selected workflow, resolved inside the run
+            // and dropped when the pass ends (worker-local: instances are
+            // never stored on the service across threads). Disabled
+            // assignments never reach this line, so they never require a
+            // provider.
+            let provider = self.resolver.provider(choice)?;
+            let identity = self.resolver.identity(choice)?;
+            let phase_run_id = self.start_phase_run(
+                run_id,
+                &choice.name,
+                selected_memory_ids.len() as i64,
+                &identity,
+            )?;
             phase_run_ids.push(phase_run_id);
             // The prompt is rendered before the request audit so the stored
             // hash binds the exact text the pass runs against (spec §Audit).
-            let prompt = self.provider.render_pass_prompt(
-                pass_name,
+            let prompt = provider.render_pass_prompt(
+                &choice.name,
                 &selection_context,
                 &selected_memories,
             )?;
@@ -572,21 +629,21 @@ impl<P: DreamProvider> DreamService<P> {
                 trigger_type,
                 &threshold_state,
                 &selected_memory_ids,
-                pass_name,
+                &choice.name,
                 &groups,
                 &prompt_hash,
+                &identity,
             )?;
 
-            let raw = self
-                .provider
-                .run_pass(pass_name, &selection_context, &selected_memories)?;
+            let raw = provider.run_pass(&choice.name, &selection_context, &selected_memories)?;
             if !raw.is_object() {
                 return Err(DreamError::InvalidOutput(format!(
-                    "{pass_name} output must be an object"
+                    "{} output must be an object",
+                    choice.name
                 )));
             }
 
-            if pass_name == "coverage_audit" {
+            if choice.name == "coverage_audit" {
                 let covered = coverage_ids(&raw, &allowed_memory_ids)?;
                 let covered_count = covered.len() as i64;
                 covered_memory_ids.extend(covered);
@@ -597,9 +654,10 @@ impl<P: DreamProvider> DreamService<P> {
                     trigger_type,
                     &threshold_state,
                     &selected_memory_ids,
-                    pass_name,
+                    &choice.name,
                     &self.response_summary(&[]),
                     &prompt_hash,
+                    &identity,
                 )?;
                 continue;
             }
@@ -612,12 +670,13 @@ impl<P: DreamProvider> DreamService<P> {
                     trigger_type,
                     &threshold_state,
                     &selected_memory_ids,
-                    pass_name,
+                    &choice.name,
                     &output.warnings,
+                    &identity,
                 )?;
             }
             validate_normalized_output(&output, &selection_context, &allowed_memory_ids)?;
-            self.validate_pass_output(pass_name, &output)?;
+            self.validate_pass_output(&choice.name, &output)?;
             let output_count = output.crystals.len() as i64;
             let response_summary = self.response_summary(std::slice::from_ref(&output));
             staged.push(output);
@@ -628,9 +687,10 @@ impl<P: DreamProvider> DreamService<P> {
                 trigger_type,
                 &threshold_state,
                 &selected_memory_ids,
-                pass_name,
+                &choice.name,
                 &response_summary,
                 &prompt_hash,
+                &identity,
             )?;
         }
 
@@ -659,9 +719,15 @@ impl<P: DreamProvider> DreamService<P> {
             ));
         }
 
-        // Persistence: one validated mutation batch in one transaction.
-        let persistence_phase_run_id =
-            self.start_phase_run(run_id, "persistence", selected_memory_ids.len() as i64)?;
+        // Persistence: one validated mutation batch in one transaction. The
+        // persistence phase is not a provider pass; it records the run's
+        // primary lane.
+        let persistence_phase_run_id = self.start_phase_run(
+            run_id,
+            "persistence",
+            selected_memory_ids.len() as i64,
+            &primary_provider,
+        )?;
         phase_run_ids.push(persistence_phase_run_id);
         let summary = self.apply_outputs(run_id, cycle_id, &groups, &staged, &selection_context)?;
         self.complete_phase_run(
@@ -677,6 +743,7 @@ impl<P: DreamProvider> DreamService<P> {
             &groups,
             &staged,
             &summary,
+            &primary_provider,
         )?;
 
         // Deterministic phases (spec §Phase Boundaries steps 5-7): they run
@@ -1475,7 +1542,8 @@ impl<P: DreamProvider> DreamService<P> {
         )?;
         drop(connection);
 
-        let mut payload = self.audit_base(trigger_type, threshold_state, &[], phase);
+        let provider = deterministic_identity();
+        let mut payload = self.audit_base(trigger_type, threshold_state, &[], phase, &provider);
         payload.insert("provider_type".into(), json!("deterministic"));
         payload.insert(
             "created_crystals".into(),
@@ -1535,7 +1603,7 @@ impl<P: DreamProvider> DreamService<P> {
             id: run_id,
             cycle_id,
             status: "completed".to_string(),
-            provider: self.provider.name().to_string(),
+            provider: self.run_provider_label(),
             input_count,
             created_crystal_count,
             proposal_count,
@@ -1564,7 +1632,13 @@ impl<P: DreamProvider> DreamService<P> {
         transaction.execute(
             "insert into dream_runs(cycle_id, status, provider, error, created_at, completed_at)
              values (?1, 'skipped', ?2, ?3, ?4, ?5)",
-            rusqlite::params![cycle_id, self.provider.name(), reason, timestamp, timestamp],
+            rusqlite::params![
+                cycle_id,
+                self.run_provider_label(),
+                reason,
+                timestamp,
+                timestamp
+            ],
         )?;
         let run_id = transaction.last_insert_rowid();
         transaction.commit()?;
@@ -1572,7 +1646,7 @@ impl<P: DreamProvider> DreamService<P> {
             id: run_id,
             cycle_id,
             status: "skipped".to_string(),
-            provider: self.provider.name().to_string(),
+            provider: self.run_provider_label(),
             input_count: 0,
             created_crystal_count: 0,
             proposal_count: 0,
@@ -1580,11 +1654,20 @@ impl<P: DreamProvider> DreamService<P> {
         })
     }
 
+    /// The run-level provider summary (the `dream_runs.provider` label): the
+    /// first enabled workflow's wire provider name, or the injected test
+    /// provider under the deterministic seam. Empty when no workflow is
+    /// enabled — such a run fails the coverage gate before any pass.
+    fn run_provider_label(&self) -> String {
+        self.resolver.run_provider_name(&self.choices)
+    }
+
     fn start_phase_run(
         &self,
         run_id: i64,
         phase: &str,
         input_count: i64,
+        provider: &ProviderIdentity,
     ) -> Result<i64, DreamError> {
         let connection = open_migrated(&self.config.database_path())?;
         connection.execute(
@@ -1596,9 +1679,9 @@ impl<P: DreamProvider> DreamService<P> {
             rusqlite::params![
                 run_id,
                 phase,
-                self.provider.profile_name(),
-                self.provider.name(),
-                self.provider.model(),
+                provider.profile,
+                provider.name,
+                provider.model,
                 input_count,
                 now(),
             ],
@@ -1638,6 +1721,7 @@ impl<P: DreamProvider> DreamService<P> {
         threshold_state: &Value,
         selected_memory_ids: &[i64],
         phase_name: &str,
+        provider: &ProviderIdentity,
     ) -> serde_json::Map<String, Value> {
         let mut payload = serde_json::Map::new();
         payload.insert("trigger_type".into(), json!(trigger_type));
@@ -1648,18 +1732,14 @@ impl<P: DreamProvider> DreamService<P> {
         );
         payload.insert("phase_name".into(), json!(phase_name));
         payload.insert("prompt_version".into(), json!(format!("{phase_name}:v1")));
-        payload.insert(
-            "provider_profile".into(),
-            json!(self.provider.profile_name()),
-        );
-        payload.insert("model".into(), json!(self.provider.model()));
-        let endpoint = self.provider.endpoint();
+        payload.insert("provider_profile".into(), json!(provider.profile));
+        payload.insert("model".into(), json!(provider.model));
         payload.insert(
             "endpoint".into(),
-            if endpoint.is_empty() {
+            if provider.endpoint.is_empty() {
                 Value::Null
             } else {
-                json!(redact_endpoint(endpoint))
+                json!(redact_endpoint(&provider.endpoint))
             },
         );
         payload
@@ -1702,12 +1782,14 @@ impl<P: DreamProvider> DreamService<P> {
         pass_name: &str,
         groups: &[SelectionGroup],
         prompt_sha256: &str,
+        provider: &ProviderIdentity,
     ) -> Result<(), DreamError> {
         let mut payload = self.audit_base(
             trigger_type,
             threshold_state,
             selected_memory_ids,
             pass_name,
+            provider,
         );
         payload.insert("request_summary".into(), self.request_summary(groups));
         payload.insert("prompt_sha256".into(), json!(prompt_sha256));
@@ -1733,12 +1815,14 @@ impl<P: DreamProvider> DreamService<P> {
         pass_name: &str,
         response_summary: &Value,
         prompt_sha256: &str,
+        provider: &ProviderIdentity,
     ) -> Result<(), DreamError> {
         let mut payload = self.audit_base(
             trigger_type,
             threshold_state,
             selected_memory_ids,
             pass_name,
+            provider,
         );
         payload.insert("response_summary".into(), response_summary.clone());
         payload.insert("parse_warnings".into(), json!([]));
@@ -1764,12 +1848,14 @@ impl<P: DreamProvider> DreamService<P> {
         selected_memory_ids: &[i64],
         pass_name: &str,
         warnings: &[ParseWarning],
+        provider: &ProviderIdentity,
     ) -> Result<(), DreamError> {
         let mut payload = self.audit_base(
             trigger_type,
             threshold_state,
             selected_memory_ids,
             pass_name,
+            provider,
         );
         payload.insert(
             "warnings".into(),
@@ -1807,6 +1893,7 @@ impl<P: DreamProvider> DreamService<P> {
         groups: &[SelectionGroup],
         staged: &[NormalizedOutput],
         summary: &ApplySummary,
+        provider: &ProviderIdentity,
     ) -> Result<(), DreamError> {
         let phase_name = "persistence";
         let mut payload = self.audit_base(
@@ -1814,6 +1901,7 @@ impl<P: DreamProvider> DreamService<P> {
             threshold_state,
             selected_memory_ids,
             phase_name,
+            provider,
         );
         payload.insert("request_summary".into(), self.request_summary(groups));
         payload.insert("response_summary".into(), self.response_summary(staged));
@@ -1956,81 +2044,6 @@ impl<P: DreamProvider> DreamService<P> {
             Err(_) => message,
         }
     }
-}
-
-/// Resolve every enabled `dream.conf` workflow assignment against the
-/// `provider.conf` catalog (ADR 0007 resolution: explicit assignment, then
-/// catalog defaults, then fail closed) and require the injected provider to
-/// be the one the wiring declares. Disabled workflows are skipped, never
-/// errors. The error text names the workflow and the problem and carries no
-/// secret material, so it is safe for run records and audit surfaces.
-fn validate_workflow_wiring(
-    dream_config: &DreamConfig,
-    catalog: &ProviderCatalog,
-    injected_deterministic: bool,
-    injected_profile: &str,
-    injected_model: &str,
-) -> Result<(), DreamError> {
-    for (name, workflow) in &dream_config.workflows {
-        if !workflow.enabled {
-            continue;
-        }
-        let provider_id = if workflow.provider.trim().is_empty() {
-            catalog.defaults.provider.trim()
-        } else {
-            workflow.provider.trim()
-        };
-        let model = if workflow.model.trim().is_empty() {
-            catalog.defaults.model.trim()
-        } else {
-            workflow.model.trim()
-        };
-        if provider_id.is_empty() {
-            return Err(DreamError::InvalidWorkflow(format!(
-                "workflow {name}: enabled workflow must have a provider"
-            )));
-        }
-        if model.is_empty() {
-            return Err(DreamError::InvalidWorkflow(format!(
-                "workflow {name}: enabled workflow must have a model"
-            )));
-        }
-        if provider_id == "deterministic" {
-            if !injected_deterministic {
-                return Err(DreamError::InvalidWorkflow(format!(
-                    "workflow {name} is declared deterministic; only the deterministic \
-                     provider may run it"
-                )));
-            }
-            continue;
-        }
-        if injected_deterministic {
-            return Err(DreamError::InvalidWorkflow(format!(
-                "workflow {name} requires configured provider {provider_id}; the \
-                 deterministic provider never substitutes for a configured LLM workflow"
-            )));
-        }
-        let Some(profile) = catalog.providers.get(provider_id) else {
-            return Err(DreamError::InvalidWorkflow(format!(
-                "workflow {name}: provider profile missing: {provider_id}"
-            )));
-        };
-        // Python `_provider_from_profile`: only ollama runs without a key.
-        if profile.provider_type() != "ollama" && profile.key().is_blank() {
-            return Err(DreamError::InvalidWorkflow(format!(
-                "workflow {name}: API key missing for provider profile: {provider_id}"
-            )));
-        }
-        // One provider runs the whole cycle, so the injected provider must be
-        // exactly the wiring the enabled workflows resolve to.
-        if injected_profile != provider_id || injected_model != model {
-            return Err(DreamError::InvalidWorkflow(format!(
-                "workflow {name} is assigned to provider {provider_id} model {model}; \
-                 the injected provider serves {injected_profile} model {injected_model}"
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn next_cycle_id(connection: &Connection) -> Result<i64, DreamError> {

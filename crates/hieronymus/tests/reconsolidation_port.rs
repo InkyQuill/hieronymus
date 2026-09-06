@@ -9,7 +9,8 @@ use hieronymus::concepts::{ConceptStore, NewConcept};
 use hieronymus::crystals::{CrystalStore, NewCrystal};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::dream_config::{default_dream_config, load_dream_config, save_dream_config};
-use hieronymus::dreaming::{DeterministicDreamProvider, DreamRunRecord, DreamService};
+use hieronymus::dream_workflows::WorkflowResolver;
+use hieronymus::dreaming::{DreamRunRecord, DreamService};
 use hieronymus::feedback::{
     FeedbackError, FeedbackStore, RECALLED_AGAIN_DELTAS, RECALLED_MISS_DELTAS,
     RECALLED_USEFUL_DELTAS, RecallFeedback,
@@ -160,7 +161,7 @@ fn link_crystal_to_concept(config: &HieronymusConfig, crystal_id: i64, concept_i
 }
 
 fn dream(config: &HieronymusConfig) -> DreamRunRecord {
-    DreamService::open(config, DeterministicDreamProvider)
+    DreamService::open(config, WorkflowResolver::deterministic())
         .unwrap()
         .run_all("admin", true, false)
         .unwrap()
