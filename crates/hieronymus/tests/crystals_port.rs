@@ -350,6 +350,55 @@ fn supersede_marks_old_superseded_and_validates_shape() {
     assert_eq!(error.to_string(), "crystal cannot supersede itself");
 }
 
+#[test]
+fn supersede_rejects_active_rule_crystals_in_either_direction() {
+    let root = tempfile::tempdir().unwrap();
+    let store = open_store(&root);
+    // NewCrystal::new defaults to status "active", so this is the ADR 0011
+    // protected shape: an active rule crystal.
+    let rule = store
+        .add_crystal(
+            &context("demo"),
+            "rule",
+            &NewCrystal::new("rule", "Always translate X as Y."),
+        )
+        .unwrap();
+    let replacement = store
+        .add_crystal(
+            &context("demo"),
+            "rule",
+            &NewCrystal::new("rule", "Newer rendering.").with_type_and_status("candidate"),
+        )
+        .unwrap();
+
+    let error = store
+        .supersede(rule, replacement, "Dream replace.", 1)
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("crystal {rule} is an active rule and cannot be superseded here (ADR 0011)")
+    );
+
+    let error = store
+        .supersede(replacement, rule, "Dream replace.", 2)
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("crystal {rule} is an active rule and cannot be superseded here (ADR 0011)")
+    );
+
+    // The primitive refused before any row mutated.
+    assert_eq!(store.get(rule).unwrap().status, "active");
+    assert_eq!(store.get(replacement).unwrap().status, "candidate");
+    assert!(
+        store
+            .get(replacement)
+            .unwrap()
+            .supersedes_crystal_id
+            .is_none()
+    );
+}
+
 // Small helper used by the status test above; kept local to the port file.
 trait WithTypeAndStatus {
     fn with_type_and_status(self, status: &str) -> Self;

@@ -43,6 +43,8 @@ pub enum CrystalError {
     SupersedeNotActive,
     #[error("supersede crystal {0} does not match")]
     SupersedeMismatch(String),
+    #[error("crystal {0} is an active rule and cannot be superseded here (ADR 0011)")]
+    SupersedeActiveRule(i64),
     #[error("limit must be at least 1")]
     LimitTooSmall,
     #[error("{0}")]
@@ -677,7 +679,8 @@ impl CrystalStore {
 
     /// Supersede an old crystal with a new same-shape one: the old record
     /// becomes `superseded`, the new one points at it, and a memory event is
-    /// recorded for the audit trail.
+    /// recorded for the audit trail. Active rule crystals are rejected in
+    /// either position (ADR 0011).
     pub fn supersede(
         &self,
         old_crystal_id: i64,
@@ -741,6 +744,12 @@ fn crystal_row(connection: &Connection, crystal_id: i64) -> Result<CrystalRow, C
         })
 }
 
+/// The ADR 0011 / slice-5 protection predicate: active structured rule
+/// authority never decays passively, never supersedes, never combines.
+pub(crate) fn is_active_rule(crystal_type: &str, status: &str) -> bool {
+    crystal_type == "rule" && status == "active"
+}
+
 fn validate_supersede_rows(old_row: &CrystalRow, new_row: &CrystalRow) -> Result<(), CrystalError> {
     for row in [old_row, new_row] {
         if !["active", "candidate"].contains(&row.status.as_str()) {
@@ -774,9 +783,10 @@ fn validate_supersede_rows(old_row: &CrystalRow, new_row: &CrystalRow) -> Result
 /// `_supersede_with_connection`): the dream graph applies provider supersede
 /// actions through this inside the persistence transaction, so a failing
 /// action rolls the whole batch back. Shape and status validation stay
-/// fail-loud — notably, active rule crystals can never be superseded by a
-/// dream action here (ADR 0011: only an authenticated user may replace
-/// approved authority).
+/// fail-loud, and the ADR 0011 guard is enforced here rather than only at
+/// the dream call site: an active rule crystal can never be a supersede
+/// source or target through this primitive (only an authenticated user may
+/// replace approved authority).
 pub(crate) fn supersede_in_transaction(
     transaction: &rusqlite::Transaction<'_>,
     old_crystal_id: i64,
@@ -790,6 +800,14 @@ pub(crate) fn supersede_in_transaction(
     }
     let old_row = crystal_row(transaction, old_crystal_id)?;
     let new_row = crystal_row(transaction, new_crystal_id)?;
+    // ADR 0011: active rule authority never moves through a supersede, in
+    // either direction, so the primitive refuses before any row mutates.
+    if is_active_rule(&old_row.crystal_type, &old_row.status) {
+        return Err(CrystalError::SupersedeActiveRule(old_crystal_id));
+    }
+    if is_active_rule(&new_row.crystal_type, &new_row.status) {
+        return Err(CrystalError::SupersedeActiveRule(new_crystal_id));
+    }
     validate_supersede_rows(&old_row, &new_row)?;
     transaction.execute(
         "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",

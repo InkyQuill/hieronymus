@@ -468,6 +468,14 @@ fn crystals_resolve_per_series_context_and_ambiguous_ones_are_rejected() {
                 "text": "Spans two series.",
                 "source_memory_ids": [book_ids[0], zola_ids[0]],
             },
+            {
+                // Same rejection, but with a provider-length title: the
+                // rejection record may not echo the whole free-text value.
+                "crystal_type": "observation",
+                "title": "Very ".repeat(40).trim_end().to_string(),
+                "text": "Spans two series with a long title.",
+                "source_memory_ids": [book_ids[0], zola_ids[0]],
+            },
         ],
     });
     let run = run_one_cycle(&config, payload);
@@ -497,7 +505,7 @@ fn crystals_resolve_per_series_context_and_ambiguous_ones_are_rejected() {
         json!(2)
     );
 
-    // The ambiguous crystal is rejected with a durable audit reason.
+    // The ambiguous crystals are rejected with a durable audit reason.
     let audit = persistence_audit(&config, run.id);
     let rejected = audit["rejected_entries"].as_array().unwrap();
     let ambiguous = rejected
@@ -505,6 +513,16 @@ fn crystals_resolve_per_series_context_and_ambiguous_ones_are_rejected() {
         .find(|entry| entry["reason"] == json!("ambiguous_crystal_context"))
         .unwrap();
     assert_eq!(ambiguous["title"], json!("Ambiguous"));
+
+    // A provider-length title is echoed only as a bounded prefix with an
+    // explicit ellipsis marker ("Very " repeated 16 times = 80 chars).
+    let bounded = format!("{}[...]", "Very ".repeat(16));
+    let long = rejected
+        .iter()
+        .find(|entry| entry["title"] == json!(bounded))
+        .unwrap();
+    assert_eq!(long["reason"], json!("ambiguous_crystal_context"));
+    assert_eq!(long["source_memory_ids"], json!([book_ids[0], zola_ids[0]]));
 }
 
 // ---------------------------------------------------------------------------

@@ -73,6 +73,11 @@ pub(crate) const MIN_NORMALIZED_CONFIDENCE: f64 = 0.05;
 /// §Dream-Time Integration, LinkReinforcer).
 pub const COMBINATION_SIMILARITY_THRESHOLD: f64 = 0.7;
 
+/// Longest provider free-text title echoed verbatim into a rejection
+/// record; longer titles are cut to this prefix with an explicit marker
+/// (see [`bounded_rejection_title`]).
+const REJECTION_TITLE_MAX_CHARS: usize = 80;
+
 /// In-place reinforcement the reconsolidator applies when a working copy
 /// stays below the diff threshold: strength-only, one notch.
 const RECONSOLIDATION_REINFORCE_DELTAS: (f64, f64) = (0.02, 0.0);
@@ -1385,7 +1390,7 @@ impl DreamService {
                     rejected_entries.push(json!({
                         "stage": "apply",
                         "reason": "ambiguous_crystal_context",
-                        "title": candidate.title,
+                        "title": bounded_rejection_title(&candidate.title),
                         "source_memory_ids": candidate.source_memory_ids,
                     }));
                     continue;
@@ -1819,15 +1824,16 @@ impl DreamService {
                     continue;
                 }
                 let ratio = token_diff_ratio(&original.text, &working_text);
-                let (action, cost) = if is_active_rule(&original.crystal_type, &original.status) {
-                    // ADR 0011: dreaming never transitions active deterministic
-                    // rule authority, however far the working copy diverged.
-                    ("rule_protected", 0)
-                } else if ratio < threshold {
-                    ("reinforced", 1)
-                } else {
-                    ("superseded", 2)
-                };
+                let (action, cost) =
+                    if crate::crystals::is_active_rule(&original.crystal_type, &original.status) {
+                        // ADR 0011: dreaming never transitions active deterministic
+                        // rule authority, however far the working copy diverged.
+                        ("rule_protected", 0)
+                    } else if ratio < threshold {
+                        ("reinforced", 1)
+                    } else {
+                        ("superseded", 2)
+                    };
                 if cost > budget {
                     break;
                 }
@@ -3689,6 +3695,17 @@ fn resolve_candidate_concepts(
     })
 }
 
+/// Provider free text echoed into a rejection record stays bounded: at most
+/// [`REJECTION_TITLE_MAX_CHARS`] characters plus an explicit ellipsis marker,
+/// so the audit stays actionable without persisting the whole value.
+pub(crate) fn bounded_rejection_title(title: &str) -> String {
+    if title.chars().count() <= REJECTION_TITLE_MAX_CHARS {
+        return title.to_string();
+    }
+    let prefix: String = title.chars().take(REJECTION_TITLE_MAX_CHARS).collect();
+    format!("{prefix}[...]")
+}
+
 /// The group whose memories a crystal cites. `None` marks an ambiguous
 /// crystal: its source memories span distinct series contexts (or none), so
 /// it must not silently land in the first group's context. Sessions sharing
@@ -3896,12 +3913,6 @@ fn levenshtein_distance(left: &[String], right: &[String]) -> usize {
         previous = current;
     }
     previous[right.len()]
-}
-
-/// The ADR 0011 / slice-5 protection predicate: active structured rule
-/// authority never decays passively, never supersedes, never combines.
-pub(crate) fn is_active_rule(crystal_type: &str, status: &str) -> bool {
-    crystal_type == "rule" && status == "active"
 }
 
 /// The `crystals` columns the reconsolidator needs from the source crystal.

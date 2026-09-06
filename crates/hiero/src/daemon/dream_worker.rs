@@ -377,7 +377,15 @@ impl DreamController {
         if self.inner.stop.load(Ordering::Acquire) {
             return None;
         }
-        let dream_config = load_dream_config(&self.inner.config).ok()?;
+        let dream_config = match load_dream_config(&self.inner.config) {
+            Ok(dream_config) => dream_config,
+            Err(error) => {
+                eprintln!(
+                    "hiero dream worker: scheduled dreaming stands down, dream config failed to load: {error}"
+                );
+                return None;
+            }
+        };
         if !dream_config.enabled {
             return None;
         }
@@ -500,8 +508,14 @@ impl DreamController {
     /// dreaming enabled and crystallization-eligible pending at the
     /// configured maximum.
     fn urgent_backlog_due(&self) -> bool {
-        let Ok(dream_config) = load_dream_config(&self.inner.config) else {
-            return false;
+        let dream_config = match load_dream_config(&self.inner.config) {
+            Ok(dream_config) => dream_config,
+            Err(error) => {
+                eprintln!(
+                    "hiero dream worker: urgent-backlog trigger stands down, dream config failed to load: {error}"
+                );
+                return false;
+            }
         };
         if !dream_config.enabled {
             return false;

@@ -24,12 +24,13 @@ use std::collections::BTreeSet;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
+use crate::crystals::is_active_rule;
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::dream_audit::{DreamAuditStore, commit_audited};
 use crate::dream_config::{DreamConfig, load_dream_config};
 use crate::dreaming::{
-    COMBINATION_SIMILARITY_THRESHOLD, DreamError, is_active_rule, now, token_similarity, tx_error,
+    COMBINATION_SIMILARITY_THRESHOLD, DreamError, now, token_similarity, tx_error,
 };
 
 /// Weight of a `crystal_links` row created by hebbian co-activation.
