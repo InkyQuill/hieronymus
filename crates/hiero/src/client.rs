@@ -18,16 +18,63 @@ pub enum ClientError {
     Protocol(&'static str),
     #[error("daemon request failed: {0}")]
     Io(#[from] std::io::Error),
+    /// No usable discovery record. Carries the record path or the reason,
+    /// never a credential.
+    #[error("no running local daemon was discovered: {0}")]
+    NotDiscovered(String),
+    /// The stored credential is missing or unusable. Carries the token path
+    /// and the reason only — never the token itself.
+    #[error("the local daemon credential is unavailable: {0}")]
+    Credential(String),
+    /// The daemon answered with a non-2xx status.
+    #[error("daemon rejected the request: HTTP {status} {detail}")]
+    Status { status: u16, detail: String },
 }
 
-/// POST a JSON body to `http://address/path` and return the status code and
-/// response body.
+/// POST a JSON body to `http://address/path`: the historical entry point,
+/// kept as a thin wrapper over [`request_json`].
 pub fn post_json(
     address: SocketAddr,
     path: &str,
     headers: &[(String, String)],
     body: &[u8],
 ) -> Result<(u16, Vec<u8>), ClientError> {
+    request_json("POST", address, path, headers, body)
+}
+
+/// Send one request to `http://address/path` and return the status code and
+/// response body. `method` is the HTTP verb (`GET`, `POST`); a body is sent
+/// whenever one is supplied.
+pub fn request_json(
+    method: &str,
+    address: SocketAddr,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<(u16, Vec<u8>), ClientError> {
+    request_json_within(method, address, path, headers, body, IO_TIMEOUT)
+}
+
+/// [`request_json`] with an explicit socket deadline. Health probing uses a
+/// short one: a listener that accepts and then says nothing must not stall an
+/// interactive command for the MCP-sized default.
+pub fn request_json_within(
+    method: &str,
+    address: SocketAddr,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>), ClientError> {
+    // The method goes into the request line: refuse anything that is not a
+    // plain token before any I/O.
+    if method.is_empty()
+        || !method
+            .bytes()
+            .all(|byte| byte.is_ascii_alphabetic() || byte == b'-')
+    {
+        return Err(ClientError::Protocol("request method is invalid"));
+    }
     // Validate headers before any I/O so injection is refused regardless of
     // the daemon's state.
     for (name, value) in headers {
@@ -40,12 +87,13 @@ pub fn post_json(
             return Err(ClientError::Protocol("header value contains CR/LF"));
         }
     }
+    let connect_timeout = CONNECT_TIMEOUT.min(timeout);
     let mut stream =
-        TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+        TcpStream::connect_timeout(&address, connect_timeout).map_err(ClientError::Connect)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
 
-    let mut request = format!("POST {path} HTTP/1.1\r\nHost: {}\r\n", address);
+    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {}\r\n", address);
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length") {
             continue;
@@ -130,6 +178,13 @@ mod tests {
             b"{}",
         )
         .unwrap_err();
+        assert!(error.to_string().contains("malformed"), "{error}");
+    }
+
+    #[test]
+    fn method_injection_is_refused() {
+        let address: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let error = request_json("GET /x HTTP/1.1\r\nX", address, "/status", &[], b"").unwrap_err();
         assert!(error.to_string().contains("malformed"), "{error}");
     }
 }

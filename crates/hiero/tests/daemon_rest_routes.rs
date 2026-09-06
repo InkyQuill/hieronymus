@@ -120,18 +120,52 @@ fn assert_frozen_contract(route_id: &str, fixture: &RouteFixture, fixup: impl Fn
     assert_frozen_success(route_id, &target, fixture, fixup);
 }
 
+/// The ADR-backed Rust delta on the authenticated `/status` payload: exactly
+/// these keys are added to the frozen contract, and nothing frozen changes.
+///
+/// ADR 0009 requires stale discovery to be detected "by authenticated health
+/// probing and process-instance comparison, never by PID existence alone".
+/// That comparison needs the live process instance and MCP revision to be
+/// readable from an authenticated endpoint (`GET /health` stays minimal and
+/// unauthenticated), so R5 adds them here. The frozen fixture file itself is
+/// untouched; this list is the recorded expectation change.
+const STATUS_RUST_ADDITIONS: [&str; 2] = ["instance_id", "protocol_revision"];
+
 #[test]
 fn status_route_matches_frozen_target() {
     let (fixture, _root, daemon) = start_daemon_with_browser_session();
     let target = substitute_route_placeholders(&route_target("http.route.get.status"), &fixture);
     assert_frozen_failures("http.route.get.status", &target, &fixture);
+    let record = daemon.discovery_record();
     // The oracle normalizes pid/port to string placeholders; the daemon serves
-    // them as numbers.
+    // them as numbers. The two added keys are appended explicitly, so any
+    // *other* drift from the frozen body still fails this assertion.
     assert_frozen_success("http.route.get.status", &target, &fixture, |body| {
         body["pid"] = json!(fixture.pid);
         body["port"] = json!(fixture.port);
+        body["instance_id"] = json!(record.instance_id);
+        body["protocol_revision"] = json!(common::PROTOCOL_REVISION);
     });
-    let _ = daemon;
+
+    // Every frozen key survives, and the additions are exactly the declared
+    // ones — no unannounced field can slip into the authenticated DTO.
+    let frozen = route_target("http.route.get.status")["success"]["response"]["body"].clone();
+    let response = execute_fixture_request(&target["success"]["request"], &fixture);
+    let served = response.body();
+    for key in frozen.as_object().unwrap().keys() {
+        assert!(served.get(key).is_some(), "frozen key {key} disappeared");
+    }
+    for key in served.as_object().unwrap().keys() {
+        assert!(
+            frozen.get(key).is_some() || STATUS_RUST_ADDITIONS.contains(&key.as_str()),
+            "undeclared addition to the authenticated status DTO: {key}"
+        );
+    }
+    // Sentinel secret: the credential appears nowhere in the payload.
+    assert!(
+        !served.to_string().contains(daemon.bearer().expose_secret()),
+        "the status payload must never contain the bearer token"
+    );
 }
 
 #[test]

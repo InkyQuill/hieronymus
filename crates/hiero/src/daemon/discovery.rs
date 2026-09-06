@@ -91,6 +91,77 @@ pub fn write_token(config: &HieronymusConfig, token: &Secret<String>) -> std::io
     unix_user_only(&path)
 }
 
+/// Why an existing installation credential cannot be used as-is.
+#[derive(Debug, thiserror::Error)]
+pub enum EnsureTokenError {
+    #[error(
+        "the stored installation token at {path} is empty; \
+         delete the file and start the daemon again to issue a new one"
+    )]
+    Empty { path: std::path::PathBuf },
+    #[error(
+        "the stored installation token at {path} is unreadable; \
+         delete the file and start the daemon again to issue a new one"
+    )]
+    Unreadable { path: std::path::PathBuf },
+    #[error(
+        "the stored installation token at {path} is readable beyond its owner (mode {mode:o}); \
+         run `chmod 600 {path}` or delete the file and start the daemon again"
+    )]
+    Insecure { path: std::path::PathBuf, mode: u32 },
+    #[error("the installation token could not be generated: {0}")]
+    Random(#[from] getrandom::Error),
+    #[error("the installation token at {path} could not be written: {source}")]
+    Write {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+}
+
+/// The stable per-installation bearer token (ADR 0012 as amended: **one**
+/// static token per installation; astra finding 11).
+///
+/// Called under data-root ownership: an existing, non-empty, user-only
+/// credential is reused verbatim, and a token is minted (0600) only when the
+/// file is absent. A plain restart is never a rotation — deliberate rotation
+/// is a separate explicit operation, and its clients recover through the
+/// 401-and-reconnect rewrite, not through a rotation ceremony. An existing but
+/// empty, unreadable, or world/group-readable credential is refused with
+/// repair guidance rather than silently replaced: silently minting over it
+/// would hand every stale holder a new secret without anyone noticing.
+pub fn ensure_installation_token(
+    config: &HieronymusConfig,
+) -> Result<Secret<String>, EnsureTokenError> {
+    let path = config.daemon_token_path();
+    if path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .map_err(|_| EnsureTokenError::Unreadable { path: path.clone() })?
+                .permissions()
+                .mode()
+                & 0o777;
+            // Owner-only bits are fine (0600 and the stricter 0400); any
+            // group or other access is not.
+            if mode & 0o077 != 0 {
+                return Err(EnsureTokenError::Insecure { path, mode });
+            }
+        }
+        return match read_token(config) {
+            Ok(token) => Ok(token),
+            Err(CredentialError::Empty { path }) => Err(EnsureTokenError::Empty { path }),
+            Err(CredentialError::Missing { path }) => Err(EnsureTokenError::Unreadable { path }),
+        };
+    }
+    let token = generate_bearer_token()?;
+    write_token(config, &token).map_err(|source| EnsureTokenError::Write {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(token)
+}
+
 /// Read the bearer token back (trimmed).
 pub fn read_token(config: &HieronymusConfig) -> Result<Secret<String>, CredentialError> {
     let path = config.daemon_token_path();
@@ -207,6 +278,57 @@ mod tests {
         assert!(error.to_string().contains("no running local service"));
         let error = read_token(&config).unwrap_err();
         assert!(error.to_string().contains("bearer token"));
+    }
+
+    #[test]
+    fn the_installation_token_is_minted_once_and_then_reused() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let first = ensure_installation_token(&config).unwrap();
+        let second = ensure_installation_token(&config).unwrap();
+        assert_eq!(first.expose_secret(), second.expose_secret());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(config.daemon_token_path())
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn an_empty_or_insecure_token_is_refused_with_repair_guidance() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        std::fs::create_dir_all(config.data_root()).unwrap();
+        std::fs::write(config.daemon_token_path(), "   \n").unwrap();
+        unix_user_only(&config.daemon_token_path()).unwrap();
+        let error = ensure_installation_token(&config).unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("is empty"), "{text}");
+        assert!(
+            text.contains(&config.daemon_token_path().display().to_string()),
+            "{text}"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(config.daemon_token_path(), "ab".repeat(32)).unwrap();
+            std::fs::set_permissions(
+                config.daemon_token_path(),
+                std::fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+            let error = ensure_installation_token(&config).unwrap_err();
+            let text = error.to_string();
+            assert!(text.contains("readable beyond its owner"), "{text}");
+            assert!(text.contains("chmod 600"), "{text}");
+            // Refusing must never leak the credential itself.
+            assert!(!text.contains(&"ab".repeat(32)), "{text}");
+        }
     }
 
     #[test]

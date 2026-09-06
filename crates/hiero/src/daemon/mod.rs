@@ -13,6 +13,7 @@ pub mod registry;
 mod rest;
 mod server;
 mod sessions;
+pub mod workers;
 mod ws;
 
 use std::net::{IpAddr, SocketAddr, TcpListener};
@@ -34,6 +35,7 @@ pub use registry::{McpRegistry, PROTOCOL_REVISION};
 
 use rest::providers::{DaemonProviderClient, ProviderClientSeam};
 use sessions::SessionStore;
+use workers::{IdleConnections, WorkerGroup};
 
 /// The daemon crate version, served by `GET /status`.
 pub(crate) fn daemon_version() -> &'static str {
@@ -100,6 +102,8 @@ pub enum DaemonError {
     Random(#[from] getrandom::Error),
     #[error("daemon cannot write the bearer token: {source}")]
     TokenWrite { source: std::io::Error },
+    #[error("daemon cannot use the installation credential: {0}")]
+    Credential(#[from] discovery::EnsureTokenError),
     #[error("daemon cannot write the discovery record: {source}")]
     DiscoveryWrite { source: std::io::Error },
     #[error("daemon cannot remove the discovery record: {source}")]
@@ -116,7 +120,16 @@ pub(crate) struct DaemonRuntime {
     pub registry: McpRegistry,
     pub bearer: Secret<String>,
     pub bound_address: SocketAddr,
-    pub stop: AtomicBool,
+    /// The one cancellation edge every loop in the daemon observes; shared
+    /// with [`DaemonRuntime::workers`].
+    pub stop: Arc<AtomicBool>,
+    /// Every mutating worker thread the daemon owns (currently the
+    /// per-connection serve threads; D5/S2 controllers register here too).
+    /// Joined before discovery removal and ownership release.
+    pub workers: WorkerGroup,
+    /// Accepted-but-not-yet-dispatched sockets, so a shutdown can wake reads
+    /// that are blocked on a peer that never sent anything.
+    pub idle_connections: IdleConnections,
     /// One-time launch grants and browser sessions (in-memory, daemon
     /// lifetime).
     pub sessions: SessionStore,
@@ -133,8 +146,9 @@ pub(crate) struct DaemonRuntime {
     /// diagnostics never depend on the file still existing.
     pub record: DiscoveryRecord,
     /// The daemon holds the database open for its whole lifetime: it owns the
-    /// data root (ADR 0009). Nobody reads it on the hot path yet.
-    #[allow(dead_code)]
+    /// data root (ADR 0009). Every worker that touches it is supervised by
+    /// [`DaemonRuntime::workers`], so the handle is quiescent by the time
+    /// shutdown rolls back and releases ownership.
     database: Mutex<rusqlite::Connection>,
 }
 
@@ -220,9 +234,10 @@ impl Daemon {
             .local_addr()
             .map_err(|source| DaemonError::Bind { address, source })?;
 
-        let bearer = discovery::generate_bearer_token()?;
-        discovery::write_token(&config, &bearer)
-            .map_err(|source| DaemonError::TokenWrite { source })?;
+        // One static per-installation credential (ADR 0012 as amended;
+        // astra 11). Ownership is held, so this read-or-mint is exclusive: a
+        // plain restart reuses the stored token and never rotates it.
+        let bearer = discovery::ensure_installation_token(&config)?;
 
         let instance_id = discovery::generate_instance_id()?;
         let record = DiscoveryRecord {
@@ -237,12 +252,15 @@ impl Daemon {
         discovery::write_discovery(&config, &record)
             .map_err(|source| DaemonError::DiscoveryWrite { source })?;
 
+        let stop = Arc::new(AtomicBool::new(false));
         let runtime = Arc::new(DaemonRuntime {
             config,
             registry,
             bearer,
             bound_address,
-            stop: AtomicBool::new(false),
+            workers: WorkerGroup::new(Arc::clone(&stop)),
+            idle_connections: IdleConnections::default(),
+            stop,
             sessions: SessionStore::default(),
             events: Arc::new(events::AdminEventHub::default()),
             assets: options.assets.clone(),
@@ -286,8 +304,7 @@ impl Daemon {
         self.runtime.stop.store(true, Ordering::Release);
     }
 
-    /// Block until shutdown is requested, then clean up: remove the matching
-    /// discovery record and join the accept loop.
+    /// Block until shutdown is requested, then run the graceful stop.
     pub fn wait_for_shutdown(mut self) -> Result<(), DaemonError> {
         while !self.runtime.stop.load(Ordering::Acquire) {
             std::thread::sleep(ACCEPT_POLL);
@@ -296,32 +313,99 @@ impl Daemon {
     }
 
     /// Request shutdown and wait for it.
-    pub fn shutdown(self) -> Result<(), DaemonError> {
+    pub fn shutdown(mut self) -> Result<(), DaemonError> {
         self.request_shutdown();
-        self.wait_for_shutdown()
+        self.stop()
     }
 
-    /// Clean up in the ADR 0009 order: stop the accept loop, remove the
-    /// matching discovery record, then release data-root ownership last so no
-    /// other process can claim the root while this daemon's discovery state is
-    /// still visible. Idempotent: safe to call from both `wait_for_shutdown`
-    /// and the `Drop` guard.
+    /// Graceful stop, by reference. Idempotent: a second call is a clean
+    /// no-op, which is what makes both `shutdown()` and the [`Drop`] guard
+    /// safe to run in sequence.
+    pub fn stop(&mut self) -> Result<(), DaemonError> {
+        self.request_shutdown();
+        self.finish_shutdown()
+    }
+
+    /// Clean up in the order the security design spec fixes: stop admission →
+    /// close MCP/WebSocket sessions → signal workers → wait for bounded work →
+    /// roll back unfinished transactions → close the semantic index → remove
+    /// matching discovery state → release ownership.
+    ///
+    /// Ownership is released **last, and never while a writer is live**. If a
+    /// worker did not join cleanly, the guard and the discovery record are
+    /// both kept and this returns `Err`: letting another owner in while a
+    /// writer may still hold the database is worse than a noisy failure
+    /// (ADR 0009, astra 9).
+    ///
+    /// A later `stop()` (or the `Drop` guard) retries, and that retry can
+    /// succeed. That is not a loosening of the rule: the only way
+    /// `stop_and_join` fails is a worker that panicked, and a panicked thread
+    /// has terminated. The retry drains a handle list that is provably empty —
+    /// every thread admitted to the group has run to completion, panic
+    /// included — so nothing is executing when the guard finally drops.
+    ///
+    /// Idempotent: safe to call from `shutdown`, `wait_for_shutdown`, and the
+    /// `Drop` guard.
     fn finish_shutdown(&mut self) -> Result<(), DaemonError> {
-        // Ensure the accept loop will actually exit before we join it — a
-        // `Daemon` dropped without `shutdown()` never set this flag.
+        if self.accept_thread.is_none() && self.ownership.is_none() {
+            return Ok(());
+        }
+        // 1. Stop admission. `WorkerGroup::spawn` refuses from here on, and
+        //    the accept loop, the websocket sessions, and every worker see the
+        //    same edge (one shared flag).
         self.runtime.stop.store(true, Ordering::Release);
-        let join_result = match self.accept_thread.take() {
+
+        // 2. Close sessions that are waiting on a peer: sockets accepted but
+        //    still blocked reading their request head. Live websocket
+        //    sessions poll the stop flag themselves and are not torn down
+        //    mid-frame.
+        self.runtime.idle_connections.wake_all();
+
+        // 3–4. Signal workers and wait for their bounded work. The accept
+        //    loop is joined first so nothing new can be admitted, then the
+        //    worker group drains.
+        let accept_result = match self.accept_thread.take() {
             Some(handle) => handle
                 .join()
                 .map_err(|_| DaemonError::Worker("accept loop panicked".to_string())),
             None => Ok(()),
         };
-        // Stale discovery from a crashed run is tolerated for now (documented
-        // in the port report); a graceful stop removes its own record.
+        let worker_result = self
+            .runtime
+            .workers
+            .stop_and_join()
+            .map_err(DaemonError::Worker);
+
+        // A join failure deliberately returns here: the discovery record and
+        // the ownership guard are both kept. The guard is released when this
+        // process exits, never while a writer may still be live.
+        accept_result.and(worker_result)?;
+
+        // 5. Roll back anything a worker left open. Reachable only now that
+        //    every worker joined, so this lock can no longer be contended.
+        self.rollback_open_transaction();
+
+        // 6. Close the semantic index. There is no daemon-owned index handle
+        //    yet (S2 registers one with the worker group); when there is, it
+        //    closes here, after the writers joined and before discovery is
+        //    removed.
+
+        // 7. Remove only our own discovery record (a newer daemon's record is
+        //    never deleted), then 8. release ownership last.
         discovery::remove_discovery(&self.runtime.config, &self.runtime.record.instance_id);
-        // Release ownership last.
         drop(self.ownership.take());
-        join_result
+        Ok(())
+    }
+
+    /// Best-effort rollback of a transaction a worker left open. A poisoned
+    /// lock is itself evidence of a panicked writer, and the connection is
+    /// dropped with the runtime in that case.
+    fn rollback_open_transaction(&self) {
+        if let Ok(connection) = self.runtime.database.lock()
+            && !connection.is_autocommit()
+        {
+            let _ = connection.execute_batch("rollback");
+        }
     }
 }
 
@@ -336,6 +420,14 @@ impl Drop for Daemon {
     }
 }
 
+/// The accept loop. It only *admits* work: every connection is served on a
+/// thread owned by [`DaemonRuntime::workers`], so a graceful stop joins the
+/// in-flight requests instead of leaving detached writers behind (the R2
+/// carry-over: a detached handler could hold the SQLite connection past
+/// ownership release).
+///
+/// Joining happens outside this thread. The loop never calls `stop_and_join`,
+/// so it can never wait on itself.
 fn spawn_accept_thread(listener: TcpListener, runtime: Arc<DaemonRuntime>) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let _ = listener.set_nonblocking(true);
@@ -345,8 +437,13 @@ fn spawn_accept_thread(listener: TcpListener, runtime: Arc<DaemonRuntime>) -> Jo
             }
             match listener.accept() {
                 Ok((stream, _)) => {
-                    let runtime = Arc::clone(&runtime);
-                    std::thread::spawn(move || serve_connection(stream, &runtime));
+                    let connection_runtime = Arc::clone(&runtime);
+                    // A refusal means shutdown started between the accept and
+                    // here: the stream is dropped with the closure, which is
+                    // exactly "stop admitting".
+                    let _ = runtime.workers.spawn(Box::new(move |_stop| {
+                        serve_connection(stream, &connection_runtime);
+                    }));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(ACCEPT_POLL);
@@ -361,10 +458,26 @@ fn serve_connection(mut stream: std::net::TcpStream, runtime: &DaemonRuntime) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(http_io_timeout()));
     let _ = stream.set_write_timeout(Some(http_io_timeout()));
-    let request = match http::read_request(&mut stream) {
+    // Park the socket while the request head is read: a peer that connects
+    // and sends nothing would otherwise pin this worker for the whole read
+    // timeout. Shutdown wakes every parked read; the timeout remains the
+    // backstop.
+    let ticket = runtime.idle_connections.park(&stream);
+    let request = http::read_request(&mut stream);
+    let released = runtime.idle_connections.release(ticket);
+    let request = match request {
         Ok(request) => request,
         Err(_) => return,
     };
+    // We read a complete request head, but shutdown may have shut this socket
+    // down in the window before `release` took the lock. Dispatching now would
+    // run the handler — committing any mutation it carries — while the
+    // response write silently fails, so a client retrying the interrupted
+    // request against the next daemon instance would double-apply it. Drop the
+    // request instead: not applying it once is what makes the retry safe.
+    if !released && runtime.stop.load(Ordering::Acquire) {
+        return;
+    }
     match server::dispatch(&request, runtime) {
         server::Dispatch::Respond(response) => {
             let _ = http::write_response(&mut stream, &response);
@@ -380,13 +493,16 @@ fn http_io_timeout() -> Duration {
     Duration::from_secs(5)
 }
 
-/// Run the daemon in the foreground: like [`Daemon::start`], plus a ctrl-c
-/// handler that triggers the same graceful shutdown.
+/// Run the daemon in the foreground: like [`Daemon::start`], plus a signal
+/// handler that triggers the same graceful shutdown. With `ctrlc`'s
+/// `termination` feature the handler covers SIGTERM (and SIGHUP) as well as
+/// SIGINT, so a service manager stopping the unit takes exactly the same
+/// drain-and-release path as ctrl-c.
 pub fn run_foreground(options: DaemonOptions) -> Result<(), DaemonError> {
     let daemon = Daemon::start(&options)?;
-    let handler_runtime = Arc::clone(&daemon.runtime);
+    let handler_stop = Arc::clone(&daemon.runtime.stop);
     ctrlc::set_handler(move || {
-        handler_runtime.stop.store(true, Ordering::Release);
+        handler_stop.store(true, Ordering::Release);
     })
     .map_err(|error| DaemonError::Signal(error.to_string()))?;
     let record = daemon.discovery_record();

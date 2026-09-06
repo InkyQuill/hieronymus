@@ -8,6 +8,7 @@ pub mod app;
 pub mod client;
 pub mod daemon;
 pub mod doctor;
+pub mod lifecycle;
 pub mod service;
 pub mod stdio;
 pub mod uninstall;
