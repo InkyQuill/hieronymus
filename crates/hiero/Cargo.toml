@@ -26,6 +26,9 @@ thiserror.workspace = true
 base64.workspace = true
 sha1.workspace = true
 home.workspace = true
+# `hiero export` publishes through a synced sibling temporary file and an
+# atomic no-clobber rename, so it can never truncate an existing destination.
+tempfile.workspace = true
 # Release archive verification (`hiero update`, byte-for-byte parity with the
 # bootstrap installer's sha256sum check).
 sha2.workspace = true
@@ -40,4 +43,4 @@ rust-embed = { version = "8", optional = true, features = [
 
 [dev-dependencies]
 rusqlite.workspace = true
-tempfile.workspace = true
+# `tempfile` is a normal dependency (see above), so tests inherit it.

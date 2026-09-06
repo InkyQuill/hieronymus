@@ -15,6 +15,11 @@ use crate::rag_models::{RagChunkRecord, RagImportResult, RagSearchHit, RagSource
 use crate::short_memory::search_expression;
 
 pub const MAX_RAG_CHUNK_CHARS: usize = 1200;
+/// The managed directory under the data root holding normalized copies of
+/// imported RAG sources. Named here so callers that must recognize the
+/// installation's own files (`hiero export`'s destination guard) cannot drift
+/// out of sync with the writer below.
+pub const RAG_NORMALIZED_DIR: &str = "rag-normalized";
 /// Shared search-depth bound: both advisory lanes (FTS and semantic) cap
 /// their candidate lists identically so reciprocal rank fusion sees evenly
 /// deep lane rankings.
@@ -134,7 +139,7 @@ impl RagStore {
             None => path.display().to_string(),
         };
         let normalized =
-            normalize_rag_source(path, &self.config.data_root().join("rag-normalized"))?;
+            normalize_rag_source(path, &self.config.data_root().join(RAG_NORMALIZED_DIR))?;
         let source_type_hint = if normalized.path == path {
             import.source_type.as_str()
         } else {

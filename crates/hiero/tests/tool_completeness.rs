@@ -991,29 +991,86 @@ fn export_cli_writes_deterministic_readonly_json() {
         .unwrap();
 
     let database_bytes = std::fs::read(config.database_path()).unwrap();
-    let output_path = root.path().join("export").join("memory.json");
-    let run_export = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let export_to = |destination: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_hiero"))
             .args([
                 "export",
                 "--output",
-                output_path.to_str().unwrap(),
+                destination.to_str().unwrap(),
                 "--data-root",
                 root.path().to_str().unwrap(),
                 "--json",
             ])
             .output()
-            .unwrap();
+            .unwrap()
+    };
+    let run_export = |destination: &std::path::Path| {
+        let output = export_to(destination);
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        std::fs::read_to_string(&output_path).unwrap()
+        std::fs::read_to_string(destination).unwrap()
     };
-    let first = run_export();
-    let second = run_export();
+    // Determinism is compared across two fresh destinations: an export never
+    // overwrites, so re-running onto the same path is a refusal, not a rewrite
+    // (finding A1 — the destination guard).
+    let output_path = root.path().join("export").join("memory.json");
+    let first = run_export(&output_path);
+    let second = run_export(&root.path().join("export").join("memory-again.json"));
     assert_eq!(first, second, "export must be byte-deterministic");
+
+    // Re-exporting onto an existing file is refused, and leaves it intact.
+    let existing = export_to(&output_path);
+    assert!(!existing.status.success());
+    assert!(
+        String::from_utf8_lossy(&existing.stderr).contains("already exists"),
+        "{}",
+        String::from_utf8_lossy(&existing.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&output_path).unwrap(), first);
+
+    // `--force` is the deliberate overwrite affordance the refusal points at.
+    let forced = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "export",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&output_path).unwrap(), first);
+
+    // The authoritative database is never a legal destination — with or
+    // without `--force`.
+    let onto_database = export_to(&config.database_path());
+    assert!(!onto_database.status.success());
+    let forced_onto_database = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "export",
+            "--output",
+            config.database_path().to_str().unwrap(),
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!forced_onto_database.status.success());
+    assert_eq!(
+        database_bytes,
+        std::fs::read(config.database_path()).unwrap(),
+        "a refused export must leave the database byte-identical"
+    );
     let document: Value = serde_json::from_str(&first).unwrap();
     assert_eq!(document["format"], json!(hiero::export::EXPORT_FORMAT));
     assert_eq!(document["tables"]["series"][0]["slug"], json!("book"));

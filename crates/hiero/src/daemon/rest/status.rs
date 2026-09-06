@@ -249,8 +249,7 @@ fn load_autostart_state(config: &HieronymusConfig) -> AutostartState {
         last_skip_reason: String::new(),
         not_enough_memories_skipped_count: 0,
     };
-    let Ok(text) = std::fs::read_to_string(config.config_root().join("dream-autostart.json"))
-    else {
+    let Ok(text) = std::fs::read_to_string(config.dream_autostart_path()) else {
         return default;
     };
     let Ok(payload) = serde_json::from_str::<Value>(&text) else {

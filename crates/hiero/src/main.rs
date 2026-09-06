@@ -24,7 +24,7 @@ const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (o
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
 const TOOL_CALL_USAGE: &str = "usage: hiero tool-call <tool> [--args <json>] [--json] [--data-root <path>] [--start-daemon] (calls the advertised MCP tool through the local daemon's authenticated /mcp route)";
-const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy)";
+const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--force] [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy. An existing destination is refused unless --force replaces it, and no path this installation owns is ever a legal destination)";
 const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
@@ -84,6 +84,9 @@ struct ParsedArguments {
     delete_data: bool,
     args_json: Option<String>,
     output: Option<String>,
+    /// `hiero export --force`: replace an existing destination instead of
+    /// refusing it. Never relaxes the destination guard itself.
+    force: bool,
 }
 
 fn parse_arguments(
@@ -116,6 +119,7 @@ fn parse_arguments(
         delete_data: false,
         args_json: None,
         output: None,
+        force: false,
     };
     let mut positionals: Vec<String> = Vec::new();
     let mut index = 0;
@@ -282,6 +286,7 @@ fn parse_arguments(
                         .clone(),
                 );
             }
+            "--force" => parsed.force = true,
             value if value.starts_with('-') => {
                 return Err(format!("unknown option: {value}"));
             }
@@ -1088,6 +1093,8 @@ fn run_tool_call(
 
 /// The `export` subcommand: serialize the memory content tables to JSON at an
 /// explicit destination. Read-only by design — never a live database copy.
+/// A destination this installation owns is always refused; an existing file is
+/// refused unless `--force` asks for it to be replaced.
 fn run_export(
     parsed: &ParsedArguments,
     data_root: Option<&std::path::Path>,
@@ -1104,7 +1111,12 @@ fn run_export(
         .ok_or_else(|| format!("export requires --output <path>; {EXPORT_USAGE}"))?;
     let destination = absolute_path(output);
     let config = load_config(data_root);
-    let report = hiero::export::run(&config, &destination).map_err(|error| error.to_string())?;
+    let report = if parsed.force {
+        hiero::export::run_overwriting(&config, &destination)
+    } else {
+        hiero::export::run(&config, &destination)
+    }
+    .map_err(|error| error.to_string())?;
     if parsed.json {
         let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         println!("{text}");
