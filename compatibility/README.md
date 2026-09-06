@@ -71,6 +71,17 @@ Python tool also merges recent dream-audit concept-suggestion payloads into
 the same list; that dream-audit merge lands with the dreaming plan, so until
 then Rust consumers see only the strict proposals.
 
+`hieronymus_rag_import` carries additive Rust-only keys with no versioned
+expectation file, because the frozen Python boundary pins no response shape
+for them: `semantic_rebuild_job` (task S2) and, alongside it,
+`semantic_indexing` plus the conditional `semantic_indexing_error` (task C4).
+`semantic_indexing` is always present and is one of `queued`, `owed`, or
+`not-required`; `semantic_rebuild_job` is a durable job id exactly when the
+value is `queued` and `null` otherwise — never a structured error object, and
+never the controller's internal `rebuild:empty-corpus` marker. Python has no
+semantic indexing lane at all, so these keys add to the response and change
+nothing a Python consumer reads.
+
 ### Web console authentication (`rust/console-auth.json`, ADR 0012)
 
 The frozen HTTP route-cases have no way to launch an authenticated console:

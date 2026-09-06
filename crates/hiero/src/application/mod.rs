@@ -139,7 +139,15 @@ impl Application {
     /// Queues a durable semantic rebuild through the installed hook (used by
     /// RAG import after its authoritative commit). `None` when no daemon
     /// owns this application; hook failures surface to the caller without
-    /// failing the import — startup/periodic reconciliation recovers.
+    /// failing the import.
+    ///
+    /// Both non-queued outcomes are safe to report rather than retry here
+    /// (task C4): the import wrote a durable `semantic_work_intent` inside its
+    /// own transaction, so the owed indexing is recorded in SQLite whether or
+    /// not this best-effort notification lands, and startup/periodic
+    /// reconciliation queues it from that record. What callers must NOT be
+    /// told is that indexing was queued when it was not — see
+    /// `memory::rag_import`.
     pub(crate) fn request_rebuild(&self, series_slug: &str) -> Option<Result<String, String>> {
         let guard = self
             .rebuild_hook

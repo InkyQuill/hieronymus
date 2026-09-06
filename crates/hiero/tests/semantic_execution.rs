@@ -836,9 +836,11 @@ fn worker_failures_retry_then_fail_honestly() {
     failing.shutdown().unwrap();
 }
 
-/// Two imports back to back: the first rebuild's frozen expectation goes
-/// stale, is durably cancelled, and one fresh whole-corpus rebuild covers
-/// both sources.
+/// Two imports back to back: the second import moves the corpus revision past
+/// what the first rebuild's candidate covers, so that candidate is durably
+/// cancelled and one fresh whole-corpus rebuild covers both sources. (Task C4
+/// replaced the frozen `expected_count` comparison this used to turn on; an
+/// equal count is not coverage.)
 #[test]
 fn concurrent_imports_converge_on_one_current_generation() {
     let root = tempfile::tempdir().unwrap();

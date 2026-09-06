@@ -36,6 +36,10 @@ use crate::semantic_model::{
 
 /// Sample queries executed during activation return at most this many hits.
 const ACTIVATION_SAMPLE_LIMIT: usize = 10;
+/// How long the activation transaction waits for a competing writer (an
+/// in-flight import) before giving up. Activation holds the write lock for two
+/// small `update`s, so this only ever absorbs someone else's short commit.
+const ACTIVATION_BUSY_TIMEOUT_MS: i64 = 5_000;
 /// File name of the promoted model under the model directory.
 const MODEL_FILE_NAME: &str = "model.onnx";
 
@@ -45,6 +49,14 @@ const MODEL_FILE_NAME: &str = "model.onnx";
 /// before the tokenizer joined the embedding identity (Task 9 review
 /// follow-up): every manifest row records the tokenization its vectors were
 /// built under.
+///
+/// `corpus_revision` (schema version 3) needs no such back-fill here: this
+/// table is created lazily, so a v2 database that already had it is altered by
+/// the 2 -> 3 step's typed converter
+/// (`schema_upgrade::add_corpus_revision_column`) and one created afterwards
+/// carries the column from the definition below. Both paths default it to `-1`
+/// — the "begun before revisions were recorded" sentinel — so the two shapes
+/// are indistinguishable to every reader.
 pub(crate) fn ensure_semantic_schema(connection: &Connection) -> Result<(), SemanticError> {
     connection.execute_batch(SEMANTIC_SCHEMA_SQL)?;
     ensure_tokenizer_column(connection)?;
@@ -64,6 +76,7 @@ create table if not exists semantic_generations (
     max_input_tokens integer not null,
     max_batch_inputs integer not null,
     expected_count integer not null,
+    corpus_revision integer not null default -1,
     written_count integer not null default 0,
     last_chunk_id integer not null default 0,
     active integer not null default 0 check (active in (0,1)),
@@ -73,6 +86,14 @@ create table if not exists semantic_generations (
 create unique index if not exists one_active_semantic_generation
     on semantic_generations(active) where active = 1;
 ";
+
+/// The `semantic_generations.corpus_revision` value of a generation that was
+/// begun before corpus revisions existed (task C4). It compares as behind
+/// every real revision — including revision 0, the value of a database that
+/// has never recorded a text change — so such a generation always reads as
+/// stale and is REBUILT. It is never relabelled with a revision it cannot be
+/// shown to cover.
+pub const UNKNOWN_CORPUS_REVISION: i64 = -1;
 
 /// Adds the `tokenizer` column when it is missing (pre-identity databases).
 /// The default backfills every existing manifest with the tokenizer this port
@@ -102,6 +123,12 @@ pub struct GenerationManifest {
     pub generation_id: String,
     pub status: String,
     pub identity: EmbeddingIdentity,
+    /// The authoritative corpus revision this generation was begun at, or
+    /// [`UNKNOWN_CORPUS_REVISION`] for a generation that predates revisions.
+    /// A generation covers the corpus only when this equals the current
+    /// revision — an equal chunk count proves nothing, because replacing a
+    /// document with a same-length one changes every vector it owns.
+    pub corpus_revision: i64,
     pub expected_count: u64,
     pub written_count: u64,
     pub last_chunk_id: i64,
@@ -399,9 +426,13 @@ impl SemanticStore {
     }
 
     /// Registers a new candidate generation. The manifest freezes the model
-    /// identity and the current authoritative chunk count; any existing row
-    /// for the id is rejected (this slice has no resume: abandon with
-    /// `cancel_generation` and start a new generation).
+    /// identity, the current authoritative chunk count, and the corpus
+    /// revision it is being built against; any existing row for the id is
+    /// rejected (this slice has no resume: abandon with `cancel_generation`
+    /// and start a new generation).
+    ///
+    /// The revision is read inside the transaction that inserts it, so the
+    /// recorded coverage claim is exactly the corpus state the insert saw.
     pub fn begin_generation(
         &self,
         generation_id: &str,
@@ -413,6 +444,7 @@ impl SemanticStore {
             connection.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
         let now = now_iso8601();
         let transaction = connection.transaction()?;
+        let corpus_revision = crate::rag::current_corpus_revision(&transaction)?;
         let existing: i64 = transaction.query_row(
             "select count(*) from semantic_generations where generation_id = ?1",
             params![generation_id],
@@ -427,9 +459,10 @@ impl SemanticStore {
             "insert into semantic_generations(
                generation_id, status, provider, model, model_revision, dimensions,
                normalization, tokenizer, max_input_tokens, max_batch_inputs,
-               expected_count, written_count, last_chunk_id, active, created_at, updated_at
+               expected_count, corpus_revision, written_count, last_chunk_id, active,
+               created_at, updated_at
              )
-             values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)",
+             values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, 0, ?12, ?12)",
             params![
                 generation_id,
                 identity.provider(),
@@ -441,6 +474,7 @@ impl SemanticStore {
                 identity.max_input_tokens() as i64,
                 identity.max_batch_inputs() as i64,
                 expected_count,
+                corpus_revision,
                 now,
             ],
         )?;
@@ -449,6 +483,7 @@ impl SemanticStore {
             generation_id: generation_id.to_string(),
             status: "building".to_string(),
             identity: identity.clone(),
+            corpus_revision,
             expected_count: expected_count as u64,
             written_count: 0,
             last_chunk_id: 0,
@@ -602,10 +637,28 @@ impl SemanticStore {
         Ok(appended)
     }
 
-    /// Validates the candidate generation (count, checksum, dimension, and
-    /// sample-query checks against the authoritative rows and the previous
-    /// active generation keeps serving throughout), then activates it in
-    /// exactly one metadata transaction.
+    /// Validates the candidate generation (count, checksum, dimension,
+    /// corpus-revision, and sample-query checks against the authoritative
+    /// rows; the previous active generation keeps serving throughout), then
+    /// activates it in exactly one metadata transaction.
+    ///
+    /// Both halves of the identity the candidate claims are checked against
+    /// CURRENT authoritative state (task C4): the embedding identity against
+    /// the provider that is about to answer queries, and the corpus revision
+    /// against `corpus_revision.revision`. A candidate begun at revision N can
+    /// never be activated once the corpus has moved to N+1 — its vectors
+    /// describe text that is no longer what the store holds — and refusing
+    /// here is what stops a rebuild that started before an import from
+    /// publishing itself after it.
+    ///
+    /// The revision check deliberately runs AFTER the count/checksum/dimension
+    /// checks rather than beside the identity check at the top. Those checks
+    /// name the specific way a candidate went stale ("checksum mismatch", "count
+    /// mismatch"), which is far more actionable than "the revision moved"; the
+    /// revision check is the exact backstop for whatever fingerprint
+    /// reconciliation cannot see — chunks added and removed in equal numbers,
+    /// a replacement whose texts hash identically behind the cursor — not a
+    /// replacement for them.
     pub fn activate_generation(
         &self,
         generation_id: &str,
@@ -673,13 +726,30 @@ impl SemanticStore {
         }
         drop(index);
 
+        // Fail closed before taking the write lock, so a doomed candidate is
+        // refused without contending with the very import that doomed it. The
+        // authoritative check is the one inside the transaction below; this is
+        // the cheap one.
+        ensure_covers_corpus_revision(&self.connection()?, &manifest)?;
+
         // Activation is exactly one SQLite transaction. The partial unique
         // index admits only one active row, so the previous active generation
         // is superseded BEFORE the candidate is promoted; on any failure the
         // transaction is dropped and rolls back to the previous state.
+        //
+        // `Immediate`: the corpus-revision re-check below has to be atomic
+        // with the promotion it authorizes. A deferred transaction would take
+        // its read snapshot first and only then contend for the write lock, so
+        // an import committing in that window would either be missed or turn
+        // into a `SQLITE_BUSY_SNAPSHOT` surprise. Holding the write lock from
+        // the start means the revision this reads is the revision that is
+        // still current when the candidate goes active.
         let now = now_iso8601();
         let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
+        connection.pragma_update(None, "busy_timeout", ACTIVATION_BUSY_TIMEOUT_MS)?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure_covers_corpus_revision(&transaction, &manifest)?;
         transaction.execute(
             "update semantic_generations
              set status = 'superseded', active = 0, updated_at = ?2
@@ -863,7 +933,8 @@ impl SemanticStore {
         let mut statement = connection.prepare(
             "select generation_id, status, provider, model, model_revision, dimensions,
                     expected_count, written_count, last_chunk_id, active, created_at, updated_at,
-                    normalization, tokenizer, max_input_tokens, max_batch_inputs
+                    normalization, tokenizer, max_input_tokens, max_batch_inputs,
+                    corpus_revision
              from semantic_generations
              where active = 1",
         )?;
@@ -879,6 +950,17 @@ impl SemanticStore {
     /// database or missing table reads as "no active generation, intact".
     /// Returns the active manifest (if any) plus whether its index survived on
     /// disk.
+    ///
+    /// This is the ONE manifest reader that runs against an arbitrary data
+    /// root rather than one `open_migrated` has already accepted, so it cannot
+    /// assume the current schema. `hiero doctor` and `hiero semantic status`
+    /// must report on a root that has not been upgraded yet — including a
+    /// schema-version-2 root that armed semantics, whose
+    /// `semantic_generations` predates `corpus_revision` — so the column is
+    /// substituted with [`UNKNOWN_CORPUS_REVISION`] when it is absent. That is
+    /// not a papered-over read: a generation from before revisions were
+    /// recorded genuinely has no proven coverage, which is exactly what the
+    /// sentinel means.
     pub fn probe_active_generation(
         config: &HieronymusConfig,
     ) -> Result<(Option<GenerationManifest>, bool), SemanticError> {
@@ -899,13 +981,23 @@ impl SemanticStore {
         if table_present == 0 {
             return Ok((None, true));
         }
-        let mut statement = connection.prepare(
+        let has_revision_column = connection
+            .prepare("select name from pragma_table_info('semantic_generations')")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .any(|name| name.as_deref() == Ok("corpus_revision"));
+        let revision_column = if has_revision_column {
+            "corpus_revision".to_string()
+        } else {
+            format!("{UNKNOWN_CORPUS_REVISION} as corpus_revision")
+        };
+        let mut statement = connection.prepare(&format!(
             "select generation_id, status, provider, model, model_revision, dimensions,
                     expected_count, written_count, last_chunk_id, active, created_at, updated_at,
-                    normalization, tokenizer, max_input_tokens, max_batch_inputs
+                    normalization, tokenizer, max_input_tokens, max_batch_inputs,
+                    {revision_column}
              from semantic_generations
-             where active = 1",
-        )?;
+             where active = 1"
+        ))?;
         let mut rows = statement.query([])?;
         let manifest = match rows.next()? {
             Some(row) => Some(manifest_from_row(row)?),
@@ -930,7 +1022,8 @@ impl SemanticStore {
         let mut statement = connection.prepare(
             "select generation_id, status, provider, model, model_revision, dimensions,
                     expected_count, written_count, last_chunk_id, active, created_at, updated_at,
-                    normalization, tokenizer, max_input_tokens, max_batch_inputs
+                    normalization, tokenizer, max_input_tokens, max_batch_inputs,
+                    corpus_revision
              from semantic_generations
              where generation_id = ?1",
         )?;
@@ -973,6 +1066,38 @@ impl SemanticStore {
     }
 }
 
+/// Refuse a candidate whose recorded corpus revision is no longer the
+/// authoritative one (task C4).
+///
+/// `ValidationFailed` on purpose, matching every other activation refusal:
+/// `semantic_jobs::activate_candidate` maps it to `JobOutcome::Failed` and
+/// marks both the job and its candidate generation terminal, which is exactly
+/// right — the candidate is unusable, not merely delayed. Reconciliation then
+/// sees an uncovered corpus (plus, on the import path, a durable work intent)
+/// and queues a fresh whole-corpus rebuild. `InvalidState` would be wrong
+/// here: that variant means "another worker won the activation race" and sends
+/// the job down `resolve_against_manifest` instead.
+fn ensure_covers_corpus_revision(
+    connection: &Connection,
+    manifest: &GenerationManifest,
+) -> Result<(), SemanticError> {
+    let authoritative = crate::rag::current_corpus_revision(connection)?;
+    if manifest.corpus_revision == authoritative {
+        return Ok(());
+    }
+    let recorded = if manifest.corpus_revision == UNKNOWN_CORPUS_REVISION {
+        "no recorded corpus revision (it predates corpus revisions)".to_string()
+    } else {
+        format!("corpus revision {}", manifest.corpus_revision)
+    };
+    Err(SemanticError::ValidationFailed(format!(
+        "generation {} was built against {recorded} but the authoritative corpus is now at \
+         revision {authoritative}; activating it would publish an index of text the store no \
+         longer holds, so a fresh whole-corpus rebuild is required",
+        manifest.generation_id
+    )))
+}
+
 fn ensure_same_identity(
     expected: &EmbeddingIdentity,
     actual: &EmbeddingIdentity,
@@ -1012,6 +1137,7 @@ fn manifest_from_row(row: &rusqlite::Row<'_>) -> Result<GenerationManifest, Sema
             row.get::<_, i64>(14)? as usize,
             row.get::<_, i64>(15)? as usize,
         )?,
+        corpus_revision: row.get(16)?,
         expected_count: row.get::<_, i64>(6)? as u64,
         written_count: row.get::<_, i64>(7)? as u64,
         last_chunk_id: row.get(8)?,
@@ -1042,7 +1168,9 @@ fn now_iso8601() -> String {
 /// [`SemanticStore::begin_generation`]: registers the candidate generation
 /// through the caller's connection (a `&Connection` cannot commit), refusing
 /// autocommit so the upgrade transaction owns the commit. The manifest
-/// freezes the authoritative chunk count as seen inside that transaction.
+/// freezes the authoritative chunk count AND the corpus revision as seen
+/// inside that transaction, so the coverage claim it records is exactly the
+/// corpus the caller serialized against.
 pub(crate) fn begin_generation_in_transaction(
     connection: &Connection,
     generation_id: &str,
@@ -1057,6 +1185,7 @@ pub(crate) fn begin_generation_in_transaction(
     ensure_semantic_schema(connection)?;
     let expected_count: i64 =
         connection.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
+    let corpus_revision = crate::rag::current_corpus_revision(connection)?;
     let now = now_iso8601();
     let existing: i64 = connection.query_row(
         "select count(*) from semantic_generations where generation_id = ?1",
@@ -1072,9 +1201,10 @@ pub(crate) fn begin_generation_in_transaction(
         "insert into semantic_generations(
            generation_id, status, provider, model, model_revision, dimensions,
            normalization, tokenizer, max_input_tokens, max_batch_inputs,
-           expected_count, written_count, last_chunk_id, active, created_at, updated_at
+           expected_count, corpus_revision, written_count, last_chunk_id, active,
+           created_at, updated_at
          )
-         values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)",
+         values (?1, 'building', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, 0, ?12, ?12)",
         params![
             generation_id,
             identity.provider(),
@@ -1086,6 +1216,7 @@ pub(crate) fn begin_generation_in_transaction(
             identity.max_input_tokens() as i64,
             identity.max_batch_inputs() as i64,
             expected_count,
+            corpus_revision,
             now,
         ],
     )?;
@@ -1093,6 +1224,7 @@ pub(crate) fn begin_generation_in_transaction(
         generation_id: generation_id.to_string(),
         status: "building".to_string(),
         identity: identity.clone(),
+        corpus_revision,
         expected_count: expected_count as u64,
         written_count: 0,
         last_chunk_id: 0,

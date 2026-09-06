@@ -40,6 +40,21 @@
 //!   identity, a model swap, an index directory deleted underneath the
 //!   daemon — as an active generation (`generation_valid`).
 //!
+//! Corpus reconciliation (Task C4, review finding A4): readiness is a claim
+//! about the CURRENT corpus, so the reconcile compares the authoritative
+//! corpus revision — not a job record — against what the active generation
+//! actually covers. Two more ways the pre-C4 loop lied, both closed here:
+//!
+//! - it queued missing work only when NO active generation existed, so a
+//!   generation built over an older corpus revision kept the active slot and
+//!   the controller reported `Ready` over text that no query could reach;
+//! - it recovered "missing work" from job records, so the window between the
+//!   import's commit and its out-of-band enqueue (a crash, or a plain enqueue
+//!   failure) left nothing for reconciliation to find. The import now writes a
+//!   durable `semantic_work_intent` inside its own transaction, and this
+//!   worker honours that intent even when an active generation exists and the
+//!   one-shot startup recovery has already run.
+//!
 //! Store, queue, sample and lane-install errors are published as `Failed`
 //! with their cause rather than swallowed: a degraded service reports its
 //! limits truthfully, and both memory and semantic RAG are mandatory, so a
@@ -110,8 +125,9 @@ pub struct ReadinessEvidence {
     /// from a failed read, which is `Failed`, not "empty".
     pub corpus_empty: bool,
     /// The active generation exists, was built under the embedding identity
-    /// this controller runs, and its vector index survived on disk. Manifest
-    /// existence alone is explicitly NOT enough.
+    /// this controller runs, its vector index survived on disk, AND it covers
+    /// the current authoritative corpus revision. Manifest existence alone is
+    /// explicitly NOT enough, and neither is an intact index over stale text.
     pub generation_valid: bool,
     /// A durable rebuild job is queued or in flight for the current target,
     /// so the current corpus is not covered yet.
@@ -500,10 +516,11 @@ fn run_worker(
     // what survives a restart, so re-queueing every tick would undo an
     // operator's cancellation.
     let mut recovery_attempted = false;
-    // The exception to that: a generation this worker had to invalidate
-    // uncovers the corpus through no operator action, so a recovery rebuild is
-    // owed. Held until it is actually queued, because the invalidation may be
-    // observed on a tick that cannot queue yet.
+    // The exception to that: a generation this worker had to invalidate, one
+    // that no longer covers the corpus, or an import's durable work intent all
+    // uncover the corpus through no operator action, so a recovery rebuild is
+    // owed. Held until it is actually queued, because it may be observed on a
+    // tick that cannot queue yet.
     let mut recovery_owed = false;
     let mut rearm_deadline = std::time::Instant::now();
     let stop_flag = Arc::clone(&stop);
@@ -589,17 +606,25 @@ fn run_worker(
             }
         };
         let mut evidence = gathered.evidence;
-        if let Some(reason) = gathered.invalidated {
+        if let Some(reason) = gathered.rebuild_owed {
             failure_detail = Some(reason);
             recovery_owed = true;
         }
 
-        // 5. Recovery queueing: a non-empty corpus with no valid generation
-        //    and nothing queued needs a durable rebuild. Once at startup, and
-        //    again for every generation this worker had to invalidate.
-        if !evidence.corpus_empty
-            && !evidence.generation_valid
+        // 5. Recovery queueing: a corpus with no generation covering it and
+        //    nothing queued needs a durable rebuild. Once at startup, and
+        //    again whenever a rebuild is owed — a generation this worker had
+        //    to invalidate, one the corpus moved past, or an import's durable
+        //    work intent.
+        //
+        //    An owed rebuild is queued even over an EMPTY corpus. That looks
+        //    pointless and is not: `queue_semantic_rebuild` answers
+        //    `EmptyCorpus` and retires the work intent in the same
+        //    transaction, so an import that emptied the corpus stops asking
+        //    for indexing it no longer needs.
+        if !evidence.generation_valid
             && !evidence.rebuild_pending
+            && (!evidence.corpus_empty || recovery_owed)
             && (!recovery_attempted || recovery_owed)
         {
             match queue_semantic_rebuild(&context.inner.config, &context.inner.identity) {
@@ -677,7 +702,7 @@ fn run_worker(
         } else if pass.drove_a_job || pass_failed {
             match gather_evidence(&context.inner, query_installed) {
                 Ok(gathered) => {
-                    if let Some(reason) = gathered.invalidated {
+                    if let Some(reason) = gathered.rebuild_owed {
                         failure_detail = Some(reason);
                         recovery_owed = true;
                     }
@@ -821,14 +846,30 @@ fn wait_for_wakeup(context: &WorkerContext, _stop: &AtomicBool) {
 }
 
 /// The gathered evidence plus the one thing the evidence itself cannot
-/// express: that an unusable active generation had to be invalidated on this
-/// tick.
+/// express: that a rebuild is OWED through no operator action, and why.
 struct GatheredEvidence {
     evidence: ReadinessEvidence,
-    /// Why the active generation was invalidated, when it was. The corpus is
-    /// now uncovered through no operator action, so the caller owes it a
-    /// recovery rebuild even after the startup one already ran.
-    invalidated: Option<String>,
+    /// Why a rebuild is owed, when one is: an active generation that had to be
+    /// invalidated, one that no longer covers the corpus, or a durable work
+    /// intent an import left behind. The corpus is uncovered through no
+    /// operator action in every case, so the caller owes it a recovery rebuild
+    /// even after the one-shot startup recovery already ran.
+    rebuild_owed: Option<String>,
+}
+
+/// What the authoritative database says about corpus coverage, read on one
+/// connection so every fact describes the same snapshot.
+struct CorpusState {
+    chunk_count: i64,
+    /// The current authoritative corpus revision (`rag::current_corpus_revision`).
+    revision: i64,
+    /// A rebuild job is queued or in flight.
+    rebuild_pending: bool,
+    /// The highest corpus revision any live job's candidate generation covers.
+    /// `None` when no rebuild is in flight.
+    queued_revision: Option<i64>,
+    /// The durably recorded owed-indexing revision an import left behind.
+    intent_revision: Option<i64>,
 }
 
 /// Read the four readiness facts from real state.
@@ -841,35 +882,65 @@ fn gather_evidence(
     inner: &ControllerInner,
     query_installed: bool,
 ) -> Result<GatheredEvidence, String> {
-    let (chunk_count, rebuild_pending) = corpus_and_queue(&inner.config)?;
-    let (generation_valid, invalidated) = assess_and_invalidate_active_generation(inner)?;
+    let corpus = corpus_and_queue(&inner.config)?;
+    let (generation_valid, mut rebuild_owed) = assess_active_generation(inner, corpus.revision)?;
+
+    // The durable intent is the one signal that survives a lost wakeup. It is
+    // owed only when neither the active generation nor a live candidate
+    // already covers it: an intent the queue has picked up is not a second
+    // piece of work. It deliberately fires even when `generation_valid` and
+    // even after the startup recovery ran, because "an import committed and
+    // its indexing was never queued" is precisely the state no other signal
+    // can distinguish from "the operator cancelled the rebuild on purpose".
+    if let Some(intent) = corpus.intent_revision {
+        let covered = corpus
+            .queued_revision
+            .unwrap_or(hieronymus::semantic_store::UNKNOWN_CORPUS_REVISION)
+            .max(if generation_valid {
+                corpus.revision
+            } else {
+                hieronymus::semantic_store::UNKNOWN_CORPUS_REVISION
+            });
+        if intent > covered && rebuild_owed.is_none() {
+            rebuild_owed = Some(format!(
+                "an import durably recorded that semantic indexing is owed up to corpus \
+                 revision {intent}, and no queued or active generation covers it; the \
+                 rebuild is being re-queued from that record"
+            ));
+        }
+    }
+
     Ok(GatheredEvidence {
         evidence: ReadinessEvidence {
             query_installed,
-            corpus_empty: chunk_count == 0,
+            corpus_empty: corpus.chunk_count == 0,
             generation_valid,
-            rebuild_pending,
+            rebuild_pending: corpus.rebuild_pending,
         },
-        invalidated,
+        rebuild_owed,
     })
 }
 
-/// The authoritative chunk count and whether a rebuild job is queued or in
-/// flight, on one connection. `semantic_jobs` exists because the tick opened
-/// the durable job store before gathering.
+/// The authoritative corpus facts plus the durable queue and work-intent
+/// state, on one connection. `semantic_jobs` and `semantic_generations` exist
+/// because the tick opened the durable job store before gathering;
+/// `corpus_revision` and `semantic_work_intent` are schema-version-3 baseline
+/// tables, so `open_migrated` succeeding is proof they are there.
 ///
-/// Every live job counts, not only one matching the running identity. That is
-/// deliberate: `queue_semantic_rebuild` keeps exactly one rebuild in flight
-/// and reconciliation terminates jobs whose generation went terminal, so a
-/// live row means the current corpus is not covered yet — and over-reporting
-/// `rebuild_pending` errs toward "not ready", which is the only safe
-/// direction here.
-fn corpus_and_queue(config: &HieronymusConfig) -> Result<(i64, bool), String> {
+/// Every live job counts toward `rebuild_pending`, not only one matching the
+/// running identity or revision. That is deliberate:
+/// `queue_semantic_rebuild` keeps exactly one rebuild in flight and cancels a
+/// candidate that no longer covers the corpus, so a live row means the current
+/// corpus is not covered yet — and over-reporting `rebuild_pending` errs
+/// toward "not ready", which is the only safe direction here.
+fn corpus_and_queue(config: &HieronymusConfig) -> Result<CorpusState, String> {
     let connection = hieronymus::db::open_migrated(&config.database_path())
         .map_err(|error| format!("the authoritative database is unreadable: {error}"))?;
     let chunk_count: i64 = connection
         .query_row("select count(*) from rag_chunks", [], |row| row.get(0))
         .map_err(|error| format!("the authoritative chunk count is unreadable: {error}"))?;
+    let revision = hieronymus::rag::current_corpus_revision(&connection)
+        .map_err(|error| format!("the authoritative corpus revision is unreadable: {error}"))?;
     let pending: i64 = connection
         .query_row(
             "select count(*) from semantic_jobs where status in ('queued', 'running')",
@@ -877,13 +948,33 @@ fn corpus_and_queue(config: &HieronymusConfig) -> Result<(i64, bool), String> {
             |row| row.get(0),
         )
         .map_err(|error| format!("the durable semantic job queue is unreadable: {error}"))?;
-    Ok((chunk_count, pending > 0))
+    let queued_revision: Option<i64> = connection
+        .query_row(
+            "select max(g.corpus_revision)
+             from semantic_jobs j
+             join semantic_generations g on g.generation_id = j.generation_id
+             where j.status in ('queued', 'running')",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .map_err(|error| {
+            format!("the queued semantic generation coverage is unreadable: {error}")
+        })?;
+    let intent_revision = hieronymus::rag::pending_semantic_work_intent(&connection)
+        .map_err(|error| format!("the durable semantic work intent is unreadable: {error}"))?;
+    Ok(CorpusState {
+        chunk_count,
+        revision,
+        rebuild_pending: pending > 0,
+        queued_revision,
+        intent_revision,
+    })
 }
 
-/// Whether the active generation can actually serve queries right now —
-/// and, when it cannot, INVALIDATE it and return the reason. This mutates
-/// durable state on that path (the generation is driven to a terminal status
-/// and out of the active slot); it is not a pure query.
+/// Whether the active generation covers the current corpus — and, when it
+/// cannot serve queries at all, INVALIDATE it and return the reason. This
+/// mutates durable state on the unusable path (the generation is driven to a
+/// terminal status and out of the active slot); it is not a pure query.
 ///
 /// The existence of a manifest row is explicitly NOT evidence. That row
 /// survives a byte-fold-era identity (the `tokenizer` column was back-filled
@@ -891,14 +982,32 @@ fn corpus_and_queue(config: &HieronymusConfig) -> Result<(i64, bool), String> {
 /// runtime swap, and an index directory deleted underneath the daemon — every
 /// one of which still answers `active_generation()` with `Ok(Some(_))` while
 /// every query against it is empty or wrong. So the checks are: identity
-/// equality against the arm this controller runs, then index integrity on
-/// disk (both read in one pass by `probe_active_generation`).
+/// equality against the arm this controller runs, then index integrity on disk
+/// (both read in one pass by `probe_active_generation`), then — task C4 —
+/// whether the generation's recorded corpus revision still matches the
+/// authoritative one.
 ///
-/// An unusable generation is *invalidated*, not relabelled: it leaves the
-/// active slot, so the corpus reads as uncovered and a rebuild is queued.
-/// Never data loss — the authoritative chunks never left `rag_chunks`.
-fn assess_and_invalidate_active_generation(
+/// The three failures are NOT the same failure, and the difference is
+/// deliberate:
+///
+/// - a foreign identity or a vanished index is *unusable*: every query against
+///   it is empty or wrong, so it is **invalidated** — driven terminal and out
+///   of the active slot, never relabelled. The corpus then reads as uncovered
+///   and a rebuild is queued. Never data loss; the authoritative chunks never
+///   left `rag_chunks`.
+/// - a revision-stale generation is *usable but behind*: its vectors are
+///   coherent and queryable, they simply describe older text. It **keeps the
+///   active slot** so recall can still serve those older results (degraded,
+///   and honestly reported as `Rebuilding` rather than `Ready`) while the
+///   fresh generation builds. Invalidating it here would take the lane down
+///   to FTS-only for the whole rebuild to no one's benefit.
+///
+/// Either way `generation_valid` is false and a rebuild is owed, which is what
+/// keeps the pre-C4 lie — an intact index over stale text reported as `Ready`
+/// — impossible.
+fn assess_active_generation(
     inner: &ControllerInner,
+    corpus_revision: i64,
 ) -> Result<(bool, Option<String>), String> {
     let (manifest, intact) = SemanticStore::probe_active_generation(&inner.config)
         .map_err(|error| format!("the semantic generation manifest is unreadable: {error}"))?;
@@ -923,26 +1032,38 @@ fn assess_and_invalidate_active_generation(
             active.generation_id
         ))
     } else {
-        // C4: also compare the generation's recorded corpus revision against
-        // the current authoritative revision here — a generation that is
-        // internally intact can still be behind the corpus it claims to
-        // cover.
         None
     };
-    match unusable {
-        None => Ok((true, None)),
-        Some(reason) => {
-            let store = SemanticStore::open(&inner.config).map_err(|error| {
-                format!(
-                    "{reason}; the semantic store could not be opened to invalidate it: {error}"
-                )
-            })?;
-            store
-                .invalidate_active_generation()
-                .map_err(|error| format!("{reason}; invalidating it failed: {error}"))?;
-            Ok((false, Some(reason)))
-        }
+    if let Some(reason) = unusable {
+        let store = SemanticStore::open(&inner.config).map_err(|error| {
+            format!("{reason}; the semantic store could not be opened to invalidate it: {error}")
+        })?;
+        store
+            .invalidate_active_generation()
+            .map_err(|error| format!("{reason}; invalidating it failed: {error}"))?;
+        return Ok((false, Some(reason)));
     }
+
+    // Usable, but does it cover the corpus it is serving? An equal chunk count
+    // would have said yes to a document replaced by one of the same length.
+    if active.corpus_revision != corpus_revision {
+        let recorded =
+            if active.corpus_revision == hieronymus::semantic_store::UNKNOWN_CORPUS_REVISION {
+                "no recorded revision (it predates corpus revisions)".to_string()
+            } else {
+                format!("corpus revision {}", active.corpus_revision)
+            };
+        return Ok((
+            false,
+            Some(format!(
+                "semantic generation {} covers {recorded} but the authoritative corpus is at \
+                 revision {corpus_revision}; it keeps serving its older text while a rebuild \
+                 is queued",
+                active.generation_id
+            )),
+        ));
+    }
+    Ok((true, None))
 }
 
 /// Task 7's activation sample: probe the series of the first authoritative

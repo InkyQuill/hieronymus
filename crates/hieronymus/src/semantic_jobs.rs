@@ -169,7 +169,7 @@ fn generation_manifest_in_transaction(
             "select generation_id, status, provider, model, model_revision,
                     dimensions, normalization, tokenizer, max_input_tokens, max_batch_inputs,
                     expected_count, written_count, last_chunk_id, active,
-                    created_at, updated_at
+                    created_at, updated_at, corpus_revision
              from semantic_generations where generation_id = ?1",
             params![generation_id],
             |row| {
@@ -190,6 +190,7 @@ fn generation_manifest_in_transaction(
                     row.get::<_, i64>(13)?,
                     row.get::<_, String>(14)?,
                     row.get::<_, String>(15)?,
+                    row.get::<_, i64>(16)?,
                 ))
             },
         )
@@ -211,6 +212,7 @@ fn generation_manifest_in_transaction(
         active,
         created_at,
         updated_at,
+        corpus_revision,
     )) = row
     else {
         return Err(SemanticError::NotFound(format!(
@@ -240,6 +242,7 @@ fn generation_manifest_in_transaction(
         generation_id,
         status,
         identity,
+        corpus_revision,
         expected_count: expected_count.max(0) as u64,
         written_count: written_count.max(0) as u64,
         last_chunk_id,

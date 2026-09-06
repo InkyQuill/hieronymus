@@ -31,6 +31,8 @@ use hieronymus::registry::{Registry, Series};
 use hieronymus::short_memory::search_expression;
 use hieronymus::workspace::{ShortTermMemoryInput, WorkspaceStore};
 
+use crate::daemon::semantic_worker::EMPTY_CORPUS_JOB_ID;
+
 use super::AppError;
 use super::Application;
 use super::decode;
@@ -697,14 +699,41 @@ fn default_source_type() -> String {
     "auto".to_string()
 }
 
+/// The three honest answers to "is the new text semantically indexed?".
+/// Serialized as `semantic_indexing` so no caller has to infer it from the
+/// shape of another field.
+const INDEXING_QUEUED: &str = "queued";
+const INDEXING_OWED: &str = "owed";
+const INDEXING_NOT_REQUIRED: &str = "not-required";
+
 /// Import a text/markdown/glossary file through the RAG store: the store
 /// resolves the actual parser and source type from the file, persists chunks
 /// with their typed tags, and treats identical checksum re-imports as
-/// metadata refreshes. Unsupported types are clean tool errors. After the
-/// authoritative commit a durable semantic rebuild is queued through the
-/// daemon's semantic controller (Task S2); when no daemon owns this
-/// application the field is `null` and startup reconciliation covers the
-/// chunks later.
+/// metadata refreshes. Unsupported types are clean tool errors.
+///
+/// The authoritative transaction also records the corpus-revision bump and the
+/// durable semantic work intent (`RagStore::import_file`), so the owed
+/// indexing is committed with the chunks that owe it. Queueing the rebuild
+/// through the daemon's semantic controller afterwards is a best-effort
+/// *notification* — a fast path, not the record.
+///
+/// Task C4 (review finding A4) is about what this call then TELLS the caller.
+/// The pre-C4 payload put an enqueue failure into `semantic_rebuild_job` as
+/// `{"error": ...}` on an otherwise-successful result, which reads as success
+/// to anything that does not inspect the field's type — the exact shape that
+/// let unindexed text look indexed. Now `semantic_indexing` states the outcome
+/// outright: `queued` (the rebuild is in the durable queue, `semantic_rebuild_job`
+/// carries its id), `owed` (the intent is durably recorded but this call could
+/// not queue it — no daemon owns this application, or the enqueue failed with
+/// `semantic_indexing_error`; reconciliation will queue it), or `not-required`
+/// (there is no indexing to do — an identical-checksum metadata refresh
+/// changed no indexable text, or there were no chunks to index at all).
+///
+/// `semantic_rebuild_job` is a job id or `null`, never anything else, and it
+/// is a string exactly when `semantic_indexing` is `queued`. The controller's
+/// internal `rebuild:empty-corpus` marker is therefore mapped to
+/// `not-required` with a `null` job rather than leaked: it is the worker's own
+/// no-op signal, not a durable job a caller could ever look up.
 fn rag_import(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagImportArgs>(arguments)?;
     let import = RagImport {
@@ -718,19 +747,38 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
         .map_err(domain)?
         .import_file(&args.series_slug, Path::new(&args.path), &import)
         .map_err(domain)?;
-    // Queue only when new authoritative rows landed: a metadata refresh of
-    // an identical checksum never changes chunk text, so the active
-    // generation's fingerprints stay valid.
-    let rebuild_job = if result.skipped || result.chunk_count == 0 {
-        Value::Null
+    // Notify only when indexable text actually changed. The gate is exactly
+    // the one the store used to bump the corpus revision: a skipped
+    // (identical-checksum) import refreshed metadata tags only, everything
+    // else moved the revision.
+    //
+    // The pre-C4 gate also tested `chunk_count == 0`, which was dead code:
+    // `load_rag_file` rejects a source that parses to zero chunks before the
+    // import transaction is even opened, so a committed non-skipped import
+    // always added at least one chunk.
+    let (rebuild_job, indexing, indexing_error) = if result.skipped {
+        (Value::Null, INDEXING_NOT_REQUIRED, None)
     } else {
         match application.request_rebuild(&args.series_slug) {
-            Some(Ok(job_id)) => json!(job_id),
-            Some(Err(error)) => json!({"error": error}),
-            None => Value::Null,
+            // The controller found no chunks to index and answered with its
+            // internal no-op marker, which is not a durable job id and must
+            // never be handed to a caller as one. Unreachable through this
+            // path today (see above), so this is the belt-and-braces half of
+            // the "a job id or null, never anything else" contract rather than
+            // a scenario — if the corpus can ever be emptied out from under an
+            // import, the payload stays honest instead of advertising a job
+            // nobody can look up.
+            Some(Ok(job_id)) if job_id == EMPTY_CORPUS_JOB_ID => {
+                (Value::Null, INDEXING_NOT_REQUIRED, None)
+            }
+            Some(Ok(job_id)) => (json!(job_id), INDEXING_QUEUED, None),
+            // The import is committed and the intent is durable; what must not
+            // happen is reporting this as a queued job.
+            Some(Err(error)) => (Value::Null, INDEXING_OWED, Some(error)),
+            None => (Value::Null, INDEXING_OWED, None),
         }
     };
-    Ok(json!({
+    let mut payload = json!({
         "source_id": result.source.id,
         "series_slug": result.source.series_slug,
         "source_ref": result.source.source_ref,
@@ -743,7 +791,12 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
         "normalized_path": result.normalized_path,
         "normalized_format": result.normalized_format,
         "semantic_rebuild_job": rebuild_job,
-    }))
+        "semantic_indexing": indexing,
+    });
+    if let Some(error) = indexing_error {
+        payload["semantic_indexing_error"] = json!(error);
+    }
+    Ok(payload)
 }
 
 // ------------------------------------------------------- hieronymus_rag_search

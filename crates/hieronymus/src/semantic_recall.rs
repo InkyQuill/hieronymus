@@ -307,23 +307,57 @@ pub enum QueueOutcome {
     EmptyCorpus,
 }
 
+/// Whether a queued rebuild already covers exactly the build the caller is
+/// about to request (task C4, review finding A4).
+///
+/// This replaces the pre-C4 equivalence, which compared nothing but the frozen
+/// `expected_count` against the current authoritative chunk count. That test
+/// is unsound in both directions a real corpus moves:
+///
+/// - **replacement at equal count.** Editing a document, or swapping one for
+///   another of the same length, leaves the chunk count untouched while
+///   changing the text of every chunk it owns. The count-only check called
+///   that a dedup hit, so the queued generation — built from the OLD text —
+///   was allowed to activate and the edit was never semantically retrievable.
+/// - **a changed embedding identity.** A model, revision, dimension, or
+///   tokenizer swap makes the queued vectors unusable for this daemon's
+///   queries no matter how many chunks they cover.
+///
+/// Corpus revision plus identity is exact on both counts: the revision is
+/// bumped by every text-affecting authoritative write, and the identity is the
+/// one the vectors will actually be built under. Both must match.
+pub fn same_build_request(
+    current_revision: i64,
+    queued_revision: i64,
+    current_identity: &crate::semantic_embeddings::EmbeddingIdentity,
+    queued_identity: &crate::semantic_embeddings::EmbeddingIdentity,
+) -> bool {
+    current_revision == queued_revision && current_identity == queued_identity
+}
+
 /// Queues a whole-corpus rebuild generation plus its durable job (Task S2's
 /// post-commit queueing, also the startup recovery path for chunks with no
 /// active generation). One rebuild is in flight at a time:
 ///
-/// - a live building job whose frozen `expected_count` matches the current
-///   authoritative count is returned as-is (dedup);
-/// - a live building job whose count went stale (a concurrent import landed
-///   after the generation froze its expectation) is durably cancelled — its
-///   candidate can never cover the new chunks — and a fresh generation is
-///   queued over the whole corpus.
+/// - a live building job that already covers exactly this build request —
+///   same corpus revision, same embedding identity
+///   ([`same_build_request`]) — is returned as-is (dedup);
+/// - a live building job that does not is durably cancelled (its candidate can
+///   never cover the current corpus) and a fresh generation is queued over the
+///   whole corpus.
 ///
-/// The check, the cancel, the candidate generation, and the job insert all
-/// happen inside ONE `BEGIN IMMEDIATE` transaction, so two imports racing in
-/// this window serialize: the loser re-reads the winner's fresh job and
-/// dedups (or supersedes it) instead of queueing a second generation. Any
-/// failure rolls the whole thing back — no cancelled flag or unqueued
-/// candidate can survive a partial queueing.
+/// Either way the durable work intent is retired up to the revision now
+/// covered, so reconciliation stops re-queueing work that is queued or done
+/// while a LATER import's intent (raised after this transaction read the
+/// revision) still survives to be honoured.
+///
+/// The check, the cancel, the candidate generation, the job insert, and the
+/// intent retirement all happen inside ONE `BEGIN IMMEDIATE` transaction, so
+/// two imports racing in this window serialize: the loser re-reads the
+/// winner's fresh job and dedups (or supersedes it) instead of queueing a
+/// second generation. Any failure rolls the whole thing back — no cancelled
+/// flag, unqueued candidate, or prematurely retired intent can survive a
+/// partial queueing.
 pub fn queue_semantic_rebuild(
     config: &HieronymusConfig,
     identity: &crate::semantic_embeddings::EmbeddingIdentity,
@@ -342,29 +376,25 @@ pub fn queue_semantic_rebuild(
 
     let chunk_count: i64 =
         transaction.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
+    let corpus_revision = crate::rag::current_corpus_revision(&transaction)?;
     if chunk_count == 0 {
+        // Nothing to index: the request IS satisfied, so the owed-work record
+        // must be retired too or reconciliation would ask forever.
+        crate::rag::clear_semantic_work_intent_through(&transaction, corpus_revision)?;
+        transaction.commit()?;
         return Ok(QueueOutcome::EmptyCorpus);
     }
 
-    let live: Option<(String, i64)> = transaction
-        .query_row(
-            "select j.job_id, g.expected_count
-             from semantic_jobs j
-             join semantic_generations g on g.generation_id = j.generation_id
-             where j.status in ('queued', 'running')
-               and g.status = 'building'
-             order by j.created_at
-             limit 1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .optional()?;
-    if let Some((job_id, expected_count)) = &live
-        && *expected_count == chunk_count
+    let live = live_building_job(&transaction)?;
+    if let Some((job_id, queued_revision, queued_identity)) = &live
+        && same_build_request(corpus_revision, *queued_revision, identity, queued_identity)
     {
-        return Ok(QueueOutcome::AlreadyQueued(job_id.clone()));
+        crate::rag::clear_semantic_work_intent_through(&transaction, corpus_revision)?;
+        let job_id = job_id.clone();
+        transaction.commit()?;
+        return Ok(QueueOutcome::AlreadyQueued(job_id));
     }
-    if let Some((job_id, _)) = &live {
+    if let Some((job_id, _, _)) = &live {
         transaction.execute(
             "update semantic_jobs set cancel_requested = 1, updated_at = ?2 where job_id = ?1",
             params![job_id, chrono::Utc::now().to_rfc3339()],
@@ -385,8 +415,76 @@ pub fn queue_semantic_rebuild(
         &generation_id,
         identity,
     )?;
+    crate::rag::clear_semantic_work_intent_through(&transaction, corpus_revision)?;
     transaction.commit()?;
     Ok(QueueOutcome::Enqueued(record.job_id))
+}
+
+/// The one live building job, with the corpus revision and full embedding
+/// identity its candidate generation was begun under. `None` means no rebuild
+/// is in flight, so nothing can be deduped against.
+///
+/// The identity is read in full (not just provider/model/dimensions like
+/// `JobIdentity`): normalization, tokenizer, and the input limits are part of
+/// what makes two sets of vectors mutually queryable, and [`same_build_request`]
+/// compares all of it.
+fn live_building_job(
+    connection: &rusqlite::Connection,
+) -> Result<Option<(String, i64, crate::semantic_embeddings::EmbeddingIdentity)>, SemanticError> {
+    let row = connection
+        .query_row(
+            "select j.job_id, g.corpus_revision, g.provider, g.model, g.model_revision,
+                    g.dimensions, g.normalization, g.tokenizer, g.max_input_tokens,
+                    g.max_batch_inputs
+             from semantic_jobs j
+             join semantic_generations g on g.generation_id = j.generation_id
+             where j.status in ('queued', 'running')
+               and g.status = 'building'
+             order by j.created_at
+             limit 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        job_id,
+        corpus_revision,
+        provider,
+        model,
+        revision,
+        dimensions,
+        normalization,
+        tokenizer,
+        max_input_tokens,
+        max_batch_inputs,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let identity = crate::semantic_embeddings::EmbeddingIdentity::new(
+        provider,
+        model,
+        revision,
+        dimensions.max(0) as usize,
+        normalization,
+        tokenizer,
+        max_input_tokens.max(0) as usize,
+        max_batch_inputs.max(0) as usize,
+    )?;
+    Ok(Some((job_id, corpus_revision, identity)))
 }
 
 /// Schedules the repair for corrupt hits: a fresh generation plus the Task 8
@@ -502,5 +600,30 @@ mod tests {
             contract_term(7, &["sorcery"]),
         ];
         assert_eq!(conflicting_rule_ids("sorcery", &duplicated), vec![7]);
+    }
+
+    /// The full truth table of the dedup predicate: revision match/mismatch
+    /// crossed with identity match/mismatch. Only the both-match corner is a
+    /// dedup hit — the pre-C4 count comparison said "already queued" for three
+    /// of these four.
+    #[test]
+    fn same_build_request_needs_both_the_revision_and_the_identity() {
+        use crate::semantic_embeddings::{EmbeddingProvider, FakeEmbeddingProvider};
+        let identity = FakeEmbeddingProvider::new(384).identity().clone();
+        let other = FakeEmbeddingProvider::new(256).identity().clone();
+        assert_ne!(identity, other);
+
+        assert!(same_build_request(9, 9, &identity, &identity));
+        assert!(!same_build_request(9, 8, &identity, &identity));
+        assert!(!same_build_request(9, 9, &identity, &other));
+        assert!(!same_build_request(9, 8, &identity, &other));
+
+        // The pre-revision sentinel is behind everything, revision 0 included.
+        assert!(!same_build_request(
+            0,
+            crate::semantic_store::UNKNOWN_CORPUS_REVISION,
+            &identity,
+            &identity
+        ));
     }
 }

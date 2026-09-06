@@ -19,6 +19,13 @@
 //! Each step's SQL publishes its own version markers (`hieronymus_meta` and
 //! `PRAGMA user_version`) as its last statements, and [`apply_steps`] verifies
 //! the markers really reached `to` before returning.
+//!
+//! A step may also carry a **typed converter**: Rust that runs inside the same
+//! transaction, immediately BEFORE the step's SQL, for the one thing declarative
+//! SQL cannot express — a decision that depends on what the database already
+//! contains. Running it first keeps the invariant that the version markers are
+//! the last statements executed for a step. Converters obey the same three
+//! rules as the SQL: no commit, no autocommit, no silent no-op on failure.
 
 use rusqlite::Connection;
 
@@ -28,10 +35,86 @@ use crate::db::RUST_META_TABLE;
 /// baseline: the four durable work tables.
 const STEP_001_TO_002: &str = include_str!("../migrations/002-durable-work.sql");
 
-/// The ordered step table: `(from, to, sql)`, contiguous and monotonic. The
-/// v1 baseline itself is not a step — it is the schema a fresh database and
-/// the Python import boundary both build directly (`db.rs`).
-const STEPS: &[(i64, i64, &str)] = &[(1, 2, STEP_001_TO_002)];
+/// Schema step 2 -> 3: the durable runtime-recovery state (corpus revision,
+/// semantic work intent, dreaming retry/pair-cursor columns).
+const STEP_002_TO_003: &str = include_str!("../migrations/003-runtime-recovery.sql");
+
+/// A typed converter: schema work that must inspect the database to decide
+/// what to do. It runs inside the caller's transaction like the step SQL.
+type Converter = fn(&Connection) -> rusqlite::Result<()>;
+
+/// One registered transition. `sql` is immutable once shipped — a defect in a
+/// released step is fixed by a NEW step, never by editing history.
+struct Step {
+    from: i64,
+    to: i64,
+    sql: &'static str,
+    /// Runs before `sql`, inside the same transaction.
+    converter: Option<Converter>,
+}
+
+/// The ordered step table, contiguous and monotonic. The v1 baseline itself is
+/// not a step — it is the schema a fresh database and the Python import
+/// boundary both build directly (`db.rs`).
+const STEPS: &[Step] = &[
+    Step {
+        from: 1,
+        to: 2,
+        sql: STEP_001_TO_002,
+        converter: None,
+    },
+    Step {
+        from: 2,
+        to: 3,
+        sql: STEP_002_TO_003,
+        converter: Some(add_corpus_revision_column),
+    },
+];
+
+/// Step 2 -> 3's typed converter: give `semantic_generations` the
+/// `corpus_revision` column WHEN THAT TABLE EXISTS.
+///
+/// Why this cannot be an `alter table` in the step SQL: `semantic_generations`
+/// is not part of any schema baseline. It is created lazily the first time a
+/// data root arms semantics (`semantic_store::ensure_semantic_schema`), so a
+/// perfectly healthy v2 database that never armed semantics simply does not
+/// have it — and an unconditional `alter table` would fail the whole upgrade
+/// transaction for those roots. A `create table if not exists` cannot help
+/// either: it is a no-op on an existing table and would leave the column
+/// missing exactly where it is needed.
+///
+/// Both paths therefore converge on one shape: an existing table is altered
+/// here, a table created afterwards carries the column from its own
+/// definition, and both use `default -1` — the sentinel for a generation begun
+/// before corpus revisions were recorded. Such a generation must be REBUILT;
+/// it is never relabelled with a revision it cannot be shown to cover.
+///
+/// Idempotent by inspection rather than by assumption, so a re-run (a resumed
+/// upgrade, a Python cutover that replays the steps) is safe.
+fn add_corpus_revision_column(connection: &Connection) -> rusqlite::Result<()> {
+    let present: i64 = connection.query_row(
+        "select count(*) from sqlite_master
+         where type = 'table' and name = 'semantic_generations'",
+        [],
+        |row| row.get(0),
+    )?;
+    if present == 0 {
+        return Ok(());
+    }
+    let mut statement =
+        connection.prepare("select name from pragma_table_info('semantic_generations')")?;
+    let columns: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(statement);
+    if columns.iter().any(|name| name == "corpus_revision") {
+        return Ok(());
+    }
+    connection.execute_batch(
+        "alter table semantic_generations
+           add column corpus_revision integer not null default -1;",
+    )
+}
 
 /// The lowest version the ordered runner can start from. A database below it
 /// predates the application-owned schema identity and is not upgradable.
@@ -84,22 +167,27 @@ pub fn apply_steps(connection: &Connection, from: i64, to: i64) -> rusqlite::Res
     while current < to {
         let step = STEPS
             .iter()
-            .find(|(step_from, _, _)| *step_from == current)
+            .find(|step| step.from == current)
             .ok_or_else(|| {
                 refused(format!(
                     "no registered schema step from version {current} \
                      (upgrading {from} to {to})"
                 ))
             })?;
-        let (_, step_to, sql) = *step;
-        if step_to > to {
+        if step.to > to {
             return Err(refused(format!(
-                "the registered step from version {current} lands at {step_to}, \
-                 past the requested target {to}"
+                "the registered step from version {current} lands at {}, \
+                 past the requested target {to}",
+                step.to
             )));
         }
-        connection.execute_batch(sql)?;
-        current = step_to;
+        // Converter first, so the step SQL's version markers stay the last
+        // statements this step executes.
+        if let Some(converter) = step.converter {
+            converter(connection)?;
+        }
+        connection.execute_batch(step.sql)?;
+        current = step.to;
     }
 
     // The steps publish their own markers; confirm they really did before the
@@ -156,10 +244,14 @@ mod tests {
     #[test]
     fn the_step_table_is_contiguous_and_reaches_the_supported_version() {
         let mut expected = BASELINE_SCHEMA_VERSION;
-        for (from, to, _) in STEPS {
-            assert_eq!(*from, expected, "steps must be contiguous");
-            assert_eq!(*to, from + 1, "steps advance one version at a time");
-            expected = *to;
+        for step in STEPS {
+            assert_eq!(step.from, expected, "steps must be contiguous");
+            assert_eq!(
+                step.to,
+                step.from + 1,
+                "steps advance one version at a time"
+            );
+            expected = step.to;
         }
         assert_eq!(
             expected, SUPPORTED_RUST_SCHEMA_VERSION,
@@ -230,5 +322,49 @@ mod tests {
             .unwrap();
         let error = apply_steps(&transaction, 2, 2).unwrap_err();
         assert!(error.to_string().contains("marker"), "{error}");
+    }
+
+    /// The 2 -> 3 converter decides from the database, not from an assumption:
+    /// a data root that never armed semantics has no `semantic_generations` at
+    /// all and must upgrade cleanly, while one that has the table gets the
+    /// column with the `-1` "predates revisions" sentinel. Re-running is a
+    /// no-op either way.
+    #[test]
+    fn the_corpus_revision_converter_only_alters_a_table_that_exists() {
+        let connection = Connection::open_in_memory().unwrap();
+
+        // No table: a clean no-op, and nothing is created behind our back.
+        add_corpus_revision_column(&connection).unwrap();
+        let tables: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 0, "the converter must not create the table");
+
+        // An existing table gains the column, and existing rows read as -1.
+        connection
+            .execute_batch(
+                "create table semantic_generations (generation_id text primary key);
+                 insert into semantic_generations values ('pre-c4');",
+            )
+            .unwrap();
+        add_corpus_revision_column(&connection).unwrap();
+        let revision: i64 = connection
+            .query_row(
+                "select corpus_revision from semantic_generations where generation_id = 'pre-c4'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            revision, -1,
+            "a generation begun before revisions were recorded must read as the sentinel"
+        );
+
+        // Idempotent: a resumed upgrade or a replayed step must not fail.
+        add_corpus_revision_column(&connection).unwrap();
     }
 }
