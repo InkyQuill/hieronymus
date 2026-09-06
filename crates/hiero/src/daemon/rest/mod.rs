@@ -122,11 +122,24 @@ pub(super) fn bearer_matches(request: &Request, runtime: &DaemonRuntime) -> bool
 }
 
 /// The browser context check: the `Origin` header must name this daemon
-/// exactly. Absent origins fail closed (the CSRF layer is waived, so this is
-/// the only cross-site guard).
+/// exactly. Absent origins fail closed — this is the guard for mutations, the
+/// grant exchange, and the WS upgrade (the CSRF layer is waived, so it is the
+/// only cross-site guard for state changes).
 pub(super) fn origin_is_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
     let origin = header(&request.headers, "origin");
     Some(format!("http://{}", runtime.bound_address).as_str()) == origin
+}
+
+/// The safe-read variant of the browser Origin check (plan W1): a request with
+/// **no** `Origin` passes, because legitimate top-level navigations and many
+/// same-origin `GET`s omit the header, but an explicit **foreign** `Origin` is
+/// still rejected. Only authenticated `GET`/`HEAD` reads use this; every
+/// state-changing route keeps [`origin_is_valid`].
+pub(super) fn origin_is_absent_or_valid(request: &Request, runtime: &DaemonRuntime) -> bool {
+    match header(&request.headers, "origin") {
+        None => true,
+        Some(_) => origin_is_valid(request, runtime),
+    }
 }
 
 /// The presented `hieronymus_session` cookie value, if any.
@@ -137,6 +150,13 @@ pub(super) fn presented_session(request: &Request) -> Option<String> {
 }
 
 /// Browser-route guard: Host → session cookie → Origin, then the handler.
+///
+/// The `Origin` rule splits by method (plan W1): safe reads accept a missing
+/// `Origin` so a top-level browser navigation into the console works, but
+/// still reject an explicit foreign `Origin`; every non-safe method requires
+/// the exact allowed `Origin`. Only `GET` reaches `guard_api` from the current
+/// route table; `HEAD` is listed alongside it as forward-looking (a `HEAD`
+/// route would be a safe read too) and costs nothing.
 fn guard_api(
     request: &Request,
     runtime: &DaemonRuntime,
@@ -150,15 +170,24 @@ fn guard_api(
     if !authorized {
         return unauthorized();
     }
-    if !origin_is_valid(request, runtime) {
+    let is_safe_read = matches!(request.method.as_str(), "GET" | "HEAD");
+    let origin_ok = if is_safe_read {
+        origin_is_absent_or_valid(request, runtime)
+    } else {
+        origin_is_valid(request, runtime)
+    };
+    if !origin_ok {
         return forbidden_origin();
     }
     handler(request, runtime)
 }
 
-/// Mint a launch grant: the minimal native (bearer + Host) path future
-/// `hiero config`/`hiero admin` commands call. Grants never appear in URLs or
-/// logs, only in this response body.
+/// Mint a launch grant: the minimal native (bearer + Host) path the
+/// `hiero admin` / `hiero config` commands call. The grant is returned only in
+/// this response body; the CLI then carries it to the browser in a URL
+/// fragment that `bootstrap.ts` scrubs before any network call (see
+/// `sessions` and plan `2026-09-05-rust-port-console`). It never appears in a
+/// query string or a log line.
 fn handle_grant_mint(request: &Request, runtime: &DaemonRuntime) -> Response {
     if !host_is_valid(request, runtime) {
         return invalid_host();
