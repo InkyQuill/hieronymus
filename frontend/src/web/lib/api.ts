@@ -1,5 +1,6 @@
 import type {
   AdminDashboard,
+  AdminActionBody,
   AdminActionResult,
   AdminSnapshot,
   DreamSettings,
@@ -130,11 +131,11 @@ export async function loadAdminSnapshot(
 
 export async function runAdminAction(
   action: string,
-  params: { id: string | number; confirmed?: boolean },
+  body: AdminActionBody,
 ): Promise<AdminActionResult> {
   return request(`/api/admin/actions/${encodeURIComponent(action)}`, {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify(body),
   });
 }
 

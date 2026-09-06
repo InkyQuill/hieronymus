@@ -362,6 +362,124 @@ fn ws_admin_resume_replays_retained_events() {
 }
 
 #[test]
+fn ws_admin_reconnect_from_last_seen_id_is_silent() {
+    let (fixture, _root, _daemon) = start_daemon_with_browser_session();
+    let port = fixture.port;
+
+    // Drive one manual run and follow the live stream to its end.
+    let (_, mut client) = ws_connect(port, &ws_upgrade_headers(&fixture));
+    let response = send_request(
+        port,
+        "POST",
+        "/api/admin/actions/run_manual_dreaming",
+        &browser_headers(&fixture, &[("Origin", same_origin(port))]),
+        br#"{}"#,
+    );
+    assert_eq!(response.status, 200);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (started_id, started) = read_event(&mut client, deadline, "dream_started");
+    assert_eq!(started["event_type"], json!("dream_started"));
+    let last_id = loop {
+        let (event_id, event) = read_event(&mut client, deadline, "live dream");
+        if event["event_type"] == json!("dream_completed") {
+            break event_id;
+        }
+        assert_eq!(event["event_type"], json!("dream_phase_progress"));
+    };
+    assert!(
+        last_id > started_id,
+        "a completed run advances past dream_started"
+    );
+    client.close();
+
+    // Reconnecting and resuming from exactly the last id we saw re-delivers
+    // nothing: no duplicate replay, no stale snapshot_refresh.
+    let (_, mut resumed) = ws_connect(port, &ws_upgrade_headers(&fixture));
+    resumed.send_text(&format!(r#"{{"resume_from_event_id": {last_id}}}"#));
+    let quiet = Instant::now() + Duration::from_millis(300);
+    assert!(
+        resumed.read_frame(quiet).is_none(),
+        "a client resuming from its own last id receives no frame"
+    );
+    resumed.close();
+
+    // A partial resume from the first id replays the retained tail
+    // contiguously and ends at the same newest id.
+    let (_, mut partial) = ws_connect(port, &ws_upgrade_headers(&fixture));
+    partial.send_text(r#"{"resume_from_event_id": 1}"#);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut seen = 1;
+    loop {
+        let (event_id, event) = read_event(&mut partial, deadline, "partial replay");
+        assert_eq!(event_id, seen + 1, "partial replay must be contiguous");
+        seen = event_id;
+        if event["event_type"] == json!("dream_completed") {
+            break;
+        }
+        assert_eq!(event["event_type"], json!("dream_phase_progress"));
+    }
+    assert_eq!(seen, last_id, "partial replay ends at the same newest id");
+    partial.close();
+}
+
+#[test]
+fn ws_admin_event_ids_restart_on_a_new_daemon_session() {
+    // First daemon session: one run advances the hub past id 1.
+    let (first, _first_root, first_daemon) = start_daemon_with_browser_session();
+    let (_, mut client) = ws_connect(first.port, &ws_upgrade_headers(&first));
+    let response = send_request(
+        first.port,
+        "POST",
+        "/api/admin/actions/run_manual_dreaming",
+        &browser_headers(&first, &[("Origin", same_origin(first.port))]),
+        br#"{}"#,
+    );
+    assert_eq!(response.status, 200);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let stale_cursor = loop {
+        let (event_id, event) = read_event(&mut client, deadline, "first session dream");
+        if event["event_type"] == json!("dream_completed") {
+            break event_id;
+        }
+    };
+    assert!(stale_cursor >= 2, "the first session advanced past id 1");
+    client.close();
+    drop(first_daemon);
+
+    // A brand-new daemon: its hub starts from zero, so a cursor carried over
+    // from the previous session is meaningless.
+    let (second, _second_root, _second_daemon) = start_daemon_with_browser_session();
+    let (_, mut resumed) = ws_connect(second.port, &ws_upgrade_headers(&second));
+    resumed.send_text(&format!(r#"{{"resume_from_event_id": {stale_cursor}}}"#));
+
+    // The fresh hub retained nothing: the stale resume neither replays nor is
+    // silently treated as "already current" — the stream just runs live.
+    let quiet = Instant::now() + Duration::from_millis(300);
+    assert!(
+        resumed.read_frame(quiet).is_none(),
+        "a stale cross-session cursor yields no replay on a fresh daemon"
+    );
+
+    let response = send_request(
+        second.port,
+        "POST",
+        "/api/admin/actions/run_manual_dreaming",
+        &browser_headers(&second, &[("Origin", same_origin(second.port))]),
+        br#"{}"#,
+    );
+    assert_eq!(response.status, 200);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (first_id, first_event) = read_event(&mut resumed, deadline, "second session dream");
+    assert_eq!(
+        first_id, 1,
+        "event ids restart at 1 for a new daemon session, ignoring the stale cursor"
+    );
+    assert_eq!(first_event["event_type"], json!("dream_started"));
+    resumed.close();
+}
+
+#[test]
 fn ws_client_close_unsubscribes_from_the_hub() {
     let (fixture, _root, daemon) = start_daemon_with_browser_session();
     assert_eq!(

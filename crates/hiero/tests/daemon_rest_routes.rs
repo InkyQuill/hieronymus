@@ -362,8 +362,34 @@ fn api_provider_routes_match_frozen_targets() {
     // contracts address it.
     assert_frozen_contract("http.route.post.api.providers", &fixture, |_| {});
     assert_frozen_contract("http.route.get.api.providers.id", &fixture, |_| {});
-    assert_frozen_contract("http.route.post.api.providers.id.check", &fixture, |_| {});
-    assert_frozen_contract("http.route.get.api.providers.id.models", &fixture, |_| {});
+
+    // Astra finding 12 / plan W3: the `check`/`models` success bodies for the
+    // synthetic `provider.invalid` profile change — production now runs the
+    // real probe, so a `.invalid` host reports a genuine transport failure
+    // instead of `{"source": "fixture", "models": ["synthetic-model"]}`. The
+    // frozen auth/CSRF/host failure cases are unchanged and still asserted;
+    // the frozen fixture bytes are untouched. The reconciled contract per
+    // ADR 0012 / Astra 12 is `compatibility/rust/provider-checks.json`.
+    for route_id in [
+        "http.route.post.api.providers.id.check",
+        "http.route.get.api.providers.id.models",
+    ] {
+        let target = substitute_route_placeholders(&route_target(route_id), &fixture);
+        assert_frozen_failures(route_id, &target, &fixture);
+        let response = execute_fixture_request(&target["success"]["request"], &fixture);
+        assert_eq!(u64::from(response.status), 200, "{route_id} success status");
+        let body = response.body();
+        let check = body.get("check").unwrap_or(&body);
+        assert_ne!(check["source"], json!("fixture"), "{route_id}: {body}");
+        assert_eq!(check["source"], json!("defaults"), "{route_id}: {body}");
+        assert!(
+            check["models"]
+                .as_array()
+                .is_some_and(|list| list.iter().all(|model| model != "synthetic-model")),
+            "{route_id} must not fabricate a synthetic model: {body}"
+        );
+    }
+
     assert_frozen_contract("http.route.delete.api.providers.id", &fixture, |_| {});
 
     // The deletion is durable: the profile is gone afterwards.

@@ -12,6 +12,7 @@
 //! lists the concrete handlers and the `tool_completeness` regression pins it
 //! to the frozen registry snapshot.
 
+pub mod admin;
 pub mod dream;
 pub mod graph;
 pub mod memory;
