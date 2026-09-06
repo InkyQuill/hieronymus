@@ -21,10 +21,9 @@ use hieronymus::semantic_embeddings::{
 };
 use hieronymus::semantic_error::SemanticError;
 use hieronymus::semantic_model::{MODEL_BYTES, ModelStatus};
-use hieronymus::semantic_recall::{
-    BYTE_FOLD_TOKENIZER_ID, ByteFoldTokenizer, SemanticLane, byte_fold_tokens,
-};
+use hieronymus::semantic_recall::{BYTE_FOLD_TOKENIZER_ID, SemanticLane};
 use hieronymus::semantic_store::{SemanticChunk, SemanticSample, SemanticStore};
+use hieronymus::semantic_tokenizer::ModelTokenizer;
 use hieronymus::workspace::WorkspaceStore;
 
 // ---------------------------------------------------------------------------
@@ -72,6 +71,7 @@ fn import_text(fixture: &Fixture, name: &str, content: &str) {
 /// with the given provider identity (the exact tokenizer the armed lane uses
 /// for queries, so document and query vectors share one mapping).
 fn activate_generation_with(fixture: &Fixture, provider: &mut dyn EmbeddingProvider) {
+    let tokenizer = model_tokenizer();
     let store = SemanticStore::open(&fixture.config).unwrap();
     store
         .begin_generation("gen-a", provider.identity())
@@ -91,7 +91,7 @@ fn activate_generation_with(fixture: &Fixture, provider: &mut dyn EmbeddingProvi
                 SemanticChunk {
                     chunk_id: *chunk_id,
                     series_slug,
-                    token_ids: byte_fold_tokens(&text),
+                    token_ids: tokenizer.encode(&text).unwrap(),
                 }
             })
             .collect();
@@ -103,10 +103,14 @@ fn activate_generation_with(fixture: &Fixture, provider: &mut dyn EmbeddingProvi
             provider,
             &SemanticSample {
                 series_slug: "demo".to_string(),
-                token_ids: byte_fold_tokens("probe"),
+                token_ids: tokenizer.encode("probe").unwrap(),
             },
         )
         .unwrap();
+}
+
+fn model_tokenizer() -> ModelTokenizer {
+    ModelTokenizer::from_bytes(include_bytes!("fixtures/minilm-tokenizer.json")).unwrap()
 }
 
 fn activate_generation(fixture: &Fixture) {
@@ -188,6 +192,7 @@ fn armed_lane_runs_end_to_end_with_a_matching_provider() {
     let armed = arm_with_provider(
         &fixture.config,
         Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
     )
     .expect("arming with a matching provider");
     assert!(matches!(armed.lane, LaneState::Armed), "{:?}", armed.lane);
@@ -218,6 +223,7 @@ fn model_identity_mismatch_degrades_the_armed_lane() {
             EMBEDDING_DIMENSIONS,
             "other-model",
         )),
+        Box::new(model_tokenizer()),
     )
     .unwrap();
     assert!(
@@ -239,21 +245,22 @@ fn model_identity_mismatch_degrades_the_armed_lane() {
 }
 
 #[test]
-fn tokenizer_swap_is_an_identity_change_and_forces_a_rebuild() {
+fn a_persisted_byte_fold_generation_cannot_serve_new_queries() {
     let fixture = fixture();
     import_text(&fixture, "a.txt", "Cooking Talent appears here.");
-    // The generation is built under the pinned model with a hypothetical new
-    // tokenizer; everything about the identity is identical to the pinned
-    // one except the tokenizer id.
-    activate_generation_with(&fixture, &mut StaticTokenizerProvider::wordpiece());
+    // A generation persisted under the retired byte-fold tokenization: the
+    // identity is identical to the pinned one except the tokenizer id.
+    activate_generation_with(&fixture, &mut StaticTokenizerProvider::byte_fold());
 
-    // A provider reporting the same model under the byte-fold tokenizer
-    // differs in exactly one identity field — the tokenizer. It can never
-    // query the generation: embeddings changed with the tokenizer, so the
-    // lane degrades until a rebuild re-embeds everything.
+    // The current lane — same model, pinned WordPiece tokenizer — differs in
+    // exactly one identity field. It can never query the old generation:
+    // embeddings changed with the tokenizer, so the lane degrades until a
+    // rebuild re-embeds everything under the new identity (the old
+    // generation is never relabeled).
     let armed = arm_with_provider(
         &fixture.config,
-        Box::new(StaticTokenizerProvider::byte_fold()),
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
     )
     .unwrap();
     let response = armed
@@ -300,10 +307,6 @@ impl StaticTokenizerProvider {
         Self { inner, identity }
     }
 
-    fn wordpiece() -> Self {
-        Self::with_tokenizer("wordpiece-v1")
-    }
-
     fn byte_fold() -> Self {
         Self::with_tokenizer(BYTE_FOLD_TOKENIZER_ID)
     }
@@ -334,7 +337,10 @@ fn semantic_status_reports_missing_model_and_no_generation() {
     assert_eq!(status.model_status, ModelStatus::Missing);
     assert!(status.active_generation.is_none());
     assert!(status.generation_intact);
-    assert_eq!(status.tokenizer, BYTE_FOLD_TOKENIZER_ID);
+    assert_eq!(
+        status.tokenizer,
+        hieronymus::semantic_tokenizer::MINILM_TOKENIZER_ID
+    );
 }
 
 #[test]
@@ -389,22 +395,27 @@ fn generation_manifest_persists_the_tokenizer() {
     let fixture = fixture();
     let store = SemanticStore::open(&fixture.config).unwrap();
     store
-        .begin_generation("gen-tok", &StaticTokenizerProvider::wordpiece().identity)
+        .begin_generation("gen-tok", &StaticTokenizerProvider::byte_fold().identity)
         .unwrap();
     let manifest = store.generation_manifest("gen-tok").unwrap().unwrap();
-    assert_eq!(manifest.identity.tokenizer(), "wordpiece-v1");
+    assert_eq!(manifest.identity.tokenizer(), BYTE_FOLD_TOKENIZER_ID);
 
-    // The byte-fold lane can never query this generation.
+    // The pinned WordPiece lane can never query this generation.
     let lane = SemanticLane::new(
         Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
-        Box::new(ByteFoldTokenizer),
+        Box::new(model_tokenizer()),
     );
     let run = lane.run(&fixture.config, &context(), "probe", 5);
     assert!(run.degraded);
 }
 
 #[test]
-fn pinned_identity_carries_the_byte_fold_tokenizer() {
+fn pinned_identity_carries_the_wordpiece_tokenizer() {
     let identity = OnnxEmbeddingProvider::static_identity();
-    assert_eq!(identity.tokenizer(), BYTE_FOLD_TOKENIZER_ID);
+    assert_eq!(
+        identity.tokenizer(),
+        hieronymus::semantic_tokenizer::MINILM_TOKENIZER_ID
+    );
+    // And it is a different identity from every retired byte-fold generation.
+    assert_ne!(identity.tokenizer(), BYTE_FOLD_TOKENIZER_ID);
 }

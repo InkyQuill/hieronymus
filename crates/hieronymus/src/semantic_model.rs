@@ -30,6 +30,18 @@ pub const MODEL_BYTES: u64 = 90_405_214;
 /// Canonical download source of the pinned model file.
 pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx";
 
+/// File name of the pinned tokenizer asset inside the model directory.
+pub const TOKENIZER_FILE_NAME: &str = "tokenizer.json";
+/// SHA-256 of the pinned tokenizer.json (hex). Same model revision as the
+/// ONNX file above; the tokenizer identity in `semantic_tokenizer` embeds
+/// this digest.
+pub const TOKENIZER_SHA256: &str =
+    "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037";
+/// Size of the pinned tokenizer.json in bytes.
+pub const TOKENIZER_BYTES: u64 = 466_247;
+/// Canonical download source of the pinned tokenizer asset.
+pub const DEFAULT_TOKENIZER_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/tokenizer.json";
+
 /// Read window used for checksum computation and network streaming.
 const STREAM_BUFFER_BYTES: usize = 1024 * 1024;
 

@@ -127,9 +127,10 @@ fn assert_frozen_contract(route_id: &str, fixture: &RouteFixture, fixup: impl Fn
 /// probing and process-instance comparison, never by PID existence alone".
 /// That comparison needs the live process instance and MCP revision to be
 /// readable from an authenticated endpoint (`GET /health` stays minimal and
-/// unauthenticated), so R5 adds them here. The frozen fixture file itself is
-/// untouched; this list is the recorded expectation change.
-const STATUS_RUST_ADDITIONS: [&str; 2] = ["instance_id", "protocol_revision"];
+/// unauthenticated), so R5 adds them here. S2 adds the semantic readiness
+/// surface (`semantic.state`, the required-gate DTO). The frozen fixture
+/// file itself is untouched; this list is the recorded expectation change.
+const STATUS_RUST_ADDITIONS: [&str; 3] = ["instance_id", "protocol_revision", "semantic"];
 
 #[test]
 fn status_route_matches_frozen_target() {
@@ -137,14 +138,24 @@ fn status_route_matches_frozen_target() {
     let target = substitute_route_placeholders(&route_target("http.route.get.status"), &fixture);
     assert_frozen_failures("http.route.get.status", &target, &fixture);
     let record = daemon.discovery_record();
+    // The S2 semantic addition is a live readiness verdict (state machine, not
+    // a fixture constant); it is normalized from a probe of the same daemon
+    // and pinned separately by the semantic_execution typed-DTO tests.
+    let probe = execute_fixture_request(&target["success"]["request"], &fixture).body();
+    let semantic = probe["semantic"].clone();
+    assert!(
+        semantic.is_object() && semantic["state"].is_string(),
+        "semantic status surface missing: {semantic}"
+    );
     // The oracle normalizes pid/port to string placeholders; the daemon serves
-    // them as numbers. The two added keys are appended explicitly, so any
+    // them as numbers. The added keys are appended explicitly, so any
     // *other* drift from the frozen body still fails this assertion.
     assert_frozen_success("http.route.get.status", &target, &fixture, |body| {
         body["pid"] = json!(fixture.pid);
         body["port"] = json!(fixture.port);
         body["instance_id"] = json!(record.instance_id);
         body["protocol_revision"] = json!(common::PROTOCOL_REVISION);
+        body["semantic"] = semantic.clone();
     });
 
     // Every frozen key survives, and the additions are exactly the declared
@@ -362,8 +373,34 @@ fn api_provider_routes_match_frozen_targets() {
     // contracts address it.
     assert_frozen_contract("http.route.post.api.providers", &fixture, |_| {});
     assert_frozen_contract("http.route.get.api.providers.id", &fixture, |_| {});
-    assert_frozen_contract("http.route.post.api.providers.id.check", &fixture, |_| {});
-    assert_frozen_contract("http.route.get.api.providers.id.models", &fixture, |_| {});
+
+    // Astra finding 12 / plan W3: the `check`/`models` success bodies for the
+    // synthetic `provider.invalid` profile change — production now runs the
+    // real probe, so a `.invalid` host reports a genuine transport failure
+    // instead of `{"source": "fixture", "models": ["synthetic-model"]}`. The
+    // frozen auth/CSRF/host failure cases are unchanged and still asserted;
+    // the frozen fixture bytes are untouched. The reconciled contract per
+    // ADR 0012 / Astra 12 is `compatibility/rust/provider-checks.json`.
+    for route_id in [
+        "http.route.post.api.providers.id.check",
+        "http.route.get.api.providers.id.models",
+    ] {
+        let target = substitute_route_placeholders(&route_target(route_id), &fixture);
+        assert_frozen_failures(route_id, &target, &fixture);
+        let response = execute_fixture_request(&target["success"]["request"], &fixture);
+        assert_eq!(u64::from(response.status), 200, "{route_id} success status");
+        let body = response.body();
+        let check = body.get("check").unwrap_or(&body);
+        assert_ne!(check["source"], json!("fixture"), "{route_id}: {body}");
+        assert_eq!(check["source"], json!("defaults"), "{route_id}: {body}");
+        assert!(
+            check["models"]
+                .as_array()
+                .is_some_and(|list| list.iter().all(|model| model != "synthetic-model")),
+            "{route_id} must not fabricate a synthetic model: {body}"
+        );
+    }
+
     assert_frozen_contract("http.route.delete.api.providers.id", &fixture, |_| {});
 
     // The deletion is durable: the profile is gone afterwards.

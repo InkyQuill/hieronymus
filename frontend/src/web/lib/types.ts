@@ -69,10 +69,25 @@ export type IngestSettings = {
 
 export type ReleaseSettings = { update_channel: "stable" | "dev" };
 
+/// One entry of the admin command catalog (`ADMIN_COMMANDS` on the daemon).
+/// The dashboard payload carries these as `command_options`; the console
+/// derives the per-view action buttons and their selection requirement from
+/// this list rather than a hand-maintained frontend map.
+export type AdminCommand = {
+  id: string;
+  label: string;
+  hint: string;
+  key: string;
+  group: string;
+  views: string[];
+  requires_selection: boolean;
+};
+
 export type AdminDashboard = {
   header: { product: string; version: string; tagline: string };
   stats: Record<string, number>;
   views: string[];
+  command_options?: AdminCommand[];
   short_term_status: Record<string, unknown>;
   dream_status: Record<string, unknown>;
 };
@@ -101,10 +116,71 @@ export type AdminSnapshot = {
     rows: AdminRow[];
     selected: AdminRow | null;
     detail: AdminDetail;
+    /// Active filter labels for the view (empty today; W2 keeps the key so
+    /// the frontend contract already carries it).
+    filters?: string[];
   };
 };
 
+/// Paging and scope inputs for `GET /api/admin/snapshot`. All optional: the
+/// daemon defaults to a bounded page of the current view with no scope.
+export type AdminSnapshotQuery = {
+  view: string;
+  selected_id?: string | number;
+  /// Bounded page size; the daemon clamps this to its own maximum.
+  limit?: number;
+  offset?: number;
+  /// Series slug the projection is scoped to; foreign-context rows are
+  /// filtered out (global concepts/rows still appear).
+  series?: string;
+};
+
+/// One part of a `split_crystal` request: a plain string, or an explicit
+/// `{title, text}` pair.
+export type AdminSplitPart = string | { title?: string; text?: string };
+
+/// The per-action request body for `POST /api/admin/actions/{action}`. Every
+/// field is optional here; the daemon validates the typed DTO for the named
+/// action (`validate_action_request` / `run_action`). The actor is NOT a
+/// field — it comes from the authenticated session.
+export type AdminActionBody = {
+  id?: string | number;
+  ids?: Array<string | number>;
+  confirmed?: boolean;
+  view?: string;
+  /// add_memory / edit_memory / merge_selected
+  text?: string;
+  title?: string;
+  /// add_memory
+  series?: string;
+  source_language?: string;
+  target_language?: string;
+  crystal_type?: string;
+  /// approve_proposal / reject_proposal
+  reason?: string;
+  /// reinforce_crystal / decay_crystal
+  evidence?: string;
+  /// inspect_recall_reasons
+  recall_id?: string;
+  /// review_dream_output
+  run_id?: string | number;
+  /// run_manual_dreaming
+  all?: boolean;
+  /// split_crystal
+  parts?: AdminSplitPart[];
+};
+
+export type AdminProvenance = {
+  title: string;
+  sources: Array<Record<string, string>>;
+};
+
 export type AdminActionResult = {
-  result: { message: string };
+  result: { message: string } & Record<string, unknown>;
   snapshot: AdminSnapshot["snapshot"];
+  /// Present only for the read-only inspection actions.
+  provenance?: AdminProvenance;
+  reasons?: Array<Record<string, string>>;
+  review?: Record<string, unknown>;
+  run?: Record<string, unknown>;
 };

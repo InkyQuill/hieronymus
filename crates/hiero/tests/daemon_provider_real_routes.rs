@@ -1,7 +1,8 @@
-//! The provider `check`/`models` REST routes in real mode: configured
-//! profiles with reachable (loopback) endpoints are probed through the real
-//! provider client, while the frozen synthetic fixture world
-//! (`https://provider.invalid/v1`) keeps answering `source: "fixture"`.
+//! The provider `check`/`models` REST routes in real mode: every configured
+//! profile — a `.invalid` host included — is probed through the real provider
+//! client over the blocking transport. The old `source: "fixture"` shortcut
+//! for `*.invalid` hosts was removed per Astra finding 12 / plan W3; the
+//! reconciled contract is `compatibility/rust/provider-checks.json`.
 //! Task-4 slice; the frozen contracts themselves live in
 //! `daemon_rest_routes.rs`. All traffic here stays on loopback (ADR 0012).
 
@@ -292,10 +293,14 @@ fn provider_routes_without_a_configured_key_report_the_python_error() {
 }
 
 #[test]
-fn synthetic_fixture_world_keeps_the_frozen_semantics() {
+fn a_dot_invalid_profile_is_probed_for_real_never_faked() {
+    // Astra finding 12 / plan W3: the `.invalid` host shortcut that answered
+    // `{"source": "fixture", "models": ["synthetic-model"]}` was removed.
+    // `provider.invalid` can never resolve, so the real probe now returns a
+    // genuine transport failure. The reconciled contract per ADR 0012 /
+    // Astra 12 is recorded in `compatibility/rust/provider-checks.json`; the
+    // frozen fixture bytes are untouched.
     let (fixture, _root, _daemon) = start_daemon_with_browser_session();
-    // The frozen oracle world: provider.invalid can never resolve, so the
-    // routes must answer with fixture semantics, not network attempts.
     let saved = save_profile(
         &fixture,
         "synthetic-provider",
@@ -307,13 +312,21 @@ fn synthetic_fixture_world_keeps_the_frozen_semantics() {
     );
 
     let models = get_models(&fixture, "synthetic-provider");
-    assert_eq!(
-        models,
-        json!({"models": ["synthetic-model"], "source": "fixture", "error": ""})
+    assert_ne!(models["source"], json!("fixture"), "{models}");
+    assert!(
+        models["models"]
+            .as_array()
+            .is_some_and(|list| list.iter().all(|model| model != "synthetic-model")),
+        "no synthetic model may be fabricated: {models}"
     );
+    assert_eq!(models["source"], json!("defaults"));
+    assert_eq!(models["error"], json!("model suggestions unavailable"));
+
     let check = post_check(&fixture, "synthetic-provider");
+    assert_ne!(check["check"]["source"], json!("fixture"), "{check}");
     assert_eq!(
-        check["check"],
-        json!({"ok": true, "models": ["synthetic-model"], "source": "fixture", "error": ""})
+        check["check"]["ok"],
+        json!(false),
+        "a .invalid host never actually connects: {check}"
     );
 }

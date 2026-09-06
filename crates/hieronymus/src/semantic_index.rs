@@ -253,7 +253,7 @@ impl VectorIndex {
             ));
         }
         validate_slug(series_slug)?;
-        let predicate = format!("series_slug = '{series_slug}'");
+        let predicate = series_predicate(series_slug)?;
         // ANN parameters only apply to indexed tables; the flat scan (a
         // correct, unindexed fallback) answers small generations directly.
         let indexed = self.ann_index_stats()?.is_some();
@@ -302,7 +302,7 @@ impl VectorIndex {
             )));
         }
         validate_slug(series_slug)?;
-        let predicate = format!("series_slug = '{series_slug}'");
+        let predicate = series_predicate(series_slug)?;
         let batches = runtime().block_on(async {
             self.table
                 .query()
@@ -532,6 +532,16 @@ fn decode_hits(batches: Vec<RecordBatch>) -> Result<Vec<SemanticHit>, SemanticEr
         }
     }
     Ok(hits)
+}
+
+/// The single validated `series_slug` predicate used by every ANN query and
+/// every series-scoped read/delete touching the vector store. Strict slug
+/// validation (see [`validate_slug`]) happens here, so no caller can build a
+/// predicate from an unvalidated slug; control characters, quotes, and
+/// statement separators are rejected before any string reaches LanceDB.
+pub fn series_predicate(series_slug: &str) -> Result<String, SemanticError> {
+    validate_slug(series_slug)?;
+    Ok(format!("series_slug = '{series_slug}'"))
 }
 
 /// Generation ids and series slugs share the harness's normalized-slug shape.

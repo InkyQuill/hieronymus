@@ -30,7 +30,8 @@ use crate::semantic_index::{
     IndexRow, VectorIndex, drop_generation_table, generation_table_exists, validate_slug,
 };
 use crate::semantic_model::{
-    MODEL_BYTES, MODEL_NAME, MODEL_SHA256, ModelAcquisition, ModelStatus, sha256_file,
+    MODEL_BYTES, MODEL_NAME, MODEL_SHA256, ModelAcquisition, ModelStatus, TOKENIZER_BYTES,
+    TOKENIZER_FILE_NAME, TOKENIZER_SHA256, sha256_file,
 };
 
 /// Sample queries executed during activation return at most this many hits.
@@ -219,14 +220,95 @@ impl SemanticStore {
         expected_sha256: &str,
         expected_bytes: u64,
     ) -> Result<ModelAcquisition, SemanticError> {
-        let destination = self.model_path();
+        self.acquire_verified_artifact(
+            transport,
+            url,
+            &self.model_path(),
+            MODEL_FILE_NAME,
+            expected_sha256,
+            expected_bytes,
+        )
+    }
+
+    /// Path of the acquired pinned tokenizer asset.
+    pub fn tokenizer_path(&self) -> PathBuf {
+        Self::tokenizer_path_for(&self.config)
+    }
+
+    /// The tokenizer path for a data root, without opening any store.
+    pub fn tokenizer_path_for(config: &HieronymusConfig) -> PathBuf {
+        config
+            .semantic_root()
+            .join("models")
+            .join(MODEL_NAME)
+            .join(TOKENIZER_FILE_NAME)
+    }
+
+    /// Cheap availability verdict over the local tokenizer asset (presence
+    /// and pinned size; the SHA-256 is verified at load time).
+    pub fn tokenizer_status(&self) -> ModelStatus {
+        Self::artifact_status_at(&self.tokenizer_path(), TOKENIZER_BYTES, "tokenizer")
+    }
+
+    fn artifact_status_at(path: &Path, expected_bytes: u64, kind: &str) -> ModelStatus {
+        match std::fs::metadata(path) {
+            Err(_) => ModelStatus::Missing,
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    ModelStatus::Invalid(format!(
+                        "{} is a directory, not the pinned {kind} file",
+                        path.display()
+                    ))
+                } else if metadata.len() != expected_bytes {
+                    ModelStatus::Invalid(format!(
+                        "{kind} file is {} bytes, expected {expected_bytes}",
+                        metadata.len()
+                    ))
+                } else {
+                    ModelStatus::Available
+                }
+            }
+        }
+    }
+
+    /// Acquires the pinned tokenizer asset with the same discipline as the
+    /// model: streaming download into a temporary file in the destination
+    /// directory, SHA-256 verification against the pinned digest, then an
+    /// atomic promotion. No override expectations: the tokenizer is part of
+    /// the embedding identity and is never swapped for an unpinned asset.
+    pub fn acquire_tokenizer(
+        &self,
+        transport: &dyn crate::semantic_model::ModelTransport,
+        url: &str,
+    ) -> Result<ModelAcquisition, SemanticError> {
+        self.acquire_verified_artifact(
+            transport,
+            url,
+            &self.tokenizer_path(),
+            TOKENIZER_FILE_NAME,
+            TOKENIZER_SHA256,
+            TOKENIZER_BYTES,
+        )
+    }
+
+    /// The shared verified acquisition flow: temp file next to the
+    /// destination, checksum against the expectation, atomic promotion.
+    fn acquire_verified_artifact(
+        &self,
+        transport: &dyn crate::semantic_model::ModelTransport,
+        url: &str,
+        destination: &Path,
+        file_name: &str,
+        expected_sha256: &str,
+        expected_bytes: u64,
+    ) -> Result<ModelAcquisition, SemanticError> {
         let model_dir = destination
             .parent()
-            .ok_or_else(|| SemanticError::Store("model path has no parent".to_string()))?
+            .ok_or_else(|| SemanticError::Store("artifact path has no parent".to_string()))?
             .to_path_buf();
         std::fs::create_dir_all(&model_dir)?;
         let temporary = tempfile::Builder::new()
-            .prefix(format!(".{MODEL_FILE_NAME}.").as_str())
+            .prefix(format!(".{file_name}.").as_str())
             .suffix(".tmp")
             .rand_bytes(8)
             .tempfile_in(&model_dir)?;
@@ -234,7 +316,7 @@ impl SemanticStore {
         let written = transport.download_to(url, temporary.path(), expected_bytes)?;
         if written != expected_bytes {
             return Err(SemanticError::ValidationFailed(format!(
-                "model download is {written} bytes, expected {expected_bytes}"
+                "artifact download is {written} bytes, expected {expected_bytes}"
             )));
         }
         let checksum = sha256_file(temporary.path())?;
@@ -247,17 +329,49 @@ impl SemanticStore {
         }
         temporary.as_file().sync_all()?;
         temporary
-            .persist(&destination)
+            .persist(destination)
             .map_err(|error| SemanticError::Promotion {
                 from: temporary_path,
-                to: destination.clone(),
+                to: destination.to_path_buf(),
                 message: error.to_string(),
             })?;
         Ok(ModelAcquisition {
-            path: destination,
+            path: destination.to_path_buf(),
             bytes: written,
             checksum,
         })
+    }
+
+    /// Loads the pinned [`ModelTokenizer`] from the acquired asset. Fails
+    /// closed when the asset is missing, wrongly sized, or fails its SHA-256
+    /// verification against the pinned digest.
+    pub fn load_model_tokenizer(
+        &self,
+    ) -> Result<crate::semantic_tokenizer::ModelTokenizer, SemanticError> {
+        let path = self.tokenizer_path();
+        match self.tokenizer_status() {
+            ModelStatus::Available => {}
+            ModelStatus::Missing => {
+                return Err(SemanticError::ModelUnavailable(
+                    "no tokenizer asset has been acquired; run an explicit model acquisition first"
+                        .to_string(),
+                ));
+            }
+            ModelStatus::Invalid(reason) => {
+                return Err(SemanticError::ModelUnavailable(format!(
+                    "the local tokenizer asset failed its pre-check: {reason}"
+                )));
+            }
+        }
+        let bytes = std::fs::read(&path)?;
+        let checksum = crate::semantic_model::sha256_file(&path)?;
+        if checksum != TOKENIZER_SHA256 {
+            return Err(SemanticError::ChecksumMismatch {
+                expected: TOKENIZER_SHA256.to_string(),
+                actual: checksum,
+            });
+        }
+        crate::semantic_tokenizer::ModelTokenizer::from_bytes(&bytes)
     }
 
     /// Loads the real ONNX provider from the acquired model. Fails closed

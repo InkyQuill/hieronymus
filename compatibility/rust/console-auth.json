@@ -1,0 +1,65 @@
+{
+  "expectation_set": "console-auth-v1",
+  "adr": "0012",
+  "rule": "Versioned Rust expectation, separate from the frozen Python HTTP route-cases. Two ADR 0012 (2026-09-03 amendment) deltas back the authenticated web console:\n\n1. Launch-grant transport. The amendment prohibits query-string secrets and waives the separate CSRF layer; it does not prohibit a URL fragment. `hiero admin` / `hiero config` mint the existing 60-second single-use grant over the bearer-authenticated `POST /auth/launch-grant` and hand the browser `http://<addr>/<page>#launch_grant=<grant>`. The grant rides only in the fragment, which is never sent to a server and never written to a server log; `frontend/src/web/lib/bootstrap.ts` strips it synchronously (`history.replaceState`) before its first network call, then `POST /auth/launch-grant/exchange` swaps it once for the `HttpOnly; SameSite=Strict` session cookie. The CLI never prints or logs the grant, the bearer, or the launch URL. No grant is persisted in the browser.\n\n2. Safe-read Origin rule. The frozen route-cases only pin `cross-origin` (explicit foreign Origin, 403), `invalid-host` (400), and `missing-session` (401) for the browser `GET /api/*` routes. The Rust daemon additionally accepts a browser `GET`/`HEAD` with NO `Origin` header (a legitimate top-level navigation into the console) when the session cookie is valid, while still rejecting an explicit foreign `Origin` on those reads. Every non-safe method (`POST` and friends), the grant exchange, and the `GET /ws/admin` upgrade keep requiring the exact `Origin` `http://<addr>`. Host validation, grant replay/expiry checks, and daemon-lifetime (in-memory) sessions are unchanged. No CSRF token is restored.",
+  "expectations": [
+    {
+      "route": "GET /api/providers",
+      "request": {
+        "headers": { "Cookie": "hieronymus_session=<SESSION>" },
+        "origin": "<absent>"
+      },
+      "expected": { "status": 200, "body_has_key": "providers" }
+    },
+    {
+      "route": "GET /api/providers",
+      "request": {
+        "headers": {},
+        "origin": "<absent>"
+      },
+      "expected": { "status": 401, "body": { "error": "unauthorized" } }
+    },
+    {
+      "route": "GET /api/providers",
+      "request": {
+        "headers": { "Cookie": "hieronymus_session=<SESSION>" },
+        "origin": "https://attacker.invalid"
+      },
+      "expected": { "status": 403, "body": { "error": "forbidden_origin" } }
+    },
+    {
+      "route": "POST /api/providers",
+      "request": {
+        "headers": { "Cookie": "hieronymus_session=<SESSION>" },
+        "origin": "<absent>"
+      },
+      "expected": { "status": 403, "body": { "error": "forbidden_origin" } }
+    },
+    {
+      "route": "POST /auth/launch-grant/exchange",
+      "request": {
+        "body": { "launch_grant": "<SINGLE_USE_LAUNCH_GRANT>" },
+        "origin": "<absent>"
+      },
+      "expected": { "status": 403, "body": { "error": "forbidden_origin" } }
+    },
+    {
+      "route": "POST /auth/launch-grant/exchange",
+      "seed": "the grant was already exchanged once",
+      "request": {
+        "body": { "launch_grant": "<SINGLE_USE_LAUNCH_GRANT>" },
+        "origin": "http://127.0.0.1:<PORT>"
+      },
+      "expected": { "status": 401, "body": { "error": "launch_grant_already_used" } }
+    },
+    {
+      "route": "GET /api/providers",
+      "seed": "the daemon that minted <SESSION> has since restarted",
+      "request": {
+        "headers": { "Cookie": "hieronymus_session=<SESSION>" },
+        "origin": "<absent>"
+      },
+      "expected": { "status": 401, "body": { "error": "unauthorized" } }
+    }
+  ]
+}

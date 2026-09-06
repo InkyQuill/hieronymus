@@ -4,9 +4,17 @@
 //! The separate CSRF token layer is waived; browser mutations are guarded by
 //! the session cookie plus `Origin`/`Host` validation (see `rest`).
 //!
-//! Redaction discipline: grant and session tokens are [`Secret`]s, never
-//! logged, and never appear in URLs — only in response bodies and cookie
-//! headers of the exchange response that hands them over.
+//! Redaction discipline: grant and session tokens are [`Secret`]s and are
+//! never logged or written to a query string. The ADR 0012 amendment
+//! (2026-09-03) prohibits query-string secrets only; per plan
+//! `2026-09-05-rust-port-console` (W1) the one-time launch grant may travel in
+//! a URL *fragment*, which is never sent to a server and never appears in
+//! server logs. `hiero admin` / `hiero config` mint a grant and hand
+//! `http://<addr>/<page>#launch_grant=<grant>` to the browser opener; the
+//! frontend's `bootstrap.ts` scrubs that fragment synchronously
+//! (`history.replaceState`) before its first network call, so the grant never
+//! survives into a reload, a `Referer`, or history. The session token itself
+//! still appears only in the `Set-Cookie` header of the exchange response.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -56,15 +64,22 @@ pub(crate) enum ExchangeOutcome {
 }
 
 impl SessionStore {
-    /// Mint a fresh one-time launch grant.
+    /// Mint a fresh one-time launch grant (valid for [`GRANT_TTL`]).
     pub fn mint_grant(&self) -> Result<Secret<String>, getrandom::Error> {
+        self.mint_grant_with_ttl(GRANT_TTL)
+    }
+
+    /// Mint a one-time launch grant with an explicit TTL. Only the default
+    /// [`GRANT_TTL`] is used in production; the tests pass a near-zero TTL to
+    /// exercise the time-based expiry path in [`prune_expired`].
+    fn mint_grant_with_ttl(&self, ttl: Duration) -> Result<Secret<String>, getrandom::Error> {
         let grant = random_token()?;
         let mut inner = self.lock();
         prune_expired(&mut inner.grants);
         inner.grants.insert(
             grant.expose_secret().clone(),
             GrantState::Available {
-                expires_at: Instant::now() + GRANT_TTL,
+                expires_at: Instant::now() + ttl,
             },
         );
         Ok(grant)
@@ -169,6 +184,19 @@ mod tests {
             store.exchange_grant("never-minted").unwrap(),
             ExchangeOutcome::Unknown
         ));
+    }
+
+    #[test]
+    fn an_expired_grant_is_indistinguishable_from_an_unknown_one() {
+        let store = SessionStore::default();
+        // A grant that is already past its TTL by the time it is presented.
+        let grant = store.mint_grant_with_ttl(Duration::from_millis(0)).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(matches!(
+            store.exchange_grant(grant.expose_secret()).unwrap(),
+            ExchangeOutcome::Unknown
+        ));
+        assert!(!store.session_is_valid(grant.expose_secret()));
     }
 
     #[test]

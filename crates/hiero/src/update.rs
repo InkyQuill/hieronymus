@@ -225,20 +225,68 @@ pub fn accepted_doctor_exit(code: Option<i32>) -> Result<bool, String> {
     }
 }
 
-/// Seam for S2: assert the candidate's semantic lane (working memory + real
-/// semantic RAG) is armed and answering before an update is allowed to keep
-/// the new binary.
-///
-// TODO(S2): assert the candidate's semantic lane is armed and ready; a
-// missing/disarmed lane must reject here even when doctor exit is an accepted
-// degraded code (coordinator R4<->S2, owner: no FTS-only completion).
-///
-/// Until S2 lands this is a documented near-no-op that always returns
-/// `Ok(())`. It is called in the activation path *after* authenticated
-/// expected-instance readiness. It is deliberately not a hard reject yet:
-/// that would refuse every update until S2 exists. S2 replaces the body.
-pub fn require_semantic_ready(_config: &HieronymusConfig) -> Result<(), String> {
-    Ok(())
+/// S2 gate: assert the candidate daemon's semantic lane (working memory +
+/// real semantic RAG) is armed and answering before an update is allowed to
+/// keep the new binary. Reads the candidate's typed `semantic` state from the
+/// SAME authenticated `GET /status` payload `poll_until_live` already trusts
+/// (ADR 0009 — never a bare TCP connect), and routes it through
+/// `daemon::semantic_worker::require_semantic_ready`. A missing semantic
+/// surface (an FTS-only build), a `failed` lane, or a payload the gate
+/// rejects refuses the update — release/update health cannot count a
+/// disarmed lane as ready. Transient `acquiring`/`rebuilding` states are
+/// retried within `READY_TIMEOUT`, since a freshly started candidate may
+/// still be arming its assets.
+pub fn require_semantic_ready(config: &HieronymusConfig) -> Result<(), String> {
+    use crate::daemon::semantic_worker::{RequiredSemanticState, require_semantic_ready as gate};
+    let deadline = Instant::now() + READY_TIMEOUT;
+    loop {
+        match semantic_state(config) {
+            // Transient states retry until the deadline; everything else —
+            // ready, failed, or an unusable payload — is the gate's verdict.
+            Ok(RequiredSemanticState::Acquiring | RequiredSemanticState::Rebuilding)
+                if Instant::now() < deadline =>
+            {
+                std::thread::sleep(READY_POLL);
+            }
+            Ok(state) => return gate(&state),
+            Err(detail) => return Err(detail),
+        }
+    }
+}
+
+/// The candidate's semantic readiness decoded from its authenticated
+/// `/status` payload (`semantic.state`: acquiring/rebuilding/ready/failed,
+/// mirroring `rest::status::semantic_payload`). A payload without a
+/// `semantic` surface is a disarmed lane, never a ready one.
+fn semantic_state(
+    config: &HieronymusConfig,
+) -> Result<crate::daemon::semantic_worker::RequiredSemanticState, String> {
+    use crate::daemon::semantic_worker::RequiredSemanticState;
+    match lifecycle::probe(config) {
+        lifecycle::DiscoveryHealth::Live { status, .. } => {
+            let semantic = status.get("semantic").ok_or_else(|| {
+                "the status payload carries no semantic lane; an FTS-only candidate is not ready".to_string()
+            })?;
+            let detail = semantic
+                .get("detail")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("no failure detail reported")
+                .to_string();
+            match semantic.get("state").and_then(serde_json::Value::as_str) {
+                Some("ready") => Ok(RequiredSemanticState::Ready),
+                Some("acquiring") => Ok(RequiredSemanticState::Acquiring),
+                Some("rebuilding") => Ok(RequiredSemanticState::Rebuilding),
+                Some("failed") => Ok(RequiredSemanticState::Failed(detail)),
+                other => Err(format!(
+                    "the status payload reported an unusable semantic state {other:?}"
+                )),
+            }
+        }
+        other => Err(format!(
+            "no live authenticated endpoint ({})",
+            other.detail()
+        )),
+    }
 }
 
 /// Everything the rollback state machine needs to restore, captured before any
@@ -1436,10 +1484,13 @@ mod tests {
     }
 
     #[test]
-    fn require_semantic_ready_is_a_documented_seam_until_s2() {
+    fn require_semantic_ready_rejects_without_a_live_semantic_lane() {
         let temp = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(temp.path());
-        assert!(super::require_semantic_ready(&config).is_ok());
+        // No daemon at all: nothing authenticated proves a semantic lane, so
+        // the gate refuses (never a bare "assume ready" default).
+        let error = super::require_semantic_ready(&config).unwrap_err();
+        assert!(error.contains("no live authenticated endpoint"), "{error}");
     }
 
     // -----------------------------------------------------------------------
@@ -1540,15 +1591,22 @@ mod tests {
     }
 
     /// A minimal live daemon for `lifecycle::probe`: an HTTP thread that answers
-    /// `GET /status` with the given identity, plus the discovery record and
-    /// token the probe needs. The thread outlives the test (blocked on
-    /// `accept`), matching the pattern in `agent_hook`/`runtime_shutdown` tests.
-    fn fake_live_daemon(config: &HieronymusConfig, instance_id: &str, version: &str) {
+    /// `GET /status` with the given identity and semantic lane state, plus the
+    /// discovery record and token the probe needs. The thread outlives the
+    /// test (blocked on `accept`), matching the pattern in
+    /// `agent_hook`/`runtime_shutdown` tests.
+    fn fake_live_daemon(
+        config: &HieronymusConfig,
+        instance_id: &str,
+        version: &str,
+        semantic_state: &str,
+    ) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let body = format!(
             "{{\"instance_id\":\"{instance_id}\",\"protocol_revision\":\"{PROTOCOL_REVISION}\",\
-             \"version\":\"{version}\"}}"
+             \"version\":\"{version}\",\"semantic\":{{\"state\":\"{semantic_state}\",\
+             \"detail\":null}}}}"
         );
         std::thread::spawn(move || {
             for stream in listener.incoming() {
@@ -1614,7 +1672,7 @@ mod tests {
         // A live endpoint that authenticates but still serves the OLD version:
         // the candidate is not proved ready, and the rollback's own readiness
         // check (expecting 0.9.0) then passes against it.
-        fake_live_daemon(&config, &"ab".repeat(16), "0.9.0");
+        fake_live_daemon(&config, &"ab".repeat(16), "0.9.0", "ready");
         let manager = FakeManager::default();
 
         let error = run_update_impl(&options, Some(&manager)).unwrap_err();
@@ -1633,13 +1691,52 @@ mod tests {
     }
 
     #[test]
+    fn started_candidate_with_a_failed_semantic_lane_is_rolled_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "0.9.0", "9.9.0", 0);
+        let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+        // The candidate publishes a live, authenticated endpoint at the
+        // expected version, but its semantic lane reports `failed` (the
+        // FTS-only surface): doctor exit 0 and version match are NOT enough —
+        // a disarmed lane is never counted as ready (coordinator R4<->S2).
+        fake_live_daemon(&config, &"ef".repeat(16), "9.9.0", "failed");
+        let manager = FakeManager::default();
+
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("candidate semantic lane not ready"),
+            "{error}"
+        );
+        // The fake endpoint keeps serving the candidate version, so the
+        // rollback's own readiness verification (expecting 0.9.0) cannot
+        // complete — both causes surface and nothing is deleted.
+        assert!(matches!(error, UpdateError::FailedAndRollbackFailed { .. }));
+        assert_eq!(error.exit_code(), 1);
+        assert!(all_links_point_at(&layout, "0.9.0").is_ok());
+        assert!(
+            layout.version_dir("9.9.0").join("hiero").exists(),
+            "candidate preserved for manual recovery"
+        );
+        // Pre-stop of the fake-running daemon, candidate start, then the
+        // rollback sequence (stop, reload, start; its verification poll
+        // fails against the still-live candidate endpoint).
+        assert_eq!(
+            manager.calls(),
+            vec!["stop", "start", "stop", "reload", "start"]
+        );
+    }
+
+    #[test]
     fn degraded_candidate_that_confirms_ready_is_kept() {
         let temp = tempfile::tempdir().unwrap();
         let (options, layout) = staged_update(temp.path(), "0.9.0", "9.9.0", 1);
         let config = hieronymus::data_root::load_config(options.data_root.as_deref());
         // Doctor exit 1, but the candidate publishes a live authenticated
         // endpoint at the expected version — the "accepted degraded" path.
-        fake_live_daemon(&config, &"cd".repeat(16), "9.9.0");
+        fake_live_daemon(&config, &"cd".repeat(16), "9.9.0", "ready");
         let manager = FakeManager::default();
 
         let report = run_update_impl(&options, Some(&manager)).unwrap();

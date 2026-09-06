@@ -8,6 +8,7 @@ pub mod agent_plugins;
 pub mod app;
 pub mod application;
 pub mod client;
+pub mod console;
 pub mod daemon;
 pub mod daemon_client;
 pub mod doctor;

@@ -11,15 +11,15 @@ use std::path::Path;
 
 use crate::semantic_error::SemanticError;
 use crate::semantic_model::{MODEL_NAME, MODEL_REVISION, MODEL_SHA256};
+use crate::semantic_tokenizer::MINILM_TOKENIZER_ID;
 
 /// Embedding width of the pinned qualification model
 /// (`sentence-transformers/all-MiniLM-L6-v2`, ONNX export).
 pub const EMBEDDING_DIMENSIONS: usize = 384;
-/// Identifier of the shared deterministic token mapping (the byte-fold
-/// tokenizer) that produced every generation of this port line. It is part of
-/// every [`EmbeddingIdentity`]: swapping the tokenization changes the
-/// embeddings, so it must change the identity and force a rebuild (Task 9
-/// review follow-up).
+/// Identifier of the retired synthetic byte-fold token mapping. Generations
+/// persisted under this id predate the pinned WordPiece tokenizer and can
+/// never be queried by the current identity: they are rejected and rebuilt,
+/// never relabeled. Kept only so old manifest rows stay truthfully labeled.
 pub const BYTE_FOLD_TOKENIZER_ID: &str = "byte-fold-v1";
 /// WordPiece vocabulary size of the pinned model; token streams are folded
 /// into this range so the ONNX graph always gathers in-bounds rows.
@@ -203,7 +203,7 @@ impl FakeEmbeddingProvider {
                 "fake-revision",
                 dimensions,
                 "l2",
-                BYTE_FOLD_TOKENIZER_ID,
+                MINILM_TOKENIZER_ID,
                 MODEL_MAX_SEQUENCE,
                 MODEL_MAX_BATCH_INPUTS,
             )
@@ -284,7 +284,7 @@ impl OnnxEmbeddingProvider {
             MODEL_REVISION,
             EMBEDDING_DIMENSIONS,
             "l2",
-            BYTE_FOLD_TOKENIZER_ID,
+            MINILM_TOKENIZER_ID,
             MODEL_MAX_SEQUENCE,
             MODEL_MAX_BATCH_INPUTS,
         )
@@ -490,8 +490,7 @@ mod tests {
     #[test]
     fn identity_rejects_over_limit_batch_requests() {
         let identity =
-            EmbeddingIdentity::new("fake", "m", "r", 4, "l2", BYTE_FOLD_TOKENIZER_ID, 4, 2)
-                .unwrap();
+            EmbeddingIdentity::new("fake", "m", "r", 4, "l2", MINILM_TOKENIZER_ID, 4, 2).unwrap();
         assert_eq!(identity.max_batch_inputs(), 2);
         assert!(identity.check_tokens(4).is_ok());
         assert!(matches!(

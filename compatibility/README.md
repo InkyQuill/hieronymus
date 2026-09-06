@@ -70,3 +70,32 @@ safe DTO projection of the pending `strict_concept_proposals` rows. The
 Python tool also merges recent dream-audit concept-suggestion payloads into
 the same list; that dream-audit merge lands with the dreaming plan, so until
 then Rust consumers see only the strict proposals.
+
+### Web console authentication (`rust/console-auth.json`, ADR 0012)
+
+The frozen HTTP route-cases have no way to launch an authenticated console:
+nothing mints or opens a launch grant, and the browser `GET /api/*` routes
+reject a request that carries no `Origin`. `rust/console-auth.json` records
+the two ADR 0012 (2026-09-03 amendment) deltas that close that gap:
+
+- **Launch-grant fragment transport.** `hiero admin` / `hiero config` mint the
+  existing 60-second single-use grant over the bearer-authenticated
+  `POST /auth/launch-grant` and open
+  `http://<addr>/<page>#launch_grant=<grant>` with `xdg-open`. The grant rides
+  only in the URL *fragment* — never a query string, never a log line — and
+  `frontend/src/web/lib/bootstrap.ts` scrubs it (synchronous
+  `history.replaceState`) before the one-time `POST
+  /auth/launch-grant/exchange`. The amendment prohibits query-string secrets
+  and waives CSRF tokens; the fragment path is the reviewed transport and no
+  CSRF token is restored.
+- **Safe-read Origin rule.** An authenticated browser `GET`/`HEAD` with **no**
+  `Origin` is served (a top-level navigation into the console), but an
+  explicit foreign `Origin` on a read is still `403`, and every mutating
+  method, the grant exchange, and the `GET /ws/admin` upgrade still require
+  the exact `Origin` `http://<addr>`. Host validation, grant replay/expiry
+  checks, `HttpOnly; SameSite=Strict` cookies, and daemon-lifetime sessions
+  are unchanged.
+
+The frozen `compatibility/snapshots/` and `compatibility/fixtures/` bytes are
+untouched; the new Rust integration coverage lives in
+`crates/hiero/tests/console_auth.rs` and `frontend/src/web/lib/bootstrap.test.ts`.

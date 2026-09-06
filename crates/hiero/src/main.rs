@@ -19,7 +19,8 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|start|stop|restart|status|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|start|stop|restart|status|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (opens the authenticated web console in your browser; starts the local daemon if needed)";
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
 const TOOL_CALL_USAGE: &str = "usage: hiero tool-call <tool> [--args <json>] [--json] [--data-root <path>] [--start-daemon] (calls the advertised MCP tool through the local daemon's authenticated /mcp route)";
@@ -391,6 +392,10 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some(command @ ("start" | "stop" | "restart" | "status")) => {
             run_lifecycle(command, &parsed, data_root)
         }
+        // The authenticated web console launchers (plan W1): mint a one-time
+        // launch grant through the local daemon and open the browser at the
+        // requested page. Never print the grant, the bearer, or the URL.
+        Some(page @ ("admin" | "config")) => run_console(page, &parsed, data_root),
         Some("doctor") => run_doctor(&parsed, data_root),
         Some("semantic") => run_semantic(&parsed, data_root),
         Some("agent-hook") => run_agent_hook(&parsed, data_root),
@@ -474,6 +479,32 @@ fn absolute_path(path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join(path)
     }
+}
+
+/// `hiero admin` / `hiero config`: open the authenticated web console. The
+/// grant, the bearer, and the launch URL fragment never touch stdout/stderr;
+/// only the page name and, on opener failure, the origin and page path (never
+/// the fragment/grant) are printed.
+fn run_console(
+    page: &str,
+    parsed: &ParsedArguments,
+    data_root: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
+    if parsed.json {
+        return Err(format!("{page} does not accept --json; {CONSOLE_USAGE}"));
+    }
+    if parsed.port.is_some() || parsed.start_daemon || parsed.dry_run {
+        return Err(format!(
+            "{page} does not accept --port, --start-daemon, or --dry-run; {CONSOLE_USAGE}"
+        ));
+    }
+    reject_subcommand(parsed, page)?;
+    reject_feedback_flags(parsed, page)?;
+    reject_headless_flags(parsed, page)?;
+    let config = load_config(data_root);
+    hiero::console::launch(&config, page)?;
+    println!("opening the {page} console in your browser");
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The `doctor` subcommand: non-mutating checks, human or JSON output, and
@@ -639,13 +670,35 @@ fn run_semantic_enable(
             .map_err(|error| error.to_string())?;
         downloaded = true;
     }
+    // The tokenizer asset rides the same explicit acquisition with the same
+    // discipline, always pinned: with explicit artifact overrides in play the
+    // caller manages artifacts themselves (and the loopback test harness must
+    // never egress), so the tokenizer is fetched only in pinned-default mode.
+    let pinned_defaults = parsed.url.is_none() && parsed.sha256.is_none() && parsed.bytes.is_none();
+    let mut tokenizer_downloaded = false;
+    if pinned_defaults && store.tokenizer_status() != ModelStatus::Available {
+        let transport = HttpModelTransport::new(std::time::Duration::from_secs(600));
+        store
+            .acquire_tokenizer(
+                &transport,
+                hieronymus::semantic_model::DEFAULT_TOKENIZER_URL,
+            )
+            .map_err(|error| error.to_string())?;
+        tokenizer_downloaded = true;
+    }
     let final_status = local_status();
 
     // Arming verification needs the ONNX runtime library; without it the
-    // model is acquired but the lane verdict stays honestly disarmed.
+    // model is acquired but the lane verdict stays honestly disarmed. A
+    // provided runtime is persisted in the semantic settings file so the
+    // daemon validates and reuses it across restarts (Task S2).
+    let mut runtime_saved = false;
     let verdict = match &parsed.runtime {
         Some(runtime) => {
-            hieronymus::semantic_arming::arming_verdict(config, std::path::Path::new(runtime))
+            let path = std::path::Path::new(runtime);
+            hieronymus::semantic_arming::save_runtime_library(config, path)?;
+            runtime_saved = true;
+            hieronymus::semantic_arming::arming_verdict(config, path)
         }
         None => hieronymus::semantic_arming::LaneState::Disarmed {
             reason: "onnx runtime library not provided; pass --runtime <lib> to verify arming"
@@ -659,8 +712,11 @@ fn run_semantic_enable(
             "model_status": model_status_name(&final_status),
             "model_detail": model_status_detail(&final_status),
             "downloaded": downloaded,
+            "tokenizer_downloaded": tokenizer_downloaded,
+            "tokenizer_path": store.tokenizer_path(),
             "model_path": store.model_path(),
             "runtime_verified": runtime_verified,
+            "runtime_saved": runtime_saved,
             "lane": verdict.as_str(),
             "reason": match &verdict {
                 hieronymus::semantic_arming::LaneState::Armed => serde_json::Value::Null,

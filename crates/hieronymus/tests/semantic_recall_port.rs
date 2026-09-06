@@ -1,8 +1,9 @@
 //! Task 9: the query-time semantic lane, reciprocal-rank fusion with the FTS
 //! chunk lane, degraded-mode warnings, corrupt-hit repair scheduling, and the
 //! `conflicts_with_rule_ids` contract markers on advisory recall hits.
-//! Tests never egress: the fake embedding provider plus the deterministic
-//! byte-fold tokenizer stand in for the model, over real SQLite and LanceDB.
+//! Tests never egress: the fake embedding provider plus the pinned WordPiece
+//! tokenizer (the committed fixture) stand in for the model, over real SQLite
+//! and LanceDB.
 
 use std::fs;
 use std::path::PathBuf;
@@ -19,8 +20,9 @@ use hieronymus::registry::Registry;
 use hieronymus::semantic_embeddings::{
     EMBEDDING_DIMENSIONS, EmbeddingProvider, FakeEmbeddingProvider,
 };
-use hieronymus::semantic_recall::{ByteFoldTokenizer, SemanticLane, byte_fold_tokens};
+use hieronymus::semantic_recall::SemanticLane;
 use hieronymus::semantic_store::{SemanticChunk, SemanticSample, SemanticStore};
+use hieronymus::semantic_tokenizer::ModelTokenizer;
 use hieronymus::terminology::{ProposeFields, Termbase};
 use hieronymus::workspace::WorkspaceStore;
 
@@ -67,11 +69,15 @@ fn import_text(fixture: &Fixture, name: &str, content: &str) {
 }
 
 /// Builds and activates a whole-corpus generation over the fixture's chunks
-/// using the fake provider and the byte-fold tokenizer (the exact tokenizer
-/// the armed recall lane uses for queries, so document and query vectors share
-/// one mapping).
+/// using the fake provider and the pinned WordPiece tokenizer (the exact
+/// tokenizer the armed recall lane uses for queries, so document and query
+/// vectors share one mapping).
+fn model_tokenizer() -> ModelTokenizer {
+    ModelTokenizer::from_bytes(include_bytes!("fixtures/minilm-tokenizer.json")).unwrap()
+}
 fn activate_generation(fixture: &Fixture) {
     let store = SemanticStore::open(&fixture.config).unwrap();
+    let tokenizer = model_tokenizer();
     let mut provider = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS);
     store
         .begin_generation("gen-a", provider.identity())
@@ -91,7 +97,7 @@ fn activate_generation(fixture: &Fixture) {
                 SemanticChunk {
                     chunk_id: *chunk_id,
                     series_slug,
-                    token_ids: byte_fold_tokens(&text),
+                    token_ids: tokenizer.encode(&text).unwrap(),
                 }
             })
             .collect();
@@ -103,7 +109,7 @@ fn activate_generation(fixture: &Fixture) {
             &mut provider,
             &SemanticSample {
                 series_slug: "demo".to_string(),
-                token_ids: byte_fold_tokens("probe"),
+                token_ids: tokenizer.encode("probe").unwrap(),
             },
         )
         .unwrap();
@@ -114,7 +120,7 @@ fn armed_service(fixture: &Fixture) -> RecallService {
         .unwrap()
         .with_semantic_lane(SemanticLane::new(
             Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
-            Box::new(ByteFoldTokenizer),
+            Box::new(model_tokenizer()),
         ))
 }
 
@@ -226,7 +232,7 @@ fn recall_degrades_when_the_lane_identity_differs_from_the_generation() {
                 EMBEDDING_DIMENSIONS,
                 "other-model",
             )),
-            Box::new(ByteFoldTokenizer),
+            Box::new(model_tokenizer()),
         ));
     let response = mismatched
         .recall(fixture.session_id, &context(), "Cooking Talent", 10)

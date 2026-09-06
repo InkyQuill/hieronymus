@@ -59,8 +59,30 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
         "providers_error": providers_error,
         "dreaming": dreaming,
         "mcp_adapter": {"available": true, "mode": "local-http"},
+        "semantic": semantic_payload(runtime),
         "housekeeping": {"last_cycle": Value::Null, "pending": pending > 0},
     })
+}
+
+/// The required semantic readiness surface (Task S2): the supervised
+/// controller's state plus, when it has one, its actionable failure detail.
+/// An FTS-only lane surfaces as `failed` — never as ready — so strict
+/// consumers gate on `require_semantic_ready`.
+fn semantic_payload(runtime: &DaemonRuntime) -> Value {
+    match runtime.semantic.state() {
+        crate::daemon::semantic_worker::RequiredSemanticState::Acquiring => {
+            json!({"state": "acquiring", "detail": Value::Null})
+        }
+        crate::daemon::semantic_worker::RequiredSemanticState::Rebuilding => {
+            json!({"state": "rebuilding", "detail": Value::Null})
+        }
+        crate::daemon::semantic_worker::RequiredSemanticState::Ready => {
+            json!({"state": "ready", "detail": Value::Null})
+        }
+        crate::daemon::semantic_worker::RequiredSemanticState::Failed(reason) => {
+            json!({"state": "failed", "detail": reason})
+        }
+    }
 }
 
 /// Builtin dream providers in the frozen order, then any catalog-only
