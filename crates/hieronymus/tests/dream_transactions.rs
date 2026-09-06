@@ -104,13 +104,16 @@ fn block_phase_completed_audits(config: &HieronymusConfig, message: &str) {
     );
 }
 
-/// Abort every audit insert: even the post-rollback failure record cannot be
-/// written while this trigger is in place.
-fn block_all_audits(config: &HieronymusConfig, message: &str) {
+/// Abort every audit insert once one audit row exists: the first pair's
+/// commit (including its own audit entry) succeeds, and the second pair's
+/// in-transaction audit append fails — the injection lands INSIDE a pair
+/// transaction (task D4's per-pair granularity).
+fn block_all_audits_after_first(config: &HieronymusConfig, message: &str) {
     execute(
         config,
         &format!(
             "CREATE TRIGGER abort_audit BEFORE INSERT ON dream_audit_entries
+             WHEN (SELECT count(*) FROM dream_audit_entries) >= 1
              BEGIN SELECT RAISE(ABORT, '{message}'); END;"
         ),
     );
@@ -209,8 +212,14 @@ fn append_in_transaction_redacts_and_commits_with_the_callers_transaction() {
 // Deterministic phases under failure injection
 // ---------------------------------------------------------------------------
 
+/// The link phase commits each budgeted pair on its own (task D4 granularity,
+/// superseding D3's whole-phase atomicity for this phase only). The audit
+/// injection lands inside the SECOND pair's transaction: that pair rolls back
+/// and stays queued, while the FIRST pair's committed link and audit entry
+/// stay durable. A retry completes every remaining pair exactly once.
 #[test]
-fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applies_once() {
+fn audit_injection_inside_a_pair_transaction_keeps_committed_pairs_and_retry_completes_exactly_once()
+ {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "only-sense-online");
@@ -218,18 +227,24 @@ fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applie
         .unwrap()
         .start_session(&context("only-sense-online"))
         .unwrap();
-    let left = add_crystal(
+    // Three distinct crystals in one session: three unique unordered pairs.
+    let first = add_crystal(
         &config,
         "only-sense-online",
         "Космический корабль летит к звёздам.",
     );
-    let right = add_crystal(
+    let second = add_crystal(
         &config,
         "only-sense-online",
         "Рецепт хлеба требует тёплой воды.",
     );
+    let third = add_crystal(
+        &config,
+        "only-sense-online",
+        "Старый мост ведёт через реку.",
+    );
     let created_at = "2026-01-01T00:00:00+00:00";
-    for crystal_id in [left, right] {
+    for crystal_id in [first, second, third] {
         open_migrated(&config.database_path())
             .unwrap()
             .execute(
@@ -241,7 +256,7 @@ fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applie
             )
             .unwrap();
     }
-    block_all_audits(&config, "audit blocked by test trigger");
+    block_all_audits_after_first(&config, "audit blocked by test trigger");
 
     let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let error = service.run_cycle("manual", false).unwrap_err();
@@ -250,22 +265,53 @@ fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applie
         "{error}"
     );
 
-    // The audit failure rolled the whole phase transaction back: no link,
-    // no consumed activations, no completed phase, no committed audit. The
-    // phase row stays untouched ('running' — deterministic phase rows are
-    // never failed in bulk; the failed run row and, when writable, the
-    // phase_failed record are the durable outcome).
+    // The first pair's atomic commit is durable: exactly one link exists
+    // with its audit entry, and its pair row is applied. The second pair's
+    // transaction (link + pair status + audit) rolled back as a unit, so it
+    // stays queued with no domain effect and no audit row. The batch is
+    // still open: no activation was consumed.
+    let links = query(
+        &config,
+        "select source_crystal_id, target_crystal_id, weight from crystal_links",
+        &[],
+    );
+    assert_eq!(links.len(), 1, "committed pair stays committed: {links:?}");
+    assert_eq!(links[0][0], json!(first));
+    assert_eq!(links[0][1], json!(second));
+    assert_eq!(links[0][2], json!(0.5));
     assert_eq!(
-        scalar(&config, "select count(*) from crystal_links"),
-        json!(0)
+        query(
+            &config,
+            "select status from dream_link_pairs order by left_id, right_id",
+            &[]
+        ),
+        vec![
+            vec![json!("applied")],
+            vec![json!("queued")],
+            vec![json!("queued")]
+        ]
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from dream_audit_entries where event_type = 'link_pair_completed'"
+        ),
+        json!(1)
     );
     assert_eq!(
         scalar(
             &config,
             "select count(*) from crystal_activations where cycle_id is null"
         ),
-        json!(2)
+        json!(3)
     );
+    assert_eq!(
+        scalar(&config, "select completed_cycle from dream_link_batches"),
+        Value::Null
+    );
+    // The phase row stays untouched ('running' — deterministic phase rows are
+    // never failed in bulk; the failed run row and, when writable, the
+    // phase_failed record are the durable outcome).
     assert_eq!(phase_status(&config, "link_reinforcement"), vec!["running"]);
     let run_row = query(&config, "select status, error from dream_runs", &[]).remove(0);
     assert_eq!(run_row[0], json!("failed"));
@@ -274,12 +320,14 @@ fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applie
         "{}",
         run_row[1]
     );
+    // The post-rollback phase_failed record was also blocked by the trigger;
+    // the pair audit that committed before the injection is the only row.
     assert_eq!(
         scalar(&config, "select count(*) from dream_audit_entries"),
-        json!(0)
+        json!(1)
     );
 
-    // Retry without the trigger: exactly one semantic effect.
+    // Retry without the trigger: every remaining pair applies exactly once.
     execute(&config, "DROP TRIGGER abort_audit");
     let retry = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let rerun = retry.run_cycle("manual", false).unwrap();
@@ -287,14 +335,26 @@ fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applie
 
     let links = query(
         &config,
-        "select source_crystal_id, target_crystal_id, weight from crystal_links",
+        "select source_crystal_id, target_crystal_id, weight from crystal_links
+         order by source_crystal_id, target_crystal_id",
         &[],
     );
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0][2], json!(0.5));
+    assert_eq!(links.len(), 3);
+    // All three weights are the initial 0.5: no pair was applied twice.
+    assert!(links.iter().all(|row| row[2] == json!(0.5)), "{links:?}");
+    // Batch completion (last pair's commit): all activations consumed with
+    // the retry run's cycle.
     assert_eq!(
         query(&config, "select cycle_id from crystal_activations", &[],),
-        vec![vec![json!(rerun.cycle_id)], vec![json!(rerun.cycle_id)]]
+        vec![
+            vec![json!(rerun.cycle_id)],
+            vec![json!(rerun.cycle_id)],
+            vec![json!(rerun.cycle_id)]
+        ]
+    );
+    assert_eq!(
+        scalar(&config, "select completed_cycle from dream_link_batches"),
+        json!(rerun.cycle_id)
     );
     assert_eq!(
         phase_status(&config, "link_reinforcement"),
@@ -305,6 +365,20 @@ fn audit_insert_failure_rolls_back_the_link_reinforcement_phase_and_retry_applie
             &config,
             "select count(*) from dream_audit_entries where event_type = 'phase_completed'
              and summary = 'completed link_reinforcement phase'"
+        ),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from dream_audit_entries where event_type = 'link_pair_completed'"
+        ),
+        json!(3)
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from dream_audit_entries where event_type = 'link_batch_completed'"
         ),
         json!(1)
     );

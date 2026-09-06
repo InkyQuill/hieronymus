@@ -40,6 +40,7 @@ use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::dream_audit::{DreamAuditStore, commit_audited};
 use crate::dream_config::{DreamConfig, load_dream_config};
+use crate::dream_link_progress::LinkProgress;
 use crate::dream_locks::{DreamCycleState, DreamLockError, dream_cycle_lock};
 use crate::dream_output::{
     ConceptProposal, NormalizedConcept, NormalizedFacet, ReinforceAction, SupersedeAction,
@@ -68,17 +69,6 @@ pub(crate) const MIN_NORMALIZED_CONFIDENCE: f64 = 0.05;
 /// crystals are near-duplicates and combine pairwise (July design
 /// §Dream-Time Integration, LinkReinforcer).
 pub const COMBINATION_SIMILARITY_THRESHOLD: f64 = 0.7;
-
-/// Weight of a `crystal_links` row created by hebbian co-activation.
-const LINK_INITIAL_WEIGHT: f64 = 0.5;
-
-/// Additive weight gain per co-activation cycle, capped at [`LINK_WEIGHT_MAX`].
-const HEBBIAN_STRENGTH_DELTA: f64 = 0.1;
-
-const LINK_WEIGHT_MAX: f64 = 1.0;
-
-/// `crystal_links.link_type` for hebbian co-activation links.
-const CO_ACTIVATION_LINK_TYPE: &str = "co_activation";
 
 /// In-place reinforcement the reconsolidator applies when a working copy
 /// stays below the diff threshold: strength-only, one notch.
@@ -1749,13 +1739,21 @@ impl DreamService {
         }
     }
 
-    /// True when any `useful` activation row has not been consumed by a cycle.
+    /// True when link work remains: either an unconsumed `useful`
+    /// activation (not yet snapshotted, or waiting in an open batch) or an
+    /// open batch whose queued pairs still need processing — the latter
+    /// matters when snapshot members were cascade-deleted after the batch
+    /// was created, leaving tombstone skips to record.
     fn links_pending(&self) -> Result<bool, DreamError> {
         let connection = open_migrated(&self.config.database_path())?;
         let pending: i64 = connection.query_row(
             "select exists (
                  select 1 from crystal_activations
                  where outcome = 'useful' and cycle_id is null
+             )
+             or exists (
+                 select 1 from dream_link_batches
+                 where completed_cycle is null
              )",
             [],
             |row| row.get(0),
@@ -1765,9 +1763,17 @@ impl DreamService {
 
     /// The link reinforcer (July design §Dream-Time Integration): useful
     /// co-activated crystals strengthen (or create) their `crystal_links` row
-    /// (hebbian rule); near-duplicate pairs combine pairwise. Consumed
-    /// activation rows are stamped with the run's cycle, so feedback evidence
-    /// is consumed at most once.
+    /// (hebbian rule); near-duplicate pairs combine pairwise. Progress is
+    /// durable per pair (task D4): eligible activations are snapshotted into
+    /// one durable batch per session, each budgeted pair commits its
+    /// reinforcement, its pair-row terminalization, and its audit entry
+    /// atomically, and unprocessed pairs stay queued — so an exhausted
+    /// budget or a mid-phase crash resumes on the next cycle instead of
+    /// dropping pairs. A batch's activations are stamped consumed only when
+    /// its last pair is terminal; the phase's completion status and audit
+    /// are the final atomic commit of the phase, and a failure there leaves
+    /// the committed pairs durable while the failure is audited
+    /// post-rollback (D3's `record_phase_failure` pattern).
     fn run_link_reinforcement(
         &self,
         run_id: i64,
@@ -1780,107 +1786,37 @@ impl DreamService {
         }
         let phase_run_id = self.start_deterministic_phase_run(run_id, "link_reinforcement", 0)?;
 
-        // One immediate write transaction: the bounded activation read, the
-        // link/combination mutations, the phase-completed status, and the
-        // redacted audit entry commit together or not at all (task D3).
+        // The link budget (ruling: the existing max_relation_records_per_pass
+        // config field) bounds the pairs terminalized in this cycle.
+        let pair_budget = self.dream_config.max_relation_records_per_pass.max(0) as usize;
+        let mut progress = LinkProgress::open(&self.config)?;
+        progress.set_run_context(run_id, Some(phase_run_id));
+        let summary = match progress.process(cycle_id, pair_budget) {
+            Ok(_) => progress.take_summary(),
+            Err(error) => {
+                // Committed pairs of this call stay committed (each pair is
+                // its own atomic commit); the failure is audited after the
+                // rollback of the in-flight pair.
+                return Err(self.record_link_phase_failure(
+                    run_id,
+                    Some(phase_run_id),
+                    trigger_type,
+                    progress.terminalized_in_call(),
+                    error,
+                ));
+            }
+        };
+        let deterministic = DeterministicSummary {
+            changed_crystal_ids: summary.changed_crystal_ids,
+            actions: summary.actions,
+            ..DeterministicSummary::default()
+        };
+
+        // The phase's final atomic commit: the phase-completed status and
+        // its redacted audit entry. Committed pairs stay durable when this
+        // fails; the next cycle resumes the queued remainder.
         let mut connection = open_migrated(&self.config.database_path())?;
         let committed = commit_audited(&mut connection, |transaction| {
-            let activation_limit = self.dream_config.max_total_affected_crystals;
-            let mut link_budget = self.dream_config.max_relation_records_per_pass.max(0);
-            let mut combination_budget = self.dream_config.max_changed_crystals_per_cycle.max(0);
-
-            // Bounded read of the cycle's unconsumed useful activations.
-            let activations: Vec<(i64, i64, i64)> = {
-                let mut statement = transaction.prepare(
-                    "select id, session_id, crystal_id
-                 from crystal_activations
-                 where outcome = 'useful' and cycle_id is null
-                 order by id
-                 limit ?1",
-                )?;
-                let rows = statement.query_map([activation_limit], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                })?;
-                rows.collect::<Result<Vec<_>, _>>()?
-            };
-
-            // Co-activation pairs per session, deterministic order.
-            let mut by_session: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
-            for (_, session_id, crystal_id) in &activations {
-                let crystals = by_session.entry(*session_id).or_default();
-                if !crystals.contains(crystal_id) {
-                    crystals.push(*crystal_id);
-                }
-            }
-            for crystals in by_session.values_mut() {
-                crystals.sort_unstable();
-            }
-            let mut pairs: Vec<(i64, i64)> = Vec::new();
-            for crystals in by_session.values() {
-                for (index, left) in crystals.iter().enumerate() {
-                    for right in &crystals[index + 1..] {
-                        pairs.push((*left, *right));
-                    }
-                }
-            }
-
-            let mut summary = DeterministicSummary::default();
-            let mut combined: std::collections::HashSet<i64> = std::collections::HashSet::new();
-            let cores = load_crystal_cores(transaction, &pairs).map_err(tx_error)?;
-            for (left, right) in pairs {
-                let (Some(left_core), Some(right_core)) = (cores.get(&left), cores.get(&right))
-                else {
-                    continue;
-                };
-                // Pairwise combination (ADR 0011 guards: only active advisory
-                // crystals combine; active deterministic rules are never
-                // absorbed, never survivors).
-                let combinable = combination_budget > 0
-                    && !combined.contains(&left)
-                    && !combined.contains(&right)
-                    && !is_active_rule(&left_core.crystal_type, &left_core.status)
-                    && !is_active_rule(&right_core.crystal_type, &right_core.status)
-                    && left_core.status == "active"
-                    && right_core.status == "active"
-                    && token_similarity(&left_core.text, &right_core.text)
-                        >= COMBINATION_SIMILARITY_THRESHOLD;
-                if combinable {
-                    let survivor = pick_combination_survivor(left, left_core, right, right_core);
-                    let absorbed = if survivor == left { right } else { left };
-                    combine_crystals(transaction, survivor, absorbed, cycle_id)
-                        .map_err(tx_error)?;
-                    combined.insert(absorbed);
-                    summary.changed_crystal_ids.push(survivor);
-                    summary.changed_crystal_ids.push(absorbed);
-                    summary.actions.push(json!({
-                        "survivor_crystal_id": survivor,
-                        "absorbed_crystal_id": absorbed,
-                        "action": "combined",
-                    }));
-                    combination_budget -= 1;
-                    continue;
-                }
-                // Hebbian strengthening between survivors of co-activation.
-                if link_budget > 0 {
-                    strengthen_co_activation_link(transaction, left, right).map_err(tx_error)?;
-                    summary.actions.push(json!({
-                        "crystal_ids": [left, right],
-                        "action": "co_activation_link",
-                    }));
-                    link_budget -= 1;
-                }
-            }
-            let consumed_ids: Vec<i64> = activations.iter().map(|(id, _, _)| *id).collect();
-            for activation_id in &consumed_ids {
-                transaction.execute(
-                    "update crystal_activations set cycle_id = ?1 where id = ?2",
-                    rusqlite::params![cycle_id, activation_id],
-                )?;
-            }
             self.complete_deterministic_phase_in_transaction(
                 transaction,
                 run_id,
@@ -1888,13 +1824,13 @@ impl DreamService {
                 "link_reinforcement",
                 trigger_type,
                 threshold_state,
-                &summary,
+                &deterministic,
             )
             .map_err(tx_error)?;
-            Ok(summary)
+            Ok(())
         });
         match committed {
-            Ok(summary) => Ok(summary),
+            Ok(()) => Ok(deterministic),
             Err(error) => Err(self.phase_commit_failure(
                 run_id,
                 Some(phase_run_id),
@@ -2469,6 +2405,50 @@ impl DreamService {
         error
     }
 
+    /// The post-rollback failure record for the link phase (task D4): every
+    /// budgeted pair commits on its own, so a mid-phase failure leaves the
+    /// pairs committed earlier in the call durable — unlike the whole-phase
+    /// failures, the record must name them instead of claiming no domain
+    /// effects. The in-flight pair rolled back and stays queued.
+    fn record_link_phase_failure(
+        &self,
+        run_id: i64,
+        phase_run_id: Option<i64>,
+        trigger_type: &str,
+        committed_pairs: usize,
+        error: DreamError,
+    ) -> DreamError {
+        let provider = deterministic_identity();
+        let mut payload = self.audit_base(
+            trigger_type,
+            &json!({}),
+            &[],
+            "link_reinforcement",
+            &provider,
+        );
+        payload.insert("error".into(), json!(self.redacted_error_message(&error)));
+        payload.insert("committed_link_pairs".into(), json!(committed_pairs));
+        payload.insert(
+            "committed_domain_effects".into(),
+            if committed_pairs == 0 {
+                json!("none: only uncommitted pair work rolled back")
+            } else {
+                json!(format!(
+                    "committed {committed_pairs} link pair(s) earlier in this phase; each pair's commit is durable"
+                ))
+            },
+        );
+        let _ = self.audit.append(
+            run_id,
+            phase_run_id,
+            "phase_failed",
+            "error",
+            "failed link_reinforcement phase",
+            &Value::Object(payload),
+        );
+        error
+    }
+
     // ------------------------------------------------------------------
     // Caps, thresholds, and redaction
     // ------------------------------------------------------------------
@@ -2541,7 +2521,7 @@ fn next_cycle_id(connection: &Connection) -> Result<i64, DreamError> {
 /// boundary (which must return `rusqlite::Result`): the original message is
 /// preserved verbatim as the wrapped failure source, so failed-run records
 /// and audit entries keep naming the real cause.
-fn tx_error(error: impl Into<DreamError>) -> rusqlite::Error {
+pub(crate) fn tx_error(error: impl Into<DreamError>) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error.into()))
 }
 
@@ -3510,7 +3490,7 @@ fn insert_dream_crystal(
     Ok(crystal_id)
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     Utc::now().to_rfc3339()
 }
 
@@ -3604,7 +3584,7 @@ fn levenshtein_distance(left: &[String], right: &[String]) -> usize {
 
 /// The ADR 0011 / slice-5 protection predicate: active structured rule
 /// authority never decays passively, never supersedes, never combines.
-fn is_active_rule(crystal_type: &str, status: &str) -> bool {
+pub(crate) fn is_active_rule(crystal_type: &str, status: &str) -> bool {
     crystal_type == "rule" && status == "active"
 }
 
@@ -3756,200 +3736,5 @@ fn archive_working_copy(
         "update short_term_memories set archived_at = ?1 where id = ?2",
         rusqlite::params![now(), memory_id],
     )?;
-    Ok(())
-}
-
-/// Minimal crystal projection for combination decisions.
-struct CrystalCore {
-    text: String,
-    status: String,
-    crystal_type: String,
-    source_credibility: String,
-    strength: f64,
-}
-
-fn load_crystal_cores(
-    transaction: &rusqlite::Transaction<'_>,
-    pairs: &[(i64, i64)],
-) -> Result<std::collections::BTreeMap<i64, CrystalCore>, DreamError> {
-    let mut ids: Vec<i64> = pairs
-        .iter()
-        .flat_map(|(left, right)| [*left, *right])
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    if ids.is_empty() {
-        return Ok(std::collections::BTreeMap::new());
-    }
-    let ids_json = format!(
-        "[{}]",
-        ids.iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    let mut statement = transaction.prepare(
-        "select id, text, status, crystal_type, source_credibility, strength
-         from crystals
-         where id in (select value from json_each(?1))",
-    )?;
-    let rows = statement.query_map([&ids_json], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            CrystalCore {
-                text: row.get(1)?,
-                status: row.get(2)?,
-                crystal_type: row.get(3)?,
-                source_credibility: row.get(4)?,
-                strength: row.get(5)?,
-            },
-        ))
-    })?;
-    let mut cores = std::collections::BTreeMap::new();
-    for row in rows {
-        let (id, core) = row?;
-        cores.insert(id, core);
-    }
-    Ok(cores)
-}
-
-/// Survivor selection (July design): higher `source_credibility` weight,
-/// tie-broken by higher `strength`, then by lower id for determinism.
-fn pick_combination_survivor(
-    left_id: i64,
-    left: &CrystalCore,
-    right_id: i64,
-    right: &CrystalCore,
-) -> i64 {
-    let left_weight = source_credibility_confidence(&left.source_credibility);
-    let right_weight = source_credibility_confidence(&right.source_credibility);
-    match right_weight.partial_cmp(&left_weight) {
-        Some(std::cmp::Ordering::Greater) => right_id,
-        Some(std::cmp::Ordering::Equal) => {
-            if right.strength > left.strength {
-                right_id
-            } else {
-                left_id
-            }
-        }
-        _ => left_id,
-    }
-}
-
-/// Pairwise combination: union the absorbed crystal's concepts and links onto
-/// the survivor, mark it `superseded`, and record one `combined_into` memory
-/// event whose evidence names the survivor (event-sourced; the
-/// `supersedes_crystal_id` column is not reused for combination).
-fn combine_crystals(
-    transaction: &rusqlite::Transaction<'_>,
-    survivor: i64,
-    absorbed: i64,
-    cycle_id: i64,
-) -> Result<(), DreamError> {
-    transaction.execute(
-        "insert or ignore into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
-         select ?1, concept_id, link_type, confidence, created_at
-         from crystal_concepts where crystal_id = ?2",
-        rusqlite::params![survivor, absorbed],
-    )?;
-    {
-        let mut statement = transaction.prepare(
-            "select source_crystal_id, target_crystal_id, link_type, weight
-             from crystal_links
-             where source_crystal_id = ?1 or target_crystal_id = ?1",
-        )?;
-        let rows = statement.query_map([absorbed], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, f64>(3)?,
-            ))
-        })?;
-        let links: Vec<(i64, i64, String, f64)> = rows.collect::<Result<Vec<_>, _>>()?;
-        drop(statement);
-        for (source, target, link_type, weight) in links {
-            let other = if source == absorbed { target } else { source };
-            if other == survivor || other == absorbed {
-                continue;
-            }
-            // Preserve the link's orientation relative to its other endpoint.
-            let (new_source, new_target) = if source == absorbed {
-                (survivor, other)
-            } else {
-                (other, survivor)
-            };
-            transaction.execute(
-                "insert or ignore into crystal_links(
-                   source_crystal_id, target_crystal_id, link_type, weight
-                 )
-                 values (?1, ?2, ?3, ?4)",
-                rusqlite::params![new_source, new_target, link_type, weight],
-            )?;
-        }
-    }
-    transaction.execute(
-        "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",
-        rusqlite::params![now(), absorbed],
-    )?;
-    transaction.execute(
-        "insert into memory_events(
-           crystal_id, session_id, event_type, source_role, evidence,
-           strength_delta, confidence_delta, applied, cycle_id, created_at
-         )
-         values (?1, null, 'combined_into', 'system', ?2, 0, 0, 1, ?3, ?4)",
-        rusqlite::params![absorbed, survivor.to_string(), cycle_id, now()],
-    )?;
-    Ok(())
-}
-
-/// Hebbian strengthening: the canonical (lower, higher) id pair's
-/// `co_activation` link gains [`HEBBIAN_STRENGTH_DELTA`], or is created at
-/// [`LINK_INITIAL_WEIGHT`], capped at [`LINK_WEIGHT_MAX`].
-fn strengthen_co_activation_link(
-    transaction: &rusqlite::Transaction<'_>,
-    left: i64,
-    right: i64,
-) -> Result<(), DreamError> {
-    let (source, target) = (left.min(right), left.max(right));
-    let existing: Option<f64> = transaction
-        .query_row(
-            "select weight from crystal_links
-             where link_type = ?1
-               and ((source_crystal_id = ?2 and target_crystal_id = ?3)
-                 or (source_crystal_id = ?3 and target_crystal_id = ?2))",
-            rusqlite::params![CO_ACTIVATION_LINK_TYPE, source, target],
-            |row| row.get(0),
-        )
-        .map(Some)
-        .or_else(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })?;
-    match existing {
-        Some(weight) => {
-            transaction.execute(
-                "update crystal_links set weight = ?1
-                 where link_type = ?2
-                   and ((source_crystal_id = ?3 and target_crystal_id = ?4)
-                     or (source_crystal_id = ?4 and target_crystal_id = ?3))",
-                rusqlite::params![
-                    (weight + HEBBIAN_STRENGTH_DELTA).min(LINK_WEIGHT_MAX),
-                    CO_ACTIVATION_LINK_TYPE,
-                    source,
-                    target
-                ],
-            )?;
-        }
-        None => {
-            transaction.execute(
-                "insert into crystal_links(
-                   source_crystal_id, target_crystal_id, link_type, weight
-                 )
-                 values (?1, ?2, ?3, ?4)",
-                rusqlite::params![source, target, CO_ACTIVATION_LINK_TYPE, LINK_INITIAL_WEIGHT],
-            )?;
-        }
-    }
     Ok(())
 }
