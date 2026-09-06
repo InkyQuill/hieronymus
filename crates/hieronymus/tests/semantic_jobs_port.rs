@@ -278,6 +278,7 @@ fn batch_config(ttl: Duration) -> RebuildConfig {
         batch_size: 2,
         lease_ttl: ttl,
         max_batch_attempts: 3,
+        ..RebuildConfig::default()
     }
 }
 

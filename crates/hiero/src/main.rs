@@ -658,10 +658,16 @@ fn run_semantic_enable(
     let final_status = local_status();
 
     // Arming verification needs the ONNX runtime library; without it the
-    // model is acquired but the lane verdict stays honestly disarmed.
+    // model is acquired but the lane verdict stays honestly disarmed. A
+    // provided runtime is persisted in the semantic settings file so the
+    // daemon validates and reuses it across restarts (Task S2).
+    let mut runtime_saved = false;
     let verdict = match &parsed.runtime {
         Some(runtime) => {
-            hieronymus::semantic_arming::arming_verdict(config, std::path::Path::new(runtime))
+            let path = std::path::Path::new(runtime);
+            hieronymus::semantic_arming::save_runtime_library(config, path)?;
+            runtime_saved = true;
+            hieronymus::semantic_arming::arming_verdict(config, path)
         }
         None => hieronymus::semantic_arming::LaneState::Disarmed {
             reason: "onnx runtime library not provided; pass --runtime <lib> to verify arming"
@@ -679,6 +685,7 @@ fn run_semantic_enable(
             "tokenizer_path": store.tokenizer_path(),
             "model_path": store.model_path(),
             "runtime_verified": runtime_verified,
+            "runtime_saved": runtime_saved,
             "lane": verdict.as_str(),
             "reason": match &verdict {
                 hieronymus::semantic_arming::LaneState::Armed => serde_json::Value::Null,

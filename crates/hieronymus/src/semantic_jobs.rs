@@ -43,6 +43,7 @@
 //!   cumulative count. `last_error` keeps the most recent error even after a
 //!   later success, as history.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -338,7 +339,7 @@ pub struct JobRecord {
 /// Bounded-batch and lease parameters for one runner. Keep `batch_size` within
 /// the provider's `max_batch_inputs`; [`SemanticStore::write_batch`] enforces
 /// the provider limit regardless.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RebuildConfig {
     /// Authoritative chunks claimed, embedded, and written per lease-held
     /// batch.
@@ -349,6 +350,12 @@ pub struct RebuildConfig {
     /// Consecutive failed batch attempts allowed before the job and its
     /// candidate generation are marked failed (GC-able).
     pub max_batch_attempts: u32,
+    /// Supervised-shutdown hook (Task S2): checked at every batch boundary.
+    /// When it reports `true`, the runner stops claiming further batches and
+    /// returns [`JobOutcome::Busy`] — the lease expires naturally and
+    /// reconciliation resumes the durable job after the restart. `None` for
+    /// unsupervised (test) runs.
+    pub stop_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl Default for RebuildConfig {
@@ -357,6 +364,7 @@ impl Default for RebuildConfig {
             batch_size: 16,
             lease_ttl: Duration::from_secs(60),
             max_batch_attempts: 3,
+            stop_check: None,
         }
     }
 }
@@ -582,6 +590,24 @@ impl SemanticJobStore {
         Ok(row)
     }
 
+    /// Job ids a worker may claim right now, oldest first: every `queued`
+    /// job plus `running` jobs whose lease expired (crash residue made
+    /// reclaimable by [`Self::reconcile`]).
+    pub fn claimable_jobs(&self) -> Result<Vec<String>, SemanticError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "select job_id from semantic_jobs
+             where status = 'queued'
+                or (status = 'running'
+                    and (lease_expires_unix_ms is null
+                         or lease_expires_unix_ms <= ?1))
+             order by created_at, job_id",
+        )?;
+        let rows = statement.query_map(params![now_unix_ms()], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(SemanticError::from)
+    }
+
     /// Sets the durable cancellation flag. The current bounded batch finishes;
     /// the runner stops at the next boundary and never activates the
     /// candidate generation.
@@ -689,6 +715,15 @@ impl SemanticJobStore {
         // while a live worker's own renewals stay cheap.
         let mut first_claim = true;
         loop {
+            // Supervised shutdown: stop at a batch boundary. The lease lapses
+            // and reconciliation resumes the durable job later.
+            if let Some(stop) = &config.stop_check
+                && stop()
+            {
+                return Ok(JobOutcome::Busy {
+                    generation_id: record.generation_id.clone(),
+                });
+            }
             let claimed = match self.claim_lease(job_id, &owner, config.lease_ttl)? {
                 LeaseClaim::Claimed(claimed) => claimed,
                 LeaseClaim::Held => {

@@ -18,7 +18,7 @@
 //!   dimensions, limits, or tokenizer) degrades with the structured
 //!   `semantic_lane_unavailable` warning, which is what forces a rebuild.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::data_root::HieronymusConfig;
 use crate::recall::{RecallError, RecallService};
@@ -27,6 +27,37 @@ use crate::semantic_jobs::ChunkTokenizer;
 use crate::semantic_model::ModelStatus;
 use crate::semantic_recall::SemanticLane;
 use crate::semantic_store::{GenerationManifest, SemanticStore};
+
+/// The semantic settings file under the config root (`semantic.conf`), the
+/// same ownership pattern as `dream.conf`/`provider.conf`: an explicit
+/// `hiero semantic enable --runtime <lib>` write, validated at daemon
+/// startup, retained across restarts.
+pub fn semantic_config_path(config: &HieronymusConfig) -> PathBuf {
+    config.config_root().join("semantic.conf")
+}
+
+/// Persists the configured ONNX runtime location for this data root.
+pub fn save_runtime_library(config: &HieronymusConfig, runtime: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(config.config_root())
+        .map_err(|error| format!("semantic.conf directory: {error}"))?;
+    let text = format!(
+        "runtime_library = {}\n",
+        toml::Value::String(runtime.display().to_string())
+    );
+    crate::atomic::atomic_write_text(&semantic_config_path(config), &text)
+        .map_err(|error| format!("semantic.conf write failed: {error}"))
+}
+
+/// The persisted ONNX runtime location, when one was configured.
+pub fn load_runtime_library(config: &HieronymusConfig) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(semantic_config_path(config)).ok()?;
+    let table = text.parse::<toml::Table>().ok()?;
+    table
+        .get("runtime_library")?
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+}
 
 /// The outcome of arming: a recall service plus whether the semantic lane is
 /// attached to it.

@@ -11,6 +11,7 @@ pub mod http;
 pub mod protocol;
 pub mod registry;
 mod rest;
+pub mod semantic_worker;
 mod server;
 mod sessions;
 pub mod workers;
@@ -154,7 +155,11 @@ pub(crate) struct DaemonRuntime {
     /// diagnostics never depend on the file still existing.
     pub record: DiscoveryRecord,
     /// The application dispatcher backing the ported MCP tools (plan M1).
-    pub application: Application,
+    /// Shared with the semantic controller, which installs/refreshes the
+    /// armed query lane through interior mutability (Task S2).
+    pub application: Arc<Application>,
+    /// The supervised semantic rebuild worker and readiness state (Task S2).
+    pub semantic: semantic_worker::SemanticController,
     /// The daemon holds the database open for its whole lifetime: it owns the
     /// data root (ADR 0009). Every worker that touches it is supervised by
     /// [`DaemonRuntime::workers`], so the handle is quiescent by the time
@@ -236,7 +241,31 @@ impl Daemon {
         let connection = open_migrated(&database_path)?;
 
         let registry = McpRegistry::embedded();
-        let application = Application::open(&config)?;
+        let application = Arc::new(Application::open(&config)?);
+
+        // The semantic controller (Task S2): one supervised worker under the
+        // same stop edge as everything else. Arming resolves through the
+        // persisted runtime configuration (`hiero semantic enable --runtime`
+        // validated here, retained across restarts); the query lane it arms
+        // is installed into the application, and RAG imports queue durable
+        // rebuilds back through the controller.
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut workers = WorkerGroup::new(Arc::clone(&stop));
+        let semantic = {
+            let lane_application = Arc::clone(&application);
+            let arm = semantic_worker::resolve_arm(&config);
+            semantic_worker::SemanticController::start_with(
+                config.clone(),
+                &mut workers,
+                arm,
+                Box::new(move |lane| lane_application.install_semantic_lane(lane)),
+            )
+            .map_err(DaemonError::Worker)?
+        };
+        let hook_controller = semantic.clone();
+        application.set_rebuild_hook(Arc::new(move |series| {
+            hook_controller.request_rebuild(series)
+        }));
 
         let address = SocketAddr::new(IpAddr::from([127, 0, 0, 1]), options.port);
         let listener =
@@ -263,13 +292,12 @@ impl Daemon {
         discovery::write_discovery(&config, &record)
             .map_err(|source| DaemonError::DiscoveryWrite { source })?;
 
-        let stop = Arc::new(AtomicBool::new(false));
         let runtime = Arc::new(DaemonRuntime {
             config,
             registry,
             bearer,
             bound_address,
-            workers: WorkerGroup::new(Arc::clone(&stop)),
+            workers,
             idle_connections: IdleConnections::default(),
             stop,
             sessions: SessionStore::default(),
@@ -278,6 +306,7 @@ impl Daemon {
             provider_client: Box::new(DaemonProviderClient::with_default_transport()),
             record,
             application,
+            semantic,
             database: Mutex::new(connection),
         });
         let accept_thread = spawn_accept_thread(listener, Arc::clone(&runtime));
@@ -397,10 +426,9 @@ impl Daemon {
         //    every worker joined, so this lock can no longer be contended.
         self.rollback_open_transaction();
 
-        // 6. Close the semantic index. There is no daemon-owned index handle
-        //    yet (S2 registers one with the worker group); when there is, it
-        //    closes here, after the writers joined and before discovery is
-        //    removed.
+        // 6. Close the semantic index: the semantic controller's worker is
+        //    joined with the group above, so its provider/index handles are
+        //    already gone by the time discovery is removed.
 
         // 7. Remove only our own discovery record (a newer daemon's record is
         //    never deleted), then 8. release ownership last.

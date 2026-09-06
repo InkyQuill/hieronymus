@@ -700,9 +700,11 @@ fn default_source_type() -> String {
 /// Import a text/markdown/glossary file through the RAG store: the store
 /// resolves the actual parser and source type from the file, persists chunks
 /// with their typed tags, and treats identical checksum re-imports as
-/// metadata refreshes. Unsupported types are clean tool errors. Chunks are
-/// indexed by the store's own FTS/semantic indexing semantics — there is no
-/// separate index worker to notify.
+/// metadata refreshes. Unsupported types are clean tool errors. After the
+/// authoritative commit a durable semantic rebuild is queued through the
+/// daemon's semantic controller (Task S2); when no daemon owns this
+/// application the field is `null` and startup reconciliation covers the
+/// chunks later.
 fn rag_import(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagImportArgs>(arguments)?;
     let import = RagImport {
@@ -716,6 +718,18 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
         .map_err(domain)?
         .import_file(&args.series_slug, Path::new(&args.path), &import)
         .map_err(domain)?;
+    // Queue only when new authoritative rows landed: a metadata refresh of
+    // an identical checksum never changes chunk text, so the active
+    // generation's fingerprints stay valid.
+    let rebuild_job = if result.skipped || result.chunk_count == 0 {
+        Value::Null
+    } else {
+        match application.request_rebuild(&args.series_slug) {
+            Some(Ok(job_id)) => json!(job_id),
+            Some(Err(error)) => json!({"error": error}),
+            None => Value::Null,
+        }
+    };
     Ok(json!({
         "source_id": result.source.id,
         "series_slug": result.source.series_slug,
@@ -728,6 +742,7 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
         "skipped": result.skipped,
         "normalized_path": result.normalized_path,
         "normalized_format": result.normalized_format,
+        "semantic_rebuild_job": rebuild_job,
     }))
 }
 

@@ -18,6 +18,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use rusqlite::OptionalExtension;
+
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::memory_models::TranslationContext;
@@ -288,6 +290,85 @@ impl SemanticLane {
             records: eligible,
             warnings,
         })
+    }
+}
+
+/// Outcome of queueing a whole-corpus rebuild ([`queue_semantic_rebuild`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueueOutcome {
+    /// A fresh generation was begun and its rebuild job enqueued; the id is
+    /// the durable job id.
+    Enqueued(String),
+    /// A building generation with a live job already covers exactly the
+    /// current authoritative corpus; its job id is returned.
+    AlreadyQueued(String),
+    /// The corpus has no chunks: nothing to index, the lane stays
+    /// ready-for-ingest (never an error).
+    EmptyCorpus,
+}
+
+/// Queues a whole-corpus rebuild generation plus its durable job (Task S2's
+/// post-commit queueing, also the startup recovery path for chunks with no
+/// active generation). One rebuild is in flight at a time:
+///
+/// - a live building job whose frozen `expected_count` matches the current
+///   authoritative count is returned as-is (dedup);
+/// - a live building job whose count went stale (a concurrent import landed
+///   after the generation froze its expectation) is durably cancelled — its
+///   candidate can never cover the new chunks — and a fresh generation is
+///   queued over the whole corpus.
+pub fn queue_semantic_rebuild(
+    config: &HieronymusConfig,
+    identity: &crate::semantic_embeddings::EmbeddingIdentity,
+) -> Result<QueueOutcome, SemanticError> {
+    let store = SemanticStore::open(config)?;
+    let jobs = SemanticJobStore::open(config)?;
+    let chunk_count = {
+        let connection = open_migrated(Path::new(&config.database_path()))?;
+        connection.query_row("select count(*) from rag_chunks", [], |row| {
+            row.get::<_, i64>(0)
+        })?
+    };
+    if chunk_count == 0 {
+        return Ok(QueueOutcome::EmptyCorpus);
+    }
+
+    let live: Option<(String, i64)> = {
+        let connection = open_migrated(Path::new(&config.database_path()))?;
+        connection
+            .query_row(
+                "select j.job_id, g.expected_count
+                 from semantic_jobs j
+                 join semantic_generations g on g.generation_id = j.generation_id
+                 where j.status in ('queued', 'running')
+                   and g.status = 'building'
+                 order by j.created_at
+                 limit 1",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .map_err(SemanticError::from)?
+    };
+    if let Some((job_id, expected_count)) = live {
+        if expected_count == chunk_count {
+            return Ok(QueueOutcome::AlreadyQueued(job_id));
+        }
+        jobs.request_cancel(&job_id)?;
+    }
+
+    let generation_id = format!(
+        "rebuild-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+    store.begin_generation(&generation_id, identity)?;
+    match jobs.enqueue_rebuild(&generation_id, identity) {
+        Ok(record) => Ok(QueueOutcome::Enqueued(record.job_id)),
+        Err(error) => {
+            // Never leave an unqueued candidate generation behind.
+            let _ = store.cancel_generation(&generation_id);
+            Err(error)
+        }
     }
 }
 
