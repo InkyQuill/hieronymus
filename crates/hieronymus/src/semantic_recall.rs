@@ -317,59 +317,76 @@ pub enum QueueOutcome {
 ///   after the generation froze its expectation) is durably cancelled — its
 ///   candidate can never cover the new chunks — and a fresh generation is
 ///   queued over the whole corpus.
+///
+/// The check, the cancel, the candidate generation, and the job insert all
+/// happen inside ONE `BEGIN IMMEDIATE` transaction, so two imports racing in
+/// this window serialize: the loser re-reads the winner's fresh job and
+/// dedups (or supersedes it) instead of queueing a second generation. Any
+/// failure rolls the whole thing back — no cancelled flag or unqueued
+/// candidate can survive a partial queueing.
 pub fn queue_semantic_rebuild(
     config: &HieronymusConfig,
     identity: &crate::semantic_embeddings::EmbeddingIdentity,
 ) -> Result<QueueOutcome, SemanticError> {
-    let store = SemanticStore::open(config)?;
-    let jobs = SemanticJobStore::open(config)?;
-    let chunk_count = {
-        let connection = open_migrated(Path::new(&config.database_path()))?;
-        connection.query_row("select count(*) from rag_chunks", [], |row| {
-            row.get::<_, i64>(0)
-        })?
-    };
+    use rusqlite::{TransactionBehavior, params};
+
+    // Schema bootstrap only (idempotent, autocommit); the decision below runs
+    // in its own immediate transaction.
+    SemanticStore::open(config)?;
+    SemanticJobStore::open(config)?;
+    let mut connection = open_migrated(Path::new(&config.database_path()))?;
+    // Two racing importers contend for the same write lock; the busy timeout
+    // lets them serialize instead of failing.
+    connection.pragma_update(None, "busy_timeout", 5_000)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+    let chunk_count: i64 =
+        transaction.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
     if chunk_count == 0 {
         return Ok(QueueOutcome::EmptyCorpus);
     }
 
-    let live: Option<(String, i64)> = {
-        let connection = open_migrated(Path::new(&config.database_path()))?;
-        connection
-            .query_row(
-                "select j.job_id, g.expected_count
-                 from semantic_jobs j
-                 join semantic_generations g on g.generation_id = j.generation_id
-                 where j.status in ('queued', 'running')
-                   and g.status = 'building'
-                 order by j.created_at
-                 limit 1",
-                [],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-            )
-            .optional()
-            .map_err(SemanticError::from)?
-    };
-    if let Some((job_id, expected_count)) = live {
-        if expected_count == chunk_count {
-            return Ok(QueueOutcome::AlreadyQueued(job_id));
-        }
-        jobs.request_cancel(&job_id)?;
+    let live: Option<(String, i64)> = transaction
+        .query_row(
+            "select j.job_id, g.expected_count
+             from semantic_jobs j
+             join semantic_generations g on g.generation_id = j.generation_id
+             where j.status in ('queued', 'running')
+               and g.status = 'building'
+             order by j.created_at
+             limit 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    if let Some((job_id, expected_count)) = &live
+        && *expected_count == chunk_count
+    {
+        return Ok(QueueOutcome::AlreadyQueued(job_id.clone()));
+    }
+    if let Some((job_id, _)) = &live {
+        transaction.execute(
+            "update semantic_jobs set cancel_requested = 1, updated_at = ?2 where job_id = ?1",
+            params![job_id, chrono::Utc::now().to_rfc3339()],
+        )?;
     }
 
+    // Unique across racers and repeated calls: wall-clock nanos plus a
+    // process-local sequence (two serialized racers can share a nanosecond).
+    static QUEUE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let generation_id = format!(
-        "rebuild-{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        "rebuild-{}-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+        QUEUE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    store.begin_generation(&generation_id, identity)?;
-    match jobs.enqueue_rebuild(&generation_id, identity) {
-        Ok(record) => Ok(QueueOutcome::Enqueued(record.job_id)),
-        Err(error) => {
-            // Never leave an unqueued candidate generation behind.
-            let _ = store.cancel_generation(&generation_id);
-            Err(error)
-        }
-    }
+    crate::semantic_store::begin_generation_in_transaction(&transaction, &generation_id, identity)?;
+    let record = crate::semantic_jobs::enqueue_rebuild_in_transaction(
+        &transaction,
+        &generation_id,
+        identity,
+    )?;
+    transaction.commit()?;
+    Ok(QueueOutcome::Enqueued(record.job_id))
 }
 
 /// Schedules the repair for corrupt hits: a fresh generation plus the Task 8

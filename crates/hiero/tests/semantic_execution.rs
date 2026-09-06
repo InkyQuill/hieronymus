@@ -778,3 +778,74 @@ fn an_empty_corpus_rebuild_request_is_a_no_op_marker() {
     assert_eq!(job_id, EMPTY_CORPUS_JOB_ID);
     group.stop_and_join().unwrap();
 }
+
+/// The queue seam is atomic: concurrent queue_semantic_rebuild calls over the
+/// same corpus observe one another — exactly one fresh generation is queued,
+/// every other caller dedups onto it. Two fresh generations from racing
+/// callers would leave an orphaned building candidate behind.
+#[test]
+fn concurrent_queue_calls_dedup_onto_one_generation() {
+    use hieronymus::semantic_recall::{QueueOutcome, queue_semantic_rebuild};
+
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let registry = hieronymus::registry::Registry::open(&config).unwrap();
+    registry
+        .create_series("demo", "Demo", "ja", "en", None)
+        .unwrap();
+    let source = root.path().join("race.txt");
+    std::fs::write(
+        &source,
+        "Racing importers must never queue two generations.",
+    )
+    .unwrap();
+    hieronymus::rag::RagStore::open(&config)
+        .unwrap()
+        .import_file("demo", &source, &hieronymus::rag::RagImport::new())
+        .unwrap();
+
+    let identity = TestArm::fast().identity();
+    let mut callers = Vec::new();
+    for _ in 0..8 {
+        let config = config.clone();
+        let identity = identity.clone();
+        callers.push(std::thread::spawn(move || {
+            queue_semantic_rebuild(&config, &identity).unwrap()
+        }));
+    }
+    let outcomes: Vec<QueueOutcome> = callers
+        .into_iter()
+        .map(|caller| caller.join().unwrap())
+        .collect();
+    let enqueued: Vec<&String> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            QueueOutcome::Enqueued(job_id) => Some(job_id),
+            _ => None,
+        })
+        .collect();
+    let deduped: Vec<&String> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            QueueOutcome::AlreadyQueued(job_id) => Some(job_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        enqueued.len(),
+        1,
+        "exactly one caller may queue a fresh generation: {outcomes:?}"
+    );
+    assert_eq!(deduped.len(), 7, "every other caller dedups: {outcomes:?}");
+    assert_eq!(enqueued[0], deduped[0]);
+
+    let connection = rusqlite::Connection::open(config.database_path()).unwrap();
+    let building: i64 = connection
+        .query_row(
+            "select count(*) from semantic_generations where status = 'building'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(building, 1, "no orphaned building candidate may survive");
+}
