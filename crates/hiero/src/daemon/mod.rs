@@ -125,6 +125,100 @@ pub enum DaemonError {
     Worker(String),
 }
 
+/// Cleanup for the startup steps that run *after* the first worker thread
+/// exists (ADR 0009: no writer may outlive data-root ownership).
+///
+/// `Daemon::start` spawns supervised workers — the semantic controller, then
+/// the dream controller — and then keeps failing: instance id, discovery
+/// publication, controller setup. Every one of those `?`s used to drop a
+/// `WorkerGroup` that joins nothing and a `RootOwnership` that releases
+/// immediately, leaving a live writer on a root another process could take
+/// over. This guard owns all three pieces for that window so an early return
+/// (or a panic) unwinds through one ordered teardown instead.
+///
+/// Drop order is the whole point, and it is the same order `finish_shutdown`
+/// uses: signal → join every worker → remove our discovery record → release
+/// ownership. It is written out explicitly rather than left to field order,
+/// because getting it backwards is exactly the bug being fixed.
+///
+/// On the success path [`StartupGuard::into_parts`] moves the pieces onto the
+/// `DaemonRuntime`/`Daemon` that own them from then on, and the drop below
+/// becomes a no-op.
+struct StartupGuard {
+    stop: Arc<AtomicBool>,
+    /// `None` only after `into_parts` handed the group to the runtime.
+    workers: Option<WorkerGroup>,
+    /// `None` only after `into_parts` handed the guard to the daemon.
+    ownership: Option<RootOwnership>,
+    /// The discovery record published during startup, if publication got that
+    /// far: a failed start must not leave a readiness record pointing at a
+    /// daemon that never began serving.
+    published: Option<(HieronymusConfig, String)>,
+}
+
+impl StartupGuard {
+    fn new(stop: Arc<AtomicBool>, workers: WorkerGroup, ownership: RootOwnership) -> StartupGuard {
+        StartupGuard {
+            stop,
+            workers: Some(workers),
+            ownership: Some(ownership),
+            published: None,
+        }
+    }
+
+    /// The worker group the controllers register with.
+    fn workers_mut(&mut self) -> &mut WorkerGroup {
+        self.workers
+            .as_mut()
+            .expect("the startup guard owns its workers until `into_parts`")
+    }
+
+    /// Record that the discovery record is now on disk, so a later startup
+    /// failure removes it again.
+    fn mark_published(&mut self, config: &HieronymusConfig, instance_id: &str) {
+        self.published = Some((config.clone(), instance_id.to_string()));
+    }
+
+    /// Startup succeeded: hand the pieces to their long-lived owners. The
+    /// guard's own `Drop` then finds nothing left to clean up.
+    fn into_parts(mut self) -> (Arc<AtomicBool>, WorkerGroup, RootOwnership) {
+        let workers = self
+            .workers
+            .take()
+            .expect("the startup guard is disarmed exactly once");
+        let ownership = self
+            .ownership
+            .take()
+            .expect("the startup guard is disarmed exactly once");
+        self.published = None;
+        (Arc::clone(&self.stop), workers, ownership)
+    }
+}
+
+impl Drop for StartupGuard {
+    fn drop(&mut self) {
+        if let Some(workers) = self.workers.take() {
+            // Signal first, then wait: a worker that already armed a provider
+            // or opened the database must be gone before anything else lets
+            // another process in. A panicked worker has terminated, so the
+            // join result is only diagnostic here — the guard is released
+            // either way, and there is no caller left to return it to.
+            self.stop.store(true, Ordering::Release);
+            if let Err(error) = workers.stop_and_join() {
+                eprintln!("hiero daemon startup cleanup: {error}");
+            }
+            drop(workers);
+        }
+        // Only now, with every writer joined: unpublish, then release the
+        // root. Publishing readiness for a daemon that failed to start would
+        // point clients (and `hiero status`) at a dead endpoint.
+        if let Some((config, instance_id)) = self.published.take() {
+            discovery::remove_discovery(&config, &instance_id);
+        }
+        drop(self.ownership.take());
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct DaemonRuntime {
     pub config: HieronymusConfig,
@@ -250,30 +344,13 @@ impl Daemon {
         let registry = McpRegistry::embedded();
         let application = Arc::new(Application::open(&config)?);
 
-        // The semantic controller (Task S2): one supervised worker under the
-        // same stop edge as everything else. Arming resolves through the
-        // persisted runtime configuration (`hiero semantic enable --runtime`
-        // validated here, retained across restarts); the query lane it arms
-        // is installed into the application, and RAG imports queue durable
-        // rebuilds back through the controller.
-        let stop = Arc::new(AtomicBool::new(false));
-        let mut workers = WorkerGroup::new(Arc::clone(&stop));
-        let semantic = {
-            let lane_application = Arc::clone(&application);
-            let arm = semantic_worker::resolve_arm(&config);
-            semantic_worker::SemanticController::start_with(
-                config.clone(),
-                &mut workers,
-                arm,
-                Box::new(move |lane| lane_application.install_semantic_lane(lane)),
-            )
-            .map_err(DaemonError::Worker)?
-        };
-        let hook_controller = semantic.clone();
-        application.set_rebuild_hook(Arc::new(move |series| {
-            hook_controller.request_rebuild(series)
-        }));
-
+        // Bind and credential validation come *before* any worker exists.
+        // Both are ordinary startup refusals — an occupied port (ADR 0009
+        // never scans for another one) and an unusable token file are the two
+        // most common ones — and neither needs a running worker to decide.
+        // Failing here therefore returns without ever having spawned a
+        // thread, which is strictly safer than unwinding through a cleanup:
+        // there is nothing to detach.
         let address = SocketAddr::new(IpAddr::from([127, 0, 0, 1]), options.port);
         let listener =
             TcpListener::bind(address).map_err(|source| DaemonError::Bind { address, source })?;
@@ -285,6 +362,38 @@ impl Daemon {
         // astra 11). Ownership is held, so this read-or-mint is exclusive: a
         // plain restart reuses the stored token and never rotates it.
         let bearer = discovery::ensure_installation_token(&config)?;
+
+        // From here on startup owns worker threads, so every remaining `?`
+        // unwinds through `StartupGuard`: signal, join, unpublish, and only
+        // then release the root.
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut guard = StartupGuard::new(
+            Arc::clone(&stop),
+            WorkerGroup::new(Arc::clone(&stop)),
+            ownership,
+        );
+
+        // The semantic controller (Task S2): one supervised worker under the
+        // same stop edge as everything else. Arming resolves through the
+        // persisted runtime configuration (`hiero semantic enable --runtime`
+        // validated here, retained across restarts); the query lane it arms
+        // is installed into the application, and RAG imports queue durable
+        // rebuilds back through the controller.
+        let semantic = {
+            let lane_application = Arc::clone(&application);
+            let arm = semantic_worker::resolve_arm(&config);
+            semantic_worker::SemanticController::start_with(
+                config.clone(),
+                guard.workers_mut(),
+                arm,
+                Box::new(move |lane| lane_application.install_semantic_lane(lane)),
+            )
+            .map_err(DaemonError::Worker)?
+        };
+        let hook_controller = semantic.clone();
+        application.set_rebuild_hook(Arc::new(move |series| {
+            hook_controller.request_rebuild(series)
+        }));
 
         let instance_id = discovery::generate_instance_id()?;
         let record = DiscoveryRecord {
@@ -298,11 +407,12 @@ impl Daemon {
         };
         discovery::write_discovery(&config, &record)
             .map_err(|source| DaemonError::DiscoveryWrite { source })?;
+        guard.mark_published(&config, &record.instance_id);
 
         // The dream controller registers its worker with the group, so a
         // graceful stop joins it before discovery is removed and ownership
         // released (task D5; the SIGTERM path needs no extra wiring).
-        let dream = dream_worker::DreamController::start(config.clone(), &mut workers)
+        let dream = dream_worker::DreamController::start(config.clone(), guard.workers_mut())
             .map_err(DaemonError::Worker)?;
         // The controller runs every production dream run; the MCP
         // `hieronymus_dream` dispatch serves through this handle. On a bare
@@ -310,6 +420,10 @@ impl Daemon {
         // fails closed.
         application.install_dream_controller(dream.clone());
         let events = dream.events();
+
+        // Startup succeeded: the runtime owns the workers and the daemon owns
+        // the root guard from here, and nothing below can fail.
+        let (stop, workers, ownership) = guard.into_parts();
         let runtime = Arc::new(DaemonRuntime {
             config,
             registry,
@@ -352,6 +466,14 @@ impl Daemon {
     /// Diagnostics support: the number of live admin websocket subscribers.
     pub fn admin_subscriber_count(&self) -> usize {
         self.runtime.events.subscriber_count()
+    }
+
+    /// Diagnostics support: how many worker handles the group still retains.
+    /// Steady state is the long-lived controllers plus whatever requests are
+    /// genuinely in flight — completed connection workers are reaped by the
+    /// accept loop, so this must not grow with the number of requests served.
+    pub fn worker_count(&self) -> usize {
+        self.runtime.workers.live_count()
     }
 
     /// The dream controller's status: the active run and the last finished
@@ -493,13 +615,30 @@ impl Drop for Daemon {
 /// ownership release).
 ///
 /// Joining happens outside this thread. The loop never calls `stop_and_join`,
-/// so it can never wait on itself.
+/// so it can never wait on itself. It *does* call `reap_finished`, which joins
+/// only handles that already ran to completion and gives up immediately if a
+/// shutdown holds the join section — the accept loop is never the thread that
+/// waits.
+///
+/// The accept thread is not itself a member of the group, and `finish_shutdown`
+/// joins it before it drains the group, so the reap below cannot collide with
+/// the shutdown drain for long (and is harmless when it does).
 fn spawn_accept_thread(listener: TcpListener, runtime: Arc<DaemonRuntime>) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let _ = listener.set_nonblocking(true);
         loop {
             if runtime.stop.load(Ordering::Acquire) {
                 break;
+            }
+            // Retire finished connection workers. Under load this runs once
+            // per accepted connection; when idle, once per `ACCEPT_POLL`.
+            // Without it the handle list would grow by one entry per request
+            // served and only drain at shutdown.
+            if let Err(error) = runtime.workers.reap_finished() {
+                // A panicked connection worker is a bug worth reporting, not
+                // a reason to stop accepting: the panic already unwound that
+                // one thread and touched nothing else.
+                eprintln!("hiero daemon worker: {error}");
             }
             match listener.accept() {
                 Ok((stream, _)) => {
@@ -581,4 +720,106 @@ pub fn run_foreground(options: DaemonOptions) -> Result<(), DaemonError> {
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
     daemon.wait_for_shutdown()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record_for(instance_id: &str) -> DiscoveryRecord {
+        DiscoveryRecord {
+            discovery_version: discovery::DISCOVERY_VERSION,
+            protocol_version: PROTOCOL_REVISION.to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            pid: std::process::id(),
+            instance_id: instance_id.to_string(),
+            started_at: "2026-09-06T00:00:00Z".to_string(),
+        }
+    }
+
+    /// The drop order the ownership invariant depends on: a startup that
+    /// fails after spawning must join every worker, then unpublish, and only
+    /// then release the root. The integration suite covers the real
+    /// `Daemon::start` paths that reach this; here the guard itself is put
+    /// through its teardown directly, because the last post-publish failure
+    /// (`DreamController::start`) has no external trigger.
+    #[test]
+    fn a_dropped_startup_guard_joins_then_unpublishes_then_releases() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let ownership = RootOwnership::acquire(&config, "daemon").unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut guard = StartupGuard::new(
+            Arc::clone(&stop),
+            WorkerGroup::new(Arc::clone(&stop)),
+            ownership,
+        );
+
+        // A worker that outlives the failure point, like a semantic worker
+        // mid-arming, plus the record a partial startup already published.
+        let joined = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&joined);
+        guard
+            .workers_mut()
+            .spawn(Box::new(move |_stop| {
+                std::thread::sleep(Duration::from_millis(150));
+                flag.store(true, Ordering::Release);
+            }))
+            .unwrap();
+        let record = record_for("guarded-instance");
+        discovery::write_discovery(&config, &record).unwrap();
+        guard.mark_published(&config, &record.instance_id);
+
+        drop(guard);
+
+        assert!(
+            joined.load(Ordering::Acquire),
+            "the guard must join every worker before it releases the root"
+        );
+        assert!(
+            !config.daemon_discovery_path().exists(),
+            "a failed startup must not leave a readiness record behind"
+        );
+        assert!(
+            RootOwnership::acquire(&config, "probe").is_ok(),
+            "ownership must be free once the guard has dropped"
+        );
+    }
+
+    /// The success path: `into_parts` hands everything to its long-lived
+    /// owner, so the guard's drop must not signal, join, unpublish, or
+    /// release anything.
+    #[test]
+    fn a_disarmed_startup_guard_leaves_its_parts_running() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let ownership = RootOwnership::acquire(&config, "daemon").unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut guard = StartupGuard::new(
+            Arc::clone(&stop),
+            WorkerGroup::new(Arc::clone(&stop)),
+            ownership,
+        );
+        let record = record_for("live-instance");
+        discovery::write_discovery(&config, &record).unwrap();
+        guard.mark_published(&config, &record.instance_id);
+
+        let (kept_stop, workers, ownership) = guard.into_parts();
+
+        assert!(!kept_stop.load(Ordering::Acquire), "nothing was cancelled");
+        workers
+            .spawn(Box::new(|_| {}))
+            .expect("the group still admits work");
+        assert!(
+            config.daemon_discovery_path().exists(),
+            "a started daemon keeps its published record"
+        );
+        assert!(
+            RootOwnership::acquire(&config, "probe").is_err(),
+            "the caller still holds the root"
+        );
+        workers.stop_and_join().unwrap();
+        drop(ownership);
+    }
 }
