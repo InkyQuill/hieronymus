@@ -436,18 +436,20 @@ fn unclaimed_tools_report_not_implemented() {
 }
 
 #[test]
-fn dream_dispatch_runs_the_deterministic_fail_closed_path() {
+fn dream_dispatch_serves_only_through_the_daemon_controller() {
     let (_root, app) = test_application();
-    // M5: hieronymus_dream executes the DreamService seam (the same path the
-    // REST manual-dreaming route uses). On a fresh root the workflow gate
-    // passes with the default disabled wiring and the run completes with
-    // nothing pending.
-    let payload = app.call("hieronymus_dream", &json!({}), ACTOR).unwrap();
-    assert_eq!(payload["status"], json!("completed"));
-    assert_eq!(payload["provider"], json!("deterministic"));
-    assert_eq!(payload["input_count"], json!(0));
-    // A named non-deterministic provider is a domain rejection (D5 upgrades
-    // this dispatch), never a silent deterministic substitution.
+    // D5: `hieronymus_dream` runs through the daemon's dream controller. A
+    // bare application (no daemon) fails closed instead of constructing a
+    // provider itself.
+    let error = app.call("hieronymus_dream", &json!({}), ACTOR).unwrap_err();
+    match error {
+        AppError::Domain(message) => {
+            assert!(message.contains("dream controller"), "{message}");
+        }
+        other => panic!("expected Domain, got: {other}"),
+    }
+    // A named provider cannot select a lane: providers are configured, and
+    // the fail-closed pin rejects anything the configured lanes do not run.
     let error = app
         .call("hieronymus_dream", &json!({"provider": "openai"}), ACTOR)
         .unwrap_err();

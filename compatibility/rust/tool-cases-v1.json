@@ -667,6 +667,16 @@
       "name": "hieronymus_rule_crystals_list",
       "setup": [
         {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
           "kind": "call",
           "tool": "hieronymus_series_create",
           "arguments": {
@@ -729,6 +739,16 @@
       "name": "hieronymus_rule_crystal_validate",
       "setup": [
         {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
           "kind": "call",
           "tool": "hieronymus_series_create",
           "arguments": {
@@ -782,6 +802,16 @@
     {
       "name": "hieronymus_rule_crystal_archive",
       "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
         {
           "kind": "call",
           "tool": "hieronymus_series_create",
@@ -1326,6 +1356,16 @@
       "name": "hieronymus_crystal_link_concept",
       "setup": [
         {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
           "kind": "call",
           "tool": "hieronymus_series_create",
           "arguments": {
@@ -1397,6 +1437,16 @@
       "name": "hieronymus_crystal_story_scopes_set",
       "setup": [
         {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
           "kind": "call",
           "tool": "hieronymus_series_create",
           "arguments": {
@@ -1459,6 +1509,16 @@
     {
       "name": "hieronymus_crystal_semantic_tags_set",
       "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
         {
           "kind": "call",
           "tool": "hieronymus_series_create",
@@ -1553,51 +1613,27 @@
       "name": "hieronymus_dream",
       "setup": [
         {
-          "kind": "call",
-          "tool": "hieronymus_series_create",
-          "arguments": {
-            "slug": "book",
-            "title": "Book",
-            "source_language": "ja",
-            "target_language": "en"
-          }
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
         },
         {
-          "kind": "call",
-          "tool": "hieronymus_session_start",
-          "arguments": {
-            "series_slug": "book"
-          },
-          "save": "session_id"
-        },
-        {
-          "kind": "call",
-          "tool": "hieronymus_short_term_add",
-          "arguments": {
-            "session_id": "$session_id",
-            "kind": "note",
-            "text": "The lighthouse keeper keeps a compass that points inward."
-          }
-        },
-        {
-          "kind": "call",
-          "tool": "hieronymus_session_complete",
-          "arguments": {
-            "session_id": "$session_id"
-          }
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
         }
       ],
       "arguments": {},
       "expected_subset": {
         "status": "completed",
-        "provider": "deterministic",
-        "input_count": 1
+        "provider": "openai",
+        "input_count": 0
       },
       "persist": {
         "table": "dream_runs",
         "where": {
           "status": "completed",
-          "provider": "deterministic"
+          "provider": "openai"
         }
       }
     }

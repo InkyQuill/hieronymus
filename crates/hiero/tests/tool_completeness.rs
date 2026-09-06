@@ -11,6 +11,9 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -327,6 +330,152 @@ impl Transport for StdioTransport {
     }
 }
 
+/// An in-process loopback LLM standing in for the configured dream lane
+/// (task D5: production dreaming runs configured providers, so the matrix
+/// wires `provider.conf` at this URL through the case's `WriteFile` setup).
+/// The `knowledge_crystals` answer replicates the deterministic provider's
+/// crystal derivation (rule versus concept from credibility and rule
+/// intent), so cases that need a dream-created crystal keep their shape.
+struct DreamLoopback {
+    url: String,
+    stop: Arc<AtomicBool>,
+    accept_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl DreamLoopback {
+    fn start() -> Self {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let accept_thread = std::thread::spawn(move || {
+            while !thread_stop.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        std::thread::spawn(move || serve_dream_request(stream));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Self {
+            url,
+            stop,
+            accept_thread: Some(accept_thread),
+        }
+    }
+}
+
+impl Drop for DreamLoopback {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(handle) = self.accept_thread.take() {
+            handle.join().unwrap();
+        }
+    }
+}
+
+fn serve_dream_request(mut stream: std::net::TcpStream) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+    let body = read_dream_request(&mut stream);
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+    let _ = std::io::Write::flush(&mut stream);
+}
+
+fn read_dream_request(stream: &mut std::net::TcpStream) -> String {
+    use std::io::Read;
+    let mut raw = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    let separator = loop {
+        if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => return String::new(),
+            Ok(count) => raw.extend_from_slice(&buffer[..count]),
+            Err(_) => return String::new(),
+        }
+    };
+    let head = String::from_utf8_lossy(&raw[..separator]).to_string();
+    let content_length = head
+        .split("\r\n")
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())?
+        })
+        .unwrap_or(0);
+    let mut body = raw[separator + 4..].to_vec();
+    while body.len() < content_length {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => body.extend_from_slice(&buffer[..count]),
+            Err(_) => break,
+        }
+    }
+    let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let instruction: Value = serde_json::from_str(
+        request["messages"][0]["content"]
+            .as_str()
+            .unwrap_or_default(),
+    )
+    .unwrap_or(Value::Null);
+    let pass = instruction["instruction"]
+        .as_str()
+        .unwrap_or_default()
+        .split("Dream pass: ")
+        .nth(1)
+        .map(|rest| rest.split('.').next().unwrap_or_default())
+        .unwrap_or_default()
+        .to_string();
+    let memory_ids: Vec<Value> = instruction["memories"]
+        .as_array()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .map(|memory| memory["id"].clone())
+        .collect();
+    let content = if pass == "coverage_audit" {
+        json!({ "covered_memory_ids": memory_ids }).to_string()
+    } else if pass == "knowledge_crystals" {
+        // The deterministic provider's derivation, over the wire schema.
+        let crystals: Vec<Value> = instruction["memories"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .map(|memory| {
+                let rule = memory["source_credibility"] == json!("user_rule")
+                    || !memory["rule_intent"].as_str().unwrap_or_default().trim().is_empty();
+                json!({
+                    "crystal_type": if rule { "rule" } else { "concept" },
+                    "title": hieronymus::dreaming::title_from_kind(memory["kind"].as_str().unwrap_or_default()),
+                    "text": hieronymus::dreaming::normalize_candidate_text(memory["text"].as_str().unwrap_or_default()),
+                    "strength": 0.6,
+                    "confidence": hieronymus::dreaming::source_credibility_confidence(
+                        memory["source_credibility"].as_str().unwrap_or_default()),
+                    "source_memory_ids": [memory["id"].clone()],
+                    "source_credibility": memory["source_credibility"].clone(),
+                    "rule_intent": memory["rule_intent"].clone(),
+                })
+            })
+            .collect();
+        json!({ "crystals": crystals }).to_string()
+    } else {
+        "{}".to_string()
+    };
+    json!({ "choices": [{ "message": { "content": content } }] }).to_string()
+}
+
 /// A stateless `tools/call` request carrying the exact `_meta` the protocol
 /// layer mirrors.
 fn tools_call(id: i64, name: &str, arguments: &Value) -> Value {
@@ -347,7 +496,7 @@ fn tools_call(id: i64, name: &str, arguments: &Value) -> Value {
 
 // -------------------------------------------------------------- case runner
 
-fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase) {
+fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase, dream_url: &str) {
     let label = format!("[{}] {}", transport.label(), case.name);
     let mut bindings = BTreeMap::new();
 
@@ -393,6 +542,7 @@ fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase) {
                 }
             }
             SetupOp::WriteFile { path, contents } => {
+                let contents = contents.replace("<DREAM_PROVIDER_URL>", dream_url);
                 let destination = root.join(path.strip_prefix("<ROOT>/").unwrap_or(path));
                 if let Some(parent) = destination.parent() {
                     std::fs::create_dir_all(parent).unwrap();
@@ -504,9 +654,10 @@ fn assert_persisted(
 fn every_case_executes_over_real_http_with_persisted_mutations() {
     for case in cases() {
         let root = tempfile::tempdir().unwrap();
+        let dream_provider = DreamLoopback::start();
         let daemon = common::start_daemon(root.path());
         let mut transport = HttpTransport { daemon, next_id: 0 };
-        run_case(&mut transport, root.path(), &case);
+        run_case(&mut transport, root.path(), &case, &dream_provider.url);
         transport.daemon.shutdown().unwrap();
     }
 }
@@ -518,8 +669,9 @@ fn every_case_executes_over_stdio_with_persisted_mutations() {
         // The in-process daemon publishes the discovery record the adapter
         // uses for stdio discovery (no fixed port, no baked-in credential).
         let daemon = common::start_daemon(root.path());
+        let dream_provider = DreamLoopback::start();
         let mut transport = StdioTransport::spawn(root.path());
-        run_case(&mut transport, root.path(), &case);
+        run_case(&mut transport, root.path(), &case, &dream_provider.url);
         transport.finish(&format!("[stdio] {}", case.name));
         daemon.shutdown().unwrap();
     }

@@ -6,6 +6,7 @@
 
 pub mod assets;
 pub mod discovery;
+pub mod dream_worker;
 mod events;
 pub mod http;
 pub mod protocol;
@@ -30,6 +31,7 @@ use hieronymus::secret::Secret;
 use hieronymus::state_classifier::{StartupState, classify};
 
 use crate::application::Application;
+use crate::daemon::dream_worker::DreamController;
 
 pub use assets::Assets;
 pub use discovery::DiscoveryRecord;
@@ -131,9 +133,10 @@ pub(crate) struct DaemonRuntime {
     /// The one cancellation edge every loop in the daemon observes; shared
     /// with [`DaemonRuntime::workers`].
     pub stop: Arc<AtomicBool>,
-    /// Every mutating worker thread the daemon owns (currently the
-    /// per-connection serve threads; D5/S2 controllers register here too).
-    /// Joined before discovery removal and ownership release.
+    /// Every mutating worker thread the daemon owns: the per-connection
+    /// serve threads and the dream controller's worker (S2's semantic
+    /// controller registers here too). Joined before discovery removal and
+    /// ownership release.
     pub workers: WorkerGroup,
     /// Accepted-but-not-yet-dispatched sockets, so a shutdown can wake reads
     /// that are blocked on a peer that never sent anything.
@@ -155,6 +158,10 @@ pub(crate) struct DaemonRuntime {
     pub record: DiscoveryRecord,
     /// The application dispatcher backing the ported MCP tools (plan M1).
     pub application: Application,
+    /// The supervised dream controller (task D5): every production dream
+    /// run — scheduled, admin manual, and MCP — coalesces into its worker.
+    /// Its event hub is the runtime's admin event hub.
+    pub dream: DreamController,
     /// The daemon holds the database open for its whole lifetime: it owns the
     /// data root (ADR 0009). Every worker that touches it is supervised by
     /// [`DaemonRuntime::workers`], so the handle is quiescent by the time
@@ -264,20 +271,33 @@ impl Daemon {
             .map_err(|source| DaemonError::DiscoveryWrite { source })?;
 
         let stop = Arc::new(AtomicBool::new(false));
+        let mut workers = WorkerGroup::new(Arc::clone(&stop));
+        // The dream controller registers its worker with the group, so a
+        // graceful stop joins it before discovery is removed and ownership
+        // released (task D5; the SIGTERM path needs no extra wiring).
+        let dream = dream_worker::DreamController::start(config.clone(), &mut workers)
+            .map_err(DaemonError::Worker)?;
+        // The controller runs every production dream run; the MCP
+        // `hieronymus_dream` dispatch serves through this handle. On a bare
+        // `Application::open` (no daemon) it stays absent and the dispatch
+        // fails closed.
+        application.install_dream_controller(dream.clone());
+        let events = dream.events();
         let runtime = Arc::new(DaemonRuntime {
             config,
             registry,
             bearer,
             bound_address,
-            workers: WorkerGroup::new(Arc::clone(&stop)),
+            workers,
             idle_connections: IdleConnections::default(),
             stop,
             sessions: SessionStore::default(),
-            events: Arc::new(events::AdminEventHub::default()),
+            events,
             assets: options.assets.clone(),
             provider_client: Box::new(DaemonProviderClient::with_default_transport()),
             record,
             application,
+            dream,
             database: Mutex::new(connection),
         });
         let accept_thread = spawn_accept_thread(listener, Arc::clone(&runtime));
@@ -304,6 +324,13 @@ impl Daemon {
     /// Diagnostics support: the number of live admin websocket subscribers.
     pub fn admin_subscriber_count(&self) -> usize {
         self.runtime.events.subscriber_count()
+    }
+
+    /// The dream controller's status: the active run and the last finished
+    /// one (the admin surface's honest controller view; the durable
+    /// run/phase registry remains the detailed record).
+    pub fn dream_status(&self) -> dream_worker::DreamStatus {
+        self.runtime.dream.status()
     }
 
     /// The discovery record this daemon published at startup.

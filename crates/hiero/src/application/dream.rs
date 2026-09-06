@@ -1,27 +1,32 @@
 //! The dream tool family (plan M5): `hieronymus_dream`, the one tool the
-//! M1–M4 families left unclaimed. The dispatch runs the existing
-//! [`DreamService`] fail-closed path — the same seam the daemon's
-//! `run_manual_dreaming` REST route uses: `DreamService::open` validates the
-//! dream.conf workflow wiring against provider.conf before any run (an
-//! enabled LLM-declared workflow refuses deterministic substitution), and
-//! `run_all` drains pending completed-session memories with the
-//! deterministic provider.
+//! M1–M4 families left unclaimed. Since task D5 the dispatch runs through
+//! the daemon's [`DreamController`]: the request coalesces into the one
+//! supervised worker (scheduled, admin, and MCP dream never run
+//! concurrently), providers are configured lanes resolved from
+//! `provider.conf`/`dream.conf` inside the controller's worker (ADR 0007),
+//! and the answer is the finished drain. There is no direct
+//! [`hieronymus::dreaming::DreamService`] construction here: on an
+//! application without a controller (not serving a daemon) the tool fails
+//! closed with a clear domain error.
 //!
-//! Scope note: the configured LLM provider lanes (scheduler, draining,
-//! per-workflow providers) belong to the dreaming plan (D5), which upgrades
-//! this dispatch. Until then a named non-deterministic provider argument is
-//! an explicit domain rejection, never a silent deterministic substitution.
+//! Argument semantics over the frozen schema: `provider`, when given, is a
+//! fail-closed pin — it must name the provider the run will actually
+//! record (the first enabled workflow's wire provider type); anything else
+//! is a domain rejection, never a silent substitution. `wait` is accepted
+//! for frozen-schema fidelity: the call is synchronous either way (Python's
+//! `run_all` blocks for `owner="mcp"` too), and concurrent requests join
+//! the active run instead of contending on the OS lock.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use hieronymus::dream_workflows::WorkflowResolver;
-use hieronymus::dreaming::DreamService;
+use hieronymus::dreaming::resolved_provider_label;
 
 use super::AppError;
 use super::Application;
 use super::decode;
 use super::domain;
+use crate::daemon::dream_worker::DreamRequest;
 
 /// The family dispatcher: `None` means the tool is not ours.
 pub(crate) fn dispatch(
@@ -45,41 +50,48 @@ struct DreamArgs {
 }
 
 /// The Python `hieronymus_dream` port: run dreaming over all pending
-/// completed-session memories and report the finished run record. The call is
-/// synchronous (Python's `run_all` blocks for `owner="mcp"` too; `wait` only
-/// changes lock acquisition there, and the Rust lock refuses with an
-/// `already running` domain error instead of waiting).
+/// completed-session memories through the daemon's dream controller and
+/// report the finished drain.
 fn dream(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<DreamArgs>(arguments)?;
-    // `wait` is accepted for frozen-schema fidelity; both Python's and the
-    // Rust `run_all` are synchronous for the MCP owner, so the answer always
-    // reports the finished run.
+    // `wait` is accepted for frozen-schema fidelity; the controller path is
+    // synchronous for the MCP owner, so the answer always reports the
+    // finished run.
     let _ = args.wait;
     if let Some(provider) = &args.provider {
-        // D5 (the dreaming plan) upgrades this dispatch with the configured
-        // provider lanes; today only the deterministic provider exists here.
-        if provider != "deterministic" {
+        // Fail-closed pin (argument validation first): the run uses the
+        // configured workflow lanes, and the answer's provider is the
+        // resolved profile's wire name.
+        let configured = resolved_provider_label(application.config())
+            .map_err(|error| AppError::Domain(error.to_string()))?;
+        if *provider != configured {
             return Err(AppError::Domain(format!(
                 "provider {provider:?} is not available; the daemon runs the \
-                 deterministic dreaming provider (fail-closed, no silent \
-                 substitution)"
+                 configured dreaming provider ({configured:?}) (fail-closed, no \
+                 silent substitution)"
             )));
         }
     }
-    // Explicit deterministic injection (the pre-D5 seam): the configured
-    // provider lanes arrive with the D5 controller.
-    let service = DreamService::open(application.config(), WorkflowResolver::deterministic())
+    let Some(controller) = application.dream_controller() else {
+        return Err(AppError::Domain(
+            "hieronymus_dream runs on the daemon's dream controller; no controller is \
+             installed, so the tool is only served by a running daemon"
+                .to_string(),
+        ));
+    };
+    let drain = controller
+        .request_and_wait(DreamRequest {
+            all: true,
+            manual: true,
+        })
         .map_err(domain)?;
-    // Same seam as the daemon's manual-dreaming route: drain everything
-    // pending (ignore the minimum threshold), refuse when another cycle
-    // holds the lock.
-    let record = service.run_all("mcp", true, false).map_err(domain)?;
+    let record = &drain.record;
     Ok(json!({
         "cycle_id": record.cycle_id,
         "status": record.status,
         "provider": record.provider,
-        "input_count": record.input_count,
-        "created_crystal_count": record.created_crystal_count,
-        "proposal_count": record.proposal_count,
+        "input_count": drain.input_count,
+        "created_crystal_count": drain.created_crystal_count,
+        "proposal_count": drain.proposal_count,
     }))
 }

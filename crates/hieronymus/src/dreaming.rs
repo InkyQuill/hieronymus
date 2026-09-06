@@ -24,13 +24,16 @@
 //! transaction. Supersede and reinforce targets are authorized against the
 //! selected context and active-rule protection (ADR 0011) before any store
 //! call; rule-related model output can only ever produce candidates and
-//! proposals. Still out of scope: passive feedback events, decay, and
-//! scheduler timers; [`DeterministicDreamProvider`] remains an explicit
-//! test and diagnostic injection via
-//! [`crate::dream_workflows::WorkflowResolver::deterministic`]; production
-//! construction of configured provider lanes is the D5 controller's job.
+//! proposals. Passive feedback events, decay, and the scheduler's interval
+//! clock belong to the daemon's dream controller (task D5): this module
+//! owns the bounded single cycle, the drain over successive capped batches
+//! ([`DreamService::run_all`], [`drain_batches`]), and the scheduling
+//! threshold decision ([`scheduled_decision`], ADR 0005).
+//! [`DeterministicDreamProvider`] remains an explicit test and diagnostic
+//! injection via [`crate::dream_workflows::WorkflowResolver::deterministic`].
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use chrono::Utc;
 use rusqlite::Connection;
@@ -121,6 +124,11 @@ pub enum DreamError {
     Crystal(#[from] crate::crystals::CrystalError),
     #[error("{0}")]
     Json(String),
+    /// The drain stopped without a clean completion record: cancellation
+    /// before any batch ran, or zero progress while eligible work remained
+    /// (recorded as a durable failed run row before this error is raised).
+    #[error("dream drain interrupted: {0}")]
+    DrainInterrupted(String),
 }
 
 impl DreamError {
@@ -149,6 +157,140 @@ pub struct DreamRunRecord {
     pub created_crystal_count: i64,
     pub proposal_count: i64,
     pub error: String,
+}
+
+/// The durable outcome of one drain ([`DreamService::run_all`]): the final
+/// batch's own run record plus the totals across every completed batch of
+/// the same drain. Each batch is one capped selection with one durable run
+/// row, so the aggregate is a summary over rows, never a replacement for
+/// them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrainRecord {
+    /// The last batch's own durable run record.
+    pub record: DreamRunRecord,
+    /// How many capped batches the drain ran (>= 1).
+    pub batches: usize,
+    /// Totals across every completed batch of the drain.
+    pub input_count: i64,
+    pub created_crystal_count: i64,
+    pub proposal_count: i64,
+}
+
+/// The bounded drain loop: call `next` — one bounded batch, already durably
+/// recorded by the caller — until it completes nothing or `cancelled` is
+/// observed. Never lifts a per-batch cap: re-selection is `next`'s job.
+pub fn drain_batches(
+    mut next: impl FnMut() -> Result<usize, DreamError>,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<usize, DreamError> {
+    let mut total = 0;
+    while !cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        let completed = next()?;
+        if completed == 0 {
+            break;
+        }
+        total += completed;
+    }
+    Ok(total)
+}
+
+/// The scheduled-tick decision (ADR 0005 §Scheduling And Drain Behavior): a
+/// backlog at the urgent maximum runs immediately, a backlog at the minimum
+/// runs on the elapsed interval, a smaller backlog is skipped honestly
+/// (`not_enough_memories`) until `not_enough_memories_cycle_threshold`
+/// consecutive skips arm the backlog escape that processes the small
+/// leftover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduledDecision {
+    /// Nothing eligible: no run and no skip row.
+    NothingPending,
+    /// Below the minimum: record an honest `not_enough_memories` skip.
+    NotEnoughMemories,
+    /// The interval fired with the minimum met.
+    Scheduled,
+    /// The urgent maximum backlog: run now, ignoring the minimum.
+    Urgent,
+    /// Enough consecutive skips: process the small leftover batch.
+    BacklogEscape,
+}
+
+/// Decide one scheduled tick from actual config state and the consecutive
+/// `not_enough_memories` skip count (ADR 0005's default shape). The interval
+/// clock is the caller's concern; the thresholds are the config's.
+pub fn scheduled_decision(
+    dream_config: &DreamConfig,
+    pending: i64,
+    consecutive_skips: i64,
+) -> ScheduledDecision {
+    if pending <= 0 {
+        return ScheduledDecision::NothingPending;
+    }
+    if pending >= dream_config.max_pending_short_term_memories {
+        return ScheduledDecision::Urgent;
+    }
+    if pending >= dream_config.min_pending_short_term_memories {
+        return ScheduledDecision::Scheduled;
+    }
+    if consecutive_skips >= dream_config.not_enough_memories_cycle_threshold {
+        return ScheduledDecision::BacklogEscape;
+    }
+    ScheduledDecision::NotEnoughMemories
+}
+
+/// Completed-session short-term memories that have not been archived and are
+/// crystallization-eligible (the dreaming input count).
+pub fn pending_short_term_memory_count(config: &HieronymusConfig) -> Result<i64, DreamError> {
+    let connection = open_migrated(&config.database_path())?;
+    let count = connection.query_row(
+        "select count(*)
+         from short_term_memories
+         join task_sessions on task_sessions.id = short_term_memories.session_id
+         where task_sessions.status = 'completed'
+           and short_term_memories.archived_at is null
+           and short_term_memories.source_crystal_id is null",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(count)
+}
+
+/// Trailing consecutive scheduled `not_enough_memories` skips (ADR 0005's
+/// backlog-escape counter), read from the durable skip rows. A
+/// `dream cycle already running` skip preserves the count (Python's
+/// cycle-active case); any other run row breaks the streak.
+pub fn consecutive_not_enough_memories_skips(config: &HieronymusConfig) -> Result<i64, DreamError> {
+    const SKIP_REASON: &str = "not_enough_memories";
+    const LOCKED_REASON: &str = "dream cycle already running";
+    let connection = open_migrated(&config.database_path())?;
+    let mut statement = connection
+        .prepare("select status, coalesce(error, '') from dream_runs order by id desc limit 200")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut count = 0;
+    for row in rows {
+        let (status, error) = row?;
+        if status == "skipped" && error.starts_with(LOCKED_REASON) {
+            continue;
+        }
+        if status == "skipped" && error.starts_with(SKIP_REASON) {
+            count += 1;
+            continue;
+        }
+        break;
+    }
+    Ok(count)
+}
+
+/// The provider label a production run would record (`dream_runs.provider`):
+/// the first enabled workflow's wire provider type. Empty when no workflow
+/// is enabled — such a run fails the coverage gate before any pass.
+pub fn resolved_provider_label(config: &HieronymusConfig) -> Result<String, DreamError> {
+    let dream_config = load_dream_config(config)?;
+    let resolver =
+        WorkflowResolver::from_catalog(load_provider_catalog(config).unwrap_or_default());
+    let choices = resolver.translate_choices(&dream_config)?;
+    Ok(resolver.run_provider_name(&choices))
 }
 
 /// Provider access seam. The dreaming core never touches the network; real
@@ -426,7 +568,15 @@ pub struct DreamService {
     /// time: the fail-closed gate has already run over the enabled ones.
     choices: Vec<WorkflowChoice>,
     audit: DreamAuditStore,
+    /// Optional progress seam for long-lived hosts (task D5): called on the
+    /// run's own thread with `(dream_run_id, cycle_id, phase)` each time a
+    /// phase row starts running, so the daemon can stream phase progress
+    /// without polling the registry.
+    phase_observer: Option<PhaseObserver>,
 }
+
+/// A phase-progress observer: `(dream_run_id, cycle_id, phase_name)`.
+pub type PhaseObserver = Arc<dyn Fn(i64, i64, &str) + Send + Sync>;
 
 /// `Debug` names the resolver lane instead of dumping it, so `unwrap_err` in
 /// tests and any diagnostic path stay redacted by construction.
@@ -454,7 +604,14 @@ impl DreamService {
             resolver,
             choices,
             audit,
+            phase_observer: None,
         })
+    }
+
+    /// Install the phase-progress observer (see [`PhaseObserver`]). Call
+    /// before the first run; the observer fires on the run's own thread.
+    pub fn set_phase_observer(&mut self, observer: PhaseObserver) {
+        self.phase_observer = Some(observer);
     }
 
     /// One dream cycle over one bounded selection (`run_cycle`).
@@ -466,14 +623,131 @@ impl DreamService {
         self.run_locked(owner, true, skip_when_locked)
     }
 
-    /// Drain every pending completed-session memory in one run (`run_all`).
+    /// Drain every pending completed-session memory (`run_all`): successive
+    /// capped batches, each one bounded selection with its own durable run
+    /// row, until a batch completes nothing (the backlog is drained, the
+    /// minimum is not met, or another cycle holds the lock). Per-cycle caps
+    /// are never lifted: the drain re-selects after each bounded batch, so
+    /// newly eligible work is considered batch by batch.
     pub fn run_all(
         &self,
         owner: &str,
         ignore_minimum: bool,
         skip_when_locked: bool,
-    ) -> Result<DreamRunRecord, DreamError> {
-        self.run_locked(owner, ignore_minimum, skip_when_locked)
+    ) -> Result<DrainRecord, DreamError> {
+        self.run_draining_with_lock_mode(
+            owner,
+            ignore_minimum,
+            skip_when_locked,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+    }
+
+    /// The controller's drain entry: like [`Self::run_all`], checking
+    /// `cancelled` between batches so a shutdown stops the drain at the next
+    /// batch boundary with the durable honest outcome of the batches that
+    /// did run.
+    pub fn run_draining(
+        &self,
+        owner: &str,
+        ignore_minimum: bool,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<DrainRecord, DreamError> {
+        self.run_draining_with_lock_mode(owner, ignore_minimum, false, cancelled)
+    }
+
+    fn run_draining_with_lock_mode(
+        &self,
+        owner: &str,
+        ignore_minimum: bool,
+        skip_when_locked: bool,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<DrainRecord, DreamError> {
+        let mut batches = 0_usize;
+        let mut input_total = 0_i64;
+        let mut created_total = 0_i64;
+        let mut proposal_total = 0_i64;
+        let mut last: Option<DreamRunRecord> = None;
+        drain_batches(
+            || {
+                // Re-select between batches: stop without an empty trailing
+                // cycle once no eligible work remains. Crystallization
+                // eligibility is the backlog (or, for threshold-respecting
+                // drains, the minimum over it); the deterministic phases
+                // keep justifying a cycle on their own material —
+                // reconsolidation working copies, unconsumed feedback,
+                // queued link pairs. The first batch is unconditional: a
+                // drain with nothing to do still records one honest empty
+                // cycle, exactly like a single cycle always has.
+                if batches > 0 && !cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                    let remaining = self.pending_short_term_memory_count()?;
+                    let eligible = if remaining > 0 {
+                        ignore_minimum
+                            || remaining >= self.dream_config.min_pending_short_term_memories
+                    } else {
+                        self.cycle_has_deterministic_work()?
+                    };
+                    if !eligible {
+                        return Ok(0_usize);
+                    }
+                }
+                let record = self.run_locked(owner, ignore_minimum, skip_when_locked)?;
+                batches += 1;
+                // Progress counts completed/archived inputs — the memories a
+                // batch actually archived, never merely selected rows (a
+                // failed batch returns Err above and archives nothing). A
+                // skipped row (another cycle holds the OS lock) is already
+                // durable; its zero progress stops the drain without a spin.
+                let progress = match record.status.as_str() {
+                    "completed" => record.input_count.max(0) as usize,
+                    "skipped" => 0_usize,
+                    other => {
+                        return Err(DreamError::DrainInterrupted(format!(
+                            "batch recorded an unexpected status {other}"
+                        )));
+                    }
+                };
+                input_total += record.input_count;
+                created_total += record.created_crystal_count;
+                proposal_total += record.proposal_count;
+                last = Some(record);
+                Ok(progress)
+            },
+            cancelled,
+        )?;
+        let Some(record) = last else {
+            return Err(DreamError::DrainInterrupted(
+                "cancelled before the first batch".to_string(),
+            ));
+        };
+        // The blocked guard: the loop stopped while eligible work remained
+        // without a batch failure to name and without an honest skip row.
+        // Nothing may spin here, and a backlog behind a completed run must
+        // never read as success: record a durable failed run row naming the
+        // stall, then fail the drain.
+        if !cancelled.load(std::sync::atomic::Ordering::Acquire) && record.status != "skipped" {
+            let remaining = self.pending_short_term_memory_count()?;
+            let eligible = if ignore_minimum {
+                remaining > 0
+            } else {
+                remaining >= self.dream_config.min_pending_short_term_memories
+            };
+            if eligible {
+                let reason = format!(
+                    "drain stopped with {remaining} eligible input(s) remaining \
+                     after {batches} batch(es) of zero progress"
+                );
+                self.record_failed_run(&reason)?;
+                return Err(DreamError::DrainInterrupted(reason));
+            }
+        }
+        Ok(DrainRecord {
+            record,
+            batches,
+            input_count: input_total,
+            created_crystal_count: created_total,
+            proposal_count: proposal_total,
+        })
     }
 
     fn run_locked(
@@ -638,6 +912,7 @@ impl DreamService {
             let identity = self.resolver.identity(choice)?;
             let phase_run_id = self.start_phase_run(
                 run_id,
+                cycle_id,
                 &choice.name,
                 selected_memory_ids.len() as i64,
                 &identity,
@@ -771,6 +1046,7 @@ impl DreamService {
         // when their completion and audit are (task D3).
         let persistence_phase_run_id = self.start_phase_run(
             run_id,
+            cycle_id,
             "persistence",
             selected_memory_ids.len() as i64,
             &primary_provider,
@@ -854,18 +1130,17 @@ impl DreamService {
     // ------------------------------------------------------------------
 
     fn pending_short_term_memory_count(&self) -> Result<i64, DreamError> {
-        let connection = open_migrated(&self.config.database_path())?;
-        let count = connection.query_row(
-            "select count(*)
-             from short_term_memories
-             join task_sessions on task_sessions.id = short_term_memories.session_id
-             where task_sessions.status = 'completed'
-               and short_term_memories.archived_at is null
-               and short_term_memories.source_crystal_id is null",
-            [],
-            |row| row.get::<_, i64>(0),
-        )?;
-        Ok(count)
+        pending_short_term_memory_count(&self.config)
+    }
+
+    /// Whether the deterministic phases have material of their own: a
+    /// session-scoped working copy, an unconsumed `recalled_again` event, or
+    /// queued link work. These justify a cycle even with no crystallization
+    /// inputs.
+    fn cycle_has_deterministic_work(&self) -> Result<bool, DreamError> {
+        Ok(self.reconsolidation_pending()?
+            || self.reinforcement_pending()?
+            || self.links_pending()?)
     }
 
     /// Port of `_load_pending_completed_groups`: at most `limit` pending
@@ -1487,8 +1762,12 @@ impl DreamService {
         if copies.is_empty() {
             return Ok(DeterministicSummary::default());
         }
-        let phase_run_id =
-            self.start_deterministic_phase_run(run_id, "reconsolidation", copies.len() as i64)?;
+        let phase_run_id = self.start_deterministic_phase_run(
+            run_id,
+            cycle_id,
+            "reconsolidation",
+            copies.len() as i64,
+        )?;
 
         let threshold = self.dream_config.reconsolidation_diff_threshold;
         // One immediate write transaction: the phase's crystal and memory
@@ -1667,7 +1946,8 @@ impl DreamService {
         if !self.reinforcement_pending()? {
             return Ok(DeterministicSummary::default());
         }
-        let phase_run_id = self.start_deterministic_phase_run(run_id, "reinforcement", 0)?;
+        let phase_run_id =
+            self.start_deterministic_phase_run(run_id, cycle_id, "reinforcement", 0)?;
         let limit = self.dream_config.max_total_affected_crystals;
 
         // One immediate write transaction: the event consumption and score
@@ -1784,7 +2064,8 @@ impl DreamService {
         if !self.links_pending()? {
             return Ok(DeterministicSummary::default());
         }
-        let phase_run_id = self.start_deterministic_phase_run(run_id, "link_reinforcement", 0)?;
+        let phase_run_id =
+            self.start_deterministic_phase_run(run_id, cycle_id, "link_reinforcement", 0)?;
 
         // The link budget (ruling: the existing max_relation_records_per_pass
         // config field) bounds the pairs terminalized in this cycle.
@@ -1845,6 +2126,7 @@ impl DreamService {
     fn start_deterministic_phase_run(
         &self,
         run_id: i64,
+        cycle_id: i64,
         phase: &str,
         input_count: i64,
     ) -> Result<i64, DreamError> {
@@ -1857,6 +2139,7 @@ impl DreamService {
              values (?1, ?2, 'deterministic', 'deterministic', 'deterministic', 'running', ?3, ?4)",
             rusqlite::params![run_id, phase, input_count, now()],
         )?;
+        self.notify_phase_observer(run_id, cycle_id, phase);
         Ok(connection.last_insert_rowid())
     }
 
@@ -1968,7 +2251,25 @@ impl DreamService {
         Ok(())
     }
 
-    fn record_skipped_run(&self, reason: &str) -> Result<DreamRunRecord, DreamError> {
+    /// Record an honest skip row (`record_skipped_run`): a run that did not
+    /// happen, with the reason on the row — the scheduled tick's
+    /// `not_enough_memories` skips and cross-process lock contention are
+    /// recorded, never silent.
+    pub fn record_skipped_run(&self, reason: &str) -> Result<DreamRunRecord, DreamError> {
+        self.record_negative_run("skipped", reason)
+    }
+
+    /// The blocked-drain record: a durable failed run row naming why the
+    /// drain stopped while eligible work remained (never a success claim).
+    fn record_failed_run(&self, reason: &str) -> Result<DreamRunRecord, DreamError> {
+        self.record_negative_run("failed", reason)
+    }
+
+    fn record_negative_run(
+        &self,
+        status: &str,
+        reason: &str,
+    ) -> Result<DreamRunRecord, DreamError> {
         let mut connection = open_migrated(&self.config.database_path())?;
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -1976,9 +2277,10 @@ impl DreamService {
         let timestamp = now();
         transaction.execute(
             "insert into dream_runs(cycle_id, status, provider, error, created_at, completed_at)
-             values (?1, 'skipped', ?2, ?3, ?4, ?5)",
+             values (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 cycle_id,
+                status,
                 self.run_provider_label(),
                 reason,
                 timestamp,
@@ -1990,7 +2292,7 @@ impl DreamService {
         Ok(DreamRunRecord {
             id: run_id,
             cycle_id,
-            status: "skipped".to_string(),
+            status: status.to_string(),
             provider: self.run_provider_label(),
             input_count: 0,
             created_crystal_count: 0,
@@ -2010,6 +2312,7 @@ impl DreamService {
     fn start_phase_run(
         &self,
         run_id: i64,
+        cycle_id: i64,
         phase: &str,
         input_count: i64,
         provider: &ProviderIdentity,
@@ -2031,7 +2334,16 @@ impl DreamService {
                 now(),
             ],
         )?;
+        self.notify_phase_observer(run_id, cycle_id, phase);
         Ok(connection.last_insert_rowid())
+    }
+
+    /// Fire the phase-progress observer, if one is installed. Best-effort by
+    /// design: progress streaming never fails a run.
+    fn notify_phase_observer(&self, run_id: i64, cycle_id: i64, phase: &str) {
+        if let Some(observer) = &self.phase_observer {
+            observer(run_id, cycle_id, phase);
+        }
     }
 
     fn complete_phase_run(&self, phase_run_id: i64, output_count: i64) -> Result<(), DreamError> {

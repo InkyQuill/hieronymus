@@ -18,9 +18,13 @@ pub mod memory;
 pub mod series_sessions;
 pub mod terms;
 
+use std::sync::OnceLock;
+
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::memory_models::TranslationContext;
 use hieronymus::recall::RecallService;
+
+use crate::daemon::dream_worker::DreamController;
 
 /// Domain-level tool failure modes. `Invalid` covers arguments that do not
 /// decode against the frozen input schema (the protocol maps it to JSON-RPC
@@ -42,6 +46,11 @@ pub enum AppError {
 pub struct Application {
     config: HieronymusConfig,
     recall: RecallService,
+    /// The daemon's dream controller (task D5), installed by
+    /// [`crate::daemon::Daemon::start`] exactly once. When absent — a bare
+    /// `Application::open` that is not serving a daemon — the dream
+    /// dispatch fails closed instead of constructing a provider itself.
+    dream: OnceLock<DreamController>,
 }
 
 impl std::fmt::Debug for Application {
@@ -65,6 +74,7 @@ impl Application {
         Ok(Self {
             config: config.clone(),
             recall,
+            dream: OnceLock::new(),
         })
     }
 
@@ -76,6 +86,18 @@ impl Application {
     /// The recall service backing the recall tool family.
     pub fn recall(&self) -> &RecallService {
         &self.recall
+    }
+
+    /// Install the daemon's dream controller. Called once by
+    /// [`crate::daemon::Daemon::start`]; a second install is refused (the
+    /// first controller keeps serving).
+    pub fn install_dream_controller(&self, controller: DreamController) {
+        let _ = self.dream.set(controller);
+    }
+
+    /// The installed dream controller, if any.
+    pub(crate) fn dream_controller(&self) -> Option<&DreamController> {
+        self.dream.get()
     }
 
     /// Dispatch one tool call. The final parameter is the authenticated

@@ -388,8 +388,10 @@ fn manual_dream_all_drains_small_batch_even_below_minimum() {
     completed_session(&config, "only-sense-online", &["A completed dream input."]);
 
     let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
-    let run = service.run_all("admin", true, false).unwrap();
+    let drain = service.run_all("admin", true, false).unwrap();
 
+    assert_eq!(drain.batches, 1, "one batch drains the whole backlog");
+    let run = drain.record;
     assert_eq!(run.status, "completed");
     assert_eq!(run.input_count, 1);
     let pending = scalar(
@@ -1156,7 +1158,7 @@ fn malformed_rule_crystal_gets_penalties_and_parse_warnings() {
         }),
     )
     .unwrap();
-    let run = service.run_all("manual", true, false).unwrap();
+    let run = service.run_all("manual", true, false).unwrap().record;
 
     assert_eq!(run.status, "completed");
     let crystal = query(

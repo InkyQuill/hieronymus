@@ -13,6 +13,7 @@ use common::{
     ws_connect, ws_upgrade_headers,
 };
 use serde_json::{Value, json};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 const JSON_CONTENT_TYPE: &str = "application/json; charset=utf-8";
@@ -52,6 +53,35 @@ fn read_event(client: &mut common::WsClient, deadline: Instant, context: &str) -
         .as_u64()
         .unwrap_or_else(|| panic!("{context} frame carries no numeric event_id: {event}"));
     (event_id, event)
+}
+
+/// Wire enabled workflow assignments to a configured provider profile so a
+/// manual dream run passes the fail-closed workflow gate (task D5: the
+/// controller resolves configured lanes; the deterministic substitution is
+/// gone). The profile's URL is never dialed — the backlog here is empty, so
+/// the run completes on the deterministic phases and the test observes the
+/// controller's event lifecycle without egress.
+fn wire_enabled_workflows(root: &Path) {
+    let config = hieronymus::data_root::HieronymusConfig::new(root);
+    let catalog = hieronymus::provider_config::ProviderCatalog::default().with_provider(
+        "test-lane",
+        hieronymus::provider_config::ProviderProfile::new(
+            "Test Lane",
+            "openai",
+            "http://127.0.0.1:9/v1",
+            "test-key",
+            5.0,
+        ),
+    );
+    hieronymus::provider_config::save_provider_catalog(&config, &catalog).unwrap();
+    let mut dream_config = hieronymus::dream_config::default_dream_config();
+    for name in ["coverage_audit", "knowledge_crystals"] {
+        let workflow = dream_config.workflows.get_mut(name).unwrap();
+        workflow.provider = "test-lane".to_string();
+        workflow.model = "test-model".to_string();
+        workflow.enabled = true;
+    }
+    hieronymus::dream_config::save_dream_config(&config, &dream_config).unwrap();
 }
 
 #[test]
@@ -179,7 +209,10 @@ fn ws_admin_requires_websocket_upgrade_headers() {
 
 #[test]
 fn ws_admin_delivers_dream_events_end_to_end() {
-    let (fixture, _root, daemon) = start_daemon_with_browser_session();
+    let (fixture, root, daemon) = start_daemon_with_browser_session();
+    // The controller resolves configured lanes per run; wire them before
+    // triggering so the run passes the fail-closed workflow gate.
+    wire_enabled_workflows(root.path());
     let port = fixture.port;
     let (_, mut client) = ws_connect(port, &ws_upgrade_headers(&fixture));
     // No resume frame: the stream runs live from the next event.
@@ -253,7 +286,12 @@ fn ws_admin_delivers_dream_events_end_to_end() {
     assert_eq!(
         result["status"],
         json!("completed"),
-        "empty deterministic run"
+        "empty backlog completes without provider calls"
+    );
+    assert_eq!(
+        result["provider"],
+        json!("openai"),
+        "the run records the configured lane's wire provider"
     );
 
     // Secret discipline: the session cookie and bearer never ride frames.
@@ -275,6 +313,7 @@ fn ws_admin_delivers_dream_events_end_to_end() {
 fn ws_admin_resume_replays_retained_events() {
     let (fixture, root, _daemon) = start_daemon_with_browser_session();
     let port = fixture.port;
+    wire_enabled_workflows(root.path());
 
     // One completed manual run: dream_started, phase events, dream_completed.
     let response = send_request(

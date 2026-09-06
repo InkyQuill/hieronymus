@@ -228,9 +228,8 @@ mod tests {
     fn unported_tools_report_not_ported() {
         let registry = McpRegistry::embedded();
         let (_root, application) = test_application();
-        // Every advertised tool dispatches since M5 (hieronymus_dream runs
-        // the DreamService seam); a name no family claims is the honest
-        // leftover that still reports NotPorted.
+        // Every advertised tool dispatches since M5; a name no family claims
+        // is the honest leftover that still reports NotPorted.
         let error = registry
             .call(
                 &application,
@@ -241,8 +240,10 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("hieronymus_nonexistent"));
 
-        // The dream dispatch runs for real: on a fresh root the workflow
-        // gate passes and the run completes with nothing pending.
+        // Since D5 the dream dispatch serves through the daemon's dream
+        // controller. A bare Application (no daemon) fails closed with a
+        // domain error instead of constructing a provider itself — the tool
+        // error envelope carries the message, the JSON-RPC layer stays clean.
         let result = registry
             .call(
                 &application,
@@ -251,10 +252,13 @@ mod tests {
                 "local-user",
             )
             .unwrap();
-        assert_eq!(result["isError"], serde_json::json!(false));
-        assert_eq!(
-            result["structuredContent"]["provider"],
-            serde_json::json!("deterministic")
+        assert_eq!(result["isError"], serde_json::json!(true));
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("dream controller"),
+            "{result}"
         );
     }
 

@@ -165,6 +165,7 @@ fn dream(config: &HieronymusConfig) -> DreamRunRecord {
         .unwrap()
         .run_all("admin", true, false)
         .unwrap()
+        .record
 }
 
 fn feedback(recall_id: &str, useful: &[i64], miss: &[i64], key: &str) -> RecallFeedback {
