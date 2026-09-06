@@ -131,9 +131,12 @@ impl AdminEventHub {
 
     /// Resume semantics: deliver the retained events with an id greater than
     /// `resume_from` to `deliver`. When the resume point is older than the
-    /// retained window, deliver a single [`snapshot_refresh_event`]
-    /// instruction instead — never a partial replay. Delivering nothing means
-    /// the client is current and continues to stream live.
+    /// retained window — i.e. the first id the client is missing
+    /// (`resume_from + 1`) has already been evicted — deliver a single
+    /// [`snapshot_refresh_event`] instruction instead, never a partial
+    /// replay. The boundary is exact: `resume_from + 1 == oldest` is still a
+    /// contiguous replay, `resume_from + 1 < oldest` is a gap. Delivering
+    /// nothing means the client is current and continues to stream live.
     pub fn replay_after(&self, resume_from: u64, deliver: &Subscriber) {
         let (replay, instruction) = {
             let inner = self.lock();
@@ -334,6 +337,41 @@ mod tests {
         let replayed = collected(&events);
         assert_eq!(replayed.len(), RETAINED_EVENTS);
         assert_eq!(replayed.first().unwrap().id, 2, "event 1 was evicted");
+    }
+
+    #[test]
+    fn window_overflow_boundary_is_exact() {
+        // ids 1..=258 published, RETAINED_EVENTS=256 retained: oldest is 3.
+        let hub = AdminEventHub::default();
+        for step in 1..=(RETAINED_EVENTS as u64 + 2) {
+            hub.publish("dream_phase_progress", json!({ "step": step }));
+        }
+
+        // resume_from + 1 == oldest (3): the client missed nothing retained,
+        // so the whole retained tail replays contiguously, no instruction.
+        let contiguous = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = collector(Arc::clone(&contiguous));
+        hub.replay_after(2, &subscriber);
+        let contiguous = collected(&contiguous);
+        assert_eq!(contiguous.len(), RETAINED_EVENTS);
+        assert_eq!(contiguous.first().unwrap().id, 3);
+        assert_eq!(contiguous.last().unwrap().id, RETAINED_EVENTS as u64 + 2);
+        assert!(
+            contiguous
+                .iter()
+                .all(|event| event.event_type == "dream_phase_progress"),
+            "a contiguous replay carries no snapshot_refresh"
+        );
+
+        // resume_from + 1 (2) < oldest (3): id 2 was evicted, so exactly one
+        // snapshot_refresh with the newest id and nothing else.
+        let lagged = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = collector(Arc::clone(&lagged));
+        hub.replay_after(1, &subscriber);
+        let lagged = collected(&lagged);
+        assert_eq!(lagged.len(), 1, "a gap delivers exactly one frame");
+        assert_eq!(lagged[0].event_type, SNAPSHOT_REFRESH_EVENT);
+        assert_eq!(lagged[0].id, RETAINED_EVENTS as u64 + 2);
     }
 
     #[test]

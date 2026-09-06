@@ -251,6 +251,45 @@ test("a stale snapshot response does not overwrite a newer one", async () => {
   await screen.findByText("Concepts record one");
 });
 
+test("rapid dashboard refreshes while a load is in flight collapse into one follow-up load", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock.mockReset();
+  let releaseRefresh: (value: AdminSnapshot) => void = () => {};
+  loadSnapshotMock
+    .mockResolvedValueOnce(listSnapshot) // onMount (Crystals)
+    .mockResolvedValueOnce(selectedSnapshot) // row click
+    .mockImplementationOnce(
+      () =>
+        new Promise<AdminSnapshot>((resolve) => {
+          releaseRefresh = resolve;
+        }),
+    ) // first event-driven refresh — hangs
+    .mockResolvedValue(selectedSnapshot); // any coalesced follow-up
+
+  const { rerender } = render(MemoryViews, {
+    props: { dashboard, onNotice: vi.fn() },
+  });
+  await user.click(
+    await screen.findByRole("button", { name: /Crystal Alpha/ }),
+  );
+  await screen.findByText("Evidence");
+  const settled = loadSnapshotMock.mock.calls.length; // 2
+
+  // Three admin events land in quick succession while the first refresh fetch
+  // is still pending.
+  await rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
+  await rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
+  await rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
+  expect(loadSnapshotMock.mock.calls.length).toBe(settled + 1);
+
+  releaseRefresh(selectedSnapshot);
+  await waitFor(() =>
+    expect(loadSnapshotMock.mock.calls.length).toBe(settled + 2),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(loadSnapshotMock.mock.calls.length).toBe(settled + 2);
+});
+
 test("a non-destructive action posts the canonical id and selected row immediately", async () => {
   const user = userEvent.setup();
   runActionMock.mockResolvedValue({

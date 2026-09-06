@@ -72,7 +72,7 @@
 
   // Every load() call takes the next sequence number; a response whose number
   // is no longer current is dropped so a slow earlier fetch can never
-  // overwrite newer state. (Full refresh coalescing is W4.)
+  // overwrite newer state.
   let loadSequence = 0;
 
   async function load(view: string, selectedId?: string | number) {
@@ -93,6 +93,33 @@
     }
   }
 
+  // Admin events are hints, not state: several may land while one refresh
+  // fetch is still in flight. Coalesce them into exactly one pending
+  // follow-up load (the App-level refreshSection already collapses the
+  // dashboard fetch the same way) so an event storm never fans out into
+  // overlapping snapshot requests.
+  let refreshInFlight: Promise<void> | null = null;
+  let refreshQueued = false;
+
+  function refreshCurrentView() {
+    const view = untrack(() => selectedView);
+    if (!view) return;
+    if (refreshInFlight) {
+      refreshQueued = true;
+      return;
+    }
+    refreshInFlight = (async () => {
+      do {
+        refreshQueued = false;
+        // Re-read the selected row each pass so a selection change during the
+        // in-flight fetch is honored by the coalesced follow-up.
+        await load(view, untrack(() => snapshot?.selected?.id));
+      } while (refreshQueued);
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+
   // Re-load the current view when the parent hands down a fresh admin
   // dashboard object (an admin event, a completed action). The selected row is
   // preserved by its stable `id` so a background refresh never loses the
@@ -104,9 +131,7 @@
       dashboardSeen = true;
       return;
     }
-    const view = untrack(() => selectedView);
-    const selectedId = untrack(() => snapshot?.selected?.id);
-    if (view) void load(view, selectedId);
+    refreshCurrentView();
   });
 
   async function post(command: AdminCommand, body: AdminActionBody) {
