@@ -68,8 +68,10 @@ short-term until dreaming converts, supersedes, or discards it.
 
 Legacy memory search keeps raw short-term IDs when they are unambiguous. If a long-term crystal and
 short-term memory would otherwise share the same legacy `id`, the crystal is returned with a negative
-compatibility ID. Vague concept suggestions in proposal lists also use negative compatibility IDs;
-only positive proposal IDs are actionable legacy compatibility proposals.
+compatibility ID. Vague concept suggestions also use negative compatibility IDs, but only in Python's
+proposal list, which merges recent dream-audit payloads; the Rust `hieronymus_concept_proposals_list`
+returns only the strict `strict_concept_proposals` half (the dream-audit merge lands with the
+dreaming plan). Only positive proposal IDs are actionable legacy compatibility proposals.
 
 `read` is source ingestion plus temporary understanding. The agent imports each read file into RAG,
 where its direct content remains available for retrieval. It must not copy source text into

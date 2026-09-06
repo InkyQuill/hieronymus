@@ -63,3 +63,10 @@ returned separately from the ranked `results`, and serialized whole even when
 `limit` removed every advisory hit. The Python fixture's bare ranked list
 remains the frozen reference for the Python tool; Rust consumers read the
 versioned delta.
+
+`hieronymus_concept_proposals_list` has a documented scope delta of the same
+kind: the Rust tool returns only the strict half of the Python response — the
+safe DTO projection of the pending `strict_concept_proposals` rows. The
+Python tool also merges recent dream-audit concept-suggestion payloads into
+the same list; that dream-audit merge lands with the dreaming plan, so until
+then Rust consumers see only the strict proposals.

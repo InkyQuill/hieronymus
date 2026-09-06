@@ -747,8 +747,10 @@ fn default_rag_search_limit() -> i64 {
 
 /// The advisory FTS chunk lane for one series (Python `rag_hit_payload`
 /// rows). Semantic RAG search stays the armed semantic lane inside recall;
-/// with no armed lane the recall response reports that degraded mode
-/// explicitly instead of presenting lexical-only rows as complete RAG.
+/// per the recall-v2 expectation, an armed-but-unavailable lane degrades
+/// explicitly with a structured `semantic_lane_unavailable` warning, while
+/// an unarmed lane is simply absent — the recall response then serves the
+/// lexical rows with no warning at all.
 fn rag_search(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagSearchArgs>(arguments)?;
     if args.limit < 1 {

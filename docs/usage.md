@@ -481,17 +481,16 @@ explicitly.
 
 ```bash
 hiero daemon
-hiero status --json
+hiero service install
+hiero service start
+hiero service status --json
+hiero service stop
 hiero doctor
-hiero admin
-hiero admin --json
-hiero install codex --dry-run
-hiero skills install --target agents --target claude
+hiero semantic status
 hiero tool-call hieronymus_series_list --args '{}'
 hiero export --output ./memory.json
 hiero plugins generate
 hiero recall-feedback --recall-id <id> --idempotency-key <key>
-hiero stop
 ```
 
 `hiero` is an alias for `hieronymus`; all subcommands work with either command.
