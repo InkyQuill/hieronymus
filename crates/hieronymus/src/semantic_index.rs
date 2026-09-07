@@ -99,6 +99,62 @@ pub fn generation_table_intact(
             if table.count_rows(Some(mismatch)).await.ok()? != 0 {
                 return None;
             }
+            if expected_count > 0 {
+                // Metadata and scalar columns can survive loss of ANN files.
+                // Exercise the same filtered vector path as serving queries,
+                // using a real stored row so the probe must return a hit.
+                let samples = table
+                    .query()
+                    .select(Select::Columns(vec![
+                        "series_slug".into(),
+                        VECTOR_COLUMN.into(),
+                    ]))
+                    .limit(1)
+                    .execute()
+                    .await
+                    .ok()?
+                    .try_collect::<Vec<RecordBatch>>()
+                    .await
+                    .ok()?;
+                let sample = samples.iter().find(|batch| batch.num_rows() > 0)?;
+                let series = column::<StringArray>(sample, "series_slug").ok()?.value(0);
+                let values = column::<FixedSizeListArray>(sample, VECTOR_COLUMN)
+                    .ok()?
+                    .value(0);
+                let vector = values
+                    .as_any()
+                    .downcast_ref::<Float32Array>()?
+                    .values()
+                    .to_vec();
+                if vector.len() != identity.dimensions()
+                    || vector.iter().any(|value| !value.is_finite())
+                    || vector.iter().all(|value| *value == 0.0)
+                {
+                    return None;
+                }
+                let mut query = table
+                    .query()
+                    .nearest_to(vector)
+                    .ok()?
+                    .column(VECTOR_COLUMN)
+                    .only_if(series_predicate(series).ok()?)
+                    .limit(1);
+                if table.index_stats(ANN_INDEX_NAME).await.ok()?.is_some() {
+                    query = query
+                        .nprobes(ANN_NUM_PROBES)
+                        .refine_factor(ANN_REFINE_FACTOR);
+                }
+                let batches = query
+                    .execute()
+                    .await
+                    .ok()?
+                    .try_collect::<Vec<RecordBatch>>()
+                    .await
+                    .ok()?;
+                if decode_hits(batches).ok()?.is_empty() {
+                    return None;
+                }
+            }
             Some(())
         })
         .await

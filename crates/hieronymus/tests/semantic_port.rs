@@ -1216,3 +1216,46 @@ fn active_probe_rejects_empty_and_corrupt_lance_directories() {
         );
     }
 }
+
+#[test]
+fn active_index_probe_rejects_damaged_ann_files() {
+    use hieronymus::semantic_index::generation_table_intact;
+    let root = tempfile::tempdir().unwrap();
+    let identity = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)
+        .identity()
+        .clone();
+    let rows = adversarial_rows();
+    let count = rows.len() as u64;
+    let mut index = VectorIndex::open(root.path(), identity.clone(), "generation-a").unwrap();
+    index.append(rows).unwrap();
+    index.create_ann_index().unwrap();
+    drop(index);
+    assert!(generation_table_intact(
+        root.path(),
+        "generation-a",
+        &identity,
+        count
+    ));
+    let table = std::fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "lance")
+        })
+        .unwrap();
+    let indices = table.join("_indices");
+    assert!(
+        indices.is_dir(),
+        "fixture must contain a physical ANN index"
+    );
+    std::fs::remove_dir_all(&indices).unwrap();
+    // Table schema/count/identity remain readable, but actual ANN search fails.
+    let index = VectorIndex::open(root.path(), identity.clone(), "generation-a").unwrap();
+    assert_eq!(index.count_rows().unwrap() as u64, count);
+    assert!(index.search(NEEDLE_SERIES, &needle(), 1).is_err());
+    assert!(
+        !generation_table_intact(root.path(), "generation-a", &identity, count),
+        "ready requires a usable vector query, not only readable table metadata"
+    );
+}
