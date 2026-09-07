@@ -162,6 +162,13 @@ pub struct SemanticStore {
 }
 
 impl SemanticStore {
+    /// Construct a read handle without opening SQLite or ensuring derived schema.
+    pub fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     /// Opens the store, ensuring the derived manifest schema exists. This
     /// never downloads a model and never opens the vector store.
     pub fn open(config: &HieronymusConfig) -> Result<Self, SemanticError> {

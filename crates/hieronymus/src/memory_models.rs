@@ -195,6 +195,7 @@ pub type MetadataMap = BTreeMap<String, serde_json::Value>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShortTermMemoryRecord {
+    pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub session_id: i64,
     pub source_role: String,
@@ -214,6 +215,7 @@ pub struct ShortTermMemoryRecord {
 /// crystal's deterministic authority lives in `term_rules`, not here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrystalRecord {
+    pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub crystal_type: String,
     pub text: String,

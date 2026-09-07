@@ -407,6 +407,16 @@ struct TermRuleRow {
 }
 
 impl Termbase {
+    pub(crate) fn for_read(
+        config: &HieronymusConfig,
+        context: &crate::memory_models::TranslationContext,
+    ) -> Self {
+        Self {
+            config: config.clone(),
+            context: context.clone(),
+        }
+    }
+
     pub fn open(
         config: &HieronymusConfig,
         context: &crate::memory_models::TranslationContext,

@@ -201,9 +201,10 @@ struct LaneInner {
     tokenizer: Box<dyn ChunkTokenizer>,
 }
 
-/// One lane run: whether the lane could run at all, its eligible hits in rank
-/// order (corrupt hits already excluded), and any structured warnings the run
-/// produced.
+/// One lane run: whether it ran, bounded authoritative candidate records
+/// (corrupt hits excluded), and structured warnings. Current candidates precede
+/// non-current source candidates; RecallService applies context disclosure and
+/// separates their result sections before publication.
 pub struct LaneRun {
     /// False when the lane degraded and never searched: the caller must then
     /// return the FTS results untouched (plus the warning) instead of fusing.
@@ -237,20 +238,25 @@ impl SemanticLane {
         query: &str,
         limit: usize,
     ) -> LaneRun {
-        let connection = match open_migrated(&config.database_path()) {
-            Ok(db) => db,
-            Err(error) => {
-                return LaneRun {
-                    degraded: true,
-                    records: vec![],
-                    warnings: vec![RecallWarning {
-                        kind: WARNING_SEMANTIC_UNAVAILABLE.into(),
-                        reason: error.to_string(),
-                    }],
-                };
+        let result: Result<_, crate::coherent_reads::CoherentReadError> =
+            crate::coherent_reads::stable_read(config, &context.series_slug, None, |db| {
+                Ok(self.run_with_connection(db, config, context, query, limit))
+            });
+        match result {
+            Ok(observed) => {
+                let mut run = observed.value;
+                self.publish_repairs(config, &mut run.warnings);
+                run
             }
-        };
-        self.run_with_connection(&connection, config, context, query, limit)
+            Err(error) => LaneRun {
+                degraded: true,
+                records: vec![],
+                warnings: vec![RecallWarning {
+                    kind: WARNING_SEMANTIC_UNAVAILABLE.into(),
+                    reason: error.to_string(),
+                }],
+            },
+        }
     }
 
     pub(crate) fn run_with_connection(
@@ -274,6 +280,46 @@ impl SemanticLane {
         }
     }
 
+    pub(crate) fn publish_repairs(
+        &self,
+        config: &HieronymusConfig,
+        warnings: &mut [RecallWarning],
+    ) {
+        for warning in warnings
+            .iter_mut()
+            .filter(|w| w.kind == "semantic_repair_required")
+        {
+            let identity = self
+                .inner
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .provider
+                .identity()
+                .clone();
+            let outcome = schedule_repair(config, &identity);
+            match outcome {
+                Ok(RepairOutcome::Scheduled(id)) => {
+                    warning.kind = WARNING_REPAIR_SCHEDULED.into();
+                    warning
+                        .reason
+                        .push_str(&format!("; rebuild generation {id} scheduled"));
+                }
+                Ok(RepairOutcome::AlreadyBuilding) => {
+                    warning.kind = WARNING_REPAIR_SCHEDULED.into();
+                    warning
+                        .reason
+                        .push_str("; a rebuild is already in progress");
+                }
+                Err(error) => {
+                    warning.kind = WARNING_REPAIR_FAILED.into();
+                    warning
+                        .reason
+                        .push_str(&format!("; scheduling the rebuild failed: {error}"));
+                }
+            }
+        }
+    }
+
     fn try_run(
         &self,
         connection: &rusqlite::Connection,
@@ -282,10 +328,10 @@ impl SemanticLane {
         query: &str,
         limit: usize,
     ) -> Result<LaneRun, String> {
-        let authoritative = RagStore::open(config).map_err(|error| error.to_string())?;
+        let authoritative = RagStore::for_read(config);
         let revision_before =
             crate::rag::current_corpus_revision(connection).map_err(|error| error.to_string())?;
-        let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
+        let store = SemanticStore::for_read(config);
         let manifest = match store.active_generation_with_connection(connection) {
             Ok(Some(manifest)) => manifest,
             Ok(None) => {
@@ -333,7 +379,6 @@ impl SemanticLane {
             .provider
             .embed_query(&token_ids)
             .map_err(|error| error.to_string())?;
-        let lane_identity = guard.provider.identity().clone();
         drop(guard);
 
         let index = VectorIndex::open(
@@ -348,79 +393,63 @@ impl SemanticLane {
             crate::story_applicability::StoryApplicability::resolve_context(connection, context)
                 .map_err(|e| e.to_string())?;
         let mut candidate_depth = depth.max(1);
-        let hits = loop {
+        let (eligible, corrupt) = loop {
             let hits = index
                 .search(&context.series_slug, &vector, candidate_depth)
                 .map_err(|error| format!("semantic search failed: {error}"))?;
-            let mut count = 0;
+            let chunk_ids: Vec<i64> = hits.iter().map(|hit| hit.chunk_id).collect();
+            let by_id: HashMap<i64, RagChunkRecord> = authoritative
+                .chunks_by_ids_with_connection(connection, &chunk_ids)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|record| (record.id, record))
+                .collect();
+            let mut current = vec![];
+            let mut outside = vec![];
+            let mut corrupt = 0;
             for hit in &hits {
+                let Some(record) = by_id.get(&hit.chunk_id) else {
+                    corrupt += 1;
+                    continue;
+                };
+                if record.series_slug != context.series_slug
+                    || hit.series_slug != context.series_slug
+                    || hit.generation_id != manifest.generation_id
+                    || crate::semantic_store::sha256_text(&record.text) != hit.checksum
+                {
+                    corrupt += 1;
+                    continue;
+                }
+                let disposition = crate::claim_reads::rehydrate_claims(
+                    connection,
+                    crate::claim_reads::ClaimTarget::RagChunk(record.id),
+                    &story_query,
+                )
+                .map_err(|e| e.to_string())?;
                 if matches!(
-                    crate::claim_reads::rehydrate_claims(
-                        connection,
-                        crate::claim_reads::ClaimTarget::RagChunk(hit.chunk_id),
-                        &story_query
-                    )
-                    .map_err(|e| e.to_string())?,
+                    disposition,
                     crate::claim_reads::ClaimDisposition::Current
                         | crate::claim_reads::ClaimDisposition::Qualified(_)
                 ) {
-                    count += 1;
+                    current.push(record.clone());
+                } else {
+                    outside.push(record.clone());
                 }
             }
-            if count >= depth
+            if current.len() >= depth
                 || hits.len() < candidate_depth
-                || candidate_depth >= crate::rag::MAX_RAG_SEARCH_LIMIT
+                || candidate_depth >= crate::claim_reads::CANDIDATE_BUDGET
             {
-                break hits;
+                current.truncate(depth);
+                outside.truncate(depth);
+                current.extend(outside);
+                break (current, corrupt);
             }
-            candidate_depth = (candidate_depth * 2).min(crate::rag::MAX_RAG_SEARCH_LIMIT);
+            candidate_depth = (candidate_depth * 2).min(crate::claim_reads::CANDIDATE_BUDGET);
         };
         drop(index);
-
-        // Hit integrity: every hit must still match its authoritative row.
-        // Stale checksums, deleted chunks, and foreign series or generations
-        // are corrupt; they are excluded and schedule a rebuild.
-        let chunk_ids: Vec<i64> = hits.iter().map(|hit| hit.chunk_id).collect();
-        let hydrated = authoritative
-            .chunks_by_ids_with_connection(connection, &chunk_ids)
-            .map_err(|error| error.to_string())?;
-        // Corpus revisions are monotonic. Bracket execution and hydration so
-        // an import before notification, or during inference, cannot look complete.
         let revision_after =
             crate::rag::current_corpus_revision(connection).map_err(|error| error.to_string())?;
-        let by_id: HashMap<i64, RagChunkRecord> = hydrated
-            .into_iter()
-            .map(|record| (record.id, record))
-            .collect();
-        let mut eligible = Vec::with_capacity(hits.len());
-        let mut corrupt = 0usize;
-        for hit in hits {
-            let Some(record) = by_id.get(&hit.chunk_id) else {
-                corrupt += 1;
-                continue;
-            };
-            let intact = record.series_slug == context.series_slug
-                && hit.series_slug == context.series_slug
-                && hit.generation_id == manifest.generation_id
-                && crate::semantic_store::sha256_text(&record.text) == hit.checksum;
-            if intact {
-                if matches!(
-                    crate::claim_reads::rehydrate_claims(
-                        connection,
-                        crate::claim_reads::ClaimTarget::RagChunk(record.id),
-                        &story_query
-                    )
-                    .map_err(|e| e.to_string())?,
-                    crate::claim_reads::ClaimDisposition::Current
-                        | crate::claim_reads::ClaimDisposition::Qualified(_)
-                ) {
-                    eligible.push(record.clone());
-                }
-            } else {
-                corrupt += 1;
-            }
-        }
-
         let mut warnings = Vec::new();
         if manifest.corpus_revision != revision_before || manifest.corpus_revision != revision_after
         {
@@ -433,31 +462,13 @@ impl SemanticLane {
         }
 
         if corrupt > 0 {
-            match schedule_repair(config, &lane_identity) {
-                Ok(RepairOutcome::Scheduled(generation_id)) => warnings.push(RecallWarning {
-                    kind: WARNING_REPAIR_SCHEDULED.to_string(),
-                    reason: format!(
-                        "{corrupt} corrupt semantic hit(s) excluded; rebuild generation \
-                         {generation_id} scheduled"
-                    ),
-                }),
-                Ok(RepairOutcome::AlreadyBuilding) => warnings.push(RecallWarning {
-                    kind: WARNING_REPAIR_SCHEDULED.to_string(),
-                    reason: format!(
-                        "{corrupt} corrupt semantic hit(s) excluded; a rebuild is already \
-                         in progress"
-                    ),
-                }),
-                Err(error) => warnings.push(RecallWarning {
-                    kind: WARNING_REPAIR_FAILED.to_string(),
-                    reason: format!(
-                        "{corrupt} corrupt semantic hit(s) excluded; scheduling the rebuild \
-                         failed: {error}"
-                    ),
-                }),
-            }
+            warnings.push(RecallWarning {
+                kind: "semantic_repair_required".into(),
+                reason: format!("{corrupt} corrupt semantic hit(s) excluded"),
+            });
         }
-        eligible.truncate(depth);
+        // Both current and non-current records are rehydrated by the enclosing
+        // recall snapshot before disclosure; outside records never take current slots.
         Ok(LaneRun {
             degraded: false,
             records: eligible,
@@ -759,6 +770,7 @@ mod tests {
 
     fn chunk(id: i64, text: &str) -> RagChunkRecord {
         RagChunkRecord {
+            claim_annotation: Default::default(),
             id,
             source_id: 1,
             series_slug: "demo".to_string(),

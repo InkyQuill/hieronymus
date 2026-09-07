@@ -178,6 +178,12 @@ pub struct CrystalStore {
 }
 
 impl CrystalStore {
+    pub(crate) fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     pub fn open(config: &HieronymusConfig) -> Result<Self, CrystalError> {
         open_migrated(&config.database_path())?;
         Ok(Self {
@@ -592,19 +598,6 @@ impl CrystalStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<(CrystalRecord, f64)>, CrystalError> {
-        let eligibility = if let Some(q) = current {
-            format!(
-                " and crystals.id in (select value from json_each('{}'))",
-                crate::claim_reads::eligible_ids(
-                    connection,
-                    crate::claim_reads::ClaimTarget::Crystal(0),
-                    q
-                )?
-            )
-        } else {
-            String::new()
-        };
-
         if limit == 0 {
             return Err(CrystalError::LimitTooSmall);
         }
@@ -612,8 +605,12 @@ impl CrystalStore {
         if expression.is_empty() {
             return Ok(Vec::new());
         }
-        let bounded_limit = limit.min(MAX_SEARCH_LIMIT) as i64;
-        let mut statement = connection.prepare(&format!(
+        let bounded_limit = if current.is_some() {
+            crate::claim_reads::CANDIDATE_BUDGET
+        } else {
+            limit.min(MAX_SEARCH_LIMIT)
+        } as i64;
+        let mut statement = connection.prepare(
             "select crystals.id, bm25(crystals_fts) as raw_bm25,
                     crystals.strength, crystals.confidence, crystals.scope_type
              from crystals_fts
@@ -626,8 +623,8 @@ impl CrystalStore {
                )
                and (crystals.source_language = ?3 or crystals.source_language = '')
                and (crystals.target_language = ?4 or crystals.target_language = '')
-             {eligibility} limit ?5",
-        ))?;
+             order by bm25(crystals_fts), crystals.id limit ?5",
+        )?;
         let scored: Vec<(i64, f64)> = statement
             .query_map(
                 rusqlite::params![
@@ -661,7 +658,14 @@ impl CrystalStore {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(left.0.id.cmp(&right.0.id))
         });
-        Ok(scored_records)
+        crate::claim_reads::select_candidates(
+            connection,
+            scored_records,
+            |(record, _)| crate::claim_reads::ClaimTarget::Crystal(record.id),
+            current,
+            limit.min(MAX_SEARCH_LIMIT),
+        )
+        .map_err(Into::into)
     }
 
     pub fn search(
@@ -735,7 +739,7 @@ impl CrystalStore {
     /// candidates, newest first.
     pub fn list_all_candidates(&self, limit: usize) -> Result<Vec<CrystalRecord>, CrystalError> {
         let connection = self.connection()?;
-        self.list_all_candidates_with_connection(&connection, None, limit)
+        self.list_all_candidates_with_connection(&connection, None, limit, None)
     }
 
     pub(crate) fn list_all_candidates_with_connection(
@@ -743,29 +747,42 @@ impl CrystalStore {
         connection: &Connection,
         current: Option<&crate::story_applicability::StoryQueryV1>,
         limit: usize,
+        metadata: Option<(&[String], &[String])>,
     ) -> Result<Vec<CrystalRecord>, CrystalError> {
-        let eligibility = if let Some(q) = current {
-            format!(
-                " and id in (select value from json_each('{}'))",
-                crate::claim_reads::eligible_ids(
-                    connection,
-                    crate::claim_reads::ClaimTarget::Crystal(0),
-                    q
-                )?
-            )
-        } else {
-            String::new()
-        };
-
         let ids: Vec<i64> = {
-            let mut statement = connection.prepare(&format!(
-                "select id from crystals
+            let mut statement = connection.prepare("select id from crystals
                  where status in ('active', 'candidate')
-                 {eligibility} order by id desc limit ?1",
-            ))?;
-            let rows = statement.query_map([limit as i64], |row| row.get(0))?;
+                   and (?2 is null or scope_type='global' or scope_key=(select 'series:'||slug from series where id=?2))
+                   and (?3 is null
+                     or exists(select 1 from crystal_story_scopes cs where cs.crystal_id=crystals.id and cs.scope in(select value from json_each(?3)))
+                     or exists(select 1 from crystal_semantic_tags ct where ct.crystal_id=crystals.id and ct.tag in(select value from json_each(?4))))
+                 order by id desc limit ?1")?;
+            let rows = statement.query_map(
+                rusqlite::params![
+                    if current.is_some() {
+                        crate::claim_reads::CANDIDATE_BUDGET as i64
+                    } else {
+                        limit as i64
+                    },
+                    current.map(|q| q.series_id),
+                    metadata
+                        .map(|(scopes, _)| serde_json::to_string(scopes))
+                        .transpose()?,
+                    metadata
+                        .map(|(_, tags)| serde_json::to_string(tags))
+                        .transpose()?
+                ],
+                |row| row.get(0),
+            )?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
+        let ids = crate::claim_reads::select_candidates(
+            connection,
+            ids,
+            |id| crate::claim_reads::ClaimTarget::Crystal(*id),
+            current,
+            limit,
+        )?;
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {
             records.push(hydrate_crystal(connection, id)?);
@@ -1016,6 +1033,7 @@ fn hydrate_crystal(
             [crystal_id],
             |row| {
                 Ok(CrystalRecord {
+                    claim_annotation: Default::default(),
                     id: row.get(0)?,
                     crystal_type: row.get(1)?,
                     text: row.get(2)?,
@@ -1052,6 +1070,10 @@ fn hydrate_side_tables(
     connection: &Connection,
     mut record: CrystalRecord,
 ) -> Result<CrystalRecord, CrystalError> {
+    record.claim_annotation = crate::claim_reads::source_annotation(
+        connection,
+        crate::claim_reads::ClaimTarget::Crystal(record.id),
+    )?;
     record.language_tags = text_map(
         connection,
         "crystal_language_tags",

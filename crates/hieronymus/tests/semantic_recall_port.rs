@@ -5,10 +5,13 @@
 //! tokenizer (the committed fixture) stand in for the model, over real SQLite
 //! and LanceDB.
 
+#[path = "support/current_story.rs"]
+mod current_story;
+
 use std::fs;
 use std::path::PathBuf;
 
-use hieronymus::crystals::{CrystalStore, NewCrystal};
+use hieronymus::crystals::CrystalStore;
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::memory_models::TranslationContext;
 use hieronymus::rag::{RagImport, RagStore};
@@ -44,8 +47,9 @@ fn fixture() -> Fixture {
     registry
         .create_series("demo", "demo", "ja", "en", None)
         .unwrap();
+    current_story::register(&config, "demo");
     let workspace = WorkspaceStore::open(&config).unwrap();
-    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    let context = current_story::context("demo", "ja", "en", "translation");
     let session = workspace.start_session(&context).unwrap();
     Fixture {
         root,
@@ -66,6 +70,7 @@ fn import_text(fixture: &Fixture, name: &str, content: &str) {
         .unwrap()
         .import_file("demo", &path, &RagImport::new())
         .unwrap();
+    current_story::capture_chunks(&fixture.config, "demo");
 }
 
 /// Builds and activates a whole-corpus generation over the fixture's chunks
@@ -76,6 +81,7 @@ fn model_tokenizer() -> ModelTokenizer {
     ModelTokenizer::from_bytes(include_bytes!("fixtures/minilm-tokenizer.json")).unwrap()
 }
 fn activate_generation(fixture: &Fixture) {
+    current_story::capture_chunks(&fixture.config, "demo");
     let store = SemanticStore::open(&fixture.config).unwrap();
     let tokenizer = model_tokenizer();
     let mut provider = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS);
@@ -144,7 +150,7 @@ fn warnings_of(response: &RecallResponse) -> &[RecallWarning] {
 }
 
 fn context() -> TranslationContext {
-    TranslationContext::new("demo", "ja", "en", "translation")
+    current_story::context("demo", "ja", "en", "translation")
 }
 
 // ---------------------------------------------------------------------------
@@ -193,9 +199,11 @@ fn degraded_lane_returns_fts_results_with_a_structured_warning() {
     )
     .unwrap();
     let generations: i64 = connection
-        .query_row("select count(*) from semantic_generations", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "select count(*) from sqlite_master where name='semantic_generations'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(generations, 0);
 }
@@ -660,7 +668,11 @@ fn armed_lane_leaves_long_term_boosts_and_activations_unchanged() {
         .add_crystal(
             &context(),
             "lesson",
-            &NewCrystal::new("lesson", "Activations are recorded on recall."),
+            &current_story::crystal(
+                &fixture.config,
+                "lesson",
+                "Activations are recorded on recall.",
+            ),
         )
         .unwrap();
     import_text(&fixture, "a.txt", "Cooking Talent appears here.");
@@ -861,7 +873,7 @@ fn strict_search_limits_disjoint_lexical_and_semantic_lanes() {
         let query = format!("Cooking {}", "AND ".repeat(suffix));
         let run = lane.run(
             &fixture.config,
-            &TranslationContext::new("demo", "", "", "translation"),
+            &current_story::context("demo", "", "", "translation"),
             &query,
             1,
         );
@@ -907,7 +919,7 @@ fn strict_search_caps_fused_lanes_when_requested_limit_exceeds_rag_cap() {
     );
     let semantic = lane.run(
         &fixture.config,
-        &TranslationContext::new("demo", "", "", "translation"),
+        &current_story::context("demo", "", "", "translation"),
         "Cooking",
         100,
     );
@@ -1048,4 +1060,121 @@ fn an_import_during_query_embedding_cannot_return_complete_strict_results() {
                 .unwrap()
                 .corpus_revision
     );
+}
+
+#[test]
+fn semantic_query_does_not_repair_missing_schema_on_read() {
+    let fixture = fixture();
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    db.execute_batch("pragma foreign_keys=off; drop table if exists semantic_generations;")
+        .unwrap();
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    assert!(lane.run(&fixture.config, &context(), "secret", 2).degraded);
+    let present: i64 = db
+        .query_row(
+            "select count(*) from sqlite_master where name='semantic_generations'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(present, 0, "query must not ensure or repair derived schema");
+}
+
+#[test]
+fn stale_vector_invalid_top_refills_with_valid_current_chunk() {
+    let fixture = fixture();
+    import_text(&fixture, "bad.txt", "secret secret secret");
+    import_text(&fixture, "good.txt", "secret survives in the garden");
+    activate_generation(&fixture);
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    let before = hieronymus::coherent_reads::revision(&db, "demo").unwrap();
+    db.execute("update memory_claims set status='invalid',revision=revision+1 where id in(select claim_id from claim_bindings where rag_chunk_id=1)",[]).unwrap();
+    db.execute("update authority_state set revision=revision+1", [])
+        .unwrap();
+    let result = armed_service(&fixture)
+        .recall(fixture.session_id, &context(), "secret secret secret", 1)
+        .unwrap();
+    assert_eq!(rag_hit_ids(&result), vec![2]);
+    assert_eq!(result.resulting_revision, before + 1);
+    assert!(result.non_current.iter().all(|h| match h {
+        RecallHit::Rag { chunk, .. } => chunk.text.is_empty() && chunk.display_text.is_empty(),
+        _ => false,
+    }));
+}
+
+#[test]
+fn qualified_rag_annotates_display_and_arbitrary_metadata_too() {
+    let fixture = fixture();
+    import_text(&fixture, "qualified.txt", "secret assertion");
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    db.execute(
+        "update memory_claims set status='qualified',qualification='Mira only suspects this'",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "update rag_chunks set metadata_json='{\"source\":\"secret assertion\"}'",
+        [],
+    )
+    .unwrap();
+    let result = RecallService::open(&fixture.config)
+        .unwrap()
+        .recall(fixture.session_id, &context(), "secret", 1)
+        .unwrap();
+    let RecallHit::Rag { chunk, .. } = &result.hits[0] else {
+        panic!("RAG expected")
+    };
+    assert!(matches!(
+        chunk.claim_annotation.disposition,
+        hieronymus::claim_reads::ClaimDisposition::Qualified(_)
+    ));
+    assert!(chunk.text.contains("Mira only suspects this"));
+    assert!(chunk.display_text.contains("Mira only suspects this"));
+    assert!(
+        chunk.metadata["source"]
+            .as_str()
+            .unwrap()
+            .contains("Mira only suspects this")
+    );
+}
+
+#[test]
+fn research_future_source_is_separate_from_current_and_current_query_redacts_all_prose() {
+    let fixture = fixture();
+    import_text(&fixture, "future.txt", "secret future revelation");
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    db.execute("update knowledge_gates set known_from=(select id from story_positions where chapter_key='Revelation')",[]).unwrap();
+    db.execute(
+        "update rag_chunks set metadata_json='{\"source\":\"secret future revelation\"}'",
+        [],
+    )
+    .unwrap();
+    activate_generation(&fixture);
+    let service = armed_service(&fixture);
+    let current = service
+        .recall(fixture.session_id, &context(), "secret", 1)
+        .unwrap();
+    assert!(current.hits.is_empty());
+    assert!(current.candidate_exhausted);
+    let RecallHit::Rag { chunk, .. } = &current.non_current[0] else {
+        panic!("RAG expected")
+    };
+    assert!(chunk.text.is_empty() && chunk.display_text.is_empty() && chunk.metadata.is_empty());
+    let mut research_context = context();
+    research_context.story_query_mode =
+        hieronymus::story_applicability::QueryMode::OmniscientResearch;
+    let research = service
+        .recall(fixture.session_id, &research_context, "secret", 1)
+        .unwrap();
+    assert!(research.hits.is_empty());
+    let RecallHit::Rag { chunk, .. } = &research.non_current[0] else {
+        panic!("RAG expected")
+    };
+    assert!(chunk.claim_annotation.source_inspection);
+    assert!(chunk.text.starts_with("Source evidence"));
+    assert!(chunk.display_text.starts_with("Source evidence"));
+    assert!(!chunk.claim_annotation.claims.is_empty());
 }

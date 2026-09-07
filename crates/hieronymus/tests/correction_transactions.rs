@@ -319,6 +319,19 @@ fn real_capture_current_recall_filters_invalid_before_limit() {
     assert_eq!(response.hits.len(), 1);
     assert_eq!(response.hits[0].item_id(), good.id);
     assert_eq!(response.resulting_revision, 1);
+    let source = store
+        .search_short_term_memories(session.id, "secret", 10)
+        .unwrap();
+    let bad_source = source.iter().find(|item| item.id == bad.id).unwrap();
+    assert!(bad_source.claim_annotation.source_inspection);
+    assert!(
+        bad_source
+            .claim_annotation
+            .claims
+            .iter()
+            .flat_map(|claim| &claim.effects)
+            .any(|effect| effect.disposition == hieronymus::claim_reads::ClaimDisposition::Invalid)
+    );
 }
 #[test]
 fn learned_qualification_is_verbatim_and_unevidenced_signals_remain_advisory() {
@@ -680,5 +693,191 @@ fn concurrent_corrections_with_one_expected_revision_commit_only_once() {
             .get::<_, i64>(0))
             .unwrap(),
         1
+    );
+}
+
+#[test]
+fn compound_invalid_member_dominates_unknown_member() {
+    use hieronymus::{
+        claim_reads::{ClaimDisposition, ClaimTarget, rehydrate_claims},
+        crystals::{CrystalStore, NewCrystal},
+        data_root::HieronymusConfig,
+    };
+    let (dir, db, r) = fixture();
+    let config = HieronymusConfig::new(dir.path());
+    let crystal = CrystalStore::open(&config)
+        .unwrap()
+        .add_crystal(
+            &hieronymus::memory_models::TranslationContext::new("book", "en", "ru", "translation"),
+            "thought",
+            &NewCrystal::new("thought", "secret"),
+        )
+        .unwrap();
+    db.execute_batch("update memory_claims set status='invalid' where id=1; insert into memory_claims(series_id,concept_id,text,revision,status,qualification,applicability_id,created_at,updated_at) values(1,1,'unknown member',1,'tentative','',1,'now','now');").unwrap();
+    let unknown = db.last_insert_rowid();
+    // Unknown sorts first, the exact early-return defect.
+    db.execute("update memory_claims set status='tentative' where id=1", [])
+        .unwrap();
+    db.execute(
+        "update memory_claims set status='invalid' where id=?",
+        [unknown],
+    )
+    .unwrap();
+    db.execute(
+        "insert into claim_bindings(claim_id,crystal_id) values(1,?1),(?2,?1)",
+        params![crystal, unknown],
+    )
+    .unwrap();
+    let query = StoryQueryV1 {
+        series_id: 1,
+        timeline_id: Some(1),
+        position_id: Some(2),
+        viewpoint: Viewpoint::Unspecified,
+        scope_predicates: vec!["volume:I".into(), "chapter:late".into()],
+        mode: QueryMode::Current,
+    };
+    assert_eq!(
+        rehydrate_claims(&db, ClaimTarget::Crystal(crystal), &query).unwrap(),
+        ClaimDisposition::Invalid
+    );
+    let _ = r;
+}
+
+#[test]
+fn unresolved_recall_returns_typed_metadata_without_assertion_fields() {
+    use hieronymus::{
+        data_root::HieronymusConfig,
+        memory_models::TranslationContext,
+        recall::{RecallHit, RecallService},
+        workspace::{ShortTermMemoryInput, WorkspaceStore},
+    };
+    let (dir, db, _) = fixture();
+    db.execute(
+        "insert into authority_state(series_id,revision) values(1,0)",
+        [],
+    )
+    .unwrap();
+    let config = HieronymusConfig::new(dir.path());
+    let context = TranslationContext::new("book", "en", "ru", "translation")
+        .volume("I")
+        .chapter("late");
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let session = workspace.start_session(&context).unwrap();
+    let memory = workspace
+        .add_short_term_memory(
+            session.id,
+            &ShortTermMemoryInput::new("note", "secret unknown assertion"),
+        )
+        .unwrap();
+    let response = RecallService::open(&config)
+        .unwrap()
+        .recall(session.id, &context, "secret", 1)
+        .unwrap();
+    assert!(response.hits.is_empty());
+    assert_eq!(response.non_current.len(), 1);
+    match &response.non_current[0] {
+        RecallHit::ShortTerm { memory: item, .. } => {
+            assert_eq!(item.id, memory.id);
+            assert!(item.text.is_empty());
+            assert!(!item.claim_annotation.claims.is_empty());
+            assert_eq!(
+                item.claim_annotation.disposition,
+                hieronymus::claim_reads::ClaimDisposition::OutsideContext
+            );
+        }
+        _ => panic!("short-term metadata expected"),
+    }
+}
+
+#[test]
+fn required_receipt_rejects_missing_tentative_foreign_and_future_and_respects_later_effect() {
+    use hieronymus::{
+        claim_reads::{ClaimDisposition, claim_disposition},
+        coherent_reads::{CoherentReadError, stable_read},
+        data_root::HieronymusConfig,
+    };
+    let (dir, mut db, mut r) = fixture();
+    let config = HieronymusConfig::new(dir.path());
+    origin(&db, &r);
+    DecisionStore::new(&mut db).apply(&r).unwrap();
+    let read = |id: &str| -> Result<_, CoherentReadError> {
+        stable_read(&config, "book", Some(id), |_| Ok(()))
+    };
+    assert!(matches!(
+        read("missing"),
+        Err(CoherentReadError::DecisionNotApplied)
+    ));
+    db.execute("update decision_records set status='tentative'", [])
+        .unwrap();
+    assert!(matches!(
+        read(&r.decision_id),
+        Err(CoherentReadError::DecisionNotApplied)
+    ));
+    db.execute(
+        "update decision_records set status='applied',result_json='{}'",
+        [],
+    )
+    .unwrap();
+    assert!(matches!(
+        read(&r.decision_id),
+        Err(CoherentReadError::DecisionNotApplied)
+    ));
+    // Restore the original stored receipt via an independent fresh fixture's canonical result.
+    let (_other, mut other_db, original) = fixture();
+    origin(&other_db, &original);
+    let result = DecisionStore::new(&mut other_db).apply(&original).unwrap();
+    db.execute(
+        "update decision_records set result_json=?",
+        [serde_json::to_string(&result).unwrap()],
+    )
+    .unwrap();
+    db.execute("update authority_state set revision=0", [])
+        .unwrap();
+    assert!(matches!(
+        read(&r.decision_id),
+        Err(CoherentReadError::DecisionNotApplied)
+    ));
+    db.execute("update authority_state set revision=1", [])
+        .unwrap();
+    assert_eq!(read(&r.decision_id).unwrap().resulting_revision, 1);
+    db.execute_batch("insert into series(id,slug,title,default_source_language,default_target_language,created_at,updated_at) values(2,'foreign','Foreign','en','ru','now','now'); insert into authority_state(series_id,revision) values(2,1)").unwrap();
+    let foreign: Result<_, CoherentReadError> =
+        stable_read(&config, "foreign", Some(&r.decision_id), |_| Ok(()));
+    assert!(matches!(
+        foreign,
+        Err(CoherentReadError::DecisionNotApplied)
+    ));
+    let first = r.decision_id.clone();
+    r.decision_id = "10000000-0000-4000-8000-000000000099".into();
+    r.origin = OriginReceiptId("20000000-0000-4000-8000-000000000099".into());
+    r.expected_revision = 1;
+    r.operation = OperationV1::Correct {
+        intent: CorrectionIntentV1::Fact {
+            claim_id: 1,
+            claim_revision: 2,
+            effect: FactEffect::Qualify {
+                qualification: "Mira only suspects this".into(),
+            },
+        },
+    };
+    origin(&db, &r);
+    DecisionStore::new(&mut db).apply(&r).unwrap();
+    let query = StoryQueryV1 {
+        series_id: 1,
+        timeline_id: Some(1),
+        position_id: Some(2),
+        viewpoint: Viewpoint::Unspecified,
+        scope_predicates: vec!["volume:I".into(), "chapter:late".into()],
+        mode: QueryMode::Current,
+    };
+    let observed: Result<_, hieronymus::recall::RecallError> =
+        stable_read(&config, "book", Some(&first), |snapshot| {
+            Ok(claim_disposition(snapshot, 1, &query)?)
+        });
+    let observed = observed.unwrap();
+    assert_eq!(observed.resulting_revision, 2);
+    assert_eq!(
+        observed.value,
+        ClaimDisposition::Qualified(vec!["Mira only suspects this".into()])
     );
 }

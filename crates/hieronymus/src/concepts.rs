@@ -263,6 +263,12 @@ where
 }
 
 impl ConceptStore {
+    pub(crate) fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     pub fn open(config: &HieronymusConfig) -> Result<Self, ConceptError> {
         open_migrated(&config.database_path())?;
         Ok(Self {
@@ -1640,10 +1646,19 @@ fn facet_ids_matching_query(
         let mut statement = connection.prepare(
             "select id
              from concept_facets
-             where value = ? collate nocase
-               and superseded_at is null",
+             where value = ?1 collate nocase
+               and superseded_at is null
+               and (?2 is null or exists(select 1 from concepts c join series s on s.id=?2 where c.id=concept_facets.concept_id and (c.scope_type='global' or c.scope_key='series:'||s.slug)))
+             order by id limit ?3",
         )?;
-        let rows = statement.query_map([query], |row| row.get(0))?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                query,
+                current.map(|q| q.series_id),
+                crate::claim_reads::CANDIDATE_BUDGET as i64
+            ],
+            |row| row.get(0),
+        )?;
         rows.collect::<Result<std::collections::HashSet<i64>, _>>()?
     };
     let expression = search_expression(query);
@@ -1653,9 +1668,18 @@ fn facet_ids_matching_query(
              from concept_facet_fts
              join concept_facets f on f.id = concept_facet_fts.rowid
              where concept_facet_fts match ?1
-               and f.superseded_at is null",
+               and f.superseded_at is null
+               and (?2 is null or exists(select 1 from concepts c join series s on s.id=?2 where c.id=f.concept_id and (c.scope_type='global' or c.scope_key='series:'||s.slug)))
+             order by bm25(concept_facet_fts), f.id limit ?3",
         )?;
-        let rows = statement.query_map([expression], |row| row.get(0))?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                expression,
+                current.map(|q| q.series_id),
+                crate::claim_reads::CANDIDATE_BUDGET as i64
+            ],
+            |row| row.get(0),
+        )?;
         for facet_id in rows {
             facet_ids.insert(facet_id?);
         }

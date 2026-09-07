@@ -101,6 +101,12 @@ impl ShortTermMemoryInput {
 }
 
 impl WorkspaceStore {
+    pub(crate) fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     pub fn open(config: &HieronymusConfig) -> Result<Self, WorkspaceError> {
         open_migrated(&config.database_path())?;
         Ok(Self {
@@ -246,19 +252,6 @@ impl WorkspaceStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
-        let eligibility = if let Some(q) = current {
-            format!(
-                " and short_term_memories.id in (select value from json_each('{}'))",
-                crate::claim_reads::eligible_ids(
-                    connection,
-                    crate::claim_reads::ClaimTarget::ShortTerm(0),
-                    q
-                )?
-            )
-        } else {
-            String::new()
-        };
-
         if limit < 1 {
             return Err(WorkspaceError::LimitTooSmall);
         }
@@ -267,7 +260,7 @@ impl WorkspaceStore {
             return Ok(Vec::new());
         }
         let ids: Vec<i64> = {
-            let mut statement = connection.prepare(&format!(
+            let mut statement = connection.prepare(
                 "select short_term_memories.id
                  from short_term_memories_fts
                  join short_term_memories
@@ -282,9 +275,9 @@ impl WorkspaceStore {
                    and task_sessions.task_type = ?5
                    and task_sessions.volume = ?6
                    and task_sessions.chapter = ?7
-                 {eligibility} order by bm25(short_term_memories_fts), short_term_memories.id
+                  order by bm25(short_term_memories_fts), short_term_memories.id
                  limit ?8",
-            ))?;
+            )?;
             let rows = statement.query_map(
                 rusqlite::params![
                     expression,
@@ -294,12 +287,23 @@ impl WorkspaceStore {
                     context.task_type,
                     context.volume,
                     context.chapter,
-                    limit as i64,
+                    if current.is_some() {
+                        crate::claim_reads::CANDIDATE_BUDGET as i64
+                    } else {
+                        limit as i64
+                    },
                 ],
                 |row| row.get(0),
             )?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
+        let ids = crate::claim_reads::select_candidates(
+            connection,
+            ids,
+            |id| crate::claim_reads::ClaimTarget::ShortTerm(*id),
+            current,
+            limit,
+        )?;
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {
             records.push(hydrate_memory(connection, id)?);
@@ -568,19 +572,6 @@ impl WorkspaceStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
-        let eligibility = if let Some(q) = current {
-            format!(
-                " and short_term_memories.id in (select value from json_each('{}'))",
-                crate::claim_reads::eligible_ids(
-                    connection,
-                    crate::claim_reads::ClaimTarget::ShortTerm(0),
-                    q
-                )?
-            )
-        } else {
-            String::new()
-        };
-
         if limit < 1 {
             return Err(WorkspaceError::LimitTooSmall);
         }
@@ -591,7 +582,7 @@ impl WorkspaceStore {
         if limit > MAX_SEARCH_LIMIT {
             return Err(WorkspaceError::LimitTooSmall);
         }
-        let mut statement = connection.prepare(&format!(
+        let mut statement = connection.prepare(
             "select short_term_memories.id
              from short_term_memories_fts
              join short_term_memories
@@ -599,15 +590,30 @@ impl WorkspaceStore {
              where short_term_memories_fts match ?1
                and short_term_memories.session_id = ?2
                and short_term_memories.archived_at is null
-             {eligibility} order by bm25(short_term_memories_fts), short_term_memories.id
+              order by bm25(short_term_memories_fts), short_term_memories.id
              limit ?3",
-        ))?;
+        )?;
         let ids = statement
             .query_map(
-                rusqlite::params![expression, session_id, limit as i64],
+                rusqlite::params![
+                    expression,
+                    session_id,
+                    if current.is_some() {
+                        crate::claim_reads::CANDIDATE_BUDGET as i64
+                    } else {
+                        limit as i64
+                    }
+                ],
                 |row| row.get::<_, i64>(0),
             )?
             .collect::<Result<Vec<_>, _>>()?;
+        let ids = crate::claim_reads::select_candidates(
+            connection,
+            ids,
+            |id| crate::claim_reads::ClaimTarget::ShortTerm(*id),
+            current,
+            limit,
+        )?;
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {
             records.push(hydrate_memory(connection, id)?);
@@ -808,6 +814,10 @@ fn hydrate_memory(
         _ => metadata_strings(metadata.get("semantic_tags"), false),
     };
     Ok(ShortTermMemoryRecord {
+        claim_annotation: crate::claim_reads::source_annotation(
+            connection,
+            crate::claim_reads::ClaimTarget::ShortTerm(memory_id),
+        )?,
         id: row.0,
         session_id: row.1,
         source_role: row.2,

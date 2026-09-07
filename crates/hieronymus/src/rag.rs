@@ -247,6 +247,12 @@ pub struct RagStore {
 }
 
 impl RagStore {
+    pub(crate) fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     pub fn open(config: &HieronymusConfig) -> Result<Self, RagError> {
         open_migrated(&config.database_path())?;
         Ok(Self {
@@ -673,19 +679,6 @@ impl RagStore {
         story_scopes: &[String],
         semantic_tags: &[String],
     ) -> Result<Vec<RagSearchHit>, RagError> {
-        let eligibility = if let Some(q) = current {
-            format!(
-                " and rag_chunks.id in (select value from json_each('{}'))",
-                crate::claim_reads::eligible_ids(
-                    connection,
-                    crate::claim_reads::ClaimTarget::RagChunk(0),
-                    q
-                )?
-            )
-        } else {
-            String::new()
-        };
-
         if limit == 0 {
             return Err(RagError::LimitTooSmall);
         }
@@ -693,7 +686,11 @@ impl RagStore {
         if expression.is_empty() {
             return Ok(Vec::new());
         }
-        let bounded_limit = limit.min(MAX_RAG_SEARCH_LIMIT) as i64;
+        let bounded_limit = if current.is_some() {
+            crate::claim_reads::CANDIDATE_BUDGET
+        } else {
+            limit.min(MAX_RAG_SEARCH_LIMIT)
+        } as i64;
         let clean_language_tags = clean_text_values(language_tags);
         let clean_story_scopes = clean_text_values(story_scopes);
         let clean_semantic_tags = clean_text_values(semantic_tags);
@@ -767,7 +764,7 @@ impl RagStore {
                on rag_sources.id = rag_chunks.source_id
               and rag_sources.series_slug = rag_chunks.series_slug
              where rag_chunks_fts match ?{expression_index}
-               and rag_chunks.series_slug = ?{series_index} {eligibility}
+               and rag_chunks.series_slug = ?{series_index}
              order by score desc, rag_chunks.id
              limit ?{limit_index}"
         );
@@ -789,6 +786,13 @@ impl RagStore {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
+        let rows = crate::claim_reads::select_candidates(
+            connection,
+            rows,
+            |row| crate::claim_reads::ClaimTarget::RagChunk(row.id),
+            current,
+            limit.min(MAX_RAG_SEARCH_LIMIT),
+        )?;
         let chunk_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
         let chunk_language_tags = text_values_for_chunks(
             connection,
@@ -809,14 +813,17 @@ impl RagStore {
             &chunk_ids,
         )?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| {
                 let metadata = match serde_json::from_str::<Value>(&row.metadata_json) {
                     Ok(Value::Object(map)) => map,
                     _ => Map::new(),
                 };
                 let chunk = RagChunkRecord {
+                    claim_annotation: crate::claim_reads::source_annotation(
+                        connection,
+                        crate::claim_reads::ClaimTarget::RagChunk(row.id),
+                    )?,
                     id: row.id,
                     source_id: row.source_id,
                     series_slug: row.series_slug,
@@ -836,13 +843,13 @@ impl RagStore {
                         .cloned()
                         .unwrap_or_default(),
                 };
-                RagSearchHit {
+                Ok(RagSearchHit {
                     chunk,
                     score: row.score,
                     reason: reason_for_chunk_kind(&row.chunk_kind).to_string(),
-                }
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, RagError>>()
     }
 
     /// Full chunk records for the given ids (id ascending, unknown ids
@@ -931,14 +938,17 @@ impl RagStore {
             &resolved_ids,
         )?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| {
                 let metadata = match serde_json::from_str::<Value>(&row.metadata_json) {
                     Ok(Value::Object(map)) => map,
                     _ => Map::new(),
                 };
-                RagChunkRecord {
+                Ok(RagChunkRecord {
+                    claim_annotation: crate::claim_reads::source_annotation(
+                        connection,
+                        crate::claim_reads::ClaimTarget::RagChunk(row.id),
+                    )?,
                     id: row.id,
                     source_id: row.source_id,
                     series_slug: row.series_slug,
@@ -957,9 +967,9 @@ impl RagStore {
                         .get(&row.id)
                         .cloned()
                         .unwrap_or_default(),
-                }
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, RagError>>()
     }
 }
 
