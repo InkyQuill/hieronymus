@@ -208,34 +208,74 @@ pub struct OutboundUrl {
     pub path: String,
 }
 
+impl OutboundUrl {
+    /// HTTP authority syntax requires brackets around an IPv6 address;
+    /// socket connections and certificate verification use the bare host.
+    pub fn http_authority(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
 pub fn parse_outbound_url(url: &str) -> Result<OutboundUrl, String> {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return Err(format!("outbound url has no scheme: {url}"));
-    };
-    let secure = match scheme.to_ascii_lowercase().as_str() {
+    // Reject characters that URL normalization could silently discard, or
+    // which could turn the HTTP request target into another request.
+    if url.bytes().any(|c| c <= b' ' || c == 127) || url.contains('\\') {
+        return Err("outbound url contains whitespace, control characters or backslashes".into());
+    }
+    let parsed = url::Url::parse(url).map_err(|e| format!("invalid outbound url: {e}"))?;
+    let secure = match parsed.scheme() {
         "http" => false,
         "https" => true,
-        other => {
-            return Err(format!(
-                "unsupported outbound url scheme: {other}:// (only http:// and https:// are supported)"
-            ));
+        _ => return Err("only http:// and https:// are supported".into()),
+    };
+    let authority = url
+        .split_once("://")
+        .ok_or("outbound url requires ://")?
+        .1
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("");
+    if authority.is_empty()
+        || authority.contains('@')
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err("outbound url must not contain userinfo".into());
+    }
+    if parsed.fragment().is_some() {
+        return Err("outbound url must not contain a fragment".into());
+    }
+    let host = match parsed.host().ok_or("outbound url has no host")? {
+        url::Host::Domain(host) => {
+            if host.split('.').any(|label| {
+                label.is_empty()
+                    || label.starts_with('-')
+                    || label.ends_with('-')
+                    || !label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }) {
+                return Err("outbound url has an invalid hostname".into());
+            }
+            host.to_string()
         }
+        url::Host::Ipv4(host) => host.to_string(),
+        url::Host::Ipv6(host) => host.to_string(),
     };
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, "/".to_string()),
-    };
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => {
-            let port = port
-                .parse::<u16>()
-                .map_err(|_| format!("outbound url has an invalid port: {url}"))?;
-            (host.to_string(), port)
-        }
-        None => (authority.to_string(), if secure { 443 } else { 80 }),
-    };
-    if host.is_empty() {
-        return Err(format!("outbound url has no host: {url}"));
+    let port = parsed
+        .port_or_known_default()
+        .ok_or("outbound url has no port")?;
+    if port == 0 {
+        return Err("outbound url port must be nonzero".into());
+    }
+    let mut path = parsed.path().to_string();
+    if let Some(query) = parsed.query() {
+        path.push('?');
+        path.push_str(query);
     }
     Ok(OutboundUrl {
         secure,

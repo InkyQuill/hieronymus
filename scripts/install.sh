@@ -40,6 +40,7 @@ esac
 RELEASE_DIR="${HIERONYMUS_RELEASE_DIR:-}"
 RELEASE_URL="${HIERONYMUS_RELEASE_URL:-}"
 UNIT_DIR="${HIERONYMUS_UNIT_DIR:-}"
+CHANNEL="${HIERONYMUS_RELEASE_CHANNEL:-stable}"
 NO_ACTIVATE=0
 
 usage() {
@@ -57,6 +58,11 @@ while [ $# -gt 0 ]; do
     --release-url)
       [ $# -ge 2 ] || usage
       RELEASE_URL="$2"
+      shift 2
+      ;;
+    --channel)
+      [ $# -ge 2 ] || usage
+      CHANNEL="$2"
       shift 2
       ;;
     --app-dir)
@@ -90,7 +96,12 @@ if [ -n "$RELEASE_DIR" ] && [ -n "$RELEASE_URL" ]; then
   echo "error: --release-dir and --release-url are mutually exclusive" >&2
   usage
 fi
+case "$CHANNEL" in stable|dev) ;; *) echo "error: channel must be stable or dev" >&2; exit 1;; esac
 if [ -n "$RELEASE_URL" ]; then
+  if [[ "$RELEASE_URL" =~ [[:space:]@\\?#] ]]; then
+    echo "error: invalid HTTPS release URL (userinfo, whitespace, query or fragment)" >&2
+    exit 1
+  fi
   case "$RELEASE_URL" in
     https://*) : ;;
     *)
@@ -162,6 +173,8 @@ if [ -n "$RELEASE_DIR" ]; then
     archive_name="$(json_field "$RELEASE_DIR/release.json" archive || true)"
     expected_sha="$(json_field "$RELEASE_DIR/release.json" sha256 || true)"
     [ -n "$archive_name" ] || fatal "release.json does not declare an archive name"
+    [[ "$declared_version" =~ ^[a-zA-Z0-9][a-zA-Z0-9.+-]*$ ]] || fatal "invalid release version"
+    [ "$archive_name" = "hieronymus-$declared_version-$TARGET.tar.gz" ] || fatal "archive does not match version and target $TARGET"
     [ -f "$RELEASE_DIR/$archive_name" ] || fatal "release.json points at $archive_name, which is not in $RELEASE_DIR"
     archive_path="$RELEASE_DIR/$archive_name"
   else
@@ -174,16 +187,18 @@ if [ -n "$RELEASE_DIR" ]; then
 else
   command -v curl >/dev/null 2>&1 || fatal "curl is required for --release-url"
   info "base url:    $RELEASE_URL"
-  curl -fsSL "$RELEASE_URL/release.json" -o "$work/release.json" ||
+  RELEASE_URL="${RELEASE_URL%/}/$CHANNEL"
+  curl --proto =https --proto-redir =https --max-time 600 --max-filesize 65536 -fsS "$RELEASE_URL/release.json" -o "$work/release.json" ||
     fatal "could not download $RELEASE_URL/release.json"
   declared_version="$(json_field "$work/release.json" version || true)"
   archive_name="$(json_field "$work/release.json" archive || true)"
   expected_sha="$(json_field "$work/release.json" sha256 || true)"
   [ -n "$archive_name" ] || fatal "release.json does not declare an archive name"
-  curl -fsSL "$RELEASE_URL/$archive_name" -o "$work/$archive_name" ||
+  [ "$(json_field "$work/release.json" channel || true)" = "$CHANNEL" ] || fatal "release metadata does not declare requested channel $CHANNEL"
+  [[ "$declared_version" =~ ^[a-zA-Z0-9][a-zA-Z0-9.+-]*$ ]] || fatal "invalid release version"
+  [ "$archive_name" = "hieronymus-$declared_version-$TARGET.tar.gz" ] || fatal "archive does not match version and target $TARGET"
+  curl --proto =https --proto-redir =https --max-time 600 --max-filesize 1073741824 -fsS "$RELEASE_URL/$archive_name" -o "$work/$archive_name" ||
     fatal "could not download $RELEASE_URL/$archive_name"
-  curl -fsSL "$RELEASE_URL/$archive_name.sha256" -o "$work/$archive_name.sha256" ||
-    true
   archive_path="$work/$archive_name"
 fi
 info "archive:     $archive_name"
@@ -211,6 +226,17 @@ fi
 if [ -n "$signature" ]; then
   fatal "release metadata carries a signature, but signature verification is not configured in the waived first release line; refusing to trust it"
 fi
+for metadata in "$RELEASE_DIR/release.json" "$work/release.json"; do
+  if [ -f "$metadata" ]; then
+    for field in version archive sha256 signature channel target; do
+      count="$(grep -o "\"$field\"[[:space:]]*:" "$metadata" | wc -l || true)"
+      [ "$count" -le 1 ] || fatal "duplicate metadata field: $field"
+    done
+  fi
+  if [ -f "$metadata" ] && grep -q '"signature"[[:space:]]*:' "$metadata"; then
+    grep -Eq '"signature"[[:space:]]*:[[:space:]]*null[[:space:]]*[,}]' "$metadata" || fatal "signature verification is not configured"
+  fi
+done
 actual_sha="$(sha256sum "$archive_path" | awk '{print $1}')"
 expected_sha="$(printf '%s' "$expected_sha" | tr 'A-Z' 'a-z')"
 [ "$actual_sha" = "$expected_sha" ] ||
@@ -220,36 +246,33 @@ info "sha256 verified: $actual_sha"
 # ---------------------------------------------------------------------------
 step "4. install into a versioned application directory"
 # ---------------------------------------------------------------------------
-mkdir -p "$APP_DIR/versions"
-stage="$(mktemp -d "$APP_DIR/versions/.stage-XXXXXX")"
-tar -xzf "$archive_path" -C "$stage"
-[ -x "$stage/hiero" ] || fatal "the archive payload has no executable hiero binary"
-for name in hieronymus hieronymus-agent-hook hieronymus-mcp; do
-  [ "$(readlink "$stage/$name")" = "hiero" ] ||
-    fatal "archive link $name does not point at hiero"
-done
-version="$("$stage/hiero" version --json | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')"
-[ -n "$version" ] || fatal "the archive binary does not report its version"
-if [ -n "$declared_version" ] && [ "$declared_version" != "$version" ]; then
-  rm -rf "$stage"
-  fatal "metadata declares version $declared_version but the binary reports $version"
+# Inspect the bootstrap entry before executing any downloaded bytes. It must
+# occur exactly once as a regular, bounded file with the literal name hiero.
+# The full typed verifier subsequently rejects every other unsafe entry.
+tar --list --verbose --numeric-owner --quoting-style=escape -zf "$archive_path" > "$work/listing"
+awk '$6 == "hiero" { if (NF != 6 || substr($1,1,1) != "-" || $3 > 536870912) bad=1; count++ } END { exit (bad || count != 1) }' "$work/listing" || fatal "invalid bootstrap executable entry"
+tar -xOzf "$archive_path" hiero > "$work/hiero"
+[ "$(wc -c < "$work/hiero")" -le 536870912 ] || fatal "bootstrap executable exceeds size limit"
+chmod 700 "$work/hiero"
+if [ -z "$RELEASE_DIR" ]; then RELEASE_DIR="$work"; fi
+"$work/hiero" release-verify --release-dir "$RELEASE_DIR" --output "$work/verified" || fatal "release verification failed"
+"$work/verified/hiero" release-assets --output "$work/verified" > "$work/assets.json" || fatal "required semantic assets failed native verification"
+cmp "$work/verified/assets.json" "$work/assets.json" || fatal "bundled asset metadata mismatch"
+version="$("$work/hiero" version --json | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')"
+update_args=(update --release-dir "$RELEASE_DIR" --app-dir "$APP_DIR" --data-root "$DATA_ROOT")
+if [ -n "$UNIT_DIR" ]; then update_args+=(--unit-dir "$UNIT_DIR"); fi
+# A no-activation bootstrap cannot take over a running managed installation.
+if [ "$NO_ACTIVATE" = "1" ] && [ -z "$UNIT_DIR" ]; then
+  update_args+=(--unit-dir "$work/offline-units")
 fi
-info "version:     $version"
+env -u HIERONYMUS_RELEASE_URL -u HIERONYMUS_RELEASE_DIR "$work/hiero" "${update_args[@]}" || fatal "verified update activation failed"
 install_dir="$APP_DIR/versions/$version"
-if [ -e "$install_dir" ]; then
-  info "replacing existing $install_dir (verified payload; never an in-place overwrite)"
-  rm -rf "$install_dir"
-fi
-mv "$stage" "$install_dir"
+info "version: $version"
 
 # ---------------------------------------------------------------------------
 step "5. update the stable command links"
 # ---------------------------------------------------------------------------
-mkdir -p "$APP_DIR/bin"
-for name in hiero hieronymus hieronymus-agent-hook hieronymus-mcp; do
-  ln -sfn "../versions/$version/$name" "$APP_DIR/bin/$name"
-done
-info "stable links: $APP_DIR/bin/{hiero,hieronymus,hieronymus-agent-hook,hieronymus-mcp}"
+info "stable links installed by the ownership-checked updater"
 
 mkdir -p "$HOME/.local/bin"
 for name in hiero hieronymus hieronymus-agent-hook hieronymus-mcp; do
@@ -305,7 +328,11 @@ case "$state" in
   empty | rust-schema)
     if [ "$can_activate" = "1" ]; then
       if systemctl --user start hieronymus.service; then
-        info "daemon started through the systemd user service"
+        if ! "$APP_DIR/bin/hiero" release-ready --data-root "$DATA_ROOT"; then
+          systemctl --user stop hieronymus.service || true
+          fatal "installed daemon did not reach authenticated semantic readiness; service stopped"
+        fi
+        info "daemon started and semantic readiness verified through the systemd user service"
         daemon_summary="started (systemd user service)"
       else
         info "warning: the service could not be started; run it manually with:"

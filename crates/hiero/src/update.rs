@@ -12,8 +12,8 @@
 //! (`{"version", "archive", "sha256", "signature"}`). A non-null `signature`
 //! is refused: signature verification is waived (not configured) for the
 //! first release line, and the updater fails closed rather than trusting
-//! something it cannot verify. Production feed transport is out of scope
-//! here; the directory works over any mount/sync the owner provides.
+//! something it cannot verify. HTTPS feeds are verified and staged by
+//! `release_source`; this activation flow consumes the resulting local directory.
 //!
 //! Compatibility gates, in order, all before anything is changed:
 //! candidate protocol revision must equal this binary's (a protocol change
@@ -49,7 +49,7 @@ const READY_POLL: Duration = Duration::from_millis(20);
 /// under `cfg(test)` so the unit tests that drive the rollback state machine
 /// with no real daemon do not stall.
 #[cfg(not(test))]
-const READY_TIMEOUT: Duration = Duration::from_secs(20);
+const READY_TIMEOUT: Duration = Duration::from_secs(90);
 #[cfg(test)]
 const READY_TIMEOUT: Duration = Duration::from_millis(300);
 
@@ -301,6 +301,13 @@ fn semantic_state(
     }
 }
 
+/// Bootstrap's post-service-start gate uses the same authenticated version
+/// and supervised semantic checks as update activation.
+pub fn require_release_ready(config: &HieronymusConfig) -> Result<(), String> {
+    poll_until_live(config, Some(env!("CARGO_PKG_VERSION")))?;
+    require_semantic_ready(config)
+}
+
 /// Everything the rollback state machine needs to restore, captured before any
 /// mutation. Holds *what* to restore, not *where* — the caller passes the
 /// layout and config.
@@ -339,6 +346,17 @@ fn run_update_impl(
         release.archive.display()
     ));
 
+    let actual = sha256_file(&release.archive)?;
+    if actual != release.sha256 {
+        return Err(UpdateError::Refused(format!(
+            "archive checksum mismatch: expected {}, got {actual}",
+            release.sha256
+        )));
+    }
+    lines.push("archive checksum verified".to_string());
+
+    crate::release_source::inspect_archive(&release.archive).map_err(UpdateError::Refused)?;
+
     if previous_version.as_deref() == Some(release.version.as_str()) {
         lines.push("already up to date; nothing was changed".to_string());
         return Ok(UpdateReport {
@@ -359,15 +377,6 @@ fn run_update_impl(
             release.version
         )));
     }
-
-    let actual = sha256_file(&release.archive)?;
-    if actual != release.sha256 {
-        return Err(UpdateError::Refused(format!(
-            "archive checksum mismatch: expected {}, got {actual}",
-            release.sha256
-        )));
-    }
-    lines.push("archive checksum verified".to_string());
 
     // Stage alongside the current version; never in-place. Every gate below
     // runs against the staged copy, and any refusal discards it first.
@@ -900,9 +909,8 @@ pub fn resolve_release(directory: &Path) -> Result<ResolvedRelease, UpdateError>
     let metadata_path = directory.join("release.json");
     if metadata_path.exists() {
         let text = std::fs::read_to_string(&metadata_path)?;
-        let payload: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-            UpdateError::Source(format!("release.json is not valid JSON: {error}"))
-        })?;
+        let payload =
+            crate::release_source::parse_metadata(text.as_bytes()).map_err(UpdateError::Source)?;
         if payload
             .get("signature")
             .map(|signature| !signature.is_null())
@@ -914,6 +922,7 @@ pub fn resolve_release(directory: &Path) -> Result<ResolvedRelease, UpdateError>
                     .to_string(),
             ));
         }
+        crate::release_source::validate_metadata(&payload).map_err(UpdateError::Source)?;
         let version = string_field(&payload, "version")?;
         let archive_name = string_field(&payload, "archive")?;
         let sha256 = normalize_sha256(&string_field(&payload, "sha256")?)?;
@@ -957,6 +966,10 @@ pub fn resolve_release(directory: &Path) -> Result<ResolvedRelease, UpdateError>
             normalize_sha256(checksum_text.split_whitespace().next().ok_or_else(|| {
                 UpdateError::Source(format!("{} is empty", checksum_path.display()))
             })?)?;
+        crate::release_source::validate_metadata(&serde_json::json!({
+            "version": version, "archive": name, "sha256": sha256,
+        }))
+        .map_err(UpdateError::Source)?;
         if found.is_some() {
             return Err(UpdateError::Source(
                 "release directory holds several archives and no release.json; \
@@ -1017,22 +1030,9 @@ pub fn sha256_file(path: &Path) -> Result<String, UpdateError> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
-/// Extract a `.tar.gz` archive with the system `tar` (the same tool the
-/// bootstrap installer and release build use).
+/// Extract through the shared typed archive verifier, before activation.
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), UpdateError> {
-    let status = Command::new("tar")
-        .arg("-xzf")
-        .arg(archive)
-        .arg("-C")
-        .arg(destination)
-        .status()
-        .map_err(|error| failed(format!("could not run tar: {error}")))?;
-    if !status.success() {
-        return Err(failed(format!(
-            "archive extraction failed (tar exited {status})"
-        )));
-    }
-    Ok(())
+    crate::release_source::extract_archive(archive, destination).map_err(failed)
 }
 
 fn failed(message: impl Into<String>) -> UpdateError {
@@ -1063,6 +1063,30 @@ fn validate_payload(staging: &Path) -> Result<(), String> {
             }
         }
     }
+    if staging.join("assets.json").exists() || cfg!(feature = "console-embed") {
+        let output = Command::new(&binary)
+            .arg("release-assets")
+            .arg("--output")
+            .arg(staging)
+            .output()
+            .map_err(|e| format!("native asset verification failed: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "native asset verification failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let expected: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(staging.join("assets.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let actual: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if actual != expected {
+            return Err("bundled asset metadata mismatch".into());
+        }
+    }
+
     Ok(())
 }
 

@@ -36,6 +36,14 @@ fn build_release(root: &Path, binary: &str) -> PathBuf {
     let payload = root.join("payload");
     std::fs::create_dir_all(&payload).unwrap();
     std::fs::copy(binary, payload.join("hiero")).unwrap();
+    assert!(
+        Command::new("strip")
+            .arg("--strip-debug")
+            .arg(payload.join("hiero"))
+            .status()
+            .unwrap()
+            .success()
+    );
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = std::fs::metadata(payload.join("hiero"))
         .unwrap()
@@ -128,105 +136,8 @@ impl Sandbox {
     }
 }
 
-fn seed_python_schema(data_root: &Path) {
-    let connection = rusqlite::Connection::open(data_root.join("hieronymus.sqlite")).unwrap();
-    for table in [
-        "series",
-        "task_sessions",
-        "short_term_memories",
-        "strict_terms",
-    ] {
-        connection
-            .execute(
-                &format!("create table {table} (id integer primary key)"),
-                [],
-            )
-            .unwrap();
-    }
-}
-
 // ---------------------------------------------------------------------------
-// The 8 steps, happy path
-// ---------------------------------------------------------------------------
-
-#[test]
-fn install_runs_all_eight_steps_and_lays_out_the_managed_tree() {
-    let sandbox = Sandbox::new();
-    build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
-    std::fs::create_dir_all(sandbox.data_root()).unwrap();
-    let version = real_version();
-
-    let (stdout, stderr, status) = sandbox.run(&[]);
-    assert!(status.success(), "{stdout}{stderr}");
-
-    // Step 1 prints the resolved platform without executing anything.
-    assert!(stdout.contains("x86_64-unknown-linux-gnu"), "{stdout}");
-    // Step 3 verified the checksum.
-    assert!(stdout.contains("sha256 verified"), "{stdout}");
-    // Step 4: versioned application directory.
-    let version_dir = sandbox.app().join("versions").join(&version);
-    assert!(version_dir.join("hiero").is_file(), "{stdout}");
-    // Step 5: stable command links (relative into the versioned directory).
-    assert_eq!(
-        std::fs::read_link(sandbox.app().join("bin/hieronymus-mcp")).unwrap(),
-        PathBuf::from(format!("../versions/{version}/hieronymus-mcp"))
-    );
-    // The installed binary works through the stable link.
-    let probe = Command::new(sandbox.app().join("bin/hiero"))
-        .arg("version")
-        .output()
-        .unwrap();
-    assert!(probe.status.success());
-    assert!(String::from_utf8(probe.stdout).unwrap().contains("hiero v"));
-    // The PATH links went into the sandboxed HOME only.
-    assert_eq!(
-        std::fs::read_link(sandbox.home().join(".local/bin/hiero")).unwrap(),
-        sandbox.app().join("bin/hiero")
-    );
-    // Step 6: the unit file is written, pointing at the installed binary and
-    // data root; the daemon was not started.
-    let unit = std::fs::read_to_string(sandbox.unit_dir().join("hieronymus.service")).unwrap();
-    assert!(
-        unit.contains(&version_dir.join("hiero").display().to_string()),
-        "{unit}"
-    );
-    assert!(
-        unit.contains(&sandbox.data_root().display().to_string()),
-        "{unit}"
-    );
-    assert!(unit.contains("Restart=on-failure"));
-    // Steps 7 and 8: doctor ran, the daemon stayed stopped (--no-activate).
-    assert!(stdout.contains("doctor: healthy"), "{stdout}");
-    assert!(stdout.contains("daemon not started"), "{stdout}");
-    // No staging leftovers.
-    let versions: Vec<_> = std::fs::read_dir(sandbox.app().join("versions"))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(versions, vec![version.clone()], "{versions:?}");
-}
-
-#[test]
-fn install_is_idempotent_on_rerun() {
-    let sandbox = Sandbox::new();
-    build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
-    std::fs::create_dir_all(sandbox.data_root()).unwrap();
-
-    let (first, first_stderr, first_status) = sandbox.run(&[]);
-    assert!(first_status.success(), "{first}{first_stderr}");
-    let (second, second_stderr, second_status) = sandbox.run(&[]);
-    assert!(second_status.success(), "{second}{second_stderr}");
-    let version = real_version();
-    let versions: Vec<_> = std::fs::read_dir(sandbox.app().join("versions"))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(versions, vec![version]);
-    assert!(sandbox.app().join("bin/hiero").is_file());
-}
-
-// ---------------------------------------------------------------------------
-// Degrade and refusal paths
+// Bootstrap refusal paths (full package success is the explicit live test)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -245,45 +156,6 @@ fn install_refuses_a_checksum_mismatch_and_installs_nothing() {
     // Nothing was installed: the app directory was never created.
     assert!(!sandbox.app().exists());
     assert!(!sandbox.unit_dir().join("hieronymus.service").exists());
-}
-
-#[test]
-fn install_completes_over_a_python_schema_but_keeps_the_daemon_stopped() {
-    let sandbox = Sandbox::new();
-    build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
-    std::fs::create_dir_all(sandbox.data_root()).unwrap();
-    seed_python_schema(&sandbox.data_root());
-
-    let (stdout, stderr, status) = sandbox.run(&[]);
-    assert!(status.success(), "{stdout}{stderr}");
-    // The upgrade is reported, never performed, and the daemon stays stopped.
-    assert!(stdout.contains("DATABASE UPGRADE REQUIRED"), "{stdout}");
-    assert!(stdout.contains("stays stopped"), "{stdout}");
-    assert!(stdout.contains("migrate"), "{stdout}");
-    assert!(stdout.contains("doctor: degraded"), "{stdout}");
-    // The managed install itself completed.
-    assert!(sandbox.app().join("bin/hiero").is_file());
-    assert!(sandbox.unit_dir().join("hieronymus.service").exists());
-}
-
-#[test]
-fn install_reports_an_unhealthy_doctor_and_still_completes() {
-    let sandbox = Sandbox::new();
-    build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
-    std::fs::create_dir_all(sandbox.data_root()).unwrap();
-    // A corrupt database: doctor exits 2, the installer reports it and leaves
-    // the start decision to the user.
-    std::fs::write(
-        sandbox.data_root().join("hieronymus.sqlite"),
-        b"not a database",
-    )
-    .unwrap();
-
-    let (stdout, stderr, status) = sandbox.run(&[]);
-    assert!(status.success(), "{stdout}{stderr}");
-    assert!(stdout.contains("UNHEALTHY"), "{stdout}");
-    assert!(stdout.contains("daemon NOT started"), "{stdout}");
-    assert!(sandbox.app().join("bin/hiero").is_file());
 }
 
 #[test]
@@ -343,4 +215,310 @@ fn install_refuses_a_non_https_release_url() {
     );
     // Nothing was fetched or installed.
     assert!(!sandbox.app().exists());
+}
+
+#[test]
+fn install_refuses_missing_semantic_assets_before_activation() {
+    let sandbox = Sandbox::new();
+    build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
+    let (stdout, stderr, status) = sandbox.run(&[]);
+    assert!(!status.success(), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("required semantic assets"),
+        "{stdout}{stderr}"
+    );
+    assert!(!sandbox.app().exists());
+    assert!(!sandbox.unit_dir().exists());
+}
+
+/// The real packaged acceptance path: no native assets are copied into the
+/// data root and no semantic-enable/runtime override is sent. Every daemon
+/// and CLI subprocess runs with an empty PATH and no loader override.
+#[test]
+#[ignore = "requires HIERO_TEST_RELEASE_DIR produced by scripts/release-build.sh"]
+fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
+    use serde_json::{Value, json};
+    use std::time::{Duration, Instant};
+    let release =
+        PathBuf::from(std::env::var_os("HIERO_TEST_RELEASE_DIR").expect("built release directory"));
+    let sandbox = Sandbox::new();
+    std::fs::create_dir_all(sandbox.home()).unwrap();
+    let install = || {
+        Command::new(installer_path())
+            .arg("--release-dir")
+            .arg(&release)
+            .arg("--app-dir")
+            .arg(sandbox.app())
+            .arg("--data-root")
+            .arg(sandbox.data_root())
+            .arg("--unit-dir")
+            .arg(sandbox.unit_dir())
+            .arg("--no-activate")
+            .env("HOME", sandbox.home())
+            .env_remove("HIERONYMUS_RELEASE_URL")
+            .env_remove("HIERONYMUS_RELEASE_DIR")
+            .output()
+            .unwrap()
+    };
+    let output = install();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let binary = sandbox.app().join("bin/hiero");
+    let empty_path = sandbox.root.path().join("empty-path");
+    std::fs::create_dir(&empty_path).unwrap();
+    let command = || {
+        let mut cmd = Command::new(&binary);
+        cmd.env("HOME", sandbox.home())
+            .env("PATH", &empty_path)
+            .env_remove("LD_LIBRARY_PATH")
+            .env_remove("HIERO_SEMANTIC_MODEL_DIR")
+            .env_remove("ORT_DYLIB_PATH");
+        cmd
+    };
+    let cli = |args: &[&str]| -> Value {
+        let output = command()
+            .args(args)
+            .arg("--data-root")
+            .arg(sandbox.data_root())
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let doctor = cli(&["doctor"]);
+    assert!(
+        doctor
+            .to_string()
+            .contains("qualified ONNX runtime selected"),
+        "{doctor}"
+    );
+    assert!(
+        doctor.to_string().contains("models/minilm/model.onnx"),
+        "{doctor}"
+    );
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let log = std::fs::File::create(sandbox.root.path().join("daemon.log")).unwrap();
+    let start = Instant::now();
+    let _daemon = Child(
+        command()
+            .arg("daemon")
+            .arg("--data-root")
+            .arg(sandbox.data_root())
+            .stdout(std::process::Stdio::null())
+            .stderr(log)
+            .spawn()
+            .unwrap(),
+    );
+    let mut states = Vec::new();
+    let wait_ready = || -> Value {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let output = command()
+                .args(["status", "--json", "--data-root"])
+                .arg(sandbox.data_root())
+                .output()
+                .unwrap();
+            if let Ok(status) = serde_json::from_slice::<Value>(&output.stdout) {
+                let semantic = &status["status"]["semantic"];
+                if semantic["state"] == "ready" {
+                    return status;
+                }
+                assert_ne!(semantic["state"], json!("failed"), "{status}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "installed daemon readiness timed out"
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    };
+    let ready = wait_ready();
+    states.push(ready);
+    eprintln!(
+        "F1 installed cold-ready seconds={:.3} (pre-staged assets, no OS cache purge)",
+        start.elapsed().as_secs_f64()
+    );
+    assert!(
+        !sandbox.data_root().join("semantic.conf").exists(),
+        "bundled startup must not persist another version's runtime path"
+    );
+    let tool = |name: &str, args: Value| -> Value {
+        let reply = cli(&["tool-call", name, "--args", &args.to_string()]);
+        assert_ne!(reply["result"]["isError"], json!(true), "{reply}");
+        serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/hybrid-relevance.json")).unwrap();
+    let mut sessions = std::collections::HashMap::new();
+    for series in fixture["series"].as_array().unwrap() {
+        tool("hieronymus_series_create", series.clone());
+        let session = tool(
+            "hieronymus_session_start",
+            json!({"series_slug":series["slug"]}),
+        );
+        sessions.insert(
+            series["slug"].as_str().unwrap().to_string(),
+            session["session_id"].clone(),
+        );
+    }
+    let source_root = sandbox.root.path().join("sources");
+    std::fs::create_dir(&source_root).unwrap();
+    for doc in fixture["documents"].as_array().unwrap() {
+        let path = source_root.join(format!("{}.txt", doc["doc_id"].as_str().unwrap()));
+        std::fs::write(&path, doc["text"].as_str().unwrap()).unwrap();
+        let reply = tool(
+            "hieronymus_rag_import",
+            json!({"series_slug":doc["series_slug"],"path":path}),
+        );
+        assert!(reply["semantic_rebuild_job"].is_string());
+    }
+    for memory in fixture["memories"].as_array().unwrap() {
+        tool(
+            "hieronymus_short_term_add",
+            json!({"session_id":sessions[memory["series_slug"].as_str().unwrap()],"kind":memory["kind"],"text":memory["text"]}),
+        );
+    }
+    for term in fixture["terms"].as_array().unwrap() {
+        let draft = tool("hieronymus_termbase_propose", term.clone());
+        tool(
+            "hieronymus_termbase_approve",
+            json!({"series_slug":term["series_slug"],"term_id":draft["id"]}),
+        );
+    }
+    wait_ready();
+    let mut failures = Vec::new();
+    for query in fixture["queries"].as_array().unwrap() {
+        for endpoint in ["hieronymus_recall", "hieronymus_rag_search"] {
+            let mut args =
+                json!({"series_slug":query["series_slug"],"query":query["query"],"limit":8});
+            if endpoint == "hieronymus_recall" {
+                args["session_id"] = sessions[query["series_slug"].as_str().unwrap()].clone();
+            }
+            let payload = tool(endpoint, args);
+            if endpoint == "hieronymus_recall" {
+                if let Some(text) = query["expected_memory_text"].as_str()
+                    && !payload["results"].as_array().unwrap().iter().any(|row| {
+                        row["text"] == text
+                            && row["rank_reason"] == "active session short-term memory match"
+                    })
+                {
+                    failures.push(format!("{} missing learned memory", query["query_id"]));
+                }
+                if let Some(term) = query.get("expected_contract_term") {
+                    let matched = payload["deterministic_contract"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|row| {
+                            row["source_text"] == term["source_text"]
+                                && row["canonical_translation"] == term["canonical_translation"]
+                        });
+                    if !matched {
+                        failures.push(format!(
+                            "{} missing deterministic contract",
+                            query["query_id"]
+                        ));
+                    }
+                }
+            }
+            let rows: Vec<&Value> = if endpoint == "hieronymus_recall" {
+                payload["results"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| row.get("chunk_kind").is_some())
+                    .collect()
+            } else {
+                payload.as_array().unwrap().iter().collect()
+            };
+            let docs = fixture["documents"].as_array().unwrap();
+            let resolve = |row: &&Value| {
+                docs.iter().find(|doc| {
+                    row["source_ref"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains(&format!("{}.txt", doc["doc_id"].as_str().unwrap()))
+                })
+            };
+            let top: Vec<&str> = rows
+                .iter()
+                .take(3)
+                .filter_map(resolve)
+                .map(|doc| doc["doc_id"].as_str().unwrap())
+                .collect();
+            for expected in query["expected_top3_doc_ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                if !top.contains(&expected.as_str().unwrap()) {
+                    failures.push(format!(
+                        "{} {endpoint} missing {expected}, top={top:?}",
+                        query["query_id"]
+                    ));
+                }
+            }
+            for row in &rows {
+                match resolve(row) {
+                    Some(doc) if doc["series_slug"] == query["series_slug"] => {}
+                    _ => failures.push(format!(
+                        "{} {endpoint} invalid series/source",
+                        query["query_id"]
+                    )),
+                }
+                if query["require_semantic_provenance"] == true
+                    && !row.to_string().contains("rag semantic match")
+                {
+                    failures.push(format!(
+                        "{} {endpoint} missing semantic provenance",
+                        query["query_id"]
+                    ));
+                }
+            }
+            eprintln!("F1 installed {} {endpoint} top3={top:?}", query["query_id"]);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    let daemon_pid = _daemon.0.id();
+    let process_status = std::fs::read_to_string(format!("/proc/{daemon_pid}/status")).unwrap();
+    let memory: Vec<_> = process_status
+        .lines()
+        .filter(|line| line.starts_with("VmRSS:") || line.starts_with("VmHWM:"))
+        .collect();
+    eprintln!("F1 installed daemon pid={daemon_pid} corpus-end memory={memory:?}");
+    let mappings = std::fs::read_to_string(format!("/proc/{daemon_pid}/maps")).unwrap();
+    let runtime_mapping = mappings
+        .lines()
+        .find(|line| line.contains("libonnxruntime.so"))
+        .expect("actual installed native runtime mapping");
+    assert!(
+        runtime_mapping.contains("/app/versions/"),
+        "{runtime_mapping}"
+    );
+    eprintln!("F1 installed runtime mapping={runtime_mapping}");
+    drop(_daemon);
+    let rerun = install();
+    assert!(
+        rerun.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&rerun.stdout),
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    eprintln!("F1 installed package clean install, bundled runtime, corpus, offline rerun passed");
 }

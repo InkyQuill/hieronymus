@@ -63,6 +63,17 @@ if [ "$mode" = "dry-run" ]; then
   exit 0
 fi
 
+if [ "$mode" = "full" ]; then
+  : "${HIERO_RELEASE_ONNX_RUNTIME:?set HIERO_RELEASE_ONNX_RUNTIME to the qualified runtime library}"
+  : "${HIERO_RELEASE_ONNX_SHA256:?set HIERO_RELEASE_ONNX_SHA256 to its qualified SHA-256}"
+  : "${HIERO_RELEASE_MODEL_DIR:?set HIERO_RELEASE_MODEL_DIR to the qualified model directory}"
+  [ -f "$HIERO_RELEASE_ONNX_RUNTIME" ] || { echo "missing ONNX runtime" >&2; exit 1; }
+  [ "$(sha256sum "$HIERO_RELEASE_ONNX_RUNTIME" | awk '{print $1}')" = "$HIERO_RELEASE_ONNX_SHA256" ] || { echo "ONNX runtime checksum mismatch" >&2; exit 1; }
+  for asset in model.onnx tokenizer.json LICENSE README.md; do
+    [ -f "$HIERO_RELEASE_MODEL_DIR/$asset" ] || { echo "missing model asset: $asset" >&2; exit 1; }
+  done
+fi
+
 step "checking Bun pin ($BUN_PIN)"
 if ! command -v bun >/dev/null 2>&1; then
   echo "error: bun is not installed; the release build needs bun $BUN_PIN" >&2
@@ -113,8 +124,19 @@ cp "$binary" "$stage/payload/hiero"
 ln -s hiero "$stage/payload/hieronymus"
 ln -s hiero "$stage/payload/hieronymus-agent-hook"
 ln -s hiero "$stage/payload/hieronymus-mcp"
+mkdir -p "$stage/payload/lib" "$stage/payload/models/minilm" "$stage/payload/licenses/runtime"
+cp -L "$HIERO_RELEASE_ONNX_RUNTIME" "$stage/payload/lib/libonnxruntime.so"
+for asset in model.onnx tokenizer.json LICENSE README.md; do
+  cp "$HIERO_RELEASE_MODEL_DIR/$asset" "$stage/payload/models/minilm/$asset"
+done
+runtime_root="$(cd "$(dirname "$HIERO_RELEASE_ONNX_RUNTIME")/.." && pwd)"
+for notice in LICENSE ThirdPartyNotices.txt VERSION_NUMBER; do
+  cp "$runtime_root/$notice" "$stage/payload/licenses/runtime/$notice"
+done
+step "verifying qualified assets and real native inference"
+env -u LD_LIBRARY_PATH -u HIERO_SEMANTIC_MODEL_DIR "$stage/payload/hiero" release-assets --output "$stage/payload" > "$stage/payload/assets.json"
 mkdir -p "$out_dir"
-tar -czf "$out_dir/$archive_name" -C "$stage/payload" hiero hieronymus hieronymus-agent-hook hieronymus-mcp
+tar -czf "$out_dir/$archive_name" -C "$stage/payload" hiero hieronymus hieronymus-agent-hook hieronymus-mcp lib models licenses assets.json
 
 step "SHA-256 checksums"
 (
@@ -123,6 +145,11 @@ step "SHA-256 checksums"
   cat "$archive_name.sha256"
 )
 
+channel="${HIERONYMUS_RELEASE_CHANNEL:-stable}"
+case "$channel" in stable|dev) ;; *) echo "channel must be stable or dev" >&2; exit 1;; esac
+archive_sha="$(sha256sum "$out_dir/$archive_name" | awk '{print $1}')"
+printf '{"version":"%s","target":"%s","channel":"%s","archive":"%s","sha256":"%s","signature":null}\n' "$version" "$TARGET" "$channel" "$archive_name" "$archive_sha" > "$out_dir/release.json"
+
 step "verifying the archive round-trip"
 (
   cd "$out_dir"
@@ -130,7 +157,9 @@ step "verifying the archive round-trip"
 )
 extract="$stage/extract"
 mkdir -p "$extract"
-tar -xzf "$out_dir/$archive_name" -C "$extract"
+"$binary" release-verify --release-dir "$out_dir" --output "$extract"
+env -u LD_LIBRARY_PATH -u HIERO_SEMANTIC_MODEL_DIR "$extract/hiero" release-assets --output "$extract" > "$stage/roundtrip-assets.json"
+cmp "$extract/assets.json" "$stage/roundtrip-assets.json"
 if [ ! "$(readlink "$extract/hieronymus")" = "hiero" ] ||
   [ ! "$(readlink "$extract/hieronymus-agent-hook")" = "hiero" ] ||
   [ ! "$(readlink "$extract/hieronymus-mcp")" = "hiero" ]; then

@@ -32,7 +32,7 @@ const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable> [--json] [--data-root <path>] (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end> [--cwd <dir>] [--json] [--data-root <path>]";
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
-const UPDATE_USAGE: &str = "usage: hiero update --release-dir <dir> [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
+const UPDATE_USAGE: &str = "usage: hiero update (--release-dir <dir> | --release-url <https-base>) [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 const UNINSTALL_USAGE: &str = "usage: hiero uninstall [--yes] [--delete-data] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 
 /// The command this argv[0] presets, if the binary was invoked under one of
@@ -79,6 +79,8 @@ struct ParsedArguments {
     binary: Option<String>,
     no_activate: bool,
     release_dir: Option<String>,
+    release_url: Option<String>,
+    channel: Option<String>,
     app_dir: Option<String>,
     yes: bool,
     delete_data: bool,
@@ -114,6 +116,8 @@ fn parse_arguments(
         binary: None,
         no_activate: false,
         release_dir: None,
+        release_url: None,
+        channel: None,
         app_dir: None,
         yes: false,
         delete_data: false,
@@ -246,6 +250,19 @@ fn parse_arguments(
                         .ok_or_else(|| "--binary requires a path argument".to_string())?
                         .clone(),
                 );
+            }
+            "--release-url" | "--channel" => {
+                let flag = arguments[index].clone();
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .ok_or_else(|| format!("{flag} requires a value"))?
+                    .clone();
+                if flag == "--channel" {
+                    parsed.channel = Some(value);
+                } else {
+                    parsed.release_url = Some(value);
+                }
             }
             "--release-dir" => {
                 index += 1;
@@ -411,6 +428,48 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some("migrate") => run_migrate(&parsed, data_root),
         Some("recover") => run_recover(&parsed, data_root),
         Some("service") => run_service(&parsed, data_root),
+        Some("release-ready") => {
+            update::require_release_ready(&load_config(data_root))?;
+            println!("release ready: authenticated version and semantic lane verified");
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("release-assets") => {
+            let directory = parsed
+                .output
+                .as_deref()
+                .map(absolute_path)
+                .unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .unwrap()
+                        .parent()
+                        .unwrap()
+                        .to_path_buf()
+                });
+            let manifest = hiero::app::verify_semantic_assets(&directory)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("release-verify") => {
+            let directory = absolute_path(
+                parsed
+                    .release_dir
+                    .as_deref()
+                    .ok_or("release-verify requires --release-dir")?,
+            );
+            let release = hiero::release_source::verify_directory(&directory)?;
+            if let Some(output) = &parsed.output {
+                hiero::release_source::extract_archive(&release.archive, &absolute_path(output))?;
+            }
+            println!(
+                "verified release {} ({})",
+                release.version,
+                hiero::app::TARGET_TRIPLE
+            );
+            Ok(ExitCode::SUCCESS)
+        }
         Some("update") => run_update_command(&parsed),
         Some("uninstall") => run_uninstall_command(&parsed),
         Some(other) => Err(format!("unknown command: {other}; {USAGE}")),
@@ -1274,12 +1333,37 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
             "update does not accept --port or --start-daemon; {UPDATE_USAGE}"
         ));
     }
-    let release_dir = parsed
+    let local = parsed
         .release_dir
         .clone()
-        .ok_or_else(|| format!("update requires --release-dir; {UPDATE_USAGE}"))?;
+        .or_else(|| std::env::var("HIERONYMUS_RELEASE_DIR").ok());
+    let remote = parsed
+        .release_url
+        .clone()
+        .or_else(|| std::env::var("HIERONYMUS_RELEASE_URL").ok());
+    if local.is_some() && remote.is_some() {
+        return Err("--release-dir and --release-url are mutually exclusive".into());
+    }
+    let staging = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let channel = parsed
+        .channel
+        .clone()
+        .or_else(|| std::env::var("HIERONYMUS_RELEASE_CHANNEL").ok())
+        .unwrap_or_else(|| "stable".into());
+    hiero::release_source::validate_channel(&channel)?;
+    let release_dir = match (local, remote) {
+        (Some(directory), None) => absolute_path(&directory),
+        (None, Some(base)) => {
+            hiero::release_source::stage_remote(&base, &channel, &staging.path().join("verified"))?
+        }
+        _ => {
+            return Err(format!(
+                "configure HIERONYMUS_RELEASE_URL or pass --release-url / --release-dir; {UPDATE_USAGE}"
+            ));
+        }
+    };
     let options = update::UpdateOptions {
-        release_dir: absolute_path(&release_dir),
+        release_dir,
         app_dir: parsed.app_dir.as_deref().map(absolute_path),
         data_root: parsed.data_root.as_deref().map(absolute_path),
         unit_dir: parsed.unit_dir.as_deref().map(absolute_path),

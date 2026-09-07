@@ -489,6 +489,46 @@ fn check_discovery(config: &HieronymusConfig, report: &mut DoctorReport) {
 /// Semantic health without any download: model presence verdict (missing is
 /// the supported FTS-only baseline), active generation, and index integrity.
 fn check_semantic(config: &HieronymusConfig, report: &mut DoctorReport) {
+    use hieronymus::semantic_arming::{load_runtime_library, verify_runtime_library};
+    match load_runtime_library(config) {
+        Ok(Some(runtime)) => match verify_runtime_library(&runtime) {
+            Ok(()) => report.push(Level::Ok, "semantic-runtime", format!("qualified ONNX runtime selected: {} (checksum verified; native readiness comes from the daemon)", runtime.display())),
+            Err(error) => report.push(Level::Error, "semantic-runtime", error),
+        },
+        Err(error) => report.push(Level::Error, "semantic-runtime", error.to_string()),
+        Ok(None) => {}
+    }
+    if hieronymus::semantic_arming::bundled_asset_root().is_some()
+        || std::env::var_os("HIERO_SEMANTIC_MODEL_DIR").is_some()
+    {
+        for (path, expected) in [
+            (
+                hieronymus::semantic_store::SemanticStore::model_path_for(config),
+                hieronymus::semantic_model::MODEL_SHA256,
+            ),
+            (
+                hieronymus::semantic_store::SemanticStore::tokenizer_path_for(config),
+                hieronymus::semantic_model::TOKENIZER_SHA256,
+            ),
+        ] {
+            match crate::update::sha256_file(&path) {
+                Ok(actual) if actual == expected => report.push(
+                    Level::Ok,
+                    "semantic-asset",
+                    format!("selected asset checksum verified: {}", path.display()),
+                ),
+                other => report.push(
+                    Level::Error,
+                    "semantic-asset",
+                    format!(
+                        "selected asset missing or checksum mismatch: {} ({other:?})",
+                        path.display()
+                    ),
+                ),
+            }
+        }
+    }
+
     let status = match hieronymus::semantic_arming::semantic_status(config) {
         Ok(status) => status,
         Err(error) => {

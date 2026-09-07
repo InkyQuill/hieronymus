@@ -94,11 +94,38 @@ pub fn configuration_revision(config: &HieronymusConfig) -> Result<u64, Semantic
     Ok(load_configuration(config)?.map_or(0, |settings| settings.configuration_revision))
 }
 
+/// Qualified native runtime identity for the current release line.
+pub const RUNTIME_SHA256: &str = "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab";
+pub const RUNTIME_VERSION: &str = "1.28.0";
+
+/// Resolve from the canonical executable, never a stable link or cwd. A
+/// managed version with missing assets remains a broken bundle, not a cue to
+/// reuse another version's assets from the data root.
+pub fn bundled_asset_root() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let directory = exe.parent()?;
+    (directory.join("assets.json").exists() || directory.parent()?.file_name()? == "versions")
+        .then(|| directory.to_path_buf())
+}
+
+pub fn verify_runtime_library(runtime: &Path) -> Result<(), String> {
+    let digest = crate::semantic_model::sha256_file(runtime).map_err(|e| e.to_string())?;
+    if digest != RUNTIME_SHA256 {
+        return Err(format!(
+            "ONNX runtime {} checksum mismatch; expected qualified runtime {RUNTIME_VERSION} ({RUNTIME_SHA256}), got {digest}",
+            runtime.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Missing configuration is distinct from unreadable or malformed settings.
 pub fn load_runtime_library(
     config: &HieronymusConfig,
 ) -> Result<Option<PathBuf>, SemanticConfigError> {
-    Ok(load_configuration(config)?.map(|settings| settings.runtime_library))
+    Ok(load_configuration(config)?
+        .map(|settings| settings.runtime_library)
+        .or_else(|| bundled_asset_root().map(|root| root.join("lib/libonnxruntime.so"))))
 }
 
 /// The outcome of arming: a recall service plus whether the semantic lane is

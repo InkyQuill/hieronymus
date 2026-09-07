@@ -211,6 +211,9 @@ impl SemanticArm for OnnxArm {
             ));
         }
         let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
+        if !store.model_path().is_absolute() || !store.tokenizer_path().is_absolute() {
+            return Err("semantic asset overrides must use an absolute directory".into());
+        }
         use hieronymus::semantic_model::ModelStatus;
         match store.model_status() {
             ModelStatus::Available => {}
@@ -241,6 +244,7 @@ impl SemanticArm for OnnxArm {
         if checksum != hieronymus::semantic_model::MODEL_SHA256 {
             return Err("model checksum mismatch; reacquire the pinned model".into());
         }
+        hieronymus::semantic_arming::verify_runtime_library(&self.runtime)?;
         let mut native = NATIVE_RUNTIME.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((path, failed)) = native.as_ref()
             && (*failed || *path != self.runtime)

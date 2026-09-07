@@ -18,3 +18,5 @@ pub mod service;
 pub mod stdio;
 pub mod uninstall;
 pub mod update;
+
+pub mod release_source;

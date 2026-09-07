@@ -1,26 +1,22 @@
 # Distribution: build, install, update, and release (Rust era)
 
-Status: build, ship, and install/update machinery complete. Authority:
-`docs/superpowers/specs/2026-08-31-rust-distribution-cutover-design.md` AS
-AMENDED (2026-09-03) and ADR 0006.
+Status: F1 packaging and verified release staging are implemented. Installed
+release qualification and the remaining product/host gates are recorded in
+`docs/agent-host-acceptance.md`; this document does not declare those gates
+passed. Current Rust plans and ADR 0016 govern the product. Historical Python
+qualification records are not release-asset inputs.
 
-> **MCP scope of the initial release (cutover gap, 2026-09-04):** the
-> distributed daemon advertises the frozen tool registry but implements only
-> `hieronymus_status` in its MCP `tools/call` dispatch — the ported memory,
-> recall, terminology, and dreaming domain tools are not wired into the
-> registry yet — and the semantic recall lane is not armed in the daemon
-> (`arm_recall_service` has no non-test caller). Over MCP the initial release
-> can therefore serve daemon status only; the domain-tool wiring and semantic
-> arming are a required follow-up slice before cutover
-> (see `docs/roadmap.md`, deferred gaps).
+The daemon now serves the wired memory and retrieval tools. Both working
+memory and real semantic RAG are required. P1 autonomous correction/viewpoint
+runtime acceptance and actual Claude/Codex host handshakes remain open gates.
 
 ## Support matrix
 
 | Property | Value |
 | --- | --- |
 | Initial target | `x86_64-unknown-linux-gnu` |
-| Semantic retrieval | **enabled** — qualified record `qualification/records/semantic-native.json` (decision `semantic-enabled`) |
-| Fallback mode | FTS5-only (the required mode when no qualified semantic record exists for the target) |
+| Semantic retrieval | Required — qualified multilingual MiniLM replacement; see `docs/semantic-validation.md` |
+| Release readiness | Real semantic lane must report `ready`; acquiring, rebuilding, missing/mismatched assets and FTS-only operation do not pass |
 | Rust pin | 1.96.0 (`rust-toolchain.toml`) |
 | Bun pin (console build only) | 1.4.0 (`frontend/bun.lock`, CI `setup-bun`) |
 
@@ -216,3 +212,91 @@ cp target/release-dist/hieronymus-$VERSION-x86_64-unknown-linux-gnu.tar.gz* "$RE
       survive; `--delete-data` (separate run) then removes exactly `$DATA`.
       A real-machine rehearsal also reruns this with the default unit dir so
       the manager paths are exercised once.
+
+## Required semantic package inputs
+
+The full builder requires these explicit inputs; there is no model download
+or language-runtime setup on the installed machine:
+
+```sh
+export HIERO_RELEASE_ONNX_RUNTIME="$PWD/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so"
+export HIERO_RELEASE_ONNX_SHA256=1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab
+export HIERO_RELEASE_MODEL_DIR="$PWD/qualification/.artifacts/models/paraphrase-multilingual-MiniLM-L12-v2"
+scripts/release-build.sh
+```
+
+Bun 1.4.0 is a build-time dependency only. The builder copies the real runtime,
+model, tokenizer, model card, Apache license and runtime notices, verifies
+pinned hashes and runs native document/query inference. `assets.json` records
+the actual identity and file hashes. Archive round-trip repeats verification
+and native inference. Missing or mismatched inputs fail the build.
+
+The version directory contains `lib/libonnxruntime.so`,
+`models/minilm/{model.onnx,tokenizer.json,LICENSE,README.md}`, runtime notices
+under `licenses/runtime/`, and `assets.json`. `minilm` is only a filesystem
+label: metadata retains `paraphrase-multilingual-MiniLM-L12-v2` at immutable
+revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`. Runtime is ONNX Runtime
+1.28.0. No qualification-record schema or attestation platform is required.
+
+The daemon resolves bundled paths from its canonical versioned executable.
+Switching back to an earlier binary therefore switches the bundled assets
+with it; shared index generations still require exact identity. An explicit
+`semantic.conf` runtime override retains priority and must match the qualified
+runtime digest before loading. `HIERO_SEMANTIC_MODEL_DIR` explicitly overrides
+the model/tokenizer directory; those files retain the current pinned checksums.
+Doctor reports the selected paths and checksum failures. Checksums alone do
+not claim native readiness: the supervised daemon publishes that separately.
+
+## Local and remote release sources
+
+No public hosting endpoint is assumed. Configure `HIERONYMUS_RELEASE_URL` or
+pass `--release-url`; `--release-dir` remains available. Supplying both is an
+error. `--channel stable|dev` (or `HIERONYMUS_RELEASE_CHANNEL`, default stable)
+selects `<base>/<channel>/release.json`. Remote metadata must declare that
+same channel. The archive is fetched beside that metadata. A feed directory
+can therefore be published under either configured channel without changing
+the updater. The builder writes the chosen channel to `release.json`.
+
+```json
+{"version":"0.7.0","target":"x86_64-unknown-linux-gnu","channel":"stable","archive":"hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"<actual 64-digit archive digest>","signature":null}
+```
+
+Remote URLs require HTTPS, valid authority/port, and no userinfo, control
+characters, query or fragment. Rust staging uses the shared parsed URL and
+rustls trust roots. Redirects are refused, so a downgrade cannot occur.
+Metadata is limited to 64 KiB and archives to 1 GiB; expanded archives are
+limited to 3 GiB. Transport certificate verification stays enabled. A non-null
+signature is refused because signature verification remains unconfigured for
+this release line; SHA-256 is integrity evidence, not an independent signature.
+
+Local and remote staging share checksum, target, archive-path and link checks
+before activation. Archive paths are a fixed allowlist; duplicate entries,
+traversal, hardlinks, devices and symlinks other than the three relative command
+aliases are refused. Bootstrap verifies checksums, extracts a single bounded
+regular bootstrap binary into a temporary directory, then invokes its typed
+release verifier and the existing ownership-checked updater. Required assets
+and real native inference are verified before stable links change.
+
+Post-start update readiness waits up to 90 seconds and accepts only actual
+`ready`, never an acquiring or rebuilding response. Timeouts fail and route
+through the existing rollback. Cold installed timings are measured by the
+explicit installed test, not inferred from the historical debug run:
+
+```sh
+HIERO_TEST_RELEASE_DIR="$PWD/target/release-dist" CARGO_BUILD_JOBS=4 \
+  cargo test -p hiero --test installer_flow --locked -- \
+  --ignored --nocapture
+```
+
+This test runs the installed daemon and MCP CLI with an empty PATH, no
+`LD_LIBRARY_PATH`, no explicit runtime setting, and no model copy in the data
+root. It checks real bundled startup and the fixed multilingual retrieval
+corpus. It is application integration evidence; it does not substitute for
+native host-handshake or autonomous-correction acceptance.
+
+IPv4 loopback TLS staging is exercised with a real trusted test certificate,
+including certificate rejection and redirect refusal. IPv6 URL parsing and
+bracketed HTTP authority formatting are covered deterministically. The native
+IPv6 loopback test is explicit and opt-in: this qualification host permits the
+listener but times out the TCP connection before TLS (60-second bounded
+connect). That probe is recorded as unverified, not a passing IPv6 TLS claim.

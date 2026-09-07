@@ -225,3 +225,85 @@ mod tests {
         assert_eq!(compare_versions("2.0.0", "10.0.0"), Ordering::Less);
     }
 }
+
+/// Verify the qualified payload and execute real native document/query
+/// inference. Used by the release builder and bootstrap before activation.
+pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> {
+    use hieronymus::semantic_arming::{RUNTIME_SHA256, RUNTIME_VERSION, verify_runtime_library};
+    use hieronymus::semantic_embeddings::{EmbeddingProvider, OnnxEmbeddingProvider};
+    use hieronymus::semantic_model::{MODEL_NAME, MODEL_REVISION, MODEL_SHA256, TOKENIZER_SHA256};
+    let runtime = root.join("lib/libonnxruntime.so");
+    verify_runtime_library(&runtime)?;
+    let mut hashes = serde_json::Map::new();
+    for (file, expected) in [
+        ("lib/libonnxruntime.so", RUNTIME_SHA256),
+        ("models/minilm/model.onnx", MODEL_SHA256),
+        ("models/minilm/tokenizer.json", TOKENIZER_SHA256),
+        (
+            "models/minilm/LICENSE",
+            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        ),
+        (
+            "models/minilm/README.md",
+            "1e98ea05b0de579fcaad3d625b62ea55647142ed674d5f5ebf1440e4bbbb6f23",
+        ),
+    ] {
+        let path = root.join(file);
+        if !std::fs::symlink_metadata(&path)
+            .map_err(|e| e.to_string())?
+            .is_file()
+        {
+            return Err(format!("asset must be a regular file: {file}"));
+        }
+        let digest = crate::update::sha256_file(&path).map_err(|e| e.to_string())?;
+        if digest != expected {
+            return Err(format!("asset checksum mismatch: {file}"));
+        }
+        hashes.insert(file.into(), serde_json::json!(digest));
+    }
+    for file in ["LICENSE", "ThirdPartyNotices.txt", "VERSION_NUMBER"] {
+        let name = format!("licenses/runtime/{file}");
+        let path = root.join(&name);
+        if !std::fs::symlink_metadata(&path)
+            .map_err(|e| e.to_string())?
+            .is_file()
+            || std::fs::metadata(&path).map_err(|e| e.to_string())?.len() == 0
+        {
+            return Err(format!("required runtime notice is missing: {name}"));
+        }
+        hashes.insert(
+            name,
+            serde_json::json!(crate::update::sha256_file(&path).map_err(|e| e.to_string())?),
+        );
+    }
+    if std::fs::read_to_string(root.join("licenses/runtime/VERSION_NUMBER"))
+        .map_err(|e| e.to_string())?
+        .trim()
+        != RUNTIME_VERSION
+    {
+        return Err("runtime VERSION_NUMBER does not match qualified runtime".into());
+    }
+    let bytes =
+        std::fs::read(root.join("models/minilm/tokenizer.json")).map_err(|e| e.to_string())?;
+    let tokenizer = hieronymus::semantic_tokenizer::ModelTokenizer::from_bytes(&bytes)
+        .map_err(|e| e.to_string())?;
+    let mut provider =
+        OnnxEmbeddingProvider::load(&runtime, &root.join("models/minilm/model.onnx"))
+            .map_err(|e| e.to_string())?;
+    let tokens = tokenizer
+        .encode("Картограф描いた地図")
+        .map_err(|e| e.to_string())?;
+    for vector in [
+        provider.embed_document(&tokens),
+        provider.embed_query(&tokens),
+    ] {
+        let vector = vector.map_err(|e| e.to_string())?;
+        if vector.len() != 384 || vector.iter().any(|v| !v.is_finite()) {
+            return Err("native inference returned an invalid vector".into());
+        }
+    }
+    Ok(
+        serde_json::json!({"model": MODEL_NAME, "revision": MODEL_REVISION,
+        "runtime_version": RUNTIME_VERSION, "target": TARGET_TRIPLE, "sha256": hashes}),
+    )
+}

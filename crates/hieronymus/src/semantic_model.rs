@@ -120,10 +120,9 @@ impl ModelTransport for HttpModelTransport {
         };
 
         let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+            "GET {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
             path = parsed.path,
-            host = parsed.host,
-            port = parsed.port,
+            authority = parsed.http_authority(),
         );
         stream
             .write_all(request.as_bytes())

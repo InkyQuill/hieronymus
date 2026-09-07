@@ -185,6 +185,12 @@ impl SemanticStore {
     /// The model path for a data root, without opening any store (report-only
     /// surfaces).
     pub fn model_path_for(config: &HieronymusConfig) -> PathBuf {
+        if let Some(directory) = std::env::var_os("HIERO_SEMANTIC_MODEL_DIR") {
+            return PathBuf::from(directory).join("model.onnx");
+        }
+        if let Some(root) = crate::semantic_arming::bundled_asset_root() {
+            return root.join("models/minilm/model.onnx");
+        }
         config
             .semantic_root()
             .join("models")
@@ -264,6 +270,12 @@ impl SemanticStore {
 
     /// The tokenizer path for a data root, without opening any store.
     pub fn tokenizer_path_for(config: &HieronymusConfig) -> PathBuf {
+        if let Some(directory) = std::env::var_os("HIERO_SEMANTIC_MODEL_DIR") {
+            return PathBuf::from(directory).join("tokenizer.json");
+        }
+        if let Some(root) = crate::semantic_arming::bundled_asset_root() {
+            return root.join("models/minilm/tokenizer.json");
+        }
         config
             .semantic_root()
             .join("models")
