@@ -185,10 +185,26 @@ fn scoped_invalidation_preserves_earlier_fact_after_reopen() {
 }
 
 fn fact_anchors(db: &Connection, r: &mut DecisionRequestV1, duplicate: bool, contradicted: i64) {
+    fact_anchors_custom(db, r, duplicate, contradicted, |_| {});
+}
+fn fact_anchors_custom(
+    db: &Connection,
+    r: &mut DecisionRequestV1,
+    duplicate: bool,
+    contradicted: i64,
+    mut alter: impl FnMut(&mut serde_json::Value),
+) {
+    let effect = match &r.operation {
+        OperationV1::Correct {
+            intent: CorrectionIntentV1::Fact { effect, .. },
+        } => effect.clone(),
+        _ => unreachable!(),
+    };
     let text = "Mira never learned the secret.\n\nMira cannot name the secret.";
     let hash = format!("{:x}", Sha256::digest(text.as_bytes()));
     for (id, start, end) in [(2, 0, 30), (3, 32, text.len())] {
-        let binding = serde_json::json!({"concept_id":1,"source_language":"en","target_language":null,"applicability":r.applicability,"position_id":2,"paragraph_start":start,"paragraph_end":end,"identity_anchor":true,"aligned_source_id":null,"rendering":null,"contradicts_rule":null,"contradicts_claim":contradicted,"claim_effect":"Invalidate","conflict_kind":"erroneous_mapping"});
+        let mut binding = serde_json::json!({"concept_id":1,"source_language":"en","target_language":null,"applicability":r.applicability,"position_id":2,"paragraph_start":start,"paragraph_end":end,"identity_anchor":true,"aligned_source_id":null,"rendering":null,"contradicts_rule":null,"contradicts_claim":contradicted,"claim_effect":effect,"conflict_kind":"erroneous_mapping"});
+        alter(&mut binding);
         db.execute("insert into evidence_records(id,series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(?1,1,'source_passage','book',?2,?3,?4,?5,?6,'now')",params![id,hash,start as i64,end as i64,text,binding.to_string()]).unwrap();
         r.evidence_refs.push(EvidenceRef {
             id,
@@ -271,11 +287,14 @@ fn real_capture_current_recall_filters_invalid_before_limit() {
         applicability: r.applicability.clone(),
     }];
     let bad = store.add_short_term_memory(session.id, &bad).unwrap();
+    let mut good_input = ShortTermMemoryInput::new("note", "secret valid retained");
+    good_input.claims = vec![ClaimInput {
+        text: good_input.text.clone(),
+        concept_id: Some(1),
+        applicability: r.applicability.clone(),
+    }];
     let good = store
-        .add_short_term_memory(
-            session.id,
-            &ShortTermMemoryInput::new("note", "secret valid retained"),
-        )
+        .add_short_term_memory(session.id, &good_input)
         .unwrap();
     let claim = db
         .query_row(
@@ -300,4 +319,366 @@ fn real_capture_current_recall_filters_invalid_before_limit() {
     assert_eq!(response.hits.len(), 1);
     assert_eq!(response.hits[0].item_id(), good.id);
     assert_eq!(response.resulting_revision, 1);
+}
+#[test]
+fn learned_qualification_is_verbatim_and_unevidenced_signals_remain_advisory() {
+    for evidenced in [true, false] {
+        let (_d, mut db, mut r) = fixture();
+        r.actor_kind = ActorKind::Agent;
+        r.operation = OperationV1::Correct {
+            intent: CorrectionIntentV1::Fact {
+                claim_id: 1,
+                claim_revision: 1,
+                effect: FactEffect::Qualify {
+                    qualification: "Only a suspicion.".into(),
+                },
+            },
+        };
+        if evidenced {
+            fact_anchors(&db, &mut r, false, 1);
+        }
+        origin_with_evidence(&db, &r);
+        let result = DecisionStore::new(&mut db).apply(&r).unwrap();
+        assert_eq!(
+            matches!(result, DecisionResultV1::Applied { .. }),
+            evidenced
+        );
+        assert_eq!(
+            db.query_row("select count(*) from claim_effects", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            i64::from(evidenced)
+        );
+        if evidenced {
+            assert_eq!(
+                db.query_row("select qualification from claim_effects", [], |r| r
+                    .get::<_, String>(0))
+                    .unwrap(),
+                "Only a suspicion."
+            );
+        } else {
+            let stored: String = db
+                .query_row("select canonical_request from decision_records", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&stored).unwrap(),
+                serde_json::to_value(&r).unwrap()
+            );
+        }
+    }
+}
+#[test]
+fn factual_evidence_rejects_wrong_identity_scope_and_missing_direct_contradiction() {
+    for defect in ["claim", "concept", "series", "scope", "missing"] {
+        let (_d, mut db, mut r) = fixture();
+        r.actor_kind = ActorKind::Agent;
+        fact_anchors_custom(&db, &mut r, false, 1, |b| match defect {
+            "claim" => b["contradicts_claim"] = serde_json::json!(2),
+            "concept" => b["concept_id"] = serde_json::json!(2),
+            "series" => b["applicability"]["series_id"] = serde_json::json!(2),
+            "scope" => b["applicability"]["chapter_key"] = serde_json::json!("early"),
+            _ => {
+                b["contradicts_claim"] = serde_json::Value::Null;
+                b["claim_effect"] = serde_json::Value::Null;
+                b["conflict_kind"] = serde_json::Value::Null;
+            }
+        });
+        origin_with_evidence(&db, &r);
+        let result = DecisionStore::new(&mut db).apply(&r);
+        if defect == "missing" {
+            assert!(matches!(result, Ok(DecisionResultV1::Tentative { .. })));
+        } else {
+            assert!(result.is_err(), "{defect}");
+        }
+        assert_eq!(
+            db.query_row("select count(*) from claim_effects", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+#[test]
+fn stale_claim_and_series_revisions_and_explicit_masks_reject_corrections() {
+    for defect in ["series", "claim", "protected"] {
+        let (_d, mut db, mut r) = fixture();
+        origin(&db, &r);
+        DecisionStore::new(&mut db).apply(&r).unwrap();
+        r.decision_id = "10000000-0000-4000-8000-000000000002".into();
+        r.origin = OriginReceiptId("20000000-0000-4000-8000-000000000002".into());
+        r.expected_revision = if defect == "series" { 0 } else { 1 };
+        r.operation = OperationV1::Correct {
+            intent: CorrectionIntentV1::Fact {
+                claim_id: 1,
+                claim_revision: if defect == "claim" { 1 } else { 2 },
+                effect: FactEffect::Qualify {
+                    qualification: "Maybe.".into(),
+                },
+            },
+        };
+        r.actor_kind = ActorKind::Agent;
+        fact_anchors(&db, &mut r, false, 1);
+        origin_with_evidence(&db, &r);
+        let result = DecisionStore::new(&mut db).apply(&r);
+        if defect == "protected" {
+            assert!(matches!(result, Err(DecisionErrorV1::AuthorityConflict)));
+        } else {
+            assert!(matches!(
+                result,
+                Err(DecisionErrorV1::RevisionConflict { .. })
+            ));
+        }
+        assert_eq!(
+            db.query_row("select count(*) from claim_effects", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+}
+fn table_bytes(db: &Connection, table: &str) -> Vec<Vec<String>> {
+    let mut s = db
+        .prepare(&format!("select * from {table} order by rowid"))
+        .unwrap();
+    let columns = s.column_count();
+    s.query_map([], |r| {
+        (0..columns)
+            .map(|i| Ok(format!("{:?}", r.get_ref(i)?)))
+            .collect()
+    })
+    .unwrap()
+    .collect::<Result<_, _>>()
+    .unwrap()
+}
+fn relevance_fixture(db: &Connection, r: &mut DecisionRequestV1) {
+    db.execute_batch("insert into crystals(id,crystal_type,text,scope_type,series_slug,strength,confidence,status,created_at,updated_at) values(1,'lesson','Mira knows','series','book',0.5,0.5,'active','now','now'); insert into task_sessions(id,series_slug,source_language,target_language,task_type,status,created_at,last_activity_at) values(1,'book','en','ru','translation','active','now','now'); insert into crystal_activations(id,crystal_id,session_id,recall_query,rank,score,recall_id,created_at) values(1,1,1,'Mira',1,1.0,'recall-one','now'); insert into term_rules(concept_id,source_language,target_language,source_text,canonical_translation,status,created_at,updated_at) values(1,'en','ru','Mira','Мира','candidate','now','now');").unwrap();
+    r.operation = OperationV1::Correct {
+        intent: CorrectionIntentV1::Relevance {
+            recall_id: "recall-one".into(),
+            useful: vec![],
+            missed: vec![1],
+        },
+    };
+    origin(db, r);
+}
+#[test]
+fn relevance_scores_once_after_dropped_response_and_keeps_facts_rules_byte_equivalent() {
+    let (_d, mut db, mut r) = fixture();
+    relevance_fixture(&db, &mut r);
+    let facts = table_bytes(&db, "memory_claims");
+    let rules = table_bytes(&db, "term_rules");
+    let receipt = DecisionStore::new(&mut db)
+        .apply(&r)
+        .unwrap()
+        .receipt()
+        .clone();
+    let replay = DecisionStore::new(&mut db).apply(&r).unwrap();
+    assert_eq!(&receipt, replay.receipt());
+    let (strength, confidence): (f64, f64) = db
+        .query_row(
+            "select strength,confidence from crystals where id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!((strength - 0.45).abs() < 1e-9);
+    assert!((confidence - 0.47).abs() < 1e-9);
+    assert_eq!(table_bytes(&db, "memory_claims"), facts);
+    assert_eq!(table_bytes(&db, "term_rules"), rules);
+    assert_eq!(
+        db.query_row(
+            "select count(*) from memory_events where event_type='recalled_miss'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row("select count(*) from consolidation_jobs", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    r.decision_id = "10000000-0000-4000-8000-000000000002".into();
+    r.origin = OriginReceiptId("20000000-0000-4000-8000-000000000002".into());
+    origin(&db, &r);
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&r),
+        Err(DecisionErrorV1::RevisionConflict { .. })
+    ));
+}
+#[test]
+fn relevance_failures_roll_back_scores_events_activation_and_job() {
+    for trigger in [
+        "before insert on memory_events",
+        "after insert on memory_events",
+        "after insert on consolidation_jobs",
+        "before update of result_json on decision_records",
+    ] {
+        let (_d, mut db, mut r) = fixture();
+        relevance_fixture(&db, &mut r);
+        let crystals = table_bytes(&db, "crystals");
+        let activations = table_bytes(&db, "crystal_activations");
+        let facts = table_bytes(&db, "memory_claims");
+        let rules = table_bytes(&db, "term_rules");
+        db.execute_batch(&format!(
+            "create trigger fail {trigger} begin select raise(abort,'failure'); end"
+        ))
+        .unwrap();
+        assert!(DecisionStore::new(&mut db).apply(&r).is_err());
+        assert_eq!(table_bytes(&db, "crystals"), crystals);
+        assert_eq!(table_bytes(&db, "crystal_activations"), activations);
+        assert_eq!(table_bytes(&db, "memory_claims"), facts);
+        assert_eq!(table_bytes(&db, "term_rules"), rules);
+        for table in ["decision_records", "memory_events", "consolidation_jobs"] {
+            assert!(table_bytes(&db, table).is_empty());
+        }
+    }
+}
+#[test]
+fn reimport_and_explicit_relocation_preserve_corrected_claim_masks() {
+    use hieronymus::{
+        claim_capture::{ClaimInput, ExistingClaimInput},
+        claim_reads::{ClaimDisposition, ClaimTarget, rehydrate_claims},
+        data_root::HieronymusConfig,
+        rag::{RagImport, RagStore},
+    };
+    for relocated in [false, true] {
+        let (dir, mut db, mut r) = fixture();
+        let config = HieronymusConfig::new(dir.path());
+        let path = dir.path().join("story.txt");
+        let store = RagStore::open(&config).unwrap();
+        std::fs::write(&path, "Mira knows the secret.\n\nOld paragraph.").unwrap();
+        let mut import = RagImport::new();
+        import.claims.insert(
+            0,
+            vec![ClaimInput {
+                text: "Mira knows the secret".into(),
+                concept_id: Some(1),
+                applicability: r.applicability.clone(),
+            }],
+        );
+        store.import_file("book", &path, &import).unwrap();
+        let claim: i64 = db
+            .query_row(
+                "select claim_id from claim_bindings where rag_chunk_id is not null",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        r.operation = OperationV1::Correct {
+            intent: CorrectionIntentV1::Fact {
+                claim_id: claim,
+                claim_revision: 1,
+                effect: FactEffect::Invalidate,
+            },
+        };
+        origin(&db, &r);
+        DecisionStore::new(&mut db).apply(&r).unwrap();
+        if relocated {
+            std::fs::write(
+                &path,
+                "Inserted.\n\nMira knows the secret.\n\nNew paragraph.",
+            )
+            .unwrap();
+            let inputs = import.claims.remove(&0).unwrap();
+            import.claims.insert(1, inputs);
+            import.claim_lineage.insert(
+                1,
+                vec![ExistingClaimInput {
+                    claim_id: claim,
+                    concept_id: Some(1),
+                    applicability: r.applicability.clone(),
+                }],
+            );
+        } else {
+            std::fs::write(&path, "Mira knows the secret.\n\nNew paragraph.").unwrap();
+        }
+        store.import_file("book", &path, &import).unwrap();
+        let chunk: i64 = db
+            .query_row(
+                "select id from rag_chunks where text='Mira knows the secret.'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let q = StoryQueryV1 {
+            series_id: 1,
+            timeline_id: Some(1),
+            position_id: Some(2),
+            viewpoint: Viewpoint::Narrator,
+            scope_predicates: vec!["volume:I".into(), "chapter:late".into()],
+            mode: QueryMode::Current,
+        };
+        assert_eq!(
+            rehydrate_claims(&db, ClaimTarget::RagChunk(chunk), &q).unwrap(),
+            ClaimDisposition::Invalid
+        );
+        assert_eq!(
+            db.query_row(
+                "select count(*) from claim_effects where claim_id=?",
+                [claim],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+}
+#[test]
+fn concurrent_corrections_with_one_expected_revision_commit_only_once() {
+    let (dir, db, r) = fixture();
+    origin(&db, &r);
+    let mut second = r.clone();
+    second.decision_id = "10000000-0000-4000-8000-000000000002".into();
+    second.origin = OriginReceiptId("20000000-0000-4000-8000-000000000002".into());
+    origin(&db, &second);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let handles = [r, second]
+        .into_iter()
+        .map(|request| {
+            let path = dir.path().join("hieronymus.sqlite");
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut db = Connection::open(path).unwrap();
+                db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+                db.execute_batch("pragma foreign_keys=on").unwrap();
+                barrier.wait();
+                DecisionStore::new(&mut db).apply(&request)
+            })
+        })
+        .collect::<Vec<_>>();
+    let outcomes = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|r| matches!(r, Ok(DecisionResultV1::Applied { .. })))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|r| matches!(r, Err(DecisionErrorV1::RevisionConflict { .. })))
+            .count(),
+        1
+    );
+    assert_eq!(
+        db.query_row("select count(*) from claim_effects", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row("select count(*) from consolidation_jobs", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
 }

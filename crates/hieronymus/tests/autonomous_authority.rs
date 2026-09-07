@@ -1178,3 +1178,46 @@ fn correction_cannot_reenter_a_wholly_excluded_old_region() {
     );
     assert_eq!(count(&db, "consolidation_jobs"), 2);
 }
+#[test]
+fn rendering_correction_primitive_reuses_validated_mutation_without_ingestion_or_commit() {
+    let (_d, mut db, mut r) = fixture();
+    r.operation = OperationV1::Correct {
+        intent: CorrectionIntentV1::Rendering {
+            replaces: None,
+            value: value("A"),
+        },
+    };
+    r.evidence_refs = anchor(&db, 1, "A");
+    r.evidence_refs.extend(anchor(&db, 2, "A"));
+    origin(&db, &r);
+    let tx = db.transaction().unwrap();
+    tx.execute("insert into decision_records(decision_id,series_id,origin_id,actor_kind,expected_revision,resulting_revision,canonical_request,result_json,status,created_at) values(?1,1,?2,'agent',0,1,?3,'{}','applied','now')",params![r.decision_id,r.origin.0,serde_json::to_value(&r).unwrap().to_string()]).unwrap();
+    let OperationV1::Correct { intent } = &r.operation else {
+        unreachable!()
+    };
+    let effect = hieronymus::corrections::apply_correction_tx(&tx, &r, intent).unwrap();
+    assert_eq!(effect.affected_rules.len(), 1);
+    assert!(hieronymus::corrections::apply_correction_tx(&tx, &r, intent).is_err());
+    assert_eq!(
+        tx.query_row("select count(*) from consolidation_jobs", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        tx.query_row("select count(*) from authority_state", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    tx.rollback().unwrap();
+    assert_eq!(
+        db.query_row(
+            "select count(*) from term_rules where status='active'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}

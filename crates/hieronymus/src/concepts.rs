@@ -373,6 +373,19 @@ impl ConceptStore {
         confidence: f64,
         is_canonical: bool,
     ) -> Result<ConceptFacetRecord, ConceptError> {
+        self.add_facet_with_claims(concept_id, value, fields, confidence, is_canonical, &[])
+    }
+    /// Capture atomic assertions with the facet in the same transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_facet_with_claims(
+        &self,
+        concept_id: i64,
+        value: &str,
+        fields: &FacetFields,
+        confidence: f64,
+        is_canonical: bool,
+        claims: &[crate::claim_capture::ClaimInput],
+    ) -> Result<ConceptFacetRecord, ConceptError> {
         let clean_value = value.trim();
         if clean_value.is_empty() {
             return Err(ConceptError::Invalid(
@@ -392,6 +405,13 @@ impl ConceptStore {
             is_canonical,
             &now,
         )?;
+        for claim in claims {
+            crate::claim_capture::capture_claim_tx(
+                &transaction,
+                crate::claim_reads::ClaimTarget::Facet(facet_id),
+                claim,
+            )?;
+        }
         transaction.commit()?;
         drop(connection);
         get_facet(&self.config, facet_id)
@@ -439,6 +459,16 @@ impl ConceptStore {
         &self,
         facet_id: i64,
         patch: &FacetPatch,
+    ) -> Result<ConceptFacetRecord, ConceptError> {
+        self.update_facet_with_claims(facet_id, patch, &[])
+    }
+    /// Changed content becomes Unknown unless supplied with new typed claims;
+    /// immutable old claims and correction effects are retained for audit.
+    pub fn update_facet_with_claims(
+        &self,
+        facet_id: i64,
+        patch: &FacetPatch,
+        claims: &[crate::claim_capture::ClaimInput],
     ) -> Result<ConceptFacetRecord, ConceptError> {
         let now = now_iso8601();
         let mut connection = self.connection()?;
@@ -494,6 +524,15 @@ impl ConceptStore {
             None | Some(None) => row.is_canonical,
             Some(Some(is_canonical)) => is_canonical,
         };
+        // Metadata cannot erase an existing correction or widen its captured
+        // applicability. Only replaced source content retires its bindings.
+        if next_value != row.value {
+            crate::claim_capture::detach_bindings(
+                &transaction,
+                crate::claim_reads::ClaimTarget::Facet(facet_id),
+                "facet_update",
+            )?;
+        }
         transaction.execute(
             "update concept_facets
              set language = ?1, facet_type = ?2, value = ?3, source_crystal_id = ?4,
@@ -521,6 +560,13 @@ impl ConceptStore {
         }
         if next_is_canonical {
             set_canonical_facet_with_connection(&transaction, concept_id, facet_id)?;
+        }
+        for claim in claims {
+            crate::claim_capture::capture_claim_tx(
+                &transaction,
+                crate::claim_reads::ClaimTarget::Facet(facet_id),
+                claim,
+            )?;
         }
         transaction.commit()?;
         drop(connection);
@@ -1313,6 +1359,10 @@ impl ConceptStore {
             ));
         }
 
+        let foreign_claim:bool=transaction.query_row("select exists(select 1 from concept_facets f join claim_bindings b on b.facet_id=f.id join memory_claims m on m.id=b.claim_id join series s on s.id=m.series_id join concepts target on target.id=?2 where f.concept_id=?1 and not (target.scope_type='global' or target.scope_type='series' and target.scope_key='series:'||s.slug))",rusqlite::params![source_concept_id,target_concept_id],|r|r.get(0))?;
+        if foreign_claim {
+            return Err(crate::authority_models::DecisionErrorV1::EvidenceMismatch.into());
+        }
         if !facet_value_exists(transaction, source_concept_id, &source.canonical_name)? {
             ensure_facet(
                 transaction,
@@ -2068,6 +2118,18 @@ fn move_facets_to_target(
         )?;
         match existing {
             None => {
+                for claim in crate::claim_capture::binding_ids(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                )? {
+                    crate::claim_capture::audit_binding(
+                        connection,
+                        claim,
+                        crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                        Some(crate::claim_reads::ClaimTarget::Facet(source_facet_id)),
+                        "facet_concept_merge",
+                    )?;
+                }
                 connection.execute(
                     "update concept_facets
                      set concept_id = ?1, is_canonical = 0, updated_at = ?2
@@ -2077,6 +2139,16 @@ fn move_facets_to_target(
             }
             Some(target_facet_id) => {
                 copy_facet_metadata(connection, source_facet_id, target_facet_id)?;
+                crate::claim_capture::copy_bindings_tx(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                    crate::claim_reads::ClaimTarget::Facet(target_facet_id),
+                )?;
+                crate::claim_capture::detach_bindings(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                    "facet_merge",
+                )?;
                 connection.execute(
                     "delete from concept_facets where id = ?1",
                     [source_facet_id],

@@ -31,6 +31,10 @@ pub(crate) fn validate_correction(
     {
         return Err(Error::OriginMismatch);
     }
+    if matches!(intent, CorrectionIntentV1::Rendering { .. }) {
+        let (mutation, reasons) = authority::validate_mutation(db, request)?;
+        return Ok((mutation.correction_effect(), reasons));
+    }
     // Even unused supplied evidence is verified, never accepted as inline authority.
     let resolved = crate::authority_evidence::resolve_all(db, request)?;
     let mut reasons = vec![];
@@ -146,7 +150,30 @@ pub fn apply_correction_tx(
     request: &DecisionRequestV1,
     intent: &CorrectionIntentV1,
 ) -> Result<CorrectionEffect, DecisionErrorV1> {
-    let (effect, reasons) = validate_correction(tx, request, intent)?;
+    tx.execute_batch("SAVEPOINT correction_effect")?;
+    let result = apply_inner(tx, request, intent);
+    if result.is_err() {
+        tx.execute_batch("ROLLBACK TO correction_effect")?;
+    }
+    tx.execute_batch("RELEASE correction_effect")?;
+    result
+}
+fn apply_inner(
+    tx: &Transaction<'_>,
+    request: &DecisionRequestV1,
+    intent: &CorrectionIntentV1,
+) -> Result<CorrectionEffect, DecisionErrorV1> {
+    let owner: Option<(String, String)> = tx
+        .query_row(
+            "select canonical_request,status from decision_records where decision_id=?",
+            [&request.decision_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if owner != Some((serde_json::to_value(request)?.to_string(), "applied".into())) {
+        return Err(DecisionErrorV1::OriginMismatch);
+    }
+    let (mut effect, reasons) = validate_correction(tx, request, intent)?;
     if !reasons.is_empty() {
         return Err(DecisionErrorV1::InvalidRequest);
     }
@@ -192,7 +219,17 @@ pub fn apply_correction_tx(
                 _ => DecisionErrorV1::InvalidRequest,
             })?;
         }
-        CorrectionIntentV1::Rendering { .. } => return Err(DecisionErrorV1::InvalidRequest),
+        CorrectionIntentV1::Rendering { .. } => {
+            let (mutation, reasons) = authority::validate_mutation(tx, request)?;
+            if !reasons.is_empty() {
+                return Err(DecisionErrorV1::InvalidRequest);
+            }
+            effect.affected_rules = authority::apply_mutations_tx(
+                tx,
+                &[mutation],
+                authority::AuditOwner::Decision(&request.decision_id),
+            )?;
+        }
     }
     Ok(effect)
 }

@@ -220,6 +220,17 @@ pub(crate) struct ValidatedMutation {
     old: Option<TermRule>,
     exclusions: Vec<crate::story_applicability::ApplicabilityV1>,
 }
+impl ValidatedMutation {
+    pub(crate) fn correction_effect(&self) -> crate::corrections::CorrectionEffect {
+        crate::corrections::CorrectionEffect {
+            affected_claims: vec![],
+            affected_rules: vec![],
+            effective_applicability: self.request.applicability.clone(),
+            effective_exclusions: self.exclusions.clone(),
+            effect: "terminology".into(),
+        }
+    }
+}
 #[derive(Clone, Copy)]
 pub(crate) enum AuditOwner<'a> {
     Decision(&'a str),
@@ -516,10 +527,7 @@ fn ingest(tx: &Transaction<'_>, r: &DecisionRequestV1) -> Result<DecisionResultV
         });
     }
     let correction_intent = match &r.operation {
-        OperationV1::Correct {
-            intent:
-                intent @ (CorrectionIntentV1::Fact { .. } | CorrectionIntentV1::Relevance { .. }),
-        } => Some(intent),
+        OperationV1::Correct { intent } => Some(intent),
         _ => None,
     };
     let (mutation, correction, reasons) = if let Some(intent) = correction_intent {
@@ -538,6 +546,7 @@ fn ingest(tx: &Transaction<'_>, r: &DecisionRequestV1) -> Result<DecisionResultV
     let effective_exclusions = mutation
         .as_ref()
         .map(|m| m.exclusions.clone())
+        .or_else(|| correction.as_ref().map(|e| e.effective_exclusions.clone()))
         .unwrap_or_default();
     let now = chrono::Utc::now().to_rfc3339();
     let revision = r.expected_revision + 1;

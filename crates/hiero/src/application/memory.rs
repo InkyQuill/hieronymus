@@ -755,6 +755,7 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
     let args = decode::<RagImportArgs>(arguments)?;
     let import = RagImport {
         claims: std::collections::BTreeMap::new(),
+        claim_lineage: std::collections::BTreeMap::new(),
         source_ref: args.source_ref,
         source_type: args.source_type,
         language_tags: args.language_tags.unwrap_or_default(),

@@ -287,6 +287,10 @@ impl CrystalStore {
             )?;
         }
         for memory_id in &new.source_memory_ids {
+            let owns:bool=transaction.query_row("select exists(select 1 from short_term_memories m join task_sessions s on s.id=m.session_id where m.id=?1 and s.series_slug=?2)",rusqlite::params![memory_id,context.series_slug],|r|r.get(0))?;
+            if !owns {
+                return Err(crate::authority_models::DecisionErrorV1::UnknownTarget.into());
+            }
             transaction.execute(
                 "insert into crystal_sources(crystal_id, short_term_memory_id)
                  values (?1, ?2)",
@@ -301,7 +305,13 @@ impl CrystalStore {
                     claim,
                 )?;
             }
-        } else if new.source_memory_ids.is_empty() {
+        } else if new.source_memory_ids.is_empty()
+            && transaction.query_row(
+                "select exists(select 1 from series where slug=?)",
+                [&context.series_slug],
+                |r| r.get::<_, bool>(0),
+            )?
+        {
             crate::claim_capture::capture_context_tx(
                 &transaction,
                 crate::claim_reads::ClaimTarget::Crystal(crystal_id),
@@ -313,14 +323,13 @@ impl CrystalStore {
                     None
                 },
             )?;
-        } else {
-            for memory_id in &new.source_memory_ids {
-                crate::claim_capture::copy_bindings_tx(
-                    &transaction,
-                    crate::claim_reads::ClaimTarget::ShortTerm(*memory_id),
-                    crate::claim_reads::ClaimTarget::Crystal(crystal_id),
-                )?;
-            }
+        }
+        for memory_id in &new.source_memory_ids {
+            crate::claim_capture::copy_bindings_tx(
+                &transaction,
+                crate::claim_reads::ClaimTarget::ShortTerm(*memory_id),
+                crate::claim_reads::ClaimTarget::Crystal(crystal_id),
+            )?;
         }
         transaction.commit()?;
         Ok(crystal_id)
