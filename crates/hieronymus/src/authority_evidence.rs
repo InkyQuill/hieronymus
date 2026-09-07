@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct EvidenceBindingV1 {
     pub concept_id: i64,
     pub source_language: String,
-    pub target_language: String,
+    pub target_language: Option<String>,
     pub applicability: ApplicabilityV1,
     pub position_id: i64,
     pub paragraph_start: usize,
@@ -15,6 +15,10 @@ pub struct EvidenceBindingV1 {
     pub aligned_source_id: Option<i64>,
     pub rendering: Option<String>,
     pub contradicts_rule: Option<i64>,
+    #[serde(default)]
+    pub contradicts_claim: Option<i64>,
+    #[serde(default)]
+    pub claim_effect: Option<FactEffect>,
     pub conflict_kind: Option<String>,
 }
 use crate::authority_applicability as applicability;
@@ -61,7 +65,7 @@ fn resolve(
         serde_json::from_str(&binding).map_err(|_| Error::EvidenceMismatch)?;
     if r.concept_id.is_some_and(|id| id != binding.concept_id)
         || binding.source_language != r.source_language
-        || Some(&binding.target_language) != r.target_language.as_ref()
+        || binding.target_language != r.target_language
         || binding.applicability.series_id != series
         || !applicability::overlaps(db, &binding.applicability, &r.applicability)?
     {
@@ -116,7 +120,10 @@ fn resolve(
             kind,
             "erroneous_mapping" | "scope_mismatch" | "story_evolution"
         )
-    }) || binding.contradicts_rule.is_some() != binding.conflict_kind.is_some()
+    }) || (binding.contradicts_rule.is_some() || binding.contradicts_claim.is_some())
+        != binding.conflict_kind.is_some()
+        || binding.contradicts_rule.is_some() && binding.contradicts_claim.is_some()
+        || binding.contradicts_claim.is_some() != binding.claim_effect.is_some()
     {
         return Err(Error::EvidenceMismatch);
     }
@@ -225,13 +232,7 @@ pub(crate) fn learned_policy(
             groups.len() - 1
         });
         let anchors = &mut groups[index];
-        if anchors.iter().any(|a| {
-            (a.identity == source.identity || a.hash == source.hash)
-                && (a.hash != source.hash
-                    || (a.start < source.end && source.start < a.end)
-                    || (a.binding.paragraph_start < source.binding.paragraph_end
-                        && source.binding.paragraph_start < a.binding.paragraph_end))
-        }) {
+        if anchors.iter().any(|a| duplicate_anchor(a, source)) {
             continue;
         }
         anchors.push(source);
@@ -256,7 +257,7 @@ pub(crate) fn learned_policy(
         };
         if Some(b.concept_id) != r.concept_id
             || b.source_language != r.source_language
-            || Some(&b.target_language) != r.target_language.as_ref()
+            || b.target_language != r.target_language
             || !applicability::effective_overlap(
                 db,
                 Some(&b.applicability),
@@ -297,6 +298,15 @@ pub(crate) fn learned_policy(
     if old.is_some() && !contradiction {
         return Ok(vec![TentativeReason::InsufficientEvidence]);
     }
+    supported_segments(db, r, &groups, exclusions)
+}
+
+fn supported_segments(
+    db: &Connection,
+    r: &DecisionRequestV1,
+    groups: &[Vec<&ResolvedEvidence>],
+    exclusions: &[ApplicabilityV1],
+) -> Result<Vec<TentativeReason>, Error> {
     // Every demonstrated structural chapter requires its own two anchors.
     let mut positions=db.prepare("select id,volume_key,chapter_key from story_positions where timeline_id=? order by ordinal")?;
     let positions = positions
@@ -357,4 +367,52 @@ pub(crate) fn learned_policy(
         return Ok(vec![TentativeReason::InsufficientEvidence]);
     }
     Ok(vec![])
+}
+
+fn duplicate_anchor(a: &ResolvedEvidence, source: &ResolvedEvidence) -> bool {
+    (a.identity == source.identity || a.hash == source.hash)
+        && (a.hash != source.hash
+            || (a.start < source.end && source.start < a.end)
+            || (a.binding.paragraph_start < source.binding.paragraph_end
+                && source.binding.paragraph_start < a.binding.paragraph_end))
+}
+pub(crate) fn learned_fact_policy(
+    db: &Connection,
+    r: &DecisionRequestV1,
+    e: &[ResolvedEvidence],
+    claim_id: i64,
+    effect: &FactEffect,
+) -> Result<Vec<TentativeReason>, Error> {
+    if r.applicability.volume_key.is_none()
+        && (r.applicability.valid_from.is_none() || r.applicability.valid_until.is_none())
+    {
+        return Ok(vec![TentativeReason::InsufficientEvidence]);
+    }
+    let mut groups: Vec<Vec<&ResolvedEvidence>> = vec![];
+    for source in e.iter().filter(|e| e.kind == EvidenceKind::SourcePassage) {
+        if source
+            .binding
+            .contradicts_claim
+            .is_some_and(|id| id != claim_id)
+        {
+            return Err(Error::EvidenceMismatch);
+        }
+        if source.binding.contradicts_claim != Some(claim_id)
+            || source.binding.claim_effect.as_ref() != Some(effect)
+            || !applicability::contains(db, &source.binding.applicability, &r.applicability)?
+        {
+            continue;
+        }
+        let index = groups
+            .iter()
+            .position(|g| g[0].binding.applicability == source.binding.applicability)
+            .unwrap_or_else(|| {
+                groups.push(vec![]);
+                groups.len() - 1
+            });
+        if !groups[index].iter().any(|a| duplicate_anchor(a, source)) {
+            groups[index].push(source);
+        }
+    }
+    supported_segments(db, r, &groups, &[])
 }

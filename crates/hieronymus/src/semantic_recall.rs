@@ -237,7 +237,31 @@ impl SemanticLane {
         query: &str,
         limit: usize,
     ) -> LaneRun {
-        match self.try_run(config, context, query, limit) {
+        let connection = match open_migrated(&config.database_path()) {
+            Ok(db) => db,
+            Err(error) => {
+                return LaneRun {
+                    degraded: true,
+                    records: vec![],
+                    warnings: vec![RecallWarning {
+                        kind: WARNING_SEMANTIC_UNAVAILABLE.into(),
+                        reason: error.to_string(),
+                    }],
+                };
+            }
+        };
+        self.run_with_connection(&connection, config, context, query, limit)
+    }
+
+    pub(crate) fn run_with_connection(
+        &self,
+        connection: &rusqlite::Connection,
+        config: &HieronymusConfig,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> LaneRun {
+        match self.try_run(connection, config, context, query, limit) {
             Ok(run) => run,
             Err(reason) => LaneRun {
                 degraded: true,
@@ -252,17 +276,17 @@ impl SemanticLane {
 
     fn try_run(
         &self,
+        connection: &rusqlite::Connection,
         config: &HieronymusConfig,
         context: &TranslationContext,
         query: &str,
         limit: usize,
     ) -> Result<LaneRun, String> {
         let authoritative = RagStore::open(config).map_err(|error| error.to_string())?;
-        let revision_before = authoritative
-            .corpus_revision()
-            .map_err(|error| error.to_string())?;
+        let revision_before =
+            crate::rag::current_corpus_revision(connection).map_err(|error| error.to_string())?;
         let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
-        let manifest = match store.active_generation() {
+        let manifest = match store.active_generation_with_connection(connection) {
             Ok(Some(manifest)) => manifest,
             Ok(None) => {
                 return Err("no active semantic generation; the response is FTS-only".to_string());
@@ -285,7 +309,7 @@ impl SemanticLane {
             ));
         }
         if !store
-            .active_generation_intact()
+            .active_generation_intact_with_connection(connection)
             .map_err(|error| error.to_string())?
         {
             return Err(
@@ -320,9 +344,37 @@ impl SemanticLane {
         .map_err(|error| error.to_string())?;
         // Same candidate depth as the FTS lane, capped identically.
         let depth = limit.min(crate::rag::MAX_RAG_SEARCH_LIMIT);
-        let hits = index
-            .search(&context.series_slug, &vector, depth)
-            .map_err(|error| format!("semantic search failed: {error}"))?;
+        let story_query =
+            crate::story_applicability::StoryApplicability::resolve_context(connection, context)
+                .map_err(|e| e.to_string())?;
+        let mut candidate_depth = depth.max(1);
+        let hits = loop {
+            let hits = index
+                .search(&context.series_slug, &vector, candidate_depth)
+                .map_err(|error| format!("semantic search failed: {error}"))?;
+            let mut count = 0;
+            for hit in &hits {
+                if matches!(
+                    crate::claim_reads::rehydrate_claims(
+                        connection,
+                        crate::claim_reads::ClaimTarget::RagChunk(hit.chunk_id),
+                        &story_query
+                    )
+                    .map_err(|e| e.to_string())?,
+                    crate::claim_reads::ClaimDisposition::Current
+                        | crate::claim_reads::ClaimDisposition::Qualified(_)
+                ) {
+                    count += 1;
+                }
+            }
+            if count >= depth
+                || hits.len() < candidate_depth
+                || candidate_depth >= crate::rag::MAX_RAG_SEARCH_LIMIT
+            {
+                break hits;
+            }
+            candidate_depth = (candidate_depth * 2).min(crate::rag::MAX_RAG_SEARCH_LIMIT);
+        };
         drop(index);
 
         // Hit integrity: every hit must still match its authoritative row.
@@ -330,13 +382,12 @@ impl SemanticLane {
         // are corrupt; they are excluded and schedule a rebuild.
         let chunk_ids: Vec<i64> = hits.iter().map(|hit| hit.chunk_id).collect();
         let hydrated = authoritative
-            .chunks_by_ids(&chunk_ids)
+            .chunks_by_ids_with_connection(connection, &chunk_ids)
             .map_err(|error| error.to_string())?;
         // Corpus revisions are monotonic. Bracket execution and hydration so
         // an import before notification, or during inference, cannot look complete.
-        let revision_after = authoritative
-            .corpus_revision()
-            .map_err(|error| error.to_string())?;
+        let revision_after =
+            crate::rag::current_corpus_revision(connection).map_err(|error| error.to_string())?;
         let by_id: HashMap<i64, RagChunkRecord> = hydrated
             .into_iter()
             .map(|record| (record.id, record))
@@ -353,7 +404,18 @@ impl SemanticLane {
                 && hit.generation_id == manifest.generation_id
                 && crate::semantic_store::sha256_text(&record.text) == hit.checksum;
             if intact {
-                eligible.push(record.clone());
+                if matches!(
+                    crate::claim_reads::rehydrate_claims(
+                        connection,
+                        crate::claim_reads::ClaimTarget::RagChunk(record.id),
+                        &story_query
+                    )
+                    .map_err(|e| e.to_string())?,
+                    crate::claim_reads::ClaimDisposition::Current
+                        | crate::claim_reads::ClaimDisposition::Qualified(_)
+                ) {
+                    eligible.push(record.clone());
+                }
             } else {
                 corrupt += 1;
             }
@@ -395,6 +457,7 @@ impl SemanticLane {
                 }),
             }
         }
+        eligible.truncate(depth);
         Ok(LaneRun {
             degraded: false,
             records: eligible,

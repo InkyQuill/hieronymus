@@ -73,7 +73,7 @@ fn anchor_for(
     let mut binding = EvidenceBindingV1 {
         concept_id: concept,
         source_language: "en".into(),
-        target_language: "ru".into(),
+        target_language: Some("ru".into()),
         applicability: a,
         position_id: pos,
         paragraph_start: start,
@@ -83,6 +83,8 @@ fn anchor_for(
         rendering: None,
         contradicts_rule: None,
         conflict_kind: None,
+        contradicts_claim: None,
+        claim_effect: None,
     };
     db.execute("insert into evidence_records(id,series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(?1,1,'source_passage',?7,?2,?3,?4,?5,?6,'now')",params![n,hash(source),start as i64,end as i64,source,serde_json::to_string(&binding).unwrap(),format!("doc{pos}-{concept}-{group}")]).unwrap();
     binding.aligned_source_id = Some(n);

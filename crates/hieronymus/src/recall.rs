@@ -1,3 +1,4 @@
+use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,6 +61,10 @@ fn next_recall_id() -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecallError {
+    #[error(transparent)]
+    Coherent(#[from] crate::coherent_reads::CoherentReadError),
+    #[error(transparent)]
+    Claim(#[from] crate::authority_models::DecisionErrorV1),
     #[error("limit must be at least 1")]
     LimitTooSmall,
     #[error("unknown session: {0}")]
@@ -169,6 +174,7 @@ pub type SemanticStatusHook = Arc<dyn Fn() -> SemanticAvailability + Send + Sync
 /// `warnings` (an empty list means every lane ran clean).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecallResponse {
+    pub resulting_revision: u64,
     pub recall_id: String,
     pub deterministic_contract: Vec<ContractTerm>,
     pub hits: Vec<RecallHit>,
@@ -323,23 +329,60 @@ impl RecallService {
         query: &str,
         limit: usize,
     ) -> Result<Vec<RagSearchHit>, RecallError> {
+        let context = TranslationContext::new(series_slug, "", "", "translation");
+        Ok(self.search_series_context(&context, query, limit)?.value)
+    }
+    pub fn search_series_context(
+        &self,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<crate::coherent_reads::Observed<Vec<RagSearchHit>>, RecallError> {
+        crate::coherent_reads::stable_read(&self.config, &context.series_slug, None, |db| {
+            self.search_series_with_connection(db, context, query, limit)
+        })
+    }
+    fn search_series_with_connection(
+        &self,
+        connection: &Connection,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<RagSearchHit>, RecallError> {
         if limit == 0 {
             return Err(RecallError::LimitTooSmall);
         }
         let store = RagStore::open(&self.config)?;
+        let series_slug = &context.series_slug;
+        let story_query =
+            crate::story_applicability::StoryApplicability::resolve_context(connection, context)
+                .map_err(|_| crate::authority_models::DecisionErrorV1::ApplicabilityConflict)?;
         // The lexical lane, unfiltered: a session-less search has no typed
         // context to boost or filter with, exactly as before C5.
-        let fts_hits = store.search(series_slug, query, limit, &[], &[], &[])?;
+        let fts_hits = store.search_with_connection(
+            connection,
+            Some(&story_query),
+            series_slug,
+            query,
+            limit,
+            &[],
+            &[],
+            &[],
+        )?;
         let Some(lane) = &self.semantic_lane else {
-            return empty_corpus_or_refuse(&store, series_slug, NO_SEMANTIC_LANE_REASON);
+            return empty_corpus_or_refuse(
+                &store,
+                connection,
+                series_slug,
+                NO_SEMANTIC_LANE_REASON,
+            );
         };
         // The minimal query context: the semantic lane needs the series
         // predicate (applied INSIDE the ANN query) and the query text, and a
         // session-less search has nothing else to give it. The empty
         // languages keep the context from seeding language tags nothing here
         // would filter on.
-        let context = TranslationContext::new(series_slug, "", "", "translation");
-        let run = lane.run(&self.config, &context, query, limit);
+        let run = lane.run_with_connection(connection, &self.config, context, query, limit);
         if run.degraded {
             let reason = run
                 .warnings
@@ -347,7 +390,7 @@ impl RecallService {
                 .find(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
                 .map(|warning| warning.reason.clone())
                 .unwrap_or_else(|| "the semantic lane could not run".to_string());
-            return empty_corpus_or_refuse(&store, series_slug, &reason);
+            return empty_corpus_or_refuse(&store, connection, series_slug, &reason);
         }
         // This strict API returns bare hits, so it cannot communicate repair
         // warnings alongside a partial result as mixed recall can.
@@ -355,6 +398,23 @@ impl RecallService {
             return Err(RecallError::SemanticUnavailable(warning.reason.clone()));
         }
         let mut hits = fuse_chunk_lanes(fts_hits, run.records);
+        let records = rehydrate_hits(connection, advisory_hits(hits, &[]), &story_query)?;
+        hits = records
+            .into_iter()
+            .filter_map(|h| match h {
+                RecallHit::Rag {
+                    chunk,
+                    score,
+                    reason,
+                    ..
+                } => Some(RagSearchHit {
+                    chunk,
+                    score,
+                    reason,
+                }),
+                _ => None,
+            })
+            .collect();
         hits.truncate(limit.min(crate::rag::MAX_RAG_SEARCH_LIMIT));
         Ok(hits)
     }
@@ -366,15 +426,79 @@ impl RecallService {
         query: &str,
         limit: usize,
     ) -> Result<RecallResponse, RecallError> {
+        let observed =
+            crate::coherent_reads::stable_read(&self.config, &context.series_slug, None, |db| {
+                self.recall_with_connection(db, Some(session_id), context, query, limit)
+            })?;
+        let mut response = observed.value;
+        response.resulting_revision = observed.resulting_revision;
+        record_recall_ledger(
+            &self.config,
+            session_id,
+            context,
+            query,
+            &response.recall_id,
+            observed.resulting_revision,
+            &mut response.hits,
+        )?;
+        Ok(response)
+    }
+
+    /// Coherent retrieval for a context with no active session. No recall ledger
+    /// is written, and the same claim filters apply to every candidate source.
+    pub fn recall_context(
+        &self,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<RecallResponse, RecallError> {
+        let observed =
+            crate::coherent_reads::stable_read(&self.config, &context.series_slug, None, |db| {
+                self.recall_with_connection(db, None, context, query, limit)
+            })?;
+        let mut response = observed.value;
+        response.resulting_revision = observed.resulting_revision;
+        Ok(response)
+    }
+
+    fn recall_with_connection(
+        &self,
+        connection: &Connection,
+        session_id: Option<i64>,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<RecallResponse, RecallError> {
         if limit == 0 {
             return Err(RecallError::LimitTooSmall);
         }
         let workspace = WorkspaceStore::open(&self.config)?;
-        require_active_session(&workspace, session_id)?;
+        if let Some(id) = session_id {
+            require_active_session(&workspace, connection, id)?;
+        }
+        let story_query =
+            crate::story_applicability::StoryApplicability::resolve_context(connection, context)
+                .map_err(|_| crate::authority_models::DecisionErrorV1::ApplicabilityConflict)?;
 
         // Short-term lane: base score decays by one rank step per position.
-        let short_term_hits: Vec<RecallHit> = workspace
-            .search_short_term_memories(session_id, query, limit)?
+        let short_term = if let Some(id) = session_id {
+            workspace.search_short_term_memories_with_connection(
+                connection,
+                Some(&story_query),
+                id,
+                query,
+                limit,
+            )?
+        } else {
+            workspace.search_short_term_memories_for_context_with_connection(
+                connection,
+                Some(&story_query),
+                context,
+                query,
+                limit,
+            )?
+        };
+        let short_term_hits: Vec<RecallHit> = short_term
             .into_iter()
             .enumerate()
             .map(|(position, memory)| RecallHit::ShortTerm {
@@ -399,14 +523,21 @@ impl RecallService {
             .map(String::as_str)
             .collect();
 
-        let scored: Vec<(CrystalRecord, f64)> =
-            crystals.search_scored(context, query, candidate_limit)?;
+        let scored: Vec<(CrystalRecord, f64)> = crystals.search_scored_with_connection(
+            connection,
+            Some(&story_query),
+            context,
+            query,
+            candidate_limit,
+        )?;
         // Metadata-only candidates: crystals with no FTS hit but matching
         // story scopes/semantic tags still enter the pool at the metadata
         // base score. Resolved before ranking so the concept boosts below
         // cover the merged candidate pool, as in the Python call site.
         let metadata_candidates = crystals_matching_metadata(
             &self.config,
+            connection,
+            &story_query,
             context,
             &context_story_scopes,
             &context_semantic_tags,
@@ -422,11 +553,14 @@ impl RecallService {
             .chain(context.tags.iter())
             .cloned()
             .collect();
-        let concept_boosts = ConceptStore::open(&self.config)?.recall_boosts_for_crystals(
-            &candidate_ids,
-            query,
-            &context_story_scope_values,
-        )?;
+        let concept_boosts = ConceptStore::open(&self.config)?
+            .recall_boosts_for_crystals_with_connection(
+                connection,
+                Some(&story_query),
+                &candidate_ids,
+                query,
+                &context_story_scope_values,
+            )?;
 
         let mut long_term: Vec<RecallHit> = scored
             .into_iter()
@@ -494,7 +628,7 @@ impl RecallService {
 
         // Live spreading activation: crystals above the threshold pull their
         // 1-hop neighbors into the pool at the attenuated score.
-        apply_spreading_activation(&crystals, &mut long_term)?;
+        apply_spreading_activation(&crystals, connection, &story_query, &mut long_term)?;
 
         // One ranked memory pool (long-term + short-term), as in the Python
         // recall which sorts all memory items together before the merge.
@@ -508,7 +642,8 @@ impl RecallService {
         // `conflicts_with_rule_ids`; the contract itself is never removed,
         // ranked, or satisfied by retrieval — validation stays a separate,
         // post-retrieval step over this computation.
-        let contract = Termbase::open(&self.config, context)?.contract(query)?;
+        let contract =
+            Termbase::open(&self.config, context)?.contract_with_connection(connection, query)?;
 
         // RAG lanes: the FTS chunk lane over the context's series with typed
         // metadata boosts, and — when armed — the semantic chunk lane, fused
@@ -516,7 +651,9 @@ impl RecallService {
         let rag_store = RagStore::open(&self.config)?;
         let rag_story_scopes = merged_context_values(&context.story_scopes, &context.tags);
         let rag_semantic_tags = merged_context_values(&context.semantic_tags, &context.tags);
-        let fts_hits: Vec<RagSearchHit> = rag_store.search(
+        let fts_hits: Vec<RagSearchHit> = rag_store.search_with_connection(
+            connection,
+            Some(&story_query),
             &context.series_slug,
             query,
             limit,
@@ -528,7 +665,7 @@ impl RecallService {
         let (rag_hits, mut warnings, lane_executed) = match &self.semantic_lane {
             None => (advisory_hits(fts_hits, &contract), Vec::new(), false),
             Some(lane) => {
-                let run = lane.run(&self.config, context, query, limit);
+                let run = lane.run_with_connection(connection, &self.config, context, query, limit);
                 if run.degraded {
                     // Missing semantic state: the FTS results ride along
                     // untouched, exactly as in the unarmed service, with the
@@ -569,11 +706,12 @@ impl RecallService {
             });
         }
 
-        let mut selected = merge_ranked_items(memory, rag_hits, limit);
-
+        let memory = rehydrate_hits(connection, memory, &story_query)?;
+        let rag_hits = rehydrate_hits(connection, rag_hits, &story_query)?;
+        let selected = merge_ranked_items(memory, rag_hits, limit);
         let recall_id = next_recall_id();
-        record_recall_ledger(&self.config, session_id, query, &recall_id, &mut selected)?;
         Ok(RecallResponse {
+            resulting_revision: 0,
             recall_id,
             deterministic_contract: contract,
             hits: selected,
@@ -589,10 +727,11 @@ impl RecallService {
 /// C5 exists to make impossible.
 fn empty_corpus_or_refuse(
     store: &RagStore,
+    connection: &Connection,
     series_slug: &str,
     reason: &str,
 ) -> Result<Vec<RagSearchHit>, RecallError> {
-    if store.series_chunk_count(series_slug)? == 0 {
+    if store.series_chunk_count_with_connection(connection, series_slug)? == 0 {
         return Ok(Vec::new());
     }
     Err(RecallError::SemanticUnavailable(reason.to_string()))
@@ -693,8 +832,12 @@ fn interleave_ranked_items(memory: Vec<RecallHit>, rag: Vec<RecallHit>) -> Vec<R
     interleaved
 }
 
-fn require_active_session(workspace: &WorkspaceStore, session_id: i64) -> Result<(), RecallError> {
-    match workspace.get_session(session_id) {
+fn require_active_session(
+    workspace: &WorkspaceStore,
+    connection: &Connection,
+    session_id: i64,
+) -> Result<(), RecallError> {
+    match workspace.get_session_with_connection(connection, session_id) {
         Ok(session) if session.status == "active" => Ok(()),
         Ok(_) => Err(RecallError::InactiveSession),
         Err(crate::workspace::WorkspaceError::UnknownSession(id)) => {
@@ -706,6 +849,8 @@ fn require_active_session(workspace: &WorkspaceStore, session_id: i64) -> Result
 
 fn crystals_matching_metadata(
     config: &HieronymusConfig,
+    connection: &Connection,
+    story_query: &crate::story_applicability::StoryQueryV1,
     _context: &TranslationContext,
     context_story_scopes: &std::collections::HashSet<&str>,
     context_semantic_tags: &std::collections::HashSet<&str>,
@@ -723,7 +868,7 @@ fn crystals_matching_metadata(
         // Chapter scopes map onto crystal story scopes verbatim.
         let _ = scope;
     }
-    for crystal in store.list_all_candidates(200)? {
+    for crystal in store.list_all_candidates_with_connection(connection, Some(story_query), 200)? {
         let scope_hit = crystal
             .story_scopes
             .iter()
@@ -745,6 +890,8 @@ fn crystals_matching_metadata(
 /// one hop only: neighbors added here never trigger further spreading.
 fn apply_spreading_activation(
     crystals: &CrystalStore,
+    connection: &Connection,
+    story_query: &crate::story_applicability::StoryQueryV1,
     long_term: &mut Vec<RecallHit>,
 ) -> Result<(), RecallError> {
     let triggers: Vec<(i64, f64)> = long_term
@@ -769,14 +916,19 @@ fn apply_spreading_activation(
         })
         .collect();
 
-    let connection = open_migrated(&crystals.config().database_path())?;
-    let mut statement = connection.prepare(
+    let eligible = crate::claim_reads::eligible_ids(
+        connection,
+        crate::claim_reads::ClaimTarget::Crystal(0),
+        story_query,
+    )?;
+    let mut statement = connection.prepare(&format!(
         "select case when source_crystal_id = ?1 then target_crystal_id
                         else source_crystal_id end as neighbor_id, weight
          from crystal_links
-         where source_crystal_id = ?1 or target_crystal_id = ?1
+         where (source_crystal_id = ?1 or target_crystal_id = ?1)
+           and neighbor_id in (select value from json_each('{eligible}'))
          limit ?2",
-    )?;
+    ))?;
     for (trigger_id, trigger_score) in triggers {
         let rows = statement.query_map(
             rusqlite::params![trigger_id, SPREADING_NEIGHBOR_LIMIT],
@@ -788,7 +940,7 @@ fn apply_spreading_activation(
                 continue;
             }
             in_pool.insert(neighbor_id);
-            let crystal = crystals.get(neighbor_id)?;
+            let crystal = crystals.get_with_connection(connection, neighbor_id)?;
             long_term.push(RecallHit::LongTerm {
                 crystal,
                 score: trigger_score * weight * SPREADING_ATTENUATION,
@@ -813,12 +965,18 @@ fn apply_spreading_activation(
 fn record_recall_ledger(
     config: &HieronymusConfig,
     session_id: i64,
+    context: &TranslationContext,
     query: &str,
     recall_id: &str,
+    expected_revision: u64,
     hits: &mut [RecallHit],
 ) -> Result<(), RecallError> {
     let mut connection = open_migrated(Path::new(&config.database_path()))?;
-    let transaction = connection.transaction()?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if crate::coherent_reads::revision(&transaction, &context.series_slug)? != expected_revision {
+        return Err(crate::coherent_reads::CoherentReadError::StaleContext.into());
+    }
     let now = chrono::Utc::now().to_rfc3339();
     for (position, hit) in hits.iter_mut().enumerate() {
         let RecallHit::LongTerm {
@@ -865,6 +1023,11 @@ fn record_recall_ledger(
                     ],
                 )?;
                 let memory_id = transaction.last_insert_rowid();
+                crate::claim_capture::copy_bindings_tx(
+                    &transaction,
+                    crate::claim_reads::ClaimTarget::Crystal(crystal_id),
+                    crate::claim_reads::ClaimTarget::ShortTerm(memory_id),
+                )?;
                 transaction.execute(
                     "insert into short_term_memories_fts(rowid, text) values (?1, ?2)",
                     rusqlite::params![memory_id, crystal.text],
@@ -909,4 +1072,47 @@ fn record_recall_ledger(
     }
     transaction.commit()?;
     Ok(())
+}
+
+fn rehydrate_hits(
+    db: &Connection,
+    hits: Vec<RecallHit>,
+    q: &crate::story_applicability::StoryQueryV1,
+) -> Result<Vec<RecallHit>, RecallError> {
+    use crate::claim_reads::{ClaimDisposition, ClaimTarget, rehydrate_claims};
+    let mut out = vec![];
+    for mut hit in hits {
+        let target = match &hit {
+            RecallHit::LongTerm { crystal, .. } => ClaimTarget::Crystal(crystal.id),
+            RecallHit::ShortTerm { memory, .. } => ClaimTarget::ShortTerm(memory.id),
+            RecallHit::Rag { chunk, .. } => ClaimTarget::RagChunk(chunk.id),
+        };
+        match rehydrate_claims(db, target, q)? {
+            ClaimDisposition::Current => {}
+            ClaimDisposition::Qualified(qualifications) => {
+                let text = match &mut hit {
+                    RecallHit::LongTerm { crystal, .. } => &mut crystal.text,
+                    RecallHit::ShortTerm { memory, .. } => &mut memory.text,
+                    RecallHit::Rag { chunk, .. } => &mut chunk.text,
+                };
+                *text = format!(
+                    "Qualified memory: {text}\nQualification: {}",
+                    qualifications.join("\n")
+                );
+            }
+            disposition => {
+                if q.mode != crate::story_applicability::QueryMode::OmniscientResearch {
+                    continue;
+                }
+                let text = match &mut hit {
+                    RecallHit::LongTerm { crystal, .. } => &mut crystal.text,
+                    RecallHit::ShortTerm { memory, .. } => &mut memory.text,
+                    RecallHit::Rag { chunk, .. } => &mut chunk.text,
+                };
+                *text = format!("Source evidence ({disposition:?}; not current truth): {text}");
+            }
+        }
+        out.push(hit);
+    }
+    Ok(out)
 }

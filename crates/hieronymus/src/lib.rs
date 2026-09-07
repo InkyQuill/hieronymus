@@ -57,3 +57,8 @@ pub mod authority;
 mod authority_applicability;
 mod authority_evidence;
 pub mod authority_models;
+
+pub mod claim_capture;
+pub mod claim_reads;
+pub mod coherent_reads;
+pub mod corrections;

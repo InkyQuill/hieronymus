@@ -243,10 +243,10 @@ impl<'a> AuditOwner<'a> {
     }
 }
 
-pub(crate) fn validate_mutation(
+pub(crate) fn validate_request(
     db: &Connection,
     r: &DecisionRequestV1,
-) -> Result<(ValidatedMutation, Vec<TentativeReason>), Error> {
+) -> Result<OriginContextV1, Error> {
     if r.version != 1 {
         return Err(Error::UnsupportedVersion);
     }
@@ -272,8 +272,7 @@ pub(crate) fn validate_mutation(
         )
         .optional()?;
     let (source, target_language) = languages.ok_or(Error::UnknownTarget)?;
-    let requested_target = r.target_language.as_ref().ok_or(Error::LanguageMismatch)?;
-    for language in [&r.source_language, requested_target] {
+    for language in std::iter::once(&r.source_language).chain(r.target_language.iter()) {
         let registered:bool=db.query_row("select exists(select 1 from series_language_tags where series_id=?1 and language_tag=?2)",params![r.series_id,language],|row|row.get(0))?;
         if language.is_empty()
             || language != &language.trim().to_lowercase()
@@ -284,19 +283,12 @@ pub(crate) fn validate_mutation(
             return Err(Error::LanguageMismatch);
         }
     }
-    let mut reasons = vec![];
-    if r.actor_kind == ActorKind::ExplicitUser && origin_context.selected_source.is_none() {
-        reasons.push(TentativeReason::AmbiguousIdentity)
-    }
     if let Some(concept) = r.concept_id {
         let valid:bool=db.query_row("select exists(select 1 from concepts c join series s on s.id=?2 where c.id=?1 and (c.scope_type='global' or (c.scope_type='series' and c.scope_key='series:'||s.slug)))",params![concept,r.series_id],|r|r.get(0))?;
         if !valid {
             return Err(Error::UnknownTarget);
         }
-    } else {
-        reasons.push(TentativeReason::AmbiguousIdentity)
     }
-    let resolved = evidence::resolve_all(db, r)?;
     let revision: Option<i64> = db
         .query_row(
             "select revision from authority_state where series_id=?",
@@ -310,6 +302,24 @@ pub(crate) fn validate_mutation(
             current_revision: revision,
         });
     }
+    Ok(origin_context)
+}
+
+pub(crate) fn validate_mutation(
+    db: &Connection,
+    r: &DecisionRequestV1,
+) -> Result<(ValidatedMutation, Vec<TentativeReason>), Error> {
+    let origin_context = validate_request(db, r)?;
+    if r.target_language.is_none() {
+        return Err(Error::LanguageMismatch);
+    }
+    let mut reasons = vec![];
+    if r.concept_id.is_none()
+        || (r.actor_kind == ActorKind::ExplicitUser && origin_context.selected_source.is_none())
+    {
+        reasons.push(TentativeReason::AmbiguousIdentity);
+    }
+    let resolved = evidence::resolve_all(db, r)?;
     let old = if let Some((id, revision)) = target(&r.operation) {
         let rule = terminology::hydrate_rule(db, id).map_err(term_error)?;
         if !(0..i64::MAX).contains(&rule.revision) {
@@ -505,20 +515,52 @@ fn ingest(tx: &Transaction<'_>, r: &DecisionRequestV1) -> Result<DecisionResultV
             tentative => tentative,
         });
     }
-    let (mutation, reasons) = validate_mutation(tx, r)?;
-    let effective_applicability = mutation.request.applicability.clone();
-    let effective_exclusions = mutation.exclusions.clone();
+    let correction_intent = match &r.operation {
+        OperationV1::Correct {
+            intent:
+                intent @ (CorrectionIntentV1::Fact { .. } | CorrectionIntentV1::Relevance { .. }),
+        } => Some(intent),
+        _ => None,
+    };
+    let (mutation, correction, reasons) = if let Some(intent) = correction_intent {
+        let (effect, reasons) = crate::corrections::validate_correction(tx, r, intent)?;
+        (None, Some(effect), reasons)
+    } else {
+        let (mutation, reasons) = validate_mutation(tx, r)?;
+        (Some(mutation), None, reasons)
+    };
+    let effective_applicability = mutation
+        .as_ref()
+        .map(|m| &m.request.applicability)
+        .or_else(|| correction.as_ref().map(|e| &e.effective_applicability))
+        .expect("validated operation")
+        .clone();
+    let effective_exclusions = mutation
+        .as_ref()
+        .map(|m| m.exclusions.clone())
+        .unwrap_or_default();
     let now = chrono::Utc::now().to_rfc3339();
     let revision = r.expected_revision + 1;
     // FK ownership exists before mutations; provisional bytes never escape the
     // transaction and are replaced by the exact result before commit.
     tx.execute("insert into decision_records(decision_id,series_id,origin_id,actor_kind,expected_revision,resulting_revision,canonical_request,result_json,status,created_at) values(?1,?2,?3,?4,?5,?6,?7,'{}',?8,?9)",params![r.decision_id,r.series_id,r.origin.0,actor(r.actor_kind),r.expected_revision as i64,revision as i64,canonical,if reasons.is_empty(){"applied"}else{"tentative"},now])?;
+    let mut claims = vec![];
     let rules = if reasons.is_empty() {
-        apply_mutations_tx(tx, &[mutation], AuditOwner::Decision(&r.decision_id))?
+        if let Some(mutation) = mutation {
+            apply_mutations_tx(tx, &[mutation], AuditOwner::Decision(&r.decision_id))?
+        } else {
+            let effect = crate::corrections::apply_correction_tx(
+                tx,
+                r,
+                correction_intent.expect("correction"),
+            )?;
+            claims = effect.affected_claims;
+            effect.affected_rules
+        }
     } else {
         vec![]
     };
-    if !rules.is_empty() {
+    if !rules.is_empty() || !claims.is_empty() {
         crate::rag::record_corpus_change(tx)?;
     }
     for (i, e) in r.evidence_refs.iter().enumerate() {
@@ -531,11 +573,14 @@ fn ingest(tx: &Transaction<'_>, r: &DecisionRequestV1) -> Result<DecisionResultV
         decision_id: r.decision_id.clone(),
         resulting_revision: revision,
         affected_rules: rules,
-        affected_claims: vec![],
+        affected_claims: claims,
         effective_applicability,
         effective_exclusions,
         effect: if reasons.is_empty() {
-            "terminology"
+            correction
+                .as_ref()
+                .map(|e| e.effect.as_str())
+                .unwrap_or("terminology")
         } else {
             "tentative"
         }

@@ -17,6 +17,8 @@ const MAX_SEARCH_LIMIT: usize = 50;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
+    #[error(transparent)]
+    Claim(#[from] crate::authority_models::DecisionErrorV1),
     #[error("unknown session: {0}")]
     UnknownSession(i64),
     #[error("unknown series: {0}")]
@@ -55,6 +57,7 @@ pub struct WorkspaceStore {
 /// One batch item for [`WorkspaceStore::add_short_term_memory`].
 #[derive(Debug, Clone)]
 pub struct ShortTermMemoryInput {
+    pub claims: Vec<crate::claim_capture::ClaimInput>,
     pub source_role: String,
     pub kind: String,
     pub text: String,
@@ -71,6 +74,7 @@ pub struct ShortTermMemoryInput {
 impl Default for ShortTermMemoryInput {
     fn default() -> Self {
         Self {
+            claims: Vec::new(),
             source_role: "agent".to_string(),
             kind: String::new(),
             text: String::new(),
@@ -224,6 +228,37 @@ impl WorkspaceStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
+        let connection = self.connection()?;
+        self.search_short_term_memories_for_context_with_connection(
+            &connection,
+            None,
+            context,
+            query,
+            limit,
+        )
+    }
+
+    pub(crate) fn search_short_term_memories_for_context_with_connection(
+        &self,
+        connection: &Connection,
+        current: Option<&crate::story_applicability::StoryQueryV1>,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
+        let eligibility = if let Some(q) = current {
+            format!(
+                " and short_term_memories.id in (select value from json_each('{}'))",
+                crate::claim_reads::eligible_ids(
+                    connection,
+                    crate::claim_reads::ClaimTarget::ShortTerm(0),
+                    q
+                )?
+            )
+        } else {
+            String::new()
+        };
+
         if limit < 1 {
             return Err(WorkspaceError::LimitTooSmall);
         }
@@ -231,9 +266,8 @@ impl WorkspaceStore {
         if expression.is_empty() {
             return Ok(Vec::new());
         }
-        let connection = self.connection()?;
         let ids: Vec<i64> = {
-            let mut statement = connection.prepare(
+            let mut statement = connection.prepare(&format!(
                 "select short_term_memories.id
                  from short_term_memories_fts
                  join short_term_memories
@@ -248,9 +282,9 @@ impl WorkspaceStore {
                    and task_sessions.task_type = ?5
                    and task_sessions.volume = ?6
                    and task_sessions.chapter = ?7
-                 order by bm25(short_term_memories_fts), short_term_memories.id
+                 {eligibility} order by bm25(short_term_memories_fts), short_term_memories.id
                  limit ?8",
-            )?;
+            ))?;
             let rows = statement.query_map(
                 rusqlite::params![
                     expression,
@@ -268,13 +302,21 @@ impl WorkspaceStore {
         };
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {
-            records.push(hydrate_memory(&connection, id)?);
+            records.push(hydrate_memory(connection, id)?);
         }
         Ok(records)
     }
 
     pub fn get_session(&self, session_id: i64) -> Result<TaskSessionRecord, WorkspaceError> {
         let connection = self.connection()?;
+        self.get_session_with_connection(&connection, session_id)
+    }
+
+    pub(crate) fn get_session_with_connection(
+        &self,
+        connection: &Connection,
+        session_id: i64,
+    ) -> Result<TaskSessionRecord, WorkspaceError> {
         let row = connection
             .query_row(
                 "select series_slug, source_language, target_language, task_type,
@@ -299,21 +341,21 @@ impl WorkspaceStore {
                 other => other.into(),
             })?;
         let language_tags = load_metadata_values(
-            &connection,
+            connection,
             "task_session_language_tags",
             "session_id",
             session_id,
             "language_tag",
         )?;
         let story_scopes = load_metadata_values(
-            &connection,
+            connection,
             "task_session_story_scopes",
             "session_id",
             session_id,
             "story_scope",
         )?;
         let semantic_tags = load_metadata_values(
-            &connection,
+            connection,
             "task_session_semantic_tags",
             "session_id",
             session_id,
@@ -400,7 +442,7 @@ impl WorkspaceStore {
         require_active_session(&transaction, session_id)?;
 
         let mut records = Vec::with_capacity(prepared.len());
-        for memory in &prepared {
+        for (memory, input) in prepared.iter().zip(&items) {
             let now = now_iso8601();
             transaction.execute(
                 "insert into short_term_memories(
@@ -458,6 +500,26 @@ impl WorkspaceStore {
                 "insert into short_term_memories_fts(rowid, text) values (?1, ?2)",
                 rusqlite::params![memory_id, memory.text],
             )?;
+            if input.claims.is_empty() {
+                let context = self
+                    .get_session_with_connection(&transaction, session_id)?
+                    .context;
+                crate::claim_capture::capture_context_tx(
+                    &transaction,
+                    crate::claim_reads::ClaimTarget::ShortTerm(memory_id),
+                    &memory.text,
+                    &context,
+                    None,
+                )?;
+            } else {
+                for claim in &input.claims {
+                    crate::claim_capture::capture_claim_tx(
+                        &transaction,
+                        crate::claim_reads::ClaimTarget::ShortTerm(memory_id),
+                        claim,
+                    )?;
+                }
+            }
             records.push(hydrate_memory(&transaction, memory_id)?);
         }
         transaction.execute(
@@ -494,6 +556,31 @@ impl WorkspaceStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
+        let connection = self.connection()?;
+        self.search_short_term_memories_with_connection(&connection, None, session_id, query, limit)
+    }
+
+    pub(crate) fn search_short_term_memories_with_connection(
+        &self,
+        connection: &Connection,
+        current: Option<&crate::story_applicability::StoryQueryV1>,
+        session_id: i64,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
+        let eligibility = if let Some(q) = current {
+            format!(
+                " and short_term_memories.id in (select value from json_each('{}'))",
+                crate::claim_reads::eligible_ids(
+                    connection,
+                    crate::claim_reads::ClaimTarget::ShortTerm(0),
+                    q
+                )?
+            )
+        } else {
+            String::new()
+        };
+
         if limit < 1 {
             return Err(WorkspaceError::LimitTooSmall);
         }
@@ -504,8 +591,7 @@ impl WorkspaceStore {
         if limit > MAX_SEARCH_LIMIT {
             return Err(WorkspaceError::LimitTooSmall);
         }
-        let connection = self.connection()?;
-        let mut statement = connection.prepare(
+        let mut statement = connection.prepare(&format!(
             "select short_term_memories.id
              from short_term_memories_fts
              join short_term_memories
@@ -513,9 +599,9 @@ impl WorkspaceStore {
              where short_term_memories_fts match ?1
                and short_term_memories.session_id = ?2
                and short_term_memories.archived_at is null
-             order by bm25(short_term_memories_fts), short_term_memories.id
+             {eligibility} order by bm25(short_term_memories_fts), short_term_memories.id
              limit ?3",
-        )?;
+        ))?;
         let ids = statement
             .query_map(
                 rusqlite::params![expression, session_id, limit as i64],
@@ -524,7 +610,7 @@ impl WorkspaceStore {
             .collect::<Result<Vec<_>, _>>()?;
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {
-            records.push(hydrate_memory(&connection, id)?);
+            records.push(hydrate_memory(connection, id)?);
         }
         Ok(records)
     }

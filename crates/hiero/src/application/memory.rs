@@ -30,7 +30,6 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use hieronymus::crystals::CrystalStore;
 use hieronymus::memory_models::{MetadataMap, ShortTermMemoryRecord};
 use hieronymus::rag::{RagImport, RagStore};
 use hieronymus::recall::{RecallHit, RecallResponse};
@@ -315,39 +314,40 @@ fn memory_search(application: &Application, arguments: &Value) -> Result<Value, 
                 })
                 .collect()
         }
-        None => {
-            let memories = store
-                .search_short_term_memories_for_context(&context, &args.query, bounded_limit)
-                .map_err(domain)?;
-            let mut entries: Vec<LegacyEntry> = memories
-                .iter()
-                .map(|memory| LegacyEntry {
+        None => application
+            .recall()
+            .recall_context(
+                &context,
+                &args.query,
+                bounded_limit * LEGACY_RECALL_OVERFETCH_FACTOR,
+            )
+            .map_err(domain)?
+            .hits
+            .into_iter()
+            .filter_map(|hit| match hit {
+                RecallHit::LongTerm { crystal, .. } => Some(LegacyEntry {
+                    id: crystal.id,
+                    kind: if crystal.title.is_empty() {
+                        crystal.crystal_type
+                    } else {
+                        crystal.title
+                    },
+                    text: crystal.text,
+                    importance: (crystal.strength * 5.0).round() as i64,
+                    source_ref: String::new(),
+                    long_term: true,
+                }),
+                RecallHit::ShortTerm { memory, .. } => Some(LegacyEntry {
                     id: memory.id,
-                    kind: legacy_kind_for_memory(memory),
-                    text: memory.text.clone(),
+                    kind: legacy_kind_for_memory(&memory),
                     importance: importance_from_metadata(&memory.metadata),
-                    source_ref: memory.source_ref.clone(),
+                    text: memory.text,
+                    source_ref: memory.source_ref,
                     long_term: false,
-                })
-                .collect();
-            let crystals = CrystalStore::open(application.config())
-                .map_err(domain)?
-                .search_active(&context, &args.query, bounded_limit)
-                .map_err(domain)?;
-            entries.extend(crystals.iter().map(|crystal| LegacyEntry {
-                id: crystal.id,
-                kind: if crystal.title.is_empty() {
-                    crystal.crystal_type.clone()
-                } else {
-                    crystal.title.clone()
-                },
-                text: crystal.text.clone(),
-                importance: (crystal.strength * 5.0).round() as i64,
-                source_ref: String::new(),
-                long_term: true,
-            }));
-            entries
-        }
+                }),
+                RecallHit::Rag { .. } => None,
+            })
+            .collect(),
     };
     Ok(finish_legacy_entries(entries, bounded_limit))
 }
@@ -390,6 +390,7 @@ fn default_credibility() -> String {
 impl ShortTermAdd {
     fn into_input(self) -> ShortTermMemoryInput {
         ShortTermMemoryInput {
+            claims: Vec::new(),
             source_role: self.source_role,
             kind: self.kind,
             text: self.text,
@@ -451,6 +452,7 @@ struct BatchItem {
 impl BatchItem {
     fn into_input(self) -> ShortTermMemoryInput {
         ShortTermMemoryInput {
+            claims: Vec::new(),
             source_role: self.source_role,
             kind: self.kind,
             text: self.text,
@@ -752,6 +754,7 @@ const INDEXING_NOT_REQUIRED: &str = "not-required";
 fn rag_import(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagImportArgs>(arguments)?;
     let import = RagImport {
+        claims: std::collections::BTreeMap::new(),
         source_ref: args.source_ref,
         source_type: args.source_type,
         language_tags: args.language_tags.unwrap_or_default(),

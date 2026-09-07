@@ -13,6 +13,8 @@ use crate::db::open_migrated;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TermbaseError {
+    #[error(transparent)]
+    Coherent(#[from] crate::coherent_reads::CoherentReadError),
     #[error("unknown term rule: {0}")]
     UnknownRule(i64),
     #[error("rule crystals support at most one forbidden variant")]
@@ -607,7 +609,45 @@ impl Termbase {
     /// whose source surface occurs (case-insensitively, longest surface per
     /// rule wins).
     pub fn contract(&self, raw_text: &str) -> Result<Vec<ContractTerm>, TermbaseError> {
-        let (resolved, _warnings) = self.resolve_active_rules(raw_text)?;
+        Ok(self.contract_observed(raw_text, None)?.value)
+    }
+
+    pub fn contract_observed(
+        &self,
+        raw_text: &str,
+        required_decision_id: Option<&str>,
+    ) -> Result<crate::coherent_reads::Observed<Vec<ContractTerm>>, TermbaseError> {
+        crate::coherent_reads::stable_read(
+            &self.config,
+            &self.context.series_slug,
+            required_decision_id,
+            |db| self.contract_with_connection(db, raw_text),
+        )
+    }
+    pub fn validate_observed(
+        &self,
+        translated_text: &str,
+        source: Source,
+        required_decision_id: Option<&str>,
+    ) -> Result<crate::coherent_reads::Observed<Vec<ValidationFinding>>, TermbaseError> {
+        let raw = match source {
+            Source::Raw(s) | Source::SourceText(s) => s,
+        };
+        crate::coherent_reads::stable_read(
+            &self.config,
+            &self.context.series_slug,
+            required_decision_id,
+            |db| self.validate_with_connection(db, translated_text, Source::Raw(raw.clone())),
+        )
+    }
+
+    pub(crate) fn contract_with_connection(
+        &self,
+        connection: &Connection,
+        raw_text: &str,
+    ) -> Result<Vec<ContractTerm>, TermbaseError> {
+        let (resolved, _warnings) =
+            self.resolve_active_rules_with_connection(connection, raw_text)?;
         Ok(resolved
             .into_iter()
             .map(|resolved| contract_term_for_rule(&resolved.rule, &resolved.source_surface))
@@ -622,16 +662,25 @@ impl Termbase {
         translated_text: &str,
         source: Source,
     ) -> Result<Vec<ValidationFinding>, TermbaseError> {
+        Ok(self.validate_observed(translated_text, source, None)?.value)
+    }
+
+    pub(crate) fn validate_with_connection(
+        &self,
+        connection: &Connection,
+        translated_text: &str,
+        source: Source,
+    ) -> Result<Vec<ValidationFinding>, TermbaseError> {
         let source_text = match source {
             Source::Raw(text) => text,
             Source::SourceText(text) => text,
         };
-        let (resolved, mut findings) = self.resolve_active_rules(&source_text)?;
+        let (resolved, mut findings) =
+            self.resolve_active_rules_with_connection(connection, &source_text)?;
         let terms: Vec<ContractTerm> = resolved
             .into_iter()
             .map(|resolved| contract_term_for_rule(&resolved.rule, &resolved.source_surface))
             .collect();
-        let connection = self.connection()?;
         for term in terms {
             for forbidden_variant in &term.forbidden_variants {
                 if !contains(translated_text, forbidden_variant, true) {
@@ -679,11 +728,11 @@ impl Termbase {
     /// Resolve active rules whose source surface occurs in the raw text.
     /// Multiple active rules for one surface with different concept sets are
     /// ambiguous and surface a warning instead of an enforceable term.
-    fn resolve_active_rules(
+    fn resolve_active_rules_with_connection(
         &self,
+        connection: &Connection,
         raw_text: &str,
     ) -> Result<(Vec<ResolvedRule>, Vec<ValidationFinding>), TermbaseError> {
-        let connection = self.connection()?;
         let mut statement = connection.prepare(
             "select id, concept_id, source_text, canonical_translation,
                     forbidden_variants_json, provenance, revision, rule_crystal_id
@@ -722,19 +771,19 @@ impl Termbase {
                     revision: row.revision,
                     rule_crystal_id: row.rule_crystal_id,
                     semantic_tags: rule_side_values(
-                        &connection,
+                        connection,
                         "term_rule_semantic_tags",
                         "tag",
                         row.id,
                     )?,
                     story_scopes: rule_side_values(
-                        &connection,
+                        connection,
                         "term_rule_story_scopes",
                         "story_scope",
                         row.id,
                     )?,
                     language_tags: rule_side_values(
-                        &connection,
+                        connection,
                         "term_rule_language_tags",
                         "language_tag",
                         row.id,
@@ -746,7 +795,7 @@ impl Termbase {
         let mut matching = Vec::new();
         for rule in active {
             if !crate::authority_applicability::rule_identity_in_context(
-                &connection,
+                connection,
                 rule.id,
                 &self.context,
             )
@@ -809,7 +858,7 @@ impl Termbase {
             if concept_sets.len() == 1 {
                 // Identity is established before authority/applicability removes
                 // historical renderings; outside identities were retained above.
-                let candidates = current_rule_candidates(&connection, &self.context, candidates)?;
+                let candidates = current_rule_candidates(connection, &self.context, candidates)?;
                 let mut renderings: Vec<&str> = candidates
                     .iter()
                     .map(|candidate| candidate.canonical_translation.as_str())
@@ -855,7 +904,7 @@ impl Termbase {
             let identity = winners[0].concept_id;
             // Context chooses an identity, not a historical rendering row.
             winners = current_rule_candidates(
-                &connection,
+                connection,
                 &self.context,
                 candidates
                     .iter()

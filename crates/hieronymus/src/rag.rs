@@ -45,6 +45,8 @@ const REASON_PROJECT_TEXT: &str = "rag project text match";
 
 #[derive(Debug, thiserror::Error)]
 pub enum RagError {
+    #[error(transparent)]
+    Claim(#[from] crate::authority_models::DecisionErrorV1),
     #[error("limit must be at least 1")]
     LimitTooSmall,
     #[error("invalid RAG source: {0}")]
@@ -65,6 +67,9 @@ pub enum RagError {
 /// keyword arguments (everything except the path defaults).
 #[derive(Debug, Clone)]
 pub struct RagImport {
+    /// Explicit atomic assertions keyed by zero-based parsed chunk index.
+    pub claims: std::collections::BTreeMap<usize, Vec<crate::claim_capture::ClaimInput>>,
+
     pub source_ref: Option<String>,
     pub source_type: String,
     pub language_tags: Vec<String>,
@@ -75,6 +80,7 @@ pub struct RagImport {
 impl Default for RagImport {
     fn default() -> Self {
         Self {
+            claims: std::collections::BTreeMap::new(),
             source_ref: None,
             source_type: "auto".to_string(),
             language_tags: Vec::new(),
@@ -266,7 +272,16 @@ impl RagStore {
     /// distinction — everything else is a refusal, never a lexical-only
     /// answer dressed up as a complete one.
     pub fn series_chunk_count(&self, series_slug: &str) -> Result<i64, RagError> {
-        Ok(self.connection()?.query_row(
+        let connection = self.connection()?;
+        self.series_chunk_count_with_connection(&connection, series_slug)
+    }
+
+    pub(crate) fn series_chunk_count_with_connection(
+        &self,
+        connection: &Connection,
+        series_slug: &str,
+    ) -> Result<i64, RagError> {
+        Ok(connection.query_row(
             "select count(*) from rag_chunks where series_slug = ?1",
             rusqlite::params![series_slug],
             |row| row.get(0),
@@ -346,6 +361,8 @@ impl RagStore {
         connection.pragma_update(None, "busy_timeout", RAG_WRITE_BUSY_TIMEOUT_MS)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let existing = source_row(&transaction, series_slug, &clean_source_ref)?;
+        let mut retained: std::collections::BTreeMap<(String, String), Vec<i64>> =
+            std::collections::BTreeMap::new();
 
         if let Some(row) = &existing {
             if row.checksum == parsed.checksum
@@ -369,6 +386,23 @@ impl RagStore {
                     normalized_format: normalized.format,
                 });
             }
+            let mut prior=transaction.prepare("select c.text,c.location,b.claim_id from rag_chunks c join claim_bindings b on b.rag_chunk_id=c.id where c.source_id=? order by b.claim_id")?;
+            let rows = prior
+                .query_map([row.id], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (text, location, claim) in rows {
+                retained.entry((text, location)).or_default().push(claim);
+            }
+            drop(prior);
+            // Capture evidence retains original object identity and bytes. Remove
+            // only obsolete object links; immutable claim/effect history survives.
+            transaction.execute("delete from claim_bindings where rag_chunk_id in (select id from rag_chunks where source_id=?)",[row.id])?;
             transaction.execute(
                 "delete from rag_sources
                  where id = ?1
@@ -396,7 +430,7 @@ impl RagStore {
             ],
         )?;
         let source_id = transaction.last_insert_rowid();
-        for chunk in &parsed.chunks {
+        for (chunk_index, chunk) in parsed.chunks.iter().enumerate() {
             transaction.execute(
                 "insert into rag_chunks(
                    source_id, series_slug, chunk_kind, text, display_text,
@@ -415,6 +449,27 @@ impl RagStore {
                 ],
             )?;
             let chunk_id = transaction.last_insert_rowid();
+            if let Some(claims) = retained.get(&(chunk.text.clone(), chunk.location.clone())) {
+                for claim in claims {
+                    transaction.execute(
+                        "insert or ignore into claim_bindings(claim_id,rag_chunk_id) values(?1,?2)",
+                        params![claim, chunk_id],
+                    )?;
+                }
+            } else if existing.is_none()
+                && let Some(claims) = import.claims.get(&chunk_index)
+            {
+                for claim in claims {
+                    crate::claim_capture::capture_claim_tx(
+                        &transaction,
+                        crate::claim_reads::ClaimTarget::RagChunk(chunk_id),
+                        claim,
+                    )?;
+                }
+            }
+            // Unmatched replacements stay unbound source evidence. An import
+            // cannot manufacture fresh Current authority over corrected content.
+
             for value in &clean_language_tags {
                 transaction.execute(
                     "insert into rag_chunk_language_tags(chunk_id, language_tag)
@@ -470,6 +525,43 @@ impl RagStore {
         story_scopes: &[String],
         semantic_tags: &[String],
     ) -> Result<Vec<RagSearchHit>, RagError> {
+        let connection = self.connection()?;
+        self.search_with_connection(
+            &connection,
+            None,
+            series_slug,
+            query,
+            limit,
+            language_tags,
+            story_scopes,
+            semantic_tags,
+        )
+    }
+
+    pub(crate) fn search_with_connection(
+        &self,
+        connection: &Connection,
+        current: Option<&crate::story_applicability::StoryQueryV1>,
+        series_slug: &str,
+        query: &str,
+        limit: usize,
+        language_tags: &[String],
+        story_scopes: &[String],
+        semantic_tags: &[String],
+    ) -> Result<Vec<RagSearchHit>, RagError> {
+        let eligibility = if let Some(q) = current {
+            format!(
+                " and rag_chunks.id in (select value from json_each('{}'))",
+                crate::claim_reads::eligible_ids(
+                    connection,
+                    crate::claim_reads::ClaimTarget::RagChunk(0),
+                    q
+                )?
+            )
+        } else {
+            String::new()
+        };
+
         if limit == 0 {
             return Err(RagError::LimitTooSmall);
         }
@@ -481,8 +573,7 @@ impl RagStore {
         let clean_language_tags = clean_text_values(language_tags);
         let clean_story_scopes = clean_text_values(story_scopes);
         let clean_semantic_tags = clean_text_values(semantic_tags);
-        let connection = self.connection()?;
-        register_casefold_collation(&connection)?;
+        register_casefold_collation(connection)?;
 
         let mut next_index = 1usize;
         let glossary_index = next_index;
@@ -552,7 +643,7 @@ impl RagStore {
                on rag_sources.id = rag_chunks.source_id
               and rag_sources.series_slug = rag_chunks.series_slug
              where rag_chunks_fts match ?{expression_index}
-               and rag_chunks.series_slug = ?{series_index}
+               and rag_chunks.series_slug = ?{series_index} {eligibility}
              order by score desc, rag_chunks.id
              limit ?{limit_index}"
         );
@@ -576,19 +667,19 @@ impl RagStore {
 
         let chunk_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
         let chunk_language_tags = text_values_for_chunks(
-            &connection,
+            connection,
             "rag_chunk_language_tags",
             "language_tag",
             &chunk_ids,
         )?;
         let chunk_story_scopes = text_values_for_chunks(
-            &connection,
+            connection,
             "rag_chunk_story_scopes",
             "story_scope",
             &chunk_ids,
         )?;
         let chunk_semantic_tags = text_values_for_chunks(
-            &connection,
+            connection,
             "rag_chunk_semantic_tags",
             "semantic_tag",
             &chunk_ids,
@@ -634,10 +725,18 @@ impl RagStore {
     /// skipped). The semantic recall lane hydrates its hits through this so
     /// fused advisory hits always carry complete, authoritative records.
     pub fn chunks_by_ids(&self, chunk_ids: &[i64]) -> Result<Vec<RagChunkRecord>, RagError> {
+        let connection = self.connection()?;
+        self.chunks_by_ids_with_connection(&connection, chunk_ids)
+    }
+
+    pub(crate) fn chunks_by_ids_with_connection(
+        &self,
+        connection: &Connection,
+        chunk_ids: &[i64],
+    ) -> Result<Vec<RagChunkRecord>, RagError> {
         if chunk_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let connection = self.connection()?;
         let unique_ids: Vec<i64> = {
             let mut ids = chunk_ids.to_vec();
             ids.sort_unstable();
@@ -690,19 +789,19 @@ impl RagStore {
 
         let resolved_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
         let chunk_language_tags = text_values_for_chunks(
-            &connection,
+            connection,
             "rag_chunk_language_tags",
             "language_tag",
             &resolved_ids,
         )?;
         let chunk_story_scopes = text_values_for_chunks(
-            &connection,
+            connection,
             "rag_chunk_story_scopes",
             "story_scope",
             &resolved_ids,
         )?;
         let chunk_semantic_tags = text_values_for_chunks(
-            &connection,
+            connection,
             "rag_chunk_semantic_tags",
             "semantic_tag",
             &resolved_ids,
