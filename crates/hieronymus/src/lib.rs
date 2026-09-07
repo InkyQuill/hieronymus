@@ -52,3 +52,8 @@ pub mod terminology;
 pub mod tls;
 pub mod upgrade;
 pub mod workspace;
+
+pub mod authority;
+mod authority_applicability;
+mod authority_evidence;
+pub mod authority_models;
