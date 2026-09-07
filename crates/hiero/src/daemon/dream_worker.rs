@@ -444,13 +444,14 @@ impl DreamController {
             return None;
         }
         let pending = pending_short_term_memory_count(&self.inner.config).ok()?;
-        if pending == 0 {
+        if pending == 0 || pending < dream_config.min_pending_short_term_memories {
             let service = DreamService::open(&self.inner.config, (self.inner.source)()).ok()?;
-            return service
-                .cycle_has_deterministic_work()
-                .ok()?
-                .then(|| self.submit_scheduled("scheduled", false))
-                .flatten();
+            if service.cycle_has_deterministic_work().ok()? {
+                return self.submit_scheduled("scheduled", false);
+            }
+            if pending == 0 {
+                return None;
+            }
         }
         let skips = consecutive_not_enough_memories_skips(&self.inner.config).unwrap_or(0);
         match scheduled_decision(&dream_config, pending, skips) {

@@ -1191,3 +1191,48 @@ fn mcp_and_admin_project_the_overall_drain_outcome() {
     assert_eq!(result["run"]["progress"]["terminalized_pairs"], json!(8));
     workers.stop_and_join().unwrap();
 }
+
+#[test]
+fn scheduled_deterministic_work_ignores_a_small_crystallization_backlog() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    seed_backlog(&config, 1, 1);
+    let connection = open_migrated(&config.database_path()).unwrap();
+    connection.execute_batch("insert into crystals(id,text,crystal_type,scope_type,strength,confidence,status,created_at,updated_at)
+      values(1,'text','lesson','global',0.5,0.5,'active','now','now');
+      insert into memory_events(crystal_id,event_type,source_role,strength_delta,confidence_delta,applied,created_at)
+      values(1,'recalled_again','system',0.1,0,0,'now'),(1,'recalled_again','system',0.1,0,0,'now');").unwrap();
+    let mut settings = default_dream_config();
+    settings.enabled = true;
+    settings.min_pending_short_term_memories = 10;
+    settings.max_total_affected_crystals = 1;
+    save_dream_config(&config, &settings).unwrap();
+    let mut workers = WorkerGroup::new(Arc::new(AtomicBool::new(false)));
+    let controller = DreamController::start_with_provider_source(
+        config,
+        &mut workers,
+        Arc::new(WorkflowResolver::deterministic),
+    )
+    .unwrap();
+    assert!(
+        controller.run_scheduled_tick().is_some(),
+        "feedback justifies a scheduled run before the crystallization threshold"
+    );
+    wait_for(|| controller.status().last.is_some(), PASS_TIMEOUT);
+    assert_eq!(
+        scalar(
+            root.path(),
+            "select count(*) from memory_events where applied=1"
+        ),
+        2
+    );
+    assert_eq!(
+        scalar(
+            root.path(),
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        1
+    );
+    assert_eq!(controller.status().last.unwrap().batches, Some(2));
+    workers.stop_and_join().unwrap();
+}

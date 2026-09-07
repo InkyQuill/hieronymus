@@ -36,6 +36,9 @@ const LINK_WEIGHT_MAX: f64 = 1.0;
 /// `crystal_links.link_type` for hebbian co-activation links.
 const CO_ACTIVATION_LINK_TYPE: &str = "co_activation";
 
+const BATCH_PAIR_TOTALS_SQL: &str =
+    "select applied_pair_count, skipped_pair_count from dream_link_batches where id=?1";
+
 /// Unique unordered pairs of the given ids in deterministic order: ids are
 /// deduplicated and sorted, then paired as (smaller, larger) — the
 /// `dream_link_pairs` snapshot contract (`left_id < right_id`).
@@ -375,6 +378,10 @@ impl LinkProgress {
                  next_right_offset = case when next_right_offset + 1 >= (select max(member_offset)+1 from dream_link_crystals where batch_id=?1) then next_left_offset+2 else next_right_offset+1 end
                  where id=?1 and lazy_pairs=1",
                 [batch_id])?;
+            transaction.execute(
+                "update dream_link_batches set applied_pair_count = applied_pair_count + (?2 = 'applied'),
+                 skipped_pair_count = skipped_pair_count + (?2 = 'skipped') where id = ?1",
+                rusqlite::params![batch_id, effect.status()])?;
             self.append_pair_audit(transaction, batch_id, cycle, left, right, &effect)
                 .map_err(tx_error)?;
             Ok(effect)
@@ -467,24 +474,10 @@ impl LinkProgress {
                  where id = ?2 and completed_cycle is null",
                 rusqlite::params![cycle, batch_id],
             )?;
-            let counts: Vec<(String, i64)> = {
-                let mut statement = transaction.prepare(
-                    "select status, count(*) from dream_link_pairs
-                     where batch_id = ?1 group by status order by status",
-                )?;
-                let rows = statement.query_map([batch_id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            let (applied, skipped): (i64, i64) =
+                transaction.query_row(BATCH_PAIR_TOTALS_SQL, [batch_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
                 })?;
-                rows.collect::<Result<Vec<_>, _>>()?
-            };
-            let applied = counts
-                .iter()
-                .find(|(status, _)| status == "applied")
-                .map_or(0, |(_, count)| *count);
-            let skipped = counts
-                .iter()
-                .find(|(status, _)| status == "skipped")
-                .map_or(0, |(_, count)| *count);
             let member_count: i64 = transaction.query_row(
                 "select count(*) from dream_link_members where batch_id=?1",
                 [batch_id],
@@ -788,5 +781,42 @@ mod tests {
     #[test]
     fn canonical_pairs_are_sorted_smaller_first() {
         assert_eq!(canonical_pairs(&[9, 4]), vec![(4, 9)]);
+    }
+    #[test]
+    fn completion_total_lookup_has_constant_vm_work_as_history_grows() {
+        use rusqlite::{Connection, StatementStatus};
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("create table dream_link_batches(id integer primary key, applied_pair_count integer, skipped_pair_count integer);
+          insert into dream_link_batches values(1,100,0);
+          create table dream_link_pairs(batch_id integer, left_id integer, right_id integer, status text);
+          create index queue on dream_link_pairs(batch_id,status,left_id,right_id);").unwrap();
+        let mut steps = Vec::new();
+        for count in [100, 10000] {
+            connection
+                .execute(
+                    "with recursive n(x) as (values(1) union all select x+1 from n where x<?1)
+              insert into dream_link_pairs select 1, 0, x, 'applied' from n",
+                    [count],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "update dream_link_batches set applied_pair_count=?1 where id=1",
+                    [count],
+                )
+                .unwrap();
+            let mut statement = connection.prepare(super::BATCH_PAIR_TOTALS_SQL).unwrap();
+            let total: i64 = statement.query_row([1], |row| row.get(0)).unwrap();
+            assert_eq!(total, count);
+            steps.push(statement.get_status(StatementStatus::VmStep));
+        }
+        assert_eq!(
+            steps[0], steps[1],
+            "terminal history must not increase completion query work"
+        );
+        assert!(
+            steps[1] < 100,
+            "single batch lookup must be bounded: {steps:?}"
+        );
     }
 }

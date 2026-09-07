@@ -325,7 +325,13 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
         // Current.
         (
             "dream_link_batches",
-            &["next_left_offset", "next_right_offset", "lazy_pairs"][..],
+            &[
+                "next_left_offset",
+                "next_right_offset",
+                "lazy_pairs",
+                "applied_pair_count",
+                "skipped_pair_count",
+            ][..],
         ),
         (RUST_META_TABLE, &["schema_version"][..]),
     ] {

@@ -1010,3 +1010,26 @@ fn legacy_materialized_pairs_drain_before_lazy_batches() {
     );
     assert_eq!(progress.process(3, 2).unwrap(), 2);
 }
+
+#[test]
+fn batch_completion_uses_durable_totals_without_recounting_pair_history() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let run = create_run(&config, 1);
+    // The committed totals are sufficient to complete a batch, independent
+    // of its terminal history size. No quadratic fixture needs materializing.
+    execute(
+        &config,
+        "insert into dream_link_batches(id,session_id,created_cycle,applied_pair_count,skipped_pair_count) values(1,1,1,49995000,7)",
+    );
+    let mut progress = open_progress(&config, run);
+    assert_eq!(progress.process(2, 1).unwrap(), 0);
+    let payload = query(
+        &config,
+        "select payload_json from dream_audit_entries where event_type='link_batch_completed'",
+        &[],
+    );
+    let payload: Value = serde_json::from_str(payload[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(payload["applied_pairs"], json!(49995000));
+    assert_eq!(payload["skipped_pairs"], json!(7));
+}

@@ -313,6 +313,14 @@ fn audit_injection_inside_a_pair_transaction_keeps_committed_pairs_and_retry_com
         scalar(&config, "select completed_cycle from dream_link_batches"),
         Value::Null
     );
+    assert_eq!(
+        scalar(&config, "select applied_pair_count from dream_link_batches"),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(&config, "select skipped_pair_count from dream_link_batches"),
+        json!(0)
+    );
     // The phase row stays untouched ('running' — deterministic phase rows are
     // never failed in bulk; the failed run row and, when writable, the
     // phase_failed record are the durable outcome).

@@ -1283,6 +1283,20 @@ fn v3_materialized_batches_upgrade_without_replaying_terminal_pairs() {
         scalar(&connection, "select count(*) from dream_link_crystals"),
         0
     );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select applied_pair_count from dream_link_batches"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select skipped_pair_count from dream_link_batches"
+        ),
+        0
+    );
     let mut progress = LinkProgress::open(&config).unwrap();
     assert_eq!(progress.process(2, 1).unwrap(), 1);
     assert_eq!(
@@ -1296,6 +1310,20 @@ fn v3_materialized_batches_upgrade_without_replaying_terminal_pairs() {
         scalar(
             &connection,
             "select count(*) from dream_link_pairs where status='skipped'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select applied_pair_count from dream_link_batches"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select skipped_pair_count from dream_link_batches"
         ),
         1
     );

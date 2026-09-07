@@ -11,6 +11,8 @@ create table dream_link_crystals (
 -- explicitly opt into lazy enumeration, including zero/singleton snapshots.
 alter table dream_link_batches add column lazy_pairs integer not null default 0
   check (lazy_pairs in (0, 1));
+alter table dream_link_batches add column applied_pair_count integer not null default 0;
+alter table dream_link_batches add column skipped_pair_count integer not null default 0;
 -- Bounded reads must not sort the legacy quadratic queue or scan the full
 -- terminal/audit history on every bounded cycle.
 create index dream_link_pairs_queue_order_idx
@@ -24,5 +26,12 @@ create index dream_feedback_cycle_idx on memory_events(cycle_id)
 create index dream_audit_run_event_idx on dream_audit_entries(dream_run_id, event_type);
 create index dream_activations_pending_session_idx on crystal_activations(session_id, id)
   where outcome = 'useful' and cycle_id is null;
+-- Upgrade is the only historical count. Runtime terminalization maintains
+-- these totals atomically so finalization never scans the quadratic history.
+update dream_link_batches set
+  applied_pair_count = (select count(*) from dream_link_pairs p
+                       where p.batch_id = dream_link_batches.id and p.status = 'applied'),
+  skipped_pair_count = (select count(*) from dream_link_pairs p
+                       where p.batch_id = dream_link_batches.id and p.status = 'skipped');
 update hieronymus_meta set schema_version = 4;
 pragma user_version = 4;
