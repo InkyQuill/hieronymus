@@ -444,3 +444,22 @@ fn export_report_names_the_destination_it_published() {
     assert_eq!(report.tables.len(), hiero::export::EXPORTED_TABLES.len());
     assert!(destination.is_file());
 }
+
+#[test]
+fn export_refuses_symlink_parent_traversal_before_normalizing() {
+    let (root, config) = open_root();
+    let outside = tempfile::tempdir().unwrap();
+    let nested = root.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let alias = outside.path().join("alias");
+    std::os::unix::fs::symlink(&nested, &alias).unwrap();
+    let destination = alias
+        .join("..")
+        .join(config.database_path().file_name().unwrap());
+    let before = std::fs::read(config.database_path()).unwrap();
+    assert!(matches!(
+        hiero::export::run_overwriting(&config, &destination),
+        Err(hiero::export::ExportError::UnsafeDestination(_))
+    ));
+    assert_eq!(std::fs::read(config.database_path()).unwrap(), before);
+}

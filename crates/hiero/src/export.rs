@@ -144,7 +144,11 @@ fn export(
     // exactly as it was. This runs for `Overwrite` too — an explicit
     // overwrite is permission to replace the user's own export, never
     // permission to replace the user's memory.
-    ensure_safe_destination(config, output)?;
+    let checked_output = ensure_safe_destination(config, output)?;
+    let destination = Destination::open(&checked_output).map_err(|source| ExportError::Write {
+        path: output.to_path_buf(),
+        source,
+    })?;
     let connection = Connection::open_with_flags(
         config.database_path(),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -184,7 +188,12 @@ fn export(
         }
     })?;
     text.push('\n');
-    publish(output, &text, publication)?;
+    destination
+        .publish(&text, publication)
+        .map_err(|source| ExportError::Write {
+            path: output.to_path_buf(),
+            source,
+        })?;
     Ok(ExportReport {
         format: EXPORT_FORMAT,
         output: output.to_path_buf(),
@@ -192,64 +201,104 @@ fn export(
     })
 }
 
-/// Publish `text` at `output`: a sibling temporary file is written, flushed,
-/// and fsynced, then renamed into place. A crash, a full disk, or a losing
-/// race leaves the destination exactly as it was and takes the temporary file
-/// with it — an export never truncates a file it cannot finish writing, and
-/// that holds for `Overwrite` as much as for `NewFileOnly`. The two differ
-/// only in whether the rename is allowed to replace an existing file.
-fn publish(output: &Path, text: &str, publication: Publication) -> Result<(), ExportError> {
-    let failure = |source: std::io::Error| ExportError::Write {
-        path: output.to_path_buf(),
-        source,
-    };
-    // Fail early with an explanation rather than an opaque rename error. The
-    // no-clobber rename below is still the authority: it closes the race
-    // between this check and the publish.
-    if publication == Publication::NewFileOnly && std::fs::symlink_metadata(output).is_ok() {
-        return Err(failure(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "destination already exists; export never overwrites without --force — pass \
-             --force, or choose another path",
-        )));
-    }
-    let directory = match output.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => {
-            std::fs::create_dir_all(parent).map_err(&failure)?;
-            parent.to_path_buf()
+/// An opened destination directory. Publication writes and fsyncs a sibling
+/// temporary file, then renames it relative to this retained descriptor.
+/// Returned errors remove the temporary file; interruption may leave debris
+/// but never a partially written destination.
+struct Destination {
+    directory: std::os::fd::OwnedFd,
+    name: std::ffi::OsString,
+}
+
+impl Destination {
+    /// Walk each component relative to an already opened directory. NOFOLLOW
+    /// prevents an ancestor swap from redirecting the export through a link;
+    /// retaining the final descriptor anchors all subsequent publication I/O.
+    fn open(output: &Path) -> std::io::Result<Self> {
+        use rustix::fs::{Mode, OFlags, mkdirat, open, openat};
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let mut directory = open("/", flags, Mode::empty())?;
+        let parent = output
+            .parent()
+            .ok_or_else(|| std::io::Error::other("missing parent"))?;
+        for component in parent.components() {
+            let Component::Normal(name) = component else {
+                continue;
+            };
+            directory = match openat(&directory, name, flags, Mode::empty()) {
+                Ok(next) => next,
+                Err(rustix::io::Errno::NOENT) => {
+                    match mkdirat(&directory, name, Mode::from_raw_mode(0o755)) {
+                        Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                    openat(&directory, name, flags, Mode::empty())?
+                }
+                Err(error) => return Err(error.into()),
+            };
         }
-        _ => PathBuf::from("."),
-    };
-    let name = output
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "export".to_string());
-    // Named like the destination and created in the same directory, so the
-    // publish is a rename within one filesystem and debris is recognizable.
-    // The 0600 default is deliberate: the document carries memory content.
-    let mut temporary = tempfile::Builder::new()
-        .prefix(&format!(".{name}."))
-        .suffix(".tmp")
-        .rand_bytes(8)
-        .tempfile_in(&directory)
-        .map_err(&failure)?;
-    temporary.write_all(text.as_bytes()).map_err(&failure)?;
-    temporary.as_file().sync_all().map_err(&failure)?;
-    // Either rename is atomic: the destination holds the old bytes or the
-    // complete new ones, never a partial write. A failure drops the temporary
-    // file, which deletes it.
-    match publication {
-        Publication::NewFileOnly => temporary.persist_noclobber(output),
-        Publication::Overwrite => temporary.persist(output),
+        Ok(Self {
+            directory,
+            name: output
+                .file_name()
+                .ok_or_else(|| std::io::Error::other("missing filename"))?
+                .to_os_string(),
+        })
     }
-    .map_err(|error| failure(error.error))?;
-    // Best effort: make the rename itself durable. Not every filesystem
-    // supports fsync on a directory, and a failure here does not invalidate
-    // the published file.
-    if let Ok(handle) = std::fs::File::open(&directory) {
-        let _ = handle.sync_all();
+
+    fn publish(&self, text: &str, publication: Publication) -> std::io::Result<()> {
+        use rustix::fs::{
+            AtFlags, Mode, OFlags, RenameFlags, openat, renameat, renameat_with, unlinkat,
+        };
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(std::io::Error::other)?;
+        let name = format!(
+            ".hiero-export-{}.tmp",
+            random
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        let fd = openat(
+            &self.directory,
+            &name,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )?;
+        let result = (|| {
+            let mut file = std::fs::File::from(fd);
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            match publication {
+                Publication::NewFileOnly => renameat_with(
+                    &self.directory,
+                    &name,
+                    &self.directory,
+                    &self.name,
+                    RenameFlags::NOREPLACE,
+                ),
+                Publication::Overwrite => {
+                    renameat(&self.directory, &name, &self.directory, &self.name)
+                }
+            }
+            .map_err(|error| {
+                if error == rustix::io::Errno::EXIST {
+                    std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "destination already exists; pass --force or choose another path",
+                    )
+                } else {
+                    std::io::Error::from(error)
+                }
+            })?;
+            let _ = rustix::fs::fsync(&self.directory);
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = unlinkat(&self.directory, &name, AtFlags::empty());
+        }
+        result
     }
-    Ok(())
 }
 
 /// Refuse destinations the installation owns. Read-only SQLite flags protect
@@ -268,7 +317,10 @@ fn publish(output: &Path, text: &str, publication: Publication) -> Result<(), Ex
 /// walking those trees on every export is impractical. Directories cannot be
 /// hard-linked, so the trees themselves stay protected by path; a hard link to
 /// an individual file under `backups/` would not be recognized.
-fn ensure_safe_destination(config: &HieronymusConfig, output: &Path) -> Result<(), ExportError> {
+fn ensure_safe_destination(
+    config: &HieronymusConfig,
+    output: &Path,
+) -> Result<PathBuf, ExportError> {
     let refuse = || ExportError::UnsafeDestination(output.to_path_buf());
     let candidate = lexical_absolute(output).map_err(|source| ExportError::Write {
         path: output.to_path_buf(),
@@ -279,7 +331,11 @@ fn ensure_safe_destination(config: &HieronymusConfig, output: &Path) -> Result<(
     //    to a protected file, and a symlinked ancestor makes every path
     //    comparison below meaningless — refuse both rather than try to reason
     //    about where they point.
-    for ancestor in candidate.ancestors() {
+    let raw_absolute = std::path::absolute(output).map_err(|source| ExportError::Write {
+        path: output.to_path_buf(),
+        source,
+    })?;
+    for ancestor in raw_absolute.ancestors() {
         if std::fs::symlink_metadata(ancestor)
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
         {
@@ -328,7 +384,7 @@ fn ensure_safe_destination(config: &HieronymusConfig, output: &Path) -> Result<(
             }
         }
     }
-    Ok(())
+    Ok(candidate)
 }
 
 /// Every individual file the installation owns. Sidecars and locks are listed
@@ -491,5 +547,34 @@ mod tests {
 
         // The export is plain data, not a SQLite file.
         assert!(!first.starts_with("SQLite format 3"));
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    #[test]
+    fn publication_stays_in_opened_directory_after_ancestor_swap() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let original = root.path().join("exports");
+        std::fs::create_dir(&original).unwrap();
+        let destination = Destination::open(&original.join("memory.json")).unwrap();
+        let moved = root.path().join("moved");
+        std::fs::rename(&original, &moved).unwrap();
+        std::os::unix::fs::symlink(outside.path(), &original).unwrap();
+        std::fs::write(outside.path().join("memory.json"), "protected").unwrap();
+        destination
+            .publish("export", Publication::Overwrite)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(moved.join("memory.json")).unwrap(),
+            "export"
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.path().join("memory.json")).unwrap(),
+            "protected"
+        );
     }
 }

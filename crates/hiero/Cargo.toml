@@ -26,9 +26,10 @@ thiserror.workspace = true
 base64.workspace = true
 sha1.workspace = true
 home.workspace = true
-# `hiero export` publishes through a synced sibling temporary file and an
-# atomic no-clobber rename, so it can never truncate an existing destination.
+# Temporary files for local tooling and tests.
 tempfile.workspace = true
+# Descriptor-relative export publication; version already present in Cargo.lock.
+rustix = { version = "=1.1.4", features = ["fs"] }
 # Release archive verification (`hiero update`, byte-for-byte parity with the
 # bootstrap installer's sha256sum check).
 sha2.workspace = true
