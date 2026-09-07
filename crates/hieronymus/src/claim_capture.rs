@@ -121,7 +121,7 @@ pub(crate) fn capture_context_tx(
     )
 }
 /// Validate concrete ownership before creating or copying a binding.
-fn validate_target(
+pub(crate) fn validate_target(
     db: &Connection,
     target: ClaimTarget,
     series: i64,
@@ -298,6 +298,19 @@ pub(crate) fn bind_existing_claim_tx(
     target: ClaimTarget,
     input: &ExistingClaimInput,
 ) -> Result<(), DecisionErrorV1> {
+    tx.execute_batch("SAVEPOINT existing_claim_lineage")?;
+    let result = bind_existing_claim_inner(tx, target, input);
+    if result.is_err() {
+        tx.execute_batch("ROLLBACK TO existing_claim_lineage")?;
+    }
+    tx.execute_batch("RELEASE existing_claim_lineage")?;
+    result
+}
+fn bind_existing_claim_inner(
+    tx: &Transaction<'_>,
+    target: ClaimTarget,
+    input: &ExistingClaimInput,
+) -> Result<(), DecisionErrorV1> {
     let (series, concept, app): (i64, Option<i64>, i64) = tx
         .query_row(
             "select series_id,concept_id,applicability_id from memory_claims where id=?",
@@ -312,15 +325,39 @@ pub(crate) fn bind_existing_claim_tx(
         return Err(DecisionErrorV1::EvidenceMismatch);
     }
     validate_target(tx, target, series, concept, true)?;
-    if tx.execute(
-        &format!(
-            "insert or ignore into claim_bindings(claim_id,{}) values(?1,?2)",
-            target.column()
-        ),
-        params![input.claim_id, target.id()],
-    )? > 0
-    {
-        audit_binding(tx, input.claim_id, target, Some(target), "explicit_lineage")?;
+    let mut statement=tx.prepare("with recursive ancestors(id) as (select input_claim_id from claim_derivations where output_claim_id=?1 union select d.input_claim_id from claim_derivations d join ancestors a on d.output_claim_id=a.id) select c.id,c.series_id,c.concept_id,c.applicability_id from ancestors a join memory_claims c on c.id=a.id order by c.id")?;
+    let rows = statement
+        .query_map([input.claim_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut claims = vec![input.claim_id];
+    for (id, owner, concept, app) in rows {
+        if id == input.claim_id || owner != series {
+            return Err(DecisionErrorV1::EvidenceMismatch);
+        }
+        let original =
+            applicability::load(tx, app)?.ok_or(DecisionErrorV1::ApplicabilityConflict)?;
+        applicability::validate(tx, &original)?;
+        validate_target(tx, target, owner, concept, true)?;
+        claims.push(id);
+    }
+    for claim in claims {
+        if tx.execute(
+            &format!(
+                "insert or ignore into claim_bindings(claim_id,{}) values(?1,?2)",
+                target.column()
+            ),
+            params![claim, target.id()],
+        )? > 0
+        {
+            audit_binding(tx, claim, target, Some(target), "explicit_lineage")?;
+        }
     }
     Ok(())
 }

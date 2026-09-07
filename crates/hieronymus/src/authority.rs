@@ -271,6 +271,13 @@ pub(crate) fn validate_request(
         return Err(Error::InvalidRequest);
     }
     let origin_context = origin(db, r)?;
+    validate_request_context(db, r, origin_context)
+}
+fn validate_request_context(
+    db: &Connection,
+    r: &DecisionRequestV1,
+    origin_context: OriginContextV1,
+) -> Result<OriginContextV1, Error> {
     if r.applicability.series_id != r.series_id {
         return Err(Error::ApplicabilityConflict);
     }
@@ -321,6 +328,13 @@ pub(crate) fn validate_mutation(
     r: &DecisionRequestV1,
 ) -> Result<(ValidatedMutation, Vec<TentativeReason>), Error> {
     let origin_context = validate_request(db, r)?;
+    validate_mutation_context(db, r, origin_context)
+}
+fn validate_mutation_context(
+    db: &Connection,
+    r: &DecisionRequestV1,
+    origin_context: OriginContextV1,
+) -> Result<(ValidatedMutation, Vec<TentativeReason>), Error> {
     if r.target_language.is_none() {
         return Err(Error::LanguageMismatch);
     }
@@ -757,4 +771,127 @@ fn audit_scope(
     tx.execute("insert into term_rule_revisions(rule_id,actor,reason,prior_status,new_status,created_at) values(?1,?2,?3,?4,?4,?5)",params![old.id,actor(m.request.actor_kind),owner.key(),old.status,now])?;
     tx.execute("insert into term_rule_actions(rule_id,actor,reason,action,expected_revision,resulting_revision,idempotency_key,request_canonical,result_json,created_at) values(?1,?2,?3,'scope',?4,?5,?6,?7,?8,?9)",params![old.id,actor(m.request.actor_kind),owner.key(),old.revision,old.revision+1,format!("{}:scope:{}",owner.key(),old.id),canonical.to_string(),serde_json::to_string(&terminology::hydrate_rule(tx,old.id).map_err(term_error)?)?,now])?;
     Ok(())
+}
+
+/// This adapter accepts only an operation in the exact immutable prepared Dream
+/// result. The ordinary ingestion origin continues to bind one operation.
+pub(crate) fn validate_result_mutation(
+    db: &Connection,
+    output: &crate::consolidation::ConsolidationResultV1,
+    series_id: i64,
+    index: usize,
+) -> Result<ValidatedMutation, Error> {
+    use crate::consolidation::{DerivedMutationV1, LearnedRuleOperationV1};
+    let canonical = serde_json::to_value(output)?.to_string();
+    let (kind, text, context, hash): (String, String, String, String) = db.query_row(
+        "select kind,text,context_json,content_hash from origin_receipts where id=?",
+        [&output.origin.0],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    if kind != "dream"
+        || context != canonical
+        || evidence::hash(&format!("{text}\n{context}")) != hash
+    {
+        return Err(Error::OriginMismatch);
+    }
+    let Some(DerivedMutationV1::LearnedRule {
+        concept_id,
+        source_language,
+        target_language,
+        applicability,
+        operation,
+    }) = output.mutations.get(index)
+    else {
+        return Err(Error::InvalidRequest);
+    };
+    let operation = match operation.as_ref() {
+        LearnedRuleOperationV1::Activate {
+            candidate_id,
+            candidate_revision,
+        } => OperationV1::Activate {
+            candidate_id: *candidate_id,
+            candidate_revision: *candidate_revision,
+        },
+        LearnedRuleOperationV1::Replace {
+            rule_id,
+            rule_revision,
+            rendering,
+        } => OperationV1::Replace {
+            rule_id: *rule_id,
+            rule_revision: *rule_revision,
+            rendering: rendering.clone(),
+        },
+        LearnedRuleOperationV1::Scope {
+            rule_id,
+            rule_revision,
+            new_applicability,
+        } => OperationV1::Scope {
+            rule_id: *rule_id,
+            rule_revision: *rule_revision,
+            new_applicability: new_applicability.clone(),
+        },
+        LearnedRuleOperationV1::Archive {
+            rule_id,
+            rule_revision,
+        } => OperationV1::Archive {
+            rule_id: *rule_id,
+            rule_revision: *rule_revision,
+        },
+    };
+    let mut evidence_refs = vec![];
+    for reference in &output.evidence_refs {
+        if output
+            .selected_claims
+            .iter()
+            .any(|c| c.evidence_id == reference.id)
+        {
+            continue;
+        }
+        let json: String = db.query_row(
+            "select binding_json from evidence_records where id=?",
+            [reference.id],
+            |r| r.get(0),
+        )?;
+        let binding: EvidenceBindingV1 =
+            serde_json::from_str(&json).map_err(|_| Error::EvidenceMismatch)?;
+        if binding.concept_id == *concept_id
+            && binding.source_language == *source_language
+            && binding.target_language.as_ref() == Some(target_language)
+            && applicability::overlaps(db, &binding.applicability, applicability)?
+        {
+            evidence_refs.push(reference.clone());
+        }
+    }
+    let r = DecisionRequestV1 {
+        version: 1,
+        decision_id: output.result_id.clone(),
+        expected_revision: output.expected_revision,
+        actor_kind: ActorKind::Dream,
+        origin: output.origin.clone(),
+        evidence_refs,
+        series_id,
+        concept_id: Some(*concept_id),
+        source_language: source_language.clone(),
+        target_language: Some(target_language.clone()),
+        applicability: applicability.clone(),
+        operation,
+    };
+    let context = OriginContextV1 {
+        decision_id: r.decision_id.clone(),
+        expected_revision: r.expected_revision,
+        selected_source: None,
+        series_id,
+        concept_id: r.concept_id,
+        source_language: r.source_language.clone(),
+        target_language: r.target_language.clone(),
+        applicability: r.applicability.clone(),
+        evidence_ids: r.evidence_refs.iter().map(|e| e.id).collect(),
+        operation: r.operation.clone(),
+    };
+    let context = validate_request_context(db, &r, context)?;
+    let (mutation, reasons) = validate_mutation_context(db, &r, context)?;
+    if !reasons.is_empty() {
+        return Err(Error::InvalidRequest);
+    }
+    Ok(mutation)
 }

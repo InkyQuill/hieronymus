@@ -30,6 +30,8 @@ pub enum ConsolidationError {
     IdempotencyConflict,
     #[error("consolidation revision conflict")]
     RevisionConflict,
+    #[error("consolidation policy: {0}")]
+    Policy(crate::authority_models::DecisionErrorV1),
     #[error("consolidation invariant: {0}")]
     Invariant(String),
 }
@@ -51,6 +53,7 @@ pub struct ConsolidationResultV1 {
     pub expected_revision: u64,
     pub origin: OriginReceiptId,
     pub evidence_refs: Vec<EvidenceRef>,
+    pub selected_claims: Vec<SelectedClaimV1>,
     pub mutations: Vec<DerivedMutationV1>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,5 +92,36 @@ pub enum LearnedRuleOperationV1 {
     Archive {
         rule_id: i64,
         rule_revision: u64,
+    },
+}
+
+/// Worker-captured selection, bound to the original immutable claim observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedClaimV1 {
+    pub claim_id: i64,
+    pub revision: u64,
+    pub evidence_id: i64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompletionReceiptV1 {
+    pub result_id: String,
+    pub job_decision_id: String,
+    pub generation: u64,
+    pub resulting_revision: u64,
+    pub affected_rules: Vec<(i64, u64)>,
+    pub affected_claims: Vec<(i64, u64)>,
+    pub committed_at: String,
+}
+/// Stale is a successful state transition: callers must commit it for retry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionOutcome {
+    Complete {
+        receipt: CompletionReceiptV1,
+    },
+    Stale {
+        result_id: String,
+        next_generation: u64,
     },
 }

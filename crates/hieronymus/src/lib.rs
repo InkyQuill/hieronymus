@@ -12,6 +12,7 @@ pub mod atomic;
 pub mod concept_models;
 pub mod concepts;
 pub mod consolidation;
+mod consolidation_completion;
 mod consolidation_models;
 pub mod crystals;
 pub mod data_root;
