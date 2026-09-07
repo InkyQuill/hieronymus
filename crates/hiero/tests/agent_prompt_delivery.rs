@@ -122,6 +122,165 @@ fn actual_cli_stdin_binding_delivery_and_private_files() {
 }
 
 #[test]
+fn stale_cli_prompt_allows_recovery_without_rebasing_saved_delivery() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let first = submit_prompt(
+        &config,
+        "claude",
+        &json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"}),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(config.database_path()).unwrap();
+    let state = || {
+        db.query_row(
+            "select revision, (select count(*) from decision_records), (select count(*) from consolidation_jobs) from authority_state where series_id=?",
+            [context["series_id"].as_i64().unwrap()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+        ).unwrap()
+    };
+    let before = state();
+    let context_path = std::fs::read_dir(root.path().join("host-contexts"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let original_context = std::fs::read(&context_path).unwrap();
+    let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as C"});
+    let rejected = cli(
+        root.path(),
+        &["user-prompt-submit", "--host", "claude"],
+        &input,
+    );
+    assert!(
+        rejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let output: Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    let message = output["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let mut values = serde_json::Deserializer::from_str(
+        message
+            .strip_prefix("Hieronymus delivery recovery: ")
+            .unwrap(),
+    )
+    .into_iter::<Value>();
+    let diagnostic = values.next().unwrap().unwrap();
+    assert_eq!(diagnostic["status"], "delivery_rejected");
+    assert_eq!(diagnostic["http_status"], 409);
+    assert_eq!(diagnostic["authority_changed"], false);
+    assert!(diagnostic.get("required_decision_id").is_none());
+    assert!(message.contains("current user operation was NOT applied"));
+    assert!(message.contains("Do not rebase or automatically resubmit"));
+    assert_eq!(state(), before);
+    assert_eq!(std::fs::read(&context_path).unwrap(), original_context);
+    let id = diagnostic["delivery_id"].as_str().unwrap();
+    let path = root
+        .path()
+        .join("host-deliveries")
+        .join(format!("{id}.json"));
+    let bytes = std::fs::read(&path).unwrap();
+    let saved: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        saved["request"]["expected_revision"],
+        context["expected_revision"]
+    );
+    assert_eq!(saved["request"]["text"], input["prompt"]);
+    assert!(saved["response"].is_null());
+    let retry = cli(
+        root.path(),
+        &["retry-delivery", "--delivery-id", id],
+        &Value::Null,
+    );
+    assert!(!retry.status.success());
+    assert!(String::from_utf8_lossy(&retry.stderr).contains("HTTP 409"));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+    let receipt = &first["result"]["Applied"]["receipt"];
+    let selected = receipt["affected_rules"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    let mut fresh = context.clone();
+    fresh["expected_revision"] = receipt["resulting_revision"].clone();
+    fresh["selected_rule"] = json!({"id":selected[0],"revision":selected[1]});
+    assert!(cli(root.path(), &["bind-context"], &fresh).status.success());
+    assert!(
+        !cli(
+            root.path(),
+            &["retry-delivery", "--delivery-id", id],
+            &Value::Null
+        )
+        .status
+        .success()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let future = cli(
+        root.path(),
+        &["user-prompt-submit", "--host", "claude"],
+        &input,
+    );
+    assert!(
+        future.status.success(),
+        "{}",
+        String::from_utf8_lossy(&future.stderr)
+    );
+    let output: Value = serde_json::from_slice(&future.stdout).unwrap();
+    assert!(
+        output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("\"Applied\"")
+    );
+    assert_eq!(state().0, before.0 + 1);
+}
+
+#[test]
+fn cli_recovery_keeps_malformed_auth_and_transport_errors_fail_closed() {
+    let (root, daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let malformed = cli(
+        root.path(),
+        &["user-prompt-submit", "--host", "claude"],
+        &json!({"prompt":"translate this as B"}),
+    );
+    assert!(!malformed.status.success());
+    assert!(malformed.stdout.is_empty());
+
+    // Corrupt only this disposable test credential; never use a real profile.
+    std::fs::write(
+        hiero::daemon::discovery::LocalCredential::HostEvent.path(&config),
+        "0".repeat(64),
+    )
+    .unwrap();
+    let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"});
+    let unauthorized = cli(
+        root.path(),
+        &["user-prompt-submit", "--host", "claude"],
+        &input,
+    );
+    assert!(!unauthorized.status.success());
+    assert!(unauthorized.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unauthorized.stderr).contains("HTTP 401"));
+
+    drop(daemon);
+    let offline = cli(
+        root.path(),
+        &["user-prompt-submit", "--host", "claude"],
+        &input,
+    );
+    assert!(!offline.status.success());
+    assert!(offline.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&offline.stderr).contains("saved but not acknowledged"));
+}
+
+#[test]
 fn console_options_expose_actual_sources_without_minting_authority() {
     let (root, daemon, _) = prepared();
     let port = daemon.local_addr().port();

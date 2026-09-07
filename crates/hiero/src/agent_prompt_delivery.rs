@@ -2,6 +2,7 @@
 //! is accepted only from the host stdin envelope, never the binding command.
 use crate::{
     application::authority::{SelectedRevision, UserCorrectionV1},
+    client::ClientError,
     daemon::discovery::LocalCredential,
     lifecycle,
 };
@@ -27,6 +28,8 @@ pub enum DeliveryError {
         "delivery {delivery_id} was saved but not acknowledged; retry-delivery with this ID: {detail}"
     )]
     Pending { delivery_id: String, detail: String },
+    #[error("delivery {delivery_id} was rejected: HTTP 409 {detail}")]
+    Rejected { delivery_id: String, detail: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -216,7 +219,25 @@ pub fn handle_prompt(
             )}}),
         );
     }
-    submit_prompt(config, h, input).map(|response| hook_output(&response))
+    match submit_prompt(config, h, input) {
+        Ok(response) => Ok(hook_output(&response)),
+        // A definitive conflict must not prevent the model from reading and
+        // binding context for a future event. The rejected delivery is never
+        // rebased, acknowledged, or turned into an applied dependency here.
+        Err(DeliveryError::Rejected {
+            delivery_id,
+            detail,
+        }) => Ok(json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": format!(
+                    "Hieronymus delivery recovery: {}. The current user operation was NOT applied. Its saved text, identity, selection and revisions remain unchanged. Read current public context and explicitly bind a genuinely future event. Do not rebase or automatically resubmit this rejected operation, invent a receipt, or treat dependent work as validated. Tell the user that the correction was rejected; unrelated work may continue. Retrying the saved delivery ID uses only its original immutable context.",
+                    json!({"status":"delivery_rejected","delivery_id":delivery_id,"http_status":409,"detail":detail.chars().take(512).collect::<String>(),"authority_changed":false})
+                )
+            }
+        })),
+        Err(error) => Err(error),
+    }
 }
 
 /// One actual host invocation means one new durable ID, even for identical
@@ -283,9 +304,18 @@ pub fn retry_delivery(config: &HieronymusConfig, id: &str) -> Result<Value, Deli
             "/authority/host-event",
             &serde_json::to_value(&d.request).map_err(|e| invalid(e.to_string()))?,
         )
-        .map_err(|e| DeliveryError::Pending {
-            delivery_id: id.into(),
-            detail: e.to_string(),
+        .map_err(|e| match e {
+            ClientError::Status {
+                status: 409,
+                detail,
+            } => DeliveryError::Rejected {
+                delivery_id: id.into(),
+                detail,
+            },
+            other => DeliveryError::Pending {
+                delivery_id: id.into(),
+                detail: other.to_string(),
+            },
         })?;
     let receipt = result
         .get("Applied")
