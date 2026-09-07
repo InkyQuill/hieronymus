@@ -26,10 +26,12 @@ from tools.qualification import acquire  # noqa: E402, I001
 
 
 _INITIAL_URL = (
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/"
-    "9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx"
+    "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/"
+    "e8f8c211226b894fcb81acc59f3b34ba3efd5f42/onnx/model.onnx"
 )
-_DESTINATION = Path("qualification/.artifacts/models/all-MiniLM-L6-v2/model.onnx")
+_DESTINATION = Path(
+    "qualification/.artifacts/models/paraphrase-multilingual-MiniLM-L12-v2/model.onnx"
+)
 _ONNX_RUNTIME_URL = (
     "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/"
     "onnxruntime-linux-x64-1.28.0.tgz"
@@ -211,11 +213,11 @@ def test_prerequisites_and_toolchain_are_exact() -> None:
         "bun": {"version": "1.4.0", "authority": "frontend/package.json"},
         "semantic_model": {
             "provider": "onnx-runtime",
-            "repository": "sentence-transformers/all-MiniLM-L6-v2",
-            "revision": "9a53d751e60e6dd34f2443711d44d5b09389f89a",
+            "repository": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            "revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
             "file": "onnx/model.onnx",
             "url": _INITIAL_URL,
-            "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+            "sha256": "10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a",
             "dimensions": 384,
             "normalization": "l2",
         },
@@ -1386,7 +1388,7 @@ def test_processes_contend_on_one_unlink_proof_kernel_mutex(
 
 @pytest.mark.parametrize(
     "ancestor",
-    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+    ["qualification", ".artifacts", "models", "paraphrase-multilingual-MiniLM-L12-v2"],
 )
 def test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes(
     tmp_path: Path,
@@ -1408,7 +1410,7 @@ def test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes
         prerequisite_path = repo_root / "qualification/prerequisites.json"
         prerequisite_path.parent.mkdir()
         prerequisite_path.write_text(json.dumps(prerequisites), encoding="utf-8")
-        components = [".artifacts", "models", "all-MiniLM-L6-v2"]
+        components = [".artifacts", "models", "paraphrase-multilingual-MiniLM-L12-v2"]
         parent = repo_root / "qualification"
         for component in components:
             path = parent / component
@@ -1432,7 +1434,7 @@ def test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes
 
 @pytest.mark.parametrize(
     "ancestor",
-    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+    ["qualification", ".artifacts", "models", "paraphrase-multilingual-MiniLM-L12-v2"],
 )
 def test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfer(
     tmp_path: Path,
@@ -1448,7 +1450,7 @@ def test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfe
         "qualification": repo_root / "qualification",
         ".artifacts": repo_root / "qualification/.artifacts",
         "models": repo_root / "qualification/.artifacts/models",
-        "all-MiniLM-L6-v2": model_dir,
+        "paraphrase-multilingual-MiniLM-L12-v2": model_dir,
     }[ancestor]
     moved = ancestor_path.with_name(f"{ancestor_path.name}.moved")
     outside = tmp_path / f"outside-{ancestor}"
@@ -1968,7 +1970,7 @@ def test_final_validation_rejects_leaf_swap_at_every_in_operation_hook(
 )
 @pytest.mark.parametrize(
     "ancestor",
-    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+    ["qualification", ".artifacts", "models", "paraphrase-multilingual-MiniLM-L12-v2"],
 )
 def test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook(
     tmp_path: Path,
@@ -1988,7 +1990,7 @@ def test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook(
         "qualification": repo_root / "qualification",
         ".artifacts": repo_root / "qualification/.artifacts",
         "models": repo_root / "qualification/.artifacts/models",
-        "all-MiniLM-L6-v2": destination.parent,
+        "paraphrase-multilingual-MiniLM-L12-v2": destination.parent,
     }[ancestor]
     outside = tmp_path / f"outside-{ancestor}-{existing}-{stage}"
     outside.mkdir()
@@ -2177,7 +2179,7 @@ def test_acquisition_rejects_permissive_artifact_leaf(
 
 @pytest.mark.parametrize(
     "ancestor",
-    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+    ["qualification", ".artifacts", "models", "paraphrase-multilingual-MiniLM-L12-v2"],
 )
 def test_acquisition_rejects_group_writable_artifact_directory(
     tmp_path: Path,
@@ -2192,7 +2194,7 @@ def test_acquisition_rejects_group_writable_artifact_directory(
         "qualification": repo_root / "qualification",
         ".artifacts": repo_root / "qualification/.artifacts",
         "models": repo_root / "qualification/.artifacts/models",
-        "all-MiniLM-L6-v2": model_dir,
+        "paraphrase-multilingual-MiniLM-L12-v2": model_dir,
     }[ancestor]
     selected.chmod(0o770)
     monkeypatch.setattr(
@@ -2270,7 +2272,7 @@ def test_final_validation_rejects_combined_hardlink_and_ancestor_swap(
         if stage != "after-named-destination-check" or swapped:
             return
         os.link(destination, outside / "model.onnx")
-        displaced = destination.parent.with_name("all-MiniLM-L6-v2.displaced")
+        displaced = destination.parent.with_name("paraphrase-multilingual-MiniLM-L12-v2.displaced")
         destination.parent.rename(displaced)
         destination.parent.symlink_to(outside, target_is_directory=True)
         swapped = True

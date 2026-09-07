@@ -18,17 +18,17 @@ use sha2::{Digest, Sha256};
 use crate::semantic_error::SemanticError;
 use crate::tls::{self, TlsError, TlsRoots};
 
-/// Embedding model pinned by the qualification record
-/// (`qualification/records/semantic-native.json`, decision `semantic-enabled`).
-pub const MODEL_NAME: &str = "all-MiniLM-L6-v2";
+/// Multilingual model pinned after the P2 public-MCP corpus comparison
+/// (`docs/semantic-validation.md`); historical native records retain their old identity.
+pub const MODEL_NAME: &str = "paraphrase-multilingual-MiniLM-L12-v2";
 /// Immutable upstream revision of the pinned model file.
-pub const MODEL_REVISION: &str = "9a53d751e60e6dd34f2443711d44d5b09389f89a";
+pub const MODEL_REVISION: &str = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42";
 /// SHA-256 of the pinned ONNX model file (hex).
-pub const MODEL_SHA256: &str = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452";
+pub const MODEL_SHA256: &str = "10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a";
 /// Size of the pinned ONNX model file in bytes.
-pub const MODEL_BYTES: u64 = 90_405_214;
+pub const MODEL_BYTES: u64 = 470_301_610;
 /// Canonical download source of the pinned model file.
-pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx";
+pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/e8f8c211226b894fcb81acc59f3b34ba3efd5f42/onnx/model.onnx";
 
 /// File name of the pinned tokenizer asset inside the model directory.
 pub const TOKENIZER_FILE_NAME: &str = "tokenizer.json";
@@ -36,11 +36,11 @@ pub const TOKENIZER_FILE_NAME: &str = "tokenizer.json";
 /// ONNX file above; the tokenizer identity in `semantic_tokenizer` embeds
 /// this digest.
 pub const TOKENIZER_SHA256: &str =
-    "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037";
+    "2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8";
 /// Size of the pinned tokenizer.json in bytes.
-pub const TOKENIZER_BYTES: u64 = 466_247;
+pub const TOKENIZER_BYTES: u64 = 9_081_518;
 /// Canonical download source of the pinned tokenizer asset.
-pub const DEFAULT_TOKENIZER_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/tokenizer.json";
+pub const DEFAULT_TOKENIZER_URL: &str = "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/e8f8c211226b894fcb81acc59f3b34ba3efd5f42/tokenizer.json";
 
 /// Read window used for checksum computation and network streaming.
 const STREAM_BUFFER_BYTES: usize = 1024 * 1024;

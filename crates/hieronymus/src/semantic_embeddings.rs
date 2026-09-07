@@ -21,9 +21,9 @@ pub const EMBEDDING_DIMENSIONS: usize = 384;
 /// never be queried by the current identity: they are rejected and rebuilt,
 /// never relabeled. Kept only so old manifest rows stay truthfully labeled.
 pub const BYTE_FOLD_TOKENIZER_ID: &str = "byte-fold-v1";
-/// WordPiece vocabulary size of the pinned model; token streams are folded
-/// into this range so the ONNX graph always gathers in-bounds rows.
-const MODEL_VOCABULARY_SIZE: u32 = 30_522;
+/// Vocabulary size from the pinned multilingual model config. Out-of-range
+/// IDs are rejected; silently remapping them would corrupt semantic meaning.
+const MODEL_VOCABULARY_SIZE: u32 = 250_037;
 /// Maximum token positions accepted per sequence by the exported graph.
 const MODEL_MAX_SEQUENCE: usize = 512;
 /// Batches of sequences the provider accepts per request.
@@ -361,12 +361,17 @@ impl OnnxEmbeddingProvider {
     fn embed(&mut self, token_ids: &[u32]) -> Result<Vec<f32>, SemanticError> {
         self.identity.check_tokens(token_ids.len())?;
 
+        if token_ids
+            .iter()
+            .any(|token| *token >= MODEL_VOCABULARY_SIZE)
+        {
+            return Err(SemanticError::InvalidEmbedding(
+                "token id exceeds the pinned model vocabulary".to_owned(),
+            ));
+        }
         let sequence = token_ids.len() as i64;
         let shape = vec![1_i64, sequence];
-        let input_ids: Vec<i64> = token_ids
-            .iter()
-            .map(|token| u64::from(*token % MODEL_VOCABULARY_SIZE) as i64)
-            .collect();
+        let input_ids: Vec<i64> = token_ids.iter().map(|token| i64::from(*token)).collect();
         let attention_mask = vec![1_i64; token_ids.len()];
         let token_type_ids = vec![0_i64; token_ids.len()];
 

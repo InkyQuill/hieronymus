@@ -1,4 +1,8 @@
-# Semantic validation: real hybrid relevance (Task S3)
+# Semantic validation: real hybrid relevance
+
+The first record below is historical S3 English qualification. P2 multilingual
+qualification and its release limits are recorded in the subsequent section;
+the historical result does not establish current multilingual or host support.
 
 Date: 2026-09-06. Branch `agent/rust-port-semantic`. This document records
 the REAL model run qualifying hybrid (memory + RAG semantic) retrieval with
@@ -87,3 +91,189 @@ its schema and `tools.qualification.validate` close the evidence list and
 replay-command grammar, so no additive evidence entry is possible without a
 separate schema change. The run re-verified those pinned identities; the
 outcomes above are this document's record.
+
+## P2 multilingual qualification — 2026-09-07
+
+The required languages are Japanese source and Russian target, with an English
+compact-memory baseline. The fixed corpus has **35 documents, 6 series and 11
+queries**, plus one lexical session note and one deterministic approved term.
+Each language pool includes topic-near distractors; foreign-series near-verbatim
+queries cannot leak into results. Expected source IDs were manually specified.
+
+Corpus SHA-256: `0f901aa7db1e60493d6e2261aeeacfd99ef48a38f645c9e608a0ac5dc4d77ccf`.
+The corpus was frozen before candidate replacement and used unchanged for both
+models. Both normal MCP tools are exercised for every case, and provenance is
+required on each expected source rather than an unrelated semantic row. Query
+and context DTOs reject unknown fields. Viewpoint/story-position fields are
+explicitly empty for retrieval acceptance; filling them currently fails instead
+of pretending the pending P1 runtime used them.
+
+### Measured decision and assets
+
+The old model failed the Russian cartographer paraphrase in both tools. Expected
+`cartographer-ru`; observed `nurse-ru, ship-physician-ru, captain-ru`. Japanese
+physician ranked only third after carpenter and gardener. This is the measured
+reason for qualifying a replacement; Japanese/Russian scope was not dropped and
+no query was changed into an exact lexical match.
+
+The candidate is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`,
+immutable revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`. Its upstream
+[immutable model card](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/blob/e8f8c211226b894fcb81acc59f3b34ba3efd5f42/README.md)
+describes multilingual sentence embeddings. The actual native public-MCP run,
+not that description, determines acceptance here.
+
+| Asset | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `onnx/model.onnx` | 470,301,610 | `10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a` |
+| `tokenizer.json` | 9,081,518 | `2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8` |
+| Immutable `README.md`, includes `license: apache-2.0` | 3,888 | `1e98ea05b0de579fcaad3d625b62ea55647142ed674d5f5ebf1440e4bbbb6f23` |
+| Standard `LICENSE` from [Apache](https://www.apache.org/licenses/LICENSE-2.0.txt) | 11,358 | `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` |
+
+The repository contains no standalone license file: the pinned model card's
+Apache-2.0 declaration and separately fetched standard license text are retained
+as distinct evidence. ONNX Runtime remains 1.28.0 with the 24,268,848-byte library
+and SHA-256 recorded above. No dependency pin or runtime binary changed.
+
+The model plus tokenizer footprint grows from 90,871,461 bytes to 479,383,128
+bytes (5.28×); including the same runtime library, from 115,140,309 to 503,651,976
+bytes. These are uncompressed embedding artifacts, not whole-app package sizes.
+The candidate retains 384 dimensions and mean-pooling/L2 normalization. Its
+configuration declares vocabulary size 250,037, maximum position embeddings
+512, and sentence-transformer input limit 128. The Unigram asset uses a
+precompiled normalizer, whitespace/Metaspace splitting and `<s>`/`</s>` tokens.
+Production truncation is 128 tokens including specials; the tokenizer identity
+includes its hash and these policies. Out-of-vocabulary numeric IDs are rejected
+rather than modulo-folded into unrelated vocabulary entries.
+
+Current acquisition metadata is updated in `qualification/prerequisites.json`
+and `tools/qualification/acquire.py`, with a 512 MiB bounded artifact ceiling.
+Historical qualification records, tokenizer fixture and standalone historical
+`run_semantic.py` harness retain the old identity. That historical harness is not
+a current-model gate. The new tokenizer fixture is stored separately, with the unmodified Apache-2.0
+license beside it as `multilingual-minilm-tokenizer.LICENSE`. Its source is the
+Sentence Transformers model repository and immutable revision named above.
+
+### Commands and unsuccessful attempts
+
+All Rust commands used `CARGO_BUILD_JOBS=4`, Rust 1.96.0, existing lockfile, and
+explicit asset paths below; no simultaneous builds replaced the process suite's
+`target/debug/hiero` binary. The current worktree was
+`/home/inky/Development/hieronymus/.worktrees/product-release-readiness`.
+
+```sh
+CARGO_BUILD_JOBS=4 \
+HIERO_TEST_ONNX_RUNTIME="$PWD/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so" \
+HIERO_TEST_MODEL_DIR="$PWD/qualification/.artifacts/models/all-MiniLM-L6-v2" \
+cargo test -p hiero --test semantic_real --locked -- --ignored --nocapture
+
+CARGO_BUILD_JOBS=4 \
+HIERO_TEST_ONNX_RUNTIME="$PWD/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so" \
+HIERO_TEST_MODEL_DIR="$PWD/qualification/.artifacts/models/paraphrase-multilingual-MiniLM-L12-v2" \
+cargo test -p hiero --test semantic_real --locked -- --ignored --nocapture
+
+CARGO_BUILD_JOBS=4 cargo test -p hieronymus --test semantic_tokenizer
+uv run pytest tests/qualification/test_acquire.py -q
+uv run python -m tools.qualification.acquire semantic-model
+```
+
+The initial `/usr/bin/time -v` attempt never ran: this host lacks that binary.
+Resource measurement therefore reads Linux `/proc/self/status` (`VmHWM`, `VmRSS`)
+in the live test after the corpus; per-tool wall latency uses monotonic time.
+An initial original-model run timed out before the corpus during daemon enable
+(27.28s). A retry passed the preliminary 21-document corpus (64.19s), but weak
+rankings motivated adding 14 near-topic distractors. The frozen 35-document old
+model runs both failed the same Russian case (72.86s and instrumented 74.93s).
+
+The first candidate run (92.09s) stopped before the corpus: the CLI reached its
+30-second polling budget and honestly returned `acquiring`, `disarmed`,
+`runtime_verified:false`. The test formerly assumed immediate arming. It now
+accepts that transitional report only while separately waiting for true daemon
+`ready`; `acquiring` never passes readiness. This slower startup matters to
+installed updater/readiness budgets and must be exercised by F1/F2.
+
+Candidate files were acquired from immutable Hugging Face `resolve/<revision>`
+URLs, checked against the repository API's LFS SHA-256 values, then verified by
+current acquisition tooling and native load. The first acquisition-tool check
+rejected mode 0644 on the manually staged model; after `chmod 600`, the private
+regular-file verification succeeded. The first Apache license request hit a
+connection reset; `curl --fail --location --max-time 25` succeeded on retry.
+
+### Remaining release acceptance
+
+[Host acceptance](agent-host-acceptance.md) records installed generated bundles
+but blocked real Claude/Codex workflows, and unverified zCode. P1 immediate
+correction and earlier/later viewpoint behavior are explicitly unresolved: its
+runtime has not been implemented. Passing retrieval does not satisfy those
+separate product requirements or constitute F1/F2 installed acceptance.
+
+### All fixed-corpus outcomes
+
+Top-three IDs below were identical between recall and rag_search for each
+model/query. Both endpoints were called and asserted independently.
+
+| Case | Original English model | Multilingual candidate | Verdict |
+| --- | --- | --- | --- |
+| `physician-paraphrase` | ["physician", "physician-duplicate", "nurse"] | ["physician", "physician-duplicate", "nurse"] | both PASS |
+| `cartographer-paraphrase` | ["cartographer", "storm", "physician-duplicate"] | ["cartographer", "storm", "physician-duplicate"] | both PASS |
+| `lexical-keeper` | ["lighthouse-keeper", "carpenter", "nurse"] | ["lighthouse-keeper", "carpenter", "nurse"] | both PASS |
+| `distractor-control-carpenter` | ["carpenter", "physician", "physician-duplicate"] | ["carpenter", "physician-duplicate", "lighthouse-keeper"] | both PASS |
+| `foreign-series-isolation` | ["physician", "physician-duplicate", "nurse"] | ["physician", "physician-duplicate", "nurse"] | both PASS |
+| `learned-memory-electrification` | ["lighthouse-keeper", "storm", "nurse"] | ["lighthouse-keeper", "carpenter", "storm"] | both PASS |
+| `terminology-independence` | ["nurse", "physician", "physician-duplicate"] | ["physician", "physician-duplicate", "nurse"] | both PASS |
+| `ship-physician-ja-paraphrase` | ["carpenter-ja", "gardener-ja", "ship-physician-ja"] | ["ship-physician-ja", "nurse-ja", "carpenter-ja"] | both PASS |
+| `cartographer-ja-paraphrase` | ["cartographer-ja", "carpenter-ja", "healer-ja"] | ["cartographer-ja", "scribe-ja", "captain-ja"] | both PASS |
+| `ship-physician-ru-paraphrase` | ["nurse-ru", "keeper-ru", "ship-physician-ru"] | ["ship-physician-ru", "nurse-ru", "captain-ru"] | both PASS |
+| `cartographer-ru-paraphrase` | ["nurse-ru", "ship-physician-ru", "captain-ru"] | ["cartographer-ru", "cook-ru", "captain-ru"] | original FAIL; candidate PASS |
+
+All expected multilingual sources rank first with the candidate. Every returned
+source resolves to the requested series; foreign distractors are excluded.
+Expected semantic-only sources carry `rag semantic match`. The learned note
+uses lexical `active session short-term memory match`; approved terminology
+remains in the independent deterministic contract. No correction/viewpoint
+claim is inferred from these results.
+
+### Comparable resource observations
+
+These are debug-suite process observations, not a release-binary memory
+benchmark. The process includes failed-load probes, corpus imports, rebuilds
+and native ONNX sessions; Linux high-water RSS persists after allocations are
+freed. Query latencies include loopback MCP transport and real retrieval.
+
+| Metric | Original | Candidate |
+| --- | ---: | ---: |
+| hieronymus_recall corpus median / max (ms) | 485.774 / 691.749 | 482.925 / 607.430 |
+| hieronymus_rag_search corpus median / max (ms) | 313.769 / 713.721 | 362.400 / 661.975 |
+| Process VmHWM at corpus end (KiB) | 571,200 | 2,778,612 |
+| Process VmRSS at corpus end (KiB) | 495,360 | 2,042,980 |
+
+The candidate's complete live suite passed in **206.44 seconds**:
+`/tmp/hieronymus-p2-multilingual-final.log`. The old comparison log is
+`/tmp/hieronymus-p2-minilm-measured.log`. The generation test seeds the old
+English model/revision/tokenizer manifest, requires immediate recall degradation
+and strict-search refusal, imports a normal source to queue rebuilding, then
+asserts the new identity becomes active and the old identity stays inactive and
+unchanged. Both document/query providers reject numeric IDs 250037 and
+`u32::MAX`. Completing and restarting a session retains durable RAG retrieval;
+the unpromoted session-local note is absent in the new session. That boundary
+is not an assertion of successful autonomous consolidation.
+
+A separate fresh-daemon stopwatch probe with staged candidate assets measured
+`semantic enable` returning `acquiring`/`disarmed` after **30.907 s**, followed
+by true `/status` readiness after **43.279 s** from command invocation. This is
+process-cold initialization in a debug build, not an OS page-cache-cold benchmark.
+Command: `python /tmp/hieronymus-p2-cold-probe.py`; the script starts the actual
+binary with a disposable root, waits for the initial failed/no-runtime daemon
+state, invokes normal CLI enable, then polls normal CLI status's nested daemon
+payload. Log `/tmp/hieronymus-p2-cold-final.log`, structured timing
+`/tmp/hieronymus-p2-cold-measurement.json`. The temporary daemon/root were removed.
+Two preceding supplemental probes failed (first misread the CLI status wrapper;
+second exited nonzero during enable and outlasted its 20-second cleanup wait).
+They supply no successful timing. The corrected probe retained stderr (empty on
+success), waited for actual initial daemon state and completed successfully.
+
+Final focused verification: native semantic arming/store/recall/tokenizer tests
+**67 passed, 1 optional live ignored**; application semantic execution plus DTO
+schema guard **33 passed, 1 required-assets live ignored**; current acquisition
+**141 passed**; Cargo formatting, full Ruff checks and formatting (217 files),
+and diff whitespace checks passed. Ignored default tests do not establish live
+support; the separately requested 206.44-second live run above does.

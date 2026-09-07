@@ -1,4 +1,4 @@
-//! Task S1: the pinned WordPiece tokenizer replaces byte-fold preprocessing on
+//! P2: the pinned multilingual Unigram tokenizer runs on
 //! both the document and query paths. The fixture is the tokenizer.json of the
 //! pinned model revision, hash-verified at acquisition time.
 
@@ -14,24 +14,24 @@ use hieronymus::semantic_store::SemanticStore;
 use hieronymus::semantic_tokenizer::{MAX_TOKENS, MINILM_TOKENIZER_ID, ModelTokenizer};
 use std::path::Path;
 
-/// [CLS] and [SEP] ids in the MiniLM (BERT-base uncased) vocabulary.
-const CLS: u32 = 101;
-const SEP: u32 = 102;
+/// <s> and </s> ids in the multilingual MiniLM Unigram vocabulary.
+const CLS: u32 = 0;
+const SEP: u32 = 2;
 /// [PAD]: never emitted once padding is disabled.
-const PAD: u32 = 0;
+const PAD: u32 = 1;
 
-const FIXTURE: &[u8] = include_bytes!("fixtures/minilm-tokenizer.json");
+const FIXTURE: &[u8] = include_bytes!("fixtures/multilingual-minilm-tokenizer.json");
 
 fn tokenizer() -> ModelTokenizer {
     ModelTokenizer::from_bytes(FIXTURE).unwrap()
 }
 
 #[test]
-fn minilm_uses_wordpiece_ids_and_special_tokens() {
+fn multilingual_minilm_uses_pinned_ids_and_special_tokens() {
     let tokenizer = ModelTokenizer::from_bytes(FIXTURE).unwrap();
     assert_eq!(
         tokenizer.encode("Hello world").unwrap(),
-        vec![101, 7592, 2088, 102]
+        vec![0, 35378, 8999, 2]
     );
 }
 
@@ -69,9 +69,9 @@ fn an_invalid_asset_is_rejected() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lowercasing_folds_casing_the_way_the_model_was_trained() {
-    // BertNormalizer lowercases (do_lower_case is part of the asset).
-    assert_eq!(
+fn casing_is_preserved_the_way_the_model_was_trained() {
+    // The multilingual asset preserves case.
+    assert_ne!(
         tokenizer().encode("Hello World").unwrap(),
         tokenizer().encode("hello world").unwrap()
     );
@@ -83,17 +83,16 @@ fn lowercasing_folds_casing_the_way_the_model_was_trained() {
 }
 
 #[test]
-fn accents_and_punctuation_are_normalized_to_wordpiece_pieces() {
+fn accents_and_punctuation_preserve_asset_tokenization() {
     let stripped = tokenizer().encode("cafe").unwrap();
     let accented = tokenizer().encode("café").unwrap();
-    // NFD accent stripping + wordpiece sub-tokens: both encode, both keep
-    // their special tokens, and the streams are comparable but not
-    // necessarily identical (the accent may split into pieces).
+    // The precompiled normalizer and Unigram vocabulary preserve the
+    // asset policy; both forms retain their special-token boundaries.
     assert_eq!(stripped.first(), Some(&CLS));
     assert_eq!(accented.first(), Some(&CLS));
     assert_eq!(stripped.last(), Some(&SEP));
     assert_eq!(accented.last(), Some(&SEP));
-    // Punctuation is separated from the word (BERT basic tokenizer).
+    // Punctuation changes the encoded sequence.
     let with_punct = tokenizer().encode("wizard!").unwrap();
     let without = tokenizer().encode("wizard").unwrap();
     assert_ne!(with_punct, without);
@@ -108,9 +107,12 @@ fn cjk_and_cyrillic_text_encode_without_unk_explosions() {
         assert_eq!(stream.first(), Some(&CLS));
         assert_eq!(stream.last(), Some(&SEP));
         assert!(stream.len() >= 3);
+        assert!(
+            !stream.contains(&3),
+            "supported literary scripts must not collapse to <unk>"
+        );
     }
-    // CJK characters are character-tokenized: one text character maps to at
-    // least one non-special token.
+    // This two-character sample has distinct vocabulary pieces.
     let cjk = tokenizer().encode("魔法").unwrap();
     assert!(cjk.len() >= 4, "two CJK chars plus specials: {:?}", cjk);
 }
@@ -127,7 +129,7 @@ fn the_empty_string_encodes_to_the_special_token_pair() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn long_input_truncates_to_256_with_special_tokens_retained() {
+fn long_input_truncates_to_128_with_special_tokens_retained() {
     let long: String = "token ".repeat(5_000);
     let stream = tokenizer().encode(&long).unwrap();
     assert_eq!(stream.len(), MAX_TOKENS);
@@ -238,7 +240,7 @@ fn the_store_acquires_verifies_and_loads_the_tokenizer() {
     let loaded = store.load_model_tokenizer().unwrap();
     assert_eq!(
         loaded.encode("Hello world").unwrap(),
-        vec![101, 7592, 2088, 102]
+        vec![0, 35378, 8999, 2]
     );
 
     // A same-size tampered asset passes the size pre-check and fails the

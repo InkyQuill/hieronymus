@@ -1,7 +1,7 @@
 //! Task S3: the REAL semantic qualification suite. Unlike
 //! `semantic_execution.rs` (scripted fake providers), everything here runs
-//! the pinned all-MiniLM-L6-v2 ONNX model through the production `OnnxArm`
-//! and the S1 WordPiece tokenizer, driven only through normal authenticated
+//! the pinned multilingual MiniLM ONNX model through the production `OnnxArm`
+//! and its Unigram tokenizer, driven only through normal authenticated
 //! MCP operations and the real `hiero semantic enable` CLI.
 //!
 //! `#[ignore]`d because it needs two explicit filesystem assets:
@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! HIERO_TEST_ONNX_RUNTIME=<...>/libonnxruntime.so \
-//! HIERO_TEST_MODEL_DIR=<...>/all-MiniLM-L6-v2 \
+//! HIERO_TEST_MODEL_DIR=<...>/paraphrase-multilingual-MiniLM-L12-v2 \
 //! cargo test -p hiero --test semantic_real -- --ignored --nocapture
 //! ```
 //!
@@ -40,9 +40,8 @@ use hiero::daemon::semantic_worker::{RequiredSemanticState, require_semantic_rea
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::recall::WARNING_SEMANTIC_UNAVAILABLE;
 use hieronymus::semantic_embeddings::{
-    BYTE_FOLD_TOKENIZER_ID, EMBEDDING_DIMENSIONS, EmbeddingIdentity, OnnxEmbeddingProvider,
+    EMBEDDING_DIMENSIONS, EmbeddingIdentity, EmbeddingProvider, OnnxEmbeddingProvider,
 };
-use hieronymus::semantic_model::{MODEL_NAME, MODEL_REVISION};
 use hieronymus::semantic_store::SemanticStore;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -54,12 +53,16 @@ const FIXTURE: &str = include_str!("fixtures/hybrid-relevance.json");
 /// `ort` keeps the loaded dylib in a process-global `OnceLock`, so the whole
 /// qualification runs as one sequenced test (see the module docs).
 const RAG_SEMANTIC_REASON: &str = "rag semantic match";
+const LEGACY_ENGLISH_TOKENIZER_ID: &str = "wordpiece-minilm-l6-v2@sha256:be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037:max-256:longest-first:bert-normalize:cls-sep";
 const SHORT_TERM_REASON: &str = "active session short-term memory match";
 
 // ------------------------------------------------------------- typed fixture
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Fixture {
+    adr: String,
+    purpose: String,
     series: Vec<SeriesSpec>,
     documents: Vec<DocumentSpec>,
     memories: Vec<MemorySpec>,
@@ -98,7 +101,11 @@ struct TermSpec {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct QuerySpec {
+    language: String,
+    context: QueryContext,
+    excluded_doc_ids: Vec<String>,
     query_id: String,
     query: String,
     series_slug: String,
@@ -115,9 +122,33 @@ struct QuerySpec {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryContext {
+    viewpoint: Option<String>,
+    story_position: Option<String>,
+    acceptance: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ContractExpectation {
     source_text: String,
     canonical_translation: String,
+}
+
+#[test]
+fn relevance_context_is_explicit_and_unknown_fields_are_rejected() {
+    let mut fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let parsed: Fixture = serde_json::from_value(fixture.clone()).unwrap();
+    for language in ["en", "ja", "ru"] {
+        assert!(
+            parsed
+                .queries
+                .iter()
+                .any(|query| query.language == language)
+        );
+    }
+    fixture["queries"][0]["context"]["unknown_viewpoint_hint"] = json!("future");
+    assert!(serde_json::from_value::<Fixture>(fixture).is_err());
 }
 
 // ------------------------------------------------------------------- assets
@@ -219,6 +250,7 @@ fn tools_call(id: i64, name: &str, arguments: Value) -> Value {
 }
 
 fn call_tool(daemon: &hiero::daemon::Daemon, id: i64, name: &str, arguments: Value) -> Value {
+    let started = std::time::Instant::now();
     let response = send_request(
         daemon.local_addr().port(),
         "POST",
@@ -227,6 +259,10 @@ fn call_tool(daemon: &hiero::daemon::Daemon, id: i64, name: &str, arguments: Val
         &serde_json::to_vec(&tools_call(id, name, arguments)).unwrap(),
     );
     assert_eq!(response.status, 200, "{:?}", response.raw_body);
+    eprintln!(
+        "P2 latency tool={name} ms={:.3}",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
     let body = response.body();
     assert!(
         body["result"].get("isError").and_then(Value::as_bool) != Some(true),
@@ -377,6 +413,8 @@ fn real_semantic_qualification() {
     let runtime = onnx_runtime_path();
     let models = model_dir();
     let fixture: Fixture = serde_json::from_str(FIXTURE).unwrap();
+    assert_eq!(fixture.adr, "0011");
+    assert!(!fixture.purpose.is_empty());
 
     // -- 1. A corrupt runtime fails readiness, honestly ------------------
     // This scenario's daemon runs as a real `hiero daemon` SUBPROCESS: ort
@@ -605,8 +643,24 @@ fn real_semantic_qualification() {
     let daemon = start_daemon(root.path());
     wait_for_state(&daemon, "failed");
     let instance_before = status_body(&daemon)["instance_id"].clone();
+    let arming_started = std::time::Instant::now();
     let enable = semantic_enable(root.path(), &runtime);
-    assert_eq!(enable["lane"], json!("armed"), "{enable}");
+    eprintln!(
+        "P2 enable initial verdict ms={:.3}: {enable}",
+        arming_started.elapsed().as_secs_f64() * 1000.0
+    );
+    // The CLI's bounded wait can return acquiring for a larger verified model.
+    // That is not readiness: require the daemon's actual terminal state here.
+    if enable["state"] == "acquiring" {
+        assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
+        wait_for_state(&daemon, "ready");
+    } else {
+        assert_eq!(enable["lane"], json!("armed"), "{enable}");
+    }
+    eprintln!(
+        "P2 enable actual-ready ms={:.3}",
+        arming_started.elapsed().as_secs_f64() * 1000.0
+    );
     assert_eq!(status_body(&daemon)["instance_id"], instance_before);
     assert_eq!(enable["model_status"], json!("available"), "{enable}");
     assert_eq!(enable["downloaded"], json!(false), "{enable}");
@@ -718,8 +772,16 @@ fn real_semantic_qualification() {
     let dto: StatusDto = serde_json::from_value(status_body(&daemon)).unwrap();
     require_semantic_ready(&required_state(&dto.semantic)).expect("ready must pass the gate");
 
-    // The curated relevance assertions.
+    // Keep measuring later cases after a failure: a language failure must not
+    // hide the other languages or public tool outcomes.
+    let mut failures = Vec::new();
     for expectation in &fixture.queries {
+        assert!(["en", "ja", "ru"].contains(&expectation.language.as_str()));
+        assert_eq!(expectation.context.acceptance, "retrieval");
+        assert!(
+            expectation.context.viewpoint.is_none() && expectation.context.story_position.is_none(),
+            "viewpoint applicability requires P1 runtime; never silently ignore context"
+        );
         let session_id = sessions[&expectation.series_slug];
         let payload = recall(
             &daemon,
@@ -728,71 +790,90 @@ fn real_semantic_qualification() {
             &expectation.series_slug,
             &expectation.query,
         );
-
-        let rows = rag_rows(&payload);
-
-        // No foreign-series hit, ever: every returned RAG row belongs to a
-        // document of the queried series.
-        for row in &rows {
-            if let Some(doc_id) = doc_id_of(row, &fixture.documents) {
-                let series = fixture
-                    .documents
+        for (tool, rows) in [
+            (
+                "recall",
+                rag_rows(&payload).into_iter().cloned().collect::<Vec<_>>(),
+            ),
+            (
+                "rag_search",
+                rag_search(
+                    &daemon,
+                    &mut id,
+                    &expectation.series_slug,
+                    &expectation.query,
+                ),
+            ),
+        ] {
+            let outcome = std::panic::catch_unwind(|| {
+                let top_three_source_ids: Vec<&str> = rows
                     .iter()
-                    .find(|document| document.doc_id == doc_id)
-                    .unwrap()
-                    .series_slug
-                    .clone();
-                assert_eq!(
-                    series, expectation.series_slug,
-                    "query {} leaked a document from series {series}: {payload}",
-                    expectation.query_id
+                    .take(3)
+                    .map(|row| {
+                        doc_id_of(row, &fixture.documents)
+                            .expect("every returned source must resolve")
+                    })
+                    .collect();
+                let returned_series: Vec<&str> = rows
+                    .iter()
+                    .map(|row| {
+                        let doc_id = doc_id_of(row, &fixture.documents).expect("known source");
+                        fixture
+                            .documents
+                            .iter()
+                            .find(|doc| doc.doc_id == doc_id)
+                            .unwrap()
+                            .series_slug
+                            .as_str()
+                    })
+                    .collect();
+                let requested_series = expectation.series_slug.as_str();
+                eprintln!(
+                    "P2 {} {} language={} top3={:?} rows={:?}",
+                    expectation.query_id, tool, expectation.language, top_three_source_ids, rows
                 );
+                assert!(
+                    returned_series
+                        .iter()
+                        .all(|series| series == &requested_series)
+                );
+                assert!(returned_series.iter().all(|series| {
+                    !expectation
+                        .excluded_series
+                        .iter()
+                        .any(|excluded| excluded == series)
+                }));
+                for row in &rows {
+                    assert!(!expectation.excluded_doc_ids.iter().any(|excluded| Some(
+                        excluded.as_str()
+                    ) == doc_id_of(
+                        row,
+                        &fixture.documents
+                    )));
+                }
+                for expected in &expectation.expected_top3_doc_ids {
+                    let expected_source_id = expected.as_str();
+                    assert!(top_three_source_ids.contains(&expected_source_id));
+                    if expectation.require_semantic_provenance {
+                        let semantic_only_result_reasons: Vec<&str> = rows
+                            .iter()
+                            .filter(|row| {
+                                doc_id_of(row, &fixture.documents) == Some(expected_source_id)
+                            })
+                            .filter_map(|row| row["rank_reason"].as_str())
+                            .collect();
+                        assert!(
+                            semantic_only_result_reasons
+                                .iter()
+                                .any(|reason| reason == &"rag semantic match")
+                        );
+                    }
+                }
+            });
+            if outcome.is_err() {
+                failures.push(format!("{}:{tool}", expectation.query_id));
             }
         }
-        for excluded in &expectation.excluded_series {
-            assert!(
-                !fixture.series.iter().any(
-                    |series| &series.slug == excluded && series.slug == expectation.series_slug
-                ),
-                "fixture error: {excluded} cannot be both excluded and the queried series"
-            );
-        }
-
-        // Every curated expected source is in the top 3 RAG rows.
-        let observed_top3: Vec<Option<&str>> = rows
-            .iter()
-            .take(3)
-            .map(|row| doc_id_of(row, &fixture.documents))
-            .collect();
-        eprintln!(
-            "query {:?} observed rag top3: {:?}",
-            expectation.query_id, observed_top3
-        );
-        for expected in &expectation.expected_top3_doc_ids {
-            assert!(
-                observed_top3.contains(&Some(expected.as_str())),
-                "query {} ({:?}) must return document {expected} in the top 3 rag rows; got {:?} (rows: {rows:?})",
-                expectation.query_id,
-                expectation.query,
-                observed_top3
-            );
-        }
-
-        // Semantic provenance for semantic-only queries.
-        if expectation.require_semantic_provenance {
-            let semantic_hit = rows.iter().any(|row| {
-                row["rank_reason"].as_str() == Some(RAG_SEMANTIC_REASON)
-                    && expectation.expected_top3_doc_ids.iter().any(|expected| {
-                        doc_id_of(row, &fixture.documents) == Some(expected.as_str())
-                    })
-            });
-            assert!(
-                semantic_hit,
-                "query {} must show actual semantic-lane provenance ({RAG_SEMANTIC_REASON}) for its expected sources: {payload}",
-                expectation.query_id
-            );
-        }
-
         // The learned memory is returned.
         if let Some(memory_text) = &expectation.expected_memory_text {
             assert!(
@@ -832,72 +913,74 @@ fn real_semantic_qualification() {
             );
         }
     }
-
-    // -- 3b. The public semantic search over the real model ---------------
-    // The same curated paraphrase, through `hieronymus_rag_search` rather
-    // than recall: a session-less series+query search that must run the real
-    // semantic lane (task C5). The query shares no content word with the
-    // document, so a lexical-only implementation cannot answer it at all —
-    // which is precisely what made the pre-C5 lexical path invisible.
-    for query_id in ["physician-paraphrase", "cartographer-paraphrase"] {
-        let expectation = fixture
-            .queries
-            .iter()
-            .find(|query| query.query_id == query_id)
-            .unwrap();
-        let rows = rag_search(
-            &daemon,
-            &mut id,
-            &expectation.series_slug,
-            &expectation.query,
-        );
-        assert!(
-            !rows.is_empty(),
-            "query {query_id} must return hybrid rows: {rows:?}"
-        );
-        for row in &rows {
-            assert_eq!(row["source"], json!("rag"), "{row}");
-            // Foreign-series exclusion: `harbour-records` holds a near
-            // duplicate of the physician document, so a leak would show up
-            // here as a top hit rather than as a subtle ordering change.
-            if let Some(doc_id) = doc_id_of(row, &fixture.documents) {
-                let owner = fixture
-                    .documents
-                    .iter()
-                    .find(|document| document.doc_id == doc_id)
-                    .unwrap();
-                assert_eq!(
-                    owner.series_slug, expectation.series_slug,
-                    "query {query_id} leaked {doc_id} from {}: {rows:?}",
-                    owner.series_slug
-                );
-            }
+    eprintln!("P2 corpus failures: {failures:?}");
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status
+            .lines()
+            .filter(|line| line.starts_with("VmHWM:") || line.starts_with("VmRSS:"))
+        {
+            eprintln!("P2 resource {line}");
         }
-        // Real semantic provenance for the expected sources.
-        assert!(
-            rows.iter().any(|row| {
-                row["rank_reason"].as_str() == Some(RAG_SEMANTIC_REASON)
-                    && expectation.expected_top3_doc_ids.iter().any(|expected| {
-                        doc_id_of(row, &fixture.documents) == Some(expected.as_str())
-                    })
-            }),
-            "query {query_id} must show semantic-lane provenance ({RAG_SEMANTIC_REASON}): {rows:?}"
-        );
     }
 
-    // -- 4. Byte-fold generations are rejected, then healed by a rebuild ---
-    // A legacy manifest persisted under the retired byte-fold tokenization
-    // (identical to the pinned identity except the tokenizer id) is seeded
-    // the way a legacy database would carry it. The armed WordPiece lane can
+    // Repeated sessions use the same durable RAG corpus. Session-local notes
+    // are not silently promoted into long-term authority by session completion.
+    for memory in &fixture.memories {
+        id += 1;
+        call_tool(
+            &daemon,
+            id,
+            "hieronymus_session_complete",
+            json!({"session_id": sessions[&memory.series_slug]}),
+        );
+        id += 1;
+        let next = call_tool(
+            &daemon,
+            id,
+            "hieronymus_session_start",
+            json!({"series_slug": memory.series_slug}),
+        );
+        let next_id = next["session_id"].as_i64().unwrap();
+        sessions.insert(memory.series_slug.clone(), next_id);
+        let response = recall(&daemon, &mut id, next_id, &memory.series_slug, &memory.text);
+        assert!(
+            !response["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["rank_reason"].as_str() == Some(SHORT_TERM_REASON)
+                    && row["text"].as_str() == Some(memory.text.as_str()))
+        );
+        let query = fixture
+            .queries
+            .iter()
+            .find(|q| q.series_slug == memory.series_slug && q.require_semantic_provenance)
+            .unwrap();
+        let response = recall(&daemon, &mut id, next_id, &memory.series_slug, &query.query);
+        let rows = rag_rows(&response);
+        for expected in &query.expected_top3_doc_ids {
+            assert!(
+                rows.iter()
+                    .take(3)
+                    .any(|row| doc_id_of(row, &fixture.documents) == Some(expected.as_str()))
+            );
+        }
+        eprintln!("P2 repeated-session durable RAG retained; unpromoted session-local note absent");
+    }
+
+    // -- 4. English-model generations are rejected, then healed by a rebuild ---
+    // A legacy manifest persisted under the retired English-model tokenization
+    // (with its original model, revision and tokenizer id) is seeded
+    // the way a legacy database would carry it. The armed multilingual lane can
     // never serve it: the per-recall identity check degrades the lane, and
     // the supervised worker rebuilds under the real identity.
-    let byte_fold_identity = EmbeddingIdentity::new(
+    let legacy_identity = EmbeddingIdentity::new(
         "onnx",
-        MODEL_NAME,
-        MODEL_REVISION,
+        "all-MiniLM-L6-v2",
+        "9a53d751e60e6dd34f2443711d44d5b09389f89a",
         EMBEDDING_DIMENSIONS,
         "l2",
-        BYTE_FOLD_TOKENIZER_ID,
+        LEGACY_ENGLISH_TOKENIZER_ID,
         512,
         32,
     )
@@ -916,23 +999,23 @@ fn real_semantic_qualification() {
                    generation_id, status, provider, model, model_revision, dimensions,
                    normalization, tokenizer, max_input_tokens, max_batch_inputs,
                    expected_count, written_count, last_chunk_id, active, created_at, updated_at
-                 ) values ('legacy-byte-fold', 'active', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                 ) values ('legacy-english-model', 'active', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                            (select count(*) from rag_chunks),
                            (select count(*) from rag_chunks), 0, 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
                 rusqlite::params![
-                    byte_fold_identity.provider(),
-                    byte_fold_identity.model(),
-                    byte_fold_identity.revision(),
-                    byte_fold_identity.dimensions() as i64,
-                    byte_fold_identity.normalization(),
-                    byte_fold_identity.tokenizer(),
-                    byte_fold_identity.max_input_tokens() as i64,
-                    byte_fold_identity.max_batch_inputs() as i64,
+                    legacy_identity.provider(),
+                    legacy_identity.model(),
+                    legacy_identity.revision(),
+                    legacy_identity.dimensions() as i64,
+                    legacy_identity.normalization(),
+                    legacy_identity.tokenizer(),
+                    legacy_identity.max_input_tokens() as i64,
+                    legacy_identity.max_batch_inputs() as i64,
                 ],
             )
             .unwrap();
     }
-    // The very next recall must not serve the byte-fold generation...
+    // The very next recall must not serve the English-model generation...
     {
         let session_id = sessions[&fixture.queries[0].series_slug];
         let payload = recall(
@@ -948,7 +1031,7 @@ fn real_semantic_qualification() {
                 .unwrap()
                 .iter()
                 .any(|warning| warning["kind"].as_str() == Some(WARNING_SEMANTIC_UNAVAILABLE)),
-            "a persisted byte-fold generation must degrade the semantic lane: {payload}"
+            "a persisted English-model generation must degrade the semantic lane: {payload}"
         );
         // ...and the strict search refuses outright rather than answering
         // with the lexical half over a corpus whose vectors it cannot query
@@ -968,7 +1051,7 @@ fn real_semantic_qualification() {
     }
     // ...and the next normal import heals it: the durable whole-corpus
     // rebuild runs under the pinned identity and supersedes the legacy row
-    // (the byte-fold generation is never relabeled, never served).
+    // (the English-model generation is never relabeled, never served).
     {
         let healing = root.path().join("sources").join("healing.txt");
         std::fs::write(
@@ -1001,7 +1084,7 @@ fn real_semantic_qualification() {
             },
             Duration::from_secs(180)
         ),
-        "the byte-fold generation must be replaced by a pinned-identity rebuild"
+        "the English-model generation must be replaced by a pinned-identity rebuild"
     );
     wait_for_state(&daemon, "ready");
     let healed = SemanticStore::open(&store_config)
@@ -1010,21 +1093,21 @@ fn real_semantic_qualification() {
         .unwrap()
         .unwrap();
     assert_eq!(healed.identity, OnnxEmbeddingProvider::static_identity());
-    assert_ne!(healed.identity.tokenizer(), BYTE_FOLD_TOKENIZER_ID);
+    assert_ne!(healed.identity.tokenizer(), LEGACY_ENGLISH_TOKENIZER_ID);
     {
         let connection = rusqlite::Connection::open(store_config.database_path()).unwrap();
         let legacy: i64 = connection
             .query_row(
                 "select count(*) from semantic_generations
-                 where generation_id = 'legacy-byte-fold'
+                 where generation_id = 'legacy-english-model'
                    and tokenizer = ?1 and status in ('failed', 'superseded') and active = 0",
-                rusqlite::params![BYTE_FOLD_TOKENIZER_ID],
+                rusqlite::params![LEGACY_ENGLISH_TOKENIZER_ID],
                 |row| row.get(0),
             )
             .unwrap();
         assert_eq!(
             legacy, 1,
-            "the legacy row keeps its byte-fold identity and is terminal/inactive"
+            "the legacy row keeps its English-model identity and is terminal/inactive"
         );
     }
     // The healed lane serves real semantic recall again.
@@ -1050,7 +1133,13 @@ fn real_semantic_qualification() {
         );
     }
 
+    let mut provider = OnnxEmbeddingProvider::load(&runtime, &models.join("model.onnx")).unwrap();
+    for invalid in [250_037, u32::MAX] {
+        assert!(provider.embed_document(&[invalid]).is_err());
+        assert!(provider.embed_query(&[invalid]).is_err());
+    }
     daemon.shutdown().unwrap();
+    assert!(failures.is_empty(), "corpus failures: {failures:?}");
 }
 
 // ------------------------------------------------------------------ helpers

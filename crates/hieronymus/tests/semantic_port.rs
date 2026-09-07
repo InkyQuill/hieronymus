@@ -259,7 +259,7 @@ fn onnx_identity_reports_the_qualified_model() {
     assert_eq!(identity.max_batch_inputs(), 32);
     // The well-known model constants come verbatim from the qualification.
     assert_eq!(MODEL_SHA256.len(), 64);
-    assert_eq!(MODEL_BYTES, 90_405_214);
+    assert_eq!(MODEL_BYTES, 470_301_610);
 }
 
 #[test]
@@ -1118,7 +1118,7 @@ fn live_onnx_provider_embeds_normalized_384_vectors() {
         .expect("crate lives two levels below the repository root")
         .join("qualification/.artifacts/models");
     let runtime = artifacts.join("onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so");
-    let model = artifacts.join("all-MiniLM-L6-v2/model.onnx");
+    let model = artifacts.join("paraphrase-multilingual-MiniLM-L12-v2/model.onnx");
     if !runtime.is_file() || !model.is_file() {
         println!("qualification artifacts not present; skipping live model run");
         return;

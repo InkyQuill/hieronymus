@@ -11,11 +11,11 @@
   },
   "semantic_model": {
     "provider": "onnx-runtime",
-    "repository": "sentence-transformers/all-MiniLM-L6-v2",
-    "revision": "9a53d751e60e6dd34f2443711d44d5b09389f89a",
+    "repository": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
     "file": "onnx/model.onnx",
-    "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx",
-    "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+    "url": "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/e8f8c211226b894fcb81acc59f3b34ba3efd5f42/onnx/model.onnx",
+    "sha256": "10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a",
     "dimensions": 384,
     "normalization": "l2"
   },

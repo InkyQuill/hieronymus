@@ -26,8 +26,8 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Final
 
 _SEMANTIC_MODEL_INITIAL_URL: Final = (
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/"
-    "9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx"
+    "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/"
+    "e8f8c211226b894fcb81acc59f3b34ba3efd5f42/onnx/model.onnx"
 )
 _ALLOWED_MODEL_HOSTS: Final = frozenset(
     {
@@ -51,14 +51,21 @@ _ALLOWED_ONNX_RUNTIME_HOSTS: Final = frozenset(
 _REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
 _MAX_REDIRECTS: Final = 5
 _CHUNK_SIZE: Final = 1024 * 1024
-_MAX_MODEL_BYTES: Final = 256 * 1024 * 1024
+_MAX_MODEL_BYTES: Final = 512 * 1024 * 1024
 _MAX_ONNX_RUNTIME_ARCHIVE_BYTES: Final = 512 * 1024 * 1024
 _MAX_ONNX_RUNTIME_EXTRACTED_BYTES: Final = 2 * 1024 * 1024 * 1024
 _TRANSPORT_TIMEOUT_SECONDS: Final = 120
 _ACQUISITION_TIMEOUT_SECONDS: Final = 300
 _LOCK_RETRY_SECONDS: Final = 0.01
-_MODEL_DESTINATION: Final = Path("qualification/.artifacts/models/all-MiniLM-L6-v2/model.onnx")
-_MODEL_DIRECTORY_COMPONENTS: Final = ("qualification", ".artifacts", "models", "all-MiniLM-L6-v2")
+_MODEL_DESTINATION: Final = Path(
+    "qualification/.artifacts/models/paraphrase-multilingual-MiniLM-L12-v2/model.onnx"
+)
+_MODEL_DIRECTORY_COMPONENTS: Final = (
+    "qualification",
+    ".artifacts",
+    "models",
+    "paraphrase-multilingual-MiniLM-L12-v2",
+)
 _DESTINATION_NAME: Final = "model.onnx"
 _PARTIAL_NAME: Final = "model.onnx.part"
 # Persistent advisory evidence; the abstract socket remains the unlink-proof mutex.
