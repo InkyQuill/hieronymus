@@ -348,10 +348,22 @@ impl RecallService {
         query: &str,
         limit: usize,
     ) -> Result<crate::coherent_reads::Observed<Vec<RagSearchHit>>, RecallError> {
-        let observed =
-            crate::coherent_reads::stable_read(&self.config, &context.series_slug, None, |db| {
-                self.search_series_with_connection(db, context, query, limit)
-            })?;
+        self.search_series_context_required(context, query, limit, None)
+    }
+
+    pub fn search_series_context_required(
+        &self,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+        required_decision_id: Option<&str>,
+    ) -> Result<crate::coherent_reads::Observed<Vec<RagSearchHit>>, RecallError> {
+        let observed = crate::coherent_reads::stable_read(
+            &self.config,
+            &context.series_slug,
+            required_decision_id,
+            |db| self.search_series_with_connection(db, context, query, limit),
+        )?;
         let (hits, mut warnings) = observed.value;
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut warnings);
@@ -452,10 +464,21 @@ impl RecallService {
         query: &str,
         limit: usize,
     ) -> Result<RecallResponse, RecallError> {
+        self.recall_required(session_id, context, query, limit, None)
+    }
+
+    pub fn recall_required(
+        &self,
+        session_id: i64,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+        required_decision_id: Option<&str>,
+    ) -> Result<RecallResponse, RecallError> {
         let observed = crate::coherent_reads::stable_read_with_publish(
             &self.config,
             &context.series_slug,
-            None,
+            required_decision_id,
             |db| self.recall_with_connection(db, Some(session_id), context, query, limit),
             |observed| {
                 let response = &mut observed.value;
@@ -492,10 +515,22 @@ impl RecallService {
         query: &str,
         limit: usize,
     ) -> Result<RecallResponse, RecallError> {
-        let observed =
-            crate::coherent_reads::stable_read(&self.config, &context.series_slug, None, |db| {
-                self.recall_with_connection(db, None, context, query, limit)
-            })?;
+        self.recall_context_required(context, query, limit, None)
+    }
+
+    pub fn recall_context_required(
+        &self,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+        required_decision_id: Option<&str>,
+    ) -> Result<RecallResponse, RecallError> {
+        let observed = crate::coherent_reads::stable_read(
+            &self.config,
+            &context.series_slug,
+            required_decision_id,
+            |db| self.recall_with_connection(db, None, context, query, limit),
+        )?;
         let mut response = observed.value;
         response.resulting_revision = observed.resulting_revision;
         if let Some(lane) = &self.semantic_lane {

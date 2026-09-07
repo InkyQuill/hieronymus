@@ -60,6 +60,11 @@ create table story_timelines (
   revision integer not null default 0 check (typeof(revision) = 'integer' and revision >= 0),
   unique (series_id, name)
 );
+-- Supplied narrative context is durable; research mode remains request-local.
+alter table task_sessions add column story_timeline_id integer references story_timelines(id);
+alter table task_sessions add column story_scene_key text;
+alter table task_sessions add column story_viewpoint_json text not null default '"Unspecified"'
+  check (json_valid(story_viewpoint_json));
 create table story_positions (
   id integer primary key,
   timeline_id integer not null references story_timelines(id),

@@ -260,6 +260,9 @@ fn add_memory(config: &HieronymusConfig, actor: &str, args: &Value) -> Result<Va
             hieronymus::crystals::ALLOWED_CRYSTAL_TYPES
         )));
     }
+    let claims: Vec<hieronymus::claim_capture::ClaimInput> =
+        serde_json::from_value(args.get("claims").cloned().unwrap_or_else(|| json!([])))
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
     let now = now_rfc3339();
 
     let mut connection = open_db(config)?;
@@ -302,6 +305,14 @@ fn add_memory(config: &HieronymusConfig, actor: &str, args: &Value) -> Result<Va
         .map_err(store_unavailable)?;
     let crystal_id = transaction.last_insert_rowid();
     insert_crystal_fts(&transaction, crystal_id, &title, &text).map_err(store_unavailable)?;
+    for claim in &claims {
+        hieronymus::claim_capture::capture_claim_tx(
+            &transaction,
+            hieronymus::claim_reads::ClaimTarget::Crystal(crystal_id),
+            claim,
+        )
+        .map_err(store_unavailable)?;
+    }
     write_audit(
         &transaction,
         actor,
@@ -668,6 +679,8 @@ fn merge_selected(config: &HieronymusConfig, actor: &str, args: &Value) -> Resul
     )
     .map_err(store_unavailable)?;
     for crystal_id in &ids {
+        hieronymus::claim_capture::copy_crystal_lineage_tx(&transaction, *crystal_id, merged_id)
+            .map_err(store_unavailable)?;
         transaction
             .execute(
                 "insert or ignore into crystal_links(source_crystal_id, target_crystal_id, link_type)
@@ -750,6 +763,8 @@ fn split_crystal(config: &HieronymusConfig, actor: &str, args: &Value) -> Result
                  values (?1, ?2, 'split_from')",
                 rusqlite::params![new_id, crystal_id],
             )
+            .map_err(store_unavailable)?;
+        hieronymus::claim_capture::copy_crystal_lineage_tx(&transaction, crystal_id, new_id)
             .map_err(store_unavailable)?;
         new_ids.push(new_id);
     }

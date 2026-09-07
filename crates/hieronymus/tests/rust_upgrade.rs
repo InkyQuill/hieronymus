@@ -1625,3 +1625,24 @@ fn v5_constraints_preserve_history_and_reject_forged_legacy_authority() {
         0
     );
 }
+
+#[test]
+fn v5_backfills_session_story_context_as_unspecified() {
+    let mut db = v4_authority_fixture();
+    db.execute("insert into task_sessions(series_slug,source_language,target_language,task_type,status,created_at,last_activity_at) select slug,'en','ru','translation','active','now','now' from series limit 1",[]).unwrap();
+    let tx = db.transaction().unwrap();
+    apply_steps(&tx, 4, 5).unwrap();
+    tx.commit().unwrap();
+    let row:(Option<i64>,Option<String>,String)=db.query_row("select story_timeline_id,story_scene_key,story_viewpoint_json from task_sessions order by id desc limit 1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    assert_eq!(row, (None, None, "\"Unspecified\"".into()));
+}
+
+#[test]
+fn v5_requires_durable_story_context_columns_at_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("db.sqlite");
+    let db = hieronymus::db::open_migrated(&path).unwrap();
+    db.execute_batch("alter table task_sessions drop column story_scene_key")
+        .unwrap();
+    assert!(hieronymus::db::verify_current_rust_schema(&path).is_err());
+}

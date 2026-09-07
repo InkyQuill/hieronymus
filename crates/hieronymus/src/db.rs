@@ -411,6 +411,14 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
             ][..],
         ),
         (
+            "task_sessions",
+            &[
+                "story_timeline_id",
+                "story_scene_key",
+                "story_viewpoint_json",
+            ][..],
+        ),
+        (
             "story_timelines",
             &["id", "series_id", "name", "revision"][..],
         ),

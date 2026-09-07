@@ -117,6 +117,7 @@ fn rule_payload(rule: &TermRule) -> Value {
 /// The Python `_crystal_payload` projection (never a serialized store type).
 fn crystal_payload(crystal: &CrystalRecord) -> Value {
     json!({
+        "claim_annotation": crystal.claim_annotation,
         "id": crystal.id,
         "crystal_type": crystal.crystal_type,
         "text": crystal.text,
@@ -243,6 +244,8 @@ fn termbase_approve(
 
 #[derive(Deserialize)]
 struct TermbaseContract {
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
     series_slug: String,
     raw_text: String,
     #[serde(default)]
@@ -259,25 +262,27 @@ struct TermbaseContract {
 /// surface, before any advisory evidence.
 fn termbase_contract(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<TermbaseContract>(arguments)?;
-    let termbase = termbase(
+    let termbase = read_termbase(
         application,
         &args.series_slug,
         args.source_language,
         args.target_language,
         &args.volume,
         &args.chapter,
+        &args.story,
     )?;
-    let terms = termbase.contract(&args.raw_text).map_err(domain)?;
-    terms
-        .iter()
-        .map(|term| serde_json::to_value(term).map_err(|error| AppError::Domain(error.to_string())))
-        .collect()
+    let observed = termbase
+        .contract_observed(&args.raw_text, args.story.required_decision_id.as_deref())
+        .map_err(super::term_read_error)?;
+    Ok(json!({"resulting_revision":observed.resulting_revision,"results":observed.value}))
 }
 
 // -------------------------------------------------- hieronymus_termbase_validate
 
 #[derive(Deserialize)]
 struct TermbaseValidate {
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
     series_slug: String,
     raw_text: String,
     translated_text: String,
@@ -296,23 +301,23 @@ struct TermbaseValidate {
 /// any advisory input — never from ranked recall results.
 fn termbase_validate(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<TermbaseValidate>(arguments)?;
-    let termbase = termbase(
+    let termbase = read_termbase(
         application,
         &args.series_slug,
         args.source_language,
         args.target_language,
         &args.volume,
         &args.chapter,
+        &args.story,
     )?;
-    let findings = termbase
-        .validate(&args.translated_text, Source::Raw(args.raw_text))
-        .map_err(domain)?;
-    findings
-        .iter()
-        .map(|finding| {
-            serde_json::to_value(finding).map_err(|error| AppError::Domain(error.to_string()))
-        })
-        .collect()
+    let observed = termbase
+        .validate_observed(
+            &args.translated_text,
+            Source::Raw(args.raw_text),
+            args.story.required_decision_id.as_deref(),
+        )
+        .map_err(super::term_read_error)?;
+    Ok(json!({"resulting_revision":observed.resulting_revision,"results":observed.value}))
 }
 
 // ---------------------------------------------- hieronymus_rule_crystal_archive
@@ -426,4 +431,27 @@ fn rule_crystals_list(application: &Application, arguments: &Value) -> Result<Va
         )
         .map_err(domain)?;
     Ok(Value::Array(crystals.iter().map(crystal_payload).collect()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_termbase(
+    application: &Application,
+    series_slug: &str,
+    source_language: Option<String>,
+    target_language: Option<String>,
+    volume: &str,
+    chapter: &str,
+    story: &super::StoryReadArgs,
+) -> Result<Termbase, AppError> {
+    let series = series_context(application, series_slug)?;
+    let mut context = translation_context(
+        &series,
+        source_language,
+        target_language,
+        "translation",
+        volume,
+        chapter,
+    )?;
+    story.apply(&mut context);
+    Termbase::open(application.config(), &context).map_err(domain)
 }

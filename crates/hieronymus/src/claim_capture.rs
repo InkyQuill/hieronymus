@@ -5,7 +5,8 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClaimInput {
     pub text: String,
     pub concept_id: Option<i64>,
@@ -265,7 +266,8 @@ fn target_snapshot(
 
 /// An explicit lineage assertion preserves an existing claim's exact identity,
 /// applicability and effects. Callers cannot widen it while rebinding an object.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExistingClaimInput {
     pub claim_id: i64,
     pub concept_id: Option<i64>,
@@ -301,4 +303,29 @@ pub(crate) fn bind_existing_claim_tx(
         audit_binding(tx, input.claim_id, target, Some(target), "explicit_lineage")?;
     }
     Ok(())
+}
+
+/// Copy original crystal identity and applicability without granting authority.
+/// The enclosing transaction owns commit; failed copies cannot leave partial
+/// bindings even when its caller handles the error and commits other work.
+pub fn copy_crystal_lineage_tx(
+    tx: &Transaction<'_>,
+    source: i64,
+    target: i64,
+) -> Result<usize, DecisionErrorV1> {
+    let same_series: bool = tx.query_row("select exists(select 1 from crystals a join crystals b on b.series_slug=a.series_slug where a.id=?1 and b.id=?2 and a.series_slug != '')",params![source,target],|r|r.get(0))?;
+    if !same_series {
+        return Err(DecisionErrorV1::InvalidRequest);
+    }
+    tx.execute_batch("SAVEPOINT crystal_lineage")?;
+    let result = copy_bindings_tx(
+        tx,
+        ClaimTarget::Crystal(source),
+        ClaimTarget::Crystal(target),
+    );
+    if result.is_err() {
+        tx.execute_batch("ROLLBACK TO crystal_lineage")?;
+    }
+    tx.execute_batch("RELEASE crystal_lineage")?;
+    result
 }

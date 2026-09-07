@@ -44,17 +44,6 @@ fn create_series(app: &Application, slug: &str, source: &str, target: &str) {
     .unwrap();
 }
 
-fn start_session(app: &Application, slug: &str) -> i64 {
-    let session = app
-        .call(
-            "hieronymus_session_start",
-            &json!({"series_slug": slug}),
-            ACTOR,
-        )
-        .unwrap();
-    session["session_id"].as_i64().unwrap()
-}
-
 fn termbase(root: &tempfile::TempDir) -> Termbase {
     let context = TranslationContext::new("book", "ja", "ru", "translation");
     Termbase::open(&config_of(root), &context).unwrap()
@@ -123,7 +112,7 @@ fn proposed_term_does_not_enforce_until_explicit_approval() {
     let args = json!({"series_slug":"book","raw_text":"猫"});
     assert_eq!(
         app.call("hieronymus_termbase_contract", &args, "local-user")
-            .unwrap(),
+            .unwrap()["results"],
         json!([])
     );
     app.call(
@@ -134,7 +123,7 @@ fn proposed_term_does_not_enforce_until_explicit_approval() {
     .unwrap();
     assert_eq!(
         app.call("hieronymus_termbase_contract", &args, "local-user")
-            .unwrap()[0]["canonical_translation"],
+            .unwrap()["results"][0]["canonical_translation"],
         "Кот"
     );
 }
@@ -167,7 +156,16 @@ fn rule_lifecycle_v2_fixture_pins_the_tool_lifecycle() {
             expect_domain(error, needle);
             continue;
         }
-        let payload = result.unwrap_or_else(|error| panic!("expected {tool} to succeed: {error}"));
+        let envelope = result.unwrap_or_else(|error| panic!("expected {tool} to succeed: {error}"));
+        let payload = if matches!(
+            tool,
+            "hieronymus_termbase_contract" | "hieronymus_termbase_validate"
+        ) {
+            assert!(envelope["resulting_revision"].is_u64());
+            &envelope["results"]
+        } else {
+            &envelope
+        };
 
         if let Some(subset) = expected["subset"].as_object() {
             for (key, value) in subset {
@@ -219,6 +217,9 @@ fn rule_lifecycle_v2_fixture_pins_the_tool_lifecycle() {
                 length,
                 "{payload}"
             );
+        }
+        if tool == "hieronymus_rule_crystals_list" {
+            assert_eq!(payload[0]["claim_annotation"]["source_inspection"], true);
         }
         if let Some(row) = expected["first_row"].as_object() {
             for (key, value) in row {
@@ -658,7 +659,7 @@ fn termbase_validate_reports_ambiguity_and_deterministic_findings() {
             ACTOR,
         )
         .unwrap();
-    let rows = findings.as_array().unwrap();
+    let rows = findings["results"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{findings}");
     assert_eq!(rows[0]["kind"], json!("conflicting_active_rules"));
     assert_eq!(rows[0]["severity"], json!("warning"));
@@ -685,7 +686,7 @@ fn termbase_validate_reports_ambiguity_and_deterministic_findings() {
             ACTOR,
         )
         .unwrap();
-    let rows = findings.as_array().unwrap();
+    let rows = findings["results"].as_array().unwrap();
     let kinds: Vec<&str> = rows
         .iter()
         .map(|row| row["kind"].as_str().unwrap())
@@ -789,7 +790,16 @@ fn approved_contract_survives_recall_with_conflicting_rag_hit() {
         ACTOR,
     )
     .unwrap();
-    let session_id = start_session(&app, "book");
+    current_story::register(app.config(), "book");
+    let session_id = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug":"book","volume":"I","chapter":"Opening"}),
+            ACTOR,
+        )
+        .unwrap()["session_id"]
+        .as_i64()
+        .unwrap();
     app.call(
         "hieronymus_short_term_add",
         &json!({"session_id": session_id, "kind": "note", "text": "whisker观察 note"}),
@@ -805,7 +815,7 @@ fn approved_contract_survives_recall_with_conflicting_rag_hit() {
     std::fs::write(&chapter, "猫 кошка wrong rendering.\n").unwrap();
     app.call(
         "hieronymus_rag_import",
-        &json!({"series_slug": "book", "path": chapter.to_str().unwrap()}),
+        &json!({"series_slug": "book", "path": chapter.to_str().unwrap(),"claims":{"0":[current_story::claim(app.config(),"book","猫 кошка wrong rendering.")]}}),
         ACTOR,
     )
     .unwrap();
@@ -846,3 +856,6 @@ fn create_series_stub(root: &tempfile::TempDir) {
         .create_series("book", "Book", "ja", "ru", None)
         .unwrap();
 }
+
+#[path = "../../hieronymus/tests/support/current_story.rs"]
+mod current_story;

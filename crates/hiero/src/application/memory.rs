@@ -34,7 +34,6 @@ use hieronymus::memory_models::{MetadataMap, ShortTermMemoryRecord};
 use hieronymus::rag::{RagImport, RagStore};
 use hieronymus::recall::{RecallHit, RecallResponse};
 use hieronymus::registry::{Registry, Series};
-use hieronymus::short_memory::search_expression;
 use hieronymus::workspace::{ShortTermMemoryInput, WorkspaceStore};
 
 use crate::daemon::semantic_worker::EMPTY_CORPUS_JOB_ID;
@@ -91,6 +90,14 @@ pub(crate) fn series_context(
 
 #[derive(Deserialize)]
 struct MemoryAdd {
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
+    #[serde(default)]
+    volume: String,
+    #[serde(default)]
+    chapter: String,
+    #[serde(default)]
+    claims: Vec<hieronymus::claim_capture::ClaimInput>,
     series_slug: String,
     kind: String,
     text: String,
@@ -117,14 +124,15 @@ fn memory_add(application: &Application, arguments: &Value) -> Result<Value, App
         return Err(AppError::Domain("kind must not be empty".to_string()));
     }
     let series = series_context(application, &args.series_slug)?;
-    let context = translation_context(
+    let mut context = translation_context(
         &series,
         args.source_language,
         args.target_language,
         "translation",
-        "",
-        "",
+        &args.volume,
+        &args.chapter,
     )?;
+    args.story.apply(&mut context);
     let store = workspace(application)?;
     let session = match store.active_default_session(&context).map_err(domain)? {
         Some(session) => session,
@@ -140,7 +148,8 @@ fn memory_add(application: &Application, arguments: &Value) -> Result<Value, App
         ("importance".to_string(), json!(args.importance)),
     ]);
     let input = ShortTermMemoryInput {
-        source_role: "user".to_string(),
+        claims: args.claims,
+        source_role: "agent".to_string(),
         kind: kind.to_string(),
         text: args.text,
         source_ref: args.source_ref,
@@ -157,6 +166,12 @@ fn memory_add(application: &Application, arguments: &Value) -> Result<Value, App
 
 #[derive(Deserialize)]
 struct MemorySearch {
+    #[serde(default)]
+    volume: String,
+    #[serde(default)]
+    chapter: String,
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
     series_slug: String,
     query: String,
     #[serde(default = "default_search_limit")]
@@ -180,6 +195,7 @@ struct LegacyEntry {
     importance: i64,
     source_ref: String,
     long_term: bool,
+    claim_annotation: hieronymus::claim_reads::ClaimReadAnnotation,
 }
 
 /// Python `_importance_from_metadata`: anything but a numeric importance is
@@ -238,6 +254,7 @@ fn finish_legacy_entries(mut entries: Vec<LegacyEntry>, limit: usize) -> Value {
             .take(limit)
             .map(|entry| {
                 json!({
+                    "claim_annotation": entry.claim_annotation,
                     "id": entry.id,
                     "kind": entry.kind,
                     "text": entry.text,
@@ -257,105 +274,80 @@ fn memory_search(application: &Application, arguments: &Value) -> Result<Value, 
     if args.limit < 1 {
         return Err(AppError::Domain("limit must be at least 1".to_string()));
     }
-    if search_expression(&args.query).is_empty() {
-        return Ok(json!([]));
-    }
     let bounded_limit = (args.limit as usize).min(LEGACY_SEARCH_LIMIT);
     let series = series_context(application, &args.series_slug)?;
-    let context = super::translation_context(
+    let mut context = super::translation_context(
         &series,
         args.source_language,
         args.target_language,
         "translation",
-        "",
-        "",
+        &args.volume,
+        &args.chapter,
     )?;
+    args.story.apply(&mut context);
     let store = workspace(application)?;
-
-    let entries: Vec<LegacyEntry> = match store.active_default_session(&context).map_err(domain)? {
-        Some(session) => {
-            let response = application
-                .recall()
-                .recall(
-                    session.id,
-                    &context,
-                    &args.query,
-                    bounded_limit * LEGACY_RECALL_OVERFETCH_FACTOR,
-                )
-                .map_err(domain)?;
-            response
-                .hits
-                .iter()
-                .filter(|hit| hit.source() != "rag")
-                .map(|hit| match hit {
-                    RecallHit::LongTerm { crystal, .. } => LegacyEntry {
-                        id: crystal.id,
-                        kind: if crystal.title.is_empty() {
-                            crystal.crystal_type.clone()
-                        } else {
-                            crystal.title.clone()
-                        },
-                        text: crystal.text.clone(),
-                        importance: (crystal.strength * 5.0).round() as i64,
-                        source_ref: String::new(),
-                        long_term: true,
-                    },
-                    RecallHit::ShortTerm { memory, .. } => LegacyEntry {
-                        id: memory.id,
-                        kind: legacy_kind_for_memory(memory),
-                        text: memory.text.clone(),
-                        importance: importance_from_metadata(&memory.metadata),
-                        source_ref: memory.source_ref.clone(),
-                        long_term: false,
-                    },
-                    RecallHit::Rag { .. } => {
-                        unreachable!("RAG rows are filtered out above")
-                    }
-                })
-                .collect()
-        }
-        None => application
-            .recall()
-            .recall_context(
-                &context,
-                &args.query,
-                bounded_limit * LEGACY_RECALL_OVERFETCH_FACTOR,
-            )
-            .map_err(domain)?
-            .hits
-            .into_iter()
-            .filter_map(|hit| match hit {
-                RecallHit::LongTerm { crystal, .. } => Some(LegacyEntry {
-                    id: crystal.id,
-                    kind: if crystal.title.is_empty() {
-                        crystal.crystal_type
-                    } else {
-                        crystal.title
-                    },
-                    text: crystal.text,
-                    importance: (crystal.strength * 5.0).round() as i64,
-                    source_ref: String::new(),
-                    long_term: true,
-                }),
-                RecallHit::ShortTerm { memory, .. } => Some(LegacyEntry {
-                    id: memory.id,
-                    kind: legacy_kind_for_memory(&memory),
-                    importance: importance_from_metadata(&memory.metadata),
-                    text: memory.text,
-                    source_ref: memory.source_ref,
-                    long_term: false,
-                }),
-                RecallHit::Rag { .. } => None,
-            })
-            .collect(),
-    };
-    Ok(finish_legacy_entries(entries, bounded_limit))
+    let response = match store.active_default_session(&context).map_err(domain)? {
+        Some(session) => application.recall().recall_required(
+            session.id,
+            &context,
+            &args.query,
+            bounded_limit * LEGACY_RECALL_OVERFETCH_FACTOR,
+            args.story.required_decision_id.as_deref(),
+        ),
+        None => application.recall().recall_context_required(
+            &context,
+            &args.query,
+            bounded_limit * LEGACY_RECALL_OVERFETCH_FACTOR,
+            args.story.required_decision_id.as_deref(),
+        ),
+    }
+    .map_err(super::recall_error)?;
+    let mut entries = Vec::new();
+    for hit in response.hits.iter().filter(|hit| hit.source() != "rag") {
+        let (id, kind, text, importance, source_ref, long_term) = match hit {
+            RecallHit::LongTerm { crystal, .. } => (
+                crystal.id,
+                if crystal.title.is_empty() {
+                    crystal.crystal_type.clone()
+                } else {
+                    crystal.title.clone()
+                },
+                crystal.text.clone(),
+                (crystal.strength * 5.0).round() as i64,
+                String::new(),
+                true,
+            ),
+            RecallHit::ShortTerm { memory, .. } => (
+                memory.id,
+                legacy_kind_for_memory(memory),
+                memory.text.clone(),
+                importance_from_metadata(&memory.metadata),
+                memory.source_ref.clone(),
+                false,
+            ),
+            _ => unreachable!(),
+        };
+        entries.push(LegacyEntry {
+            id,
+            kind,
+            text,
+            importance,
+            source_ref,
+            long_term,
+            claim_annotation: hit.claim_annotation().clone(),
+        });
+    }
+    Ok(
+        json!({"resulting_revision":response.resulting_revision,"results":finish_legacy_entries(entries,bounded_limit),"non_current":response.non_current.iter().filter(|h|h.source()!="rag").enumerate().map(|(i,h)|recall_result_row(h,i+1)).collect::<Vec<_>>(),"candidate_exhausted":response.candidate_exhausted,"warnings":response.warnings}),
+    )
 }
 
 // -------------------------------------------------- hieronymus_short_term_add
 
 #[derive(Deserialize)]
 struct ShortTermAdd {
+    #[serde(default)]
+    claims: Vec<hieronymus::claim_capture::ClaimInput>,
     session_id: i64,
     kind: String,
     text: String,
@@ -390,7 +382,7 @@ fn default_credibility() -> String {
 impl ShortTermAdd {
     fn into_input(self) -> ShortTermMemoryInput {
         ShortTermMemoryInput {
-            claims: Vec::new(),
+            claims: self.claims,
             source_role: self.source_role,
             kind: self.kind,
             text: self.text,
@@ -427,6 +419,8 @@ struct ShortTermAddBatch {
 /// session (the batch is session-scoped).
 #[derive(Deserialize)]
 struct BatchItem {
+    #[serde(default)]
+    claims: Vec<hieronymus::claim_capture::ClaimInput>,
     kind: String,
     text: String,
     #[serde(default = "default_source_role")]
@@ -452,7 +446,7 @@ struct BatchItem {
 impl BatchItem {
     fn into_input(self) -> ShortTermMemoryInput {
         ShortTermMemoryInput {
-            claims: Vec::new(),
+            claims: self.claims,
             source_role: self.source_role,
             kind: self.kind,
             text: self.text,
@@ -517,6 +511,8 @@ fn feedback(application: &Application, arguments: &Value) -> Result<Value, AppEr
 
 #[derive(Deserialize)]
 struct RecallArgs {
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
     session_id: i64,
     series_slug: String,
     query: String,
@@ -555,7 +551,9 @@ fn recall(application: &Application, arguments: &Value) -> Result<Value, AppErro
     let series = series_context(application, &args.series_slug)?;
     let store = workspace(application)?;
     let session = store.get_session(args.session_id).map_err(domain)?;
-    let context = &session.context;
+    let mut context = session.context.clone();
+    args.story.apply(&mut context);
+    let context = &context;
     if context.series_slug != series.slug {
         return Err(AppError::Domain("session context mismatch".to_string()));
     }
@@ -588,8 +586,14 @@ fn recall(application: &Application, arguments: &Value) -> Result<Value, AppErro
     }
     let response = application
         .recall()
-        .recall(args.session_id, context, &args.query, args.limit as usize)
-        .map_err(domain)?;
+        .recall_required(
+            args.session_id,
+            context,
+            &args.query,
+            args.limit as usize,
+            args.story.required_decision_id.as_deref(),
+        )
+        .map_err(super::recall_error)?;
     Ok(recall_payload(&response))
 }
 
@@ -599,6 +603,9 @@ fn recall(application: &Application, arguments: &Value) -> Result<Value, AppErro
 fn recall_payload(response: &RecallResponse) -> Value {
     json!({
         "recall_id": response.recall_id,
+        "resulting_revision": response.resulting_revision,
+        "candidate_exhausted": response.candidate_exhausted,
+        "non_current": response.non_current.iter().enumerate().map(|(index,hit)|recall_result_row(hit,index+1)).collect::<Vec<_>>(),
         "deterministic_contract": response.deterministic_contract,
         "results": response
             .hits
@@ -615,6 +622,7 @@ fn recall_payload(response: &RecallResponse) -> Value {
 /// concept references, credibility, and rule/thought markers.
 fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
     let mut row = json!({
+        "claim_annotation": hit.claim_annotation(),
         "tier": hit.source(),
         "rank": rank,
         "score": hit.score(),
@@ -636,6 +644,7 @@ fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
             row["kind"] = json!(crystal.crystal_type);
             row["crystal_type"] = json!(crystal.crystal_type);
             row["text"] = json!(crystal.text);
+            row["soft_origin"] = json!(crystal.soft_origin);
             row["rank_reason"] = json!(reason);
             row["language_tags"] = json!(crystal.language_tags);
             row["story_scopes"] = json!(crystal.story_scopes);
@@ -653,6 +662,9 @@ fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
             row["kind"] = json!(memory.kind);
             row["crystal_type"] = Value::Null;
             row["text"] = json!(memory.text);
+            row["metadata"] = json!(memory.metadata);
+            row["source_ref"] = json!(memory.source_ref);
+            row["soft_origin"] = json!(memory.soft_origin);
             row["rank_reason"] = json!(SHORT_TERM_REASON);
             row["language_tags"] = json!(memory.language_tags);
             row["story_scopes"] = json!(memory.story_scopes);
@@ -675,6 +687,7 @@ fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
             row["kind"] = json!(chunk.kind());
             row["crystal_type"] = Value::Null;
             row["text"] = json!(chunk.text);
+            row["display_text"] = json!(chunk.display_text);
             row["rank_reason"] = json!(reason);
             row["language_tags"] = json!(chunk.language_tags);
             row["story_scopes"] = json!(chunk.story_scopes);
@@ -691,6 +704,7 @@ fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
             row["metadata"] = json!(chunk.metadata);
         }
     }
+    sanitize_withheld_row(&mut row);
     row
 }
 
@@ -698,6 +712,11 @@ fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
 
 #[derive(Deserialize)]
 struct RagImportArgs {
+    #[serde(default)]
+    claims: std::collections::BTreeMap<usize, Vec<hieronymus::claim_capture::ClaimInput>>,
+    #[serde(default)]
+    claim_lineage:
+        std::collections::BTreeMap<usize, Vec<hieronymus::claim_capture::ExistingClaimInput>>,
     series_slug: String,
     path: String,
     #[serde(default)]
@@ -754,8 +773,8 @@ const INDEXING_NOT_REQUIRED: &str = "not-required";
 fn rag_import(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagImportArgs>(arguments)?;
     let import = RagImport {
-        claims: std::collections::BTreeMap::new(),
-        claim_lineage: std::collections::BTreeMap::new(),
+        claims: args.claims,
+        claim_lineage: args.claim_lineage,
         source_ref: args.source_ref,
         source_type: args.source_type,
         language_tags: args.language_tags.unwrap_or_default(),
@@ -822,6 +841,12 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
 
 #[derive(Deserialize)]
 struct RagSearchArgs {
+    #[serde(default)]
+    volume: String,
+    #[serde(default)]
+    chapter: String,
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
     series_slug: String,
     query: String,
     #[serde(default = "default_rag_search_limit")]
@@ -844,7 +869,22 @@ fn rag_search(application: &Application, arguments: &Value) -> Result<Value, App
     if args.limit < 1 {
         return Err(AppError::Domain("limit must be at least 1".to_string()));
     }
-    application.search_rag(&args.series_slug, &args.query, args.limit as usize)
+    let series = series_context(application, &args.series_slug)?;
+    let mut context = translation_context(
+        &series,
+        None,
+        None,
+        "translation",
+        &args.volume,
+        &args.chapter,
+    )?;
+    args.story.apply(&mut context);
+    application.search_rag_context(
+        &context,
+        &args.query,
+        args.limit as usize,
+        args.story.required_decision_id.as_deref(),
+    )
 }
 
 impl Application {
@@ -875,33 +915,96 @@ impl Application {
     /// describes; the accepted delta is what the rows now mean — see
     /// `compatibility/rust/rag-search-v2.json`.
     pub fn search_rag(&self, series: &str, query: &str, limit: usize) -> Result<Value, AppError> {
+        let context =
+            hieronymus::memory_models::TranslationContext::new(series, "", "", "translation");
+        self.search_rag_context(&context, query, limit, None)
+    }
+    pub fn search_rag_context(
+        &self,
+        context: &hieronymus::memory_models::TranslationContext,
+        query: &str,
+        limit: usize,
+        required: Option<&str>,
+    ) -> Result<Value, AppError> {
         self.require_semantic_service()?;
         let hits = self
             .recall()
-            .search_series(series, query, limit)
-            .map_err(domain)?;
-        Ok(Value::Array(
-            hits.iter()
-                .map(|hit| {
-                    json!({
-                        "source": "rag",
-                        "id": hit.chunk.id,
-                        "title": hit.chunk.title(),
-                        "kind": hit.chunk.kind(),
-                        "text": hit.chunk.text,
-                        "display_text": hit.chunk.display_text,
-                        "source_ref": hit.chunk.source_ref,
-                        "chunk_kind": hit.chunk.chunk_kind,
-                        "location": hit.chunk.location,
-                        "metadata": hit.chunk.metadata,
-                        "language_tags": hit.chunk.language_tags,
-                        "story_scopes": hit.chunk.story_scopes,
-                        "semantic_tags": hit.chunk.semantic_tags,
-                        "score": hit.score,
-                        "rank_reason": hit.reason,
-                    })
-                })
-                .collect(),
-        ))
+            .search_series_context_required(context, query, limit, required)
+            .map_err(super::recall_error)?;
+        let rows: Vec<Value> = hits
+            .value
+            .iter()
+            .map(|hit| {
+                let mut row = json!({
+                    "claim_annotation": hit.chunk.claim_annotation,
+                    "source": "rag",
+                    "id": hit.chunk.id,
+                    "title": hit.chunk.title(),
+                    "kind": hit.chunk.kind(),
+                    "text": hit.chunk.text,
+                    "display_text": hit.chunk.display_text,
+                    "source_ref": hit.chunk.source_ref,
+                    "chunk_kind": hit.chunk.chunk_kind,
+                    "location": hit.chunk.location,
+                    "metadata": hit.chunk.metadata,
+                    "language_tags": hit.chunk.language_tags,
+                    "story_scopes": hit.chunk.story_scopes,
+                    "semantic_tags": hit.chunk.semantic_tags,
+                    "score": hit.score,
+                    "rank_reason": hit.reason,
+                });
+                sanitize_withheld_row(&mut row);
+                row
+            })
+            .collect();
+        let (current, non_current): (Vec<_>, Vec<_>) =
+            rows.into_iter().zip(&hits.value).partition(|(_, hit)| {
+                matches!(
+                    hit.chunk.claim_annotation.disposition,
+                    hieronymus::claim_reads::ClaimDisposition::Current
+                        | hieronymus::claim_reads::ClaimDisposition::Qualified(_)
+                )
+            });
+        Ok(
+            json!({"resulting_revision":hits.resulting_revision,"results":current.into_iter().map(|(row,_)|row).collect::<Vec<_>>(),"non_current":non_current.into_iter().map(|(row,_)|row).collect::<Vec<_>>()}),
+        )
+    }
+}
+
+/// A withheld assertion must not escape via free-form kind, credibility or
+/// tags when a record is flattened. Research and source inspection retain
+/// their explicitly annotated text and metadata.
+fn sanitize_withheld_row(row: &mut Value) {
+    let status = row["claim_annotation"]["disposition"]["status"].as_str();
+    if row["claim_annotation"]["source_inspection"] != false
+        || matches!(status, Some("current" | "qualified"))
+        || row["text"] != ""
+    {
+        return;
+    }
+    for key in [
+        "title",
+        "kind",
+        "text",
+        "display_text",
+        "source_ref",
+        "chunk_kind",
+        "location",
+        "source_credibility",
+        "rule_intent",
+        "soft_origin",
+        "rank_reason",
+    ] {
+        if row.get(key).is_some() {
+            row[key] = json!("");
+        }
+    }
+    for key in ["language_tags", "story_scopes", "semantic_tags"] {
+        if row.get(key).is_some() {
+            row[key] = json!([]);
+        }
+    }
+    if row.get("metadata").is_some() {
+        row["metadata"] = json!({});
     }
 }

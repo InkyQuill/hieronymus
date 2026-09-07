@@ -21,6 +21,10 @@ pub enum WorkspaceError {
     Claim(#[from] crate::authority_models::DecisionErrorV1),
     #[error("unknown session: {0}")]
     UnknownSession(i64),
+    #[error("research mode is request-local and cannot be stored in a session")]
+    ResearchSession,
+    #[error(transparent)]
+    StoryContext(#[from] crate::story_applicability::ApplicabilityError),
     #[error("unknown series: {0}")]
     UnknownSeries(String),
     #[error("short-term memories require an active session")]
@@ -125,6 +129,9 @@ impl WorkspaceStore {
         let now = now_iso8601();
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        validate_session_context(&transaction, context)?;
+        let viewpoint = serde_json::to_string(&context.story_viewpoint)
+            .map_err(|e| WorkspaceError::Json(e.to_string()))?;
         transaction.execute(
             "insert into task_sessions(
                series_slug,
@@ -135,9 +142,9 @@ impl WorkspaceStore {
                chapter,
                status,
                created_at,
-               last_activity_at
+               last_activity_at, story_timeline_id, story_scene_key, story_viewpoint_json
              )
-             values (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?8)",
+             values (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![
                 context.series_slug,
                 context.source_language,
@@ -147,6 +154,9 @@ impl WorkspaceStore {
                 context.chapter,
                 now,
                 now,
+                context.story_timeline_id,
+                context.story_scene_key,
+                viewpoint,
             ],
         )?;
         let session_id = transaction.last_insert_rowid();
@@ -200,6 +210,9 @@ impl WorkspaceStore {
                    and task_type = ?4
                    and volume = ?5
                    and chapter = ?6
+                   and story_timeline_id is ?7
+                   and story_scene_key is ?8
+                   and story_viewpoint_json = ?9
                    and status = 'active'
                  order by id desc
                  limit 1",
@@ -210,6 +223,10 @@ impl WorkspaceStore {
                     context.task_type,
                     context.volume,
                     context.chapter,
+                    context.story_timeline_id,
+                    context.story_scene_key,
+                    serde_json::to_string(&context.story_viewpoint)
+                        .map_err(|e| WorkspaceError::Json(e.to_string()))?,
                 ],
                 |row| row.get(0),
             )
@@ -324,7 +341,7 @@ impl WorkspaceStore {
         let row = connection
             .query_row(
                 "select series_slug, source_language, target_language, task_type,
-                        volume, chapter, status, cycle_id
+                        volume, chapter, status, cycle_id, story_timeline_id, story_scene_key, story_viewpoint_json
                  from task_sessions where id = ?1",
                 [session_id],
                 |row| {
@@ -337,6 +354,9 @@ impl WorkspaceStore {
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
                         row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, String>(10)?,
                     ))
                 },
             )
@@ -365,10 +385,15 @@ impl WorkspaceStore {
             session_id,
             "semantic_tag",
         )?;
-        let context = TranslationContext::new(row.0, row.1, row.2, row.3)
+        let mut context = TranslationContext::new(row.0, row.1, row.2, row.3)
             .volume(row.4)
             .chapter(row.5)
             .with_metadata(Some(language_tags), Some(story_scopes), Some(semantic_tags));
+        context.story_timeline_id = row.8;
+        context.story_scene_key = row.9;
+        context.story_viewpoint =
+            serde_json::from_str(&row.10).map_err(|e| WorkspaceError::Json(e.to_string()))?;
+        validate_session_context(connection, &context)?;
         Ok(TaskSessionRecord {
             id: session_id,
             context,
@@ -750,7 +775,7 @@ fn prepare_short_term_memory(
     })
 }
 
-fn hydrate_memory(
+pub(crate) fn hydrate_memory(
     connection: &Connection,
     memory_id: i64,
 ) -> Result<ShortTermMemoryRecord, WorkspaceError> {
@@ -946,4 +971,31 @@ mod tests {
         assert!(store.complete_session(session.id).unwrap());
         assert!(!store.complete_session(session.id).unwrap());
     }
+}
+
+fn validate_session_context(
+    db: &Connection,
+    context: &TranslationContext,
+) -> Result<(), WorkspaceError> {
+    use crate::story_applicability::{
+        ApplicabilityError, QueryMode, StoryApplicability, Viewpoint,
+    };
+    if context.story_query_mode != QueryMode::Current {
+        return Err(WorkspaceError::ResearchSession);
+    }
+    // Legacy sessions may predate registration. Supplied story context must resolve
+    // ownership, while absent position/order remains unknown.
+    if context.story_timeline_id.is_some()
+        || context.story_scene_key.is_some()
+        || context.story_viewpoint != Viewpoint::Unspecified
+    {
+        StoryApplicability::resolve_context(db, context)?;
+        if let Viewpoint::Character(id) = context.story_viewpoint {
+            let valid: bool = db.query_row("select exists(select 1 from concepts where id=?1 and (scope_type='global' or scope_type='series' and scope_key='series:'||?2))", rusqlite::params![id,context.series_slug], |r| r.get(0))?;
+            if !valid {
+                return Err(ApplicabilityError::WrongSeries.into());
+            }
+        }
+    }
+    Ok(())
 }

@@ -61,9 +61,9 @@ fn expected_headers_from_fixture(
 // ------------------------------------------------------- frozen MCP contract
 
 #[test]
-fn tools_list_matches_frozen_fixture_exactly() {
+fn tools_list_matches_active_rust_registry_in_frozen_envelope() {
     let (_root, daemon) = start_daemon_on_ephemeral_port();
-    let protocol = mcp_protocol();
+    let protocol = current_protocol();
     let request = protocol["target"]["tools_list"]["request"].clone();
     let expected = protocol["target"]["tools_list"]["response"].clone();
 
@@ -81,7 +81,7 @@ fn tools_list_matches_frozen_fixture_exactly() {
 #[test]
 fn tools_call_status_round_trip_matches_frozen_fixture_exactly() {
     let (_root, daemon) = start_daemon_on_ephemeral_port();
-    let protocol = mcp_protocol();
+    let protocol = current_protocol();
     let request = protocol["target"]["tools_call"]["request"].clone();
     let expected = protocol["target"]["tools_call"]["response"].clone();
 
@@ -146,7 +146,7 @@ fn route_case_successes_keep_the_frozen_envelope() {
     let (_root, daemon) = start_daemon_on_ephemeral_port();
     let port = daemon.local_addr().port();
     let target = route_target("http.route.post.mcp");
-    let protocol = mcp_protocol();
+    let protocol = current_protocol();
 
     for success in target["successes"].as_array().unwrap() {
         let id = success["id"].as_str().unwrap();
@@ -200,7 +200,7 @@ fn route_case_successes_keep_the_frozen_envelope() {
 #[test]
 fn request_scoped_sse_wraps_the_same_result() {
     let (_root, daemon) = start_daemon_on_ephemeral_port();
-    let protocol = mcp_protocol();
+    let protocol = current_protocol();
     let request = protocol["target"]["tools_list"]["request"].clone();
     let expected = protocol["target"]["tools_list"]["response"].clone();
 
@@ -288,7 +288,7 @@ fn health_route_matches_frozen_contract() {
 #[test]
 fn not_yet_ported_tool_returns_clean_jsonrpc_error() {
     let (_root, daemon) = start_daemon_on_ephemeral_port();
-    let protocol = mcp_protocol();
+    let protocol = current_protocol();
     let mut request = protocol["target"]["tools_call"]["request"].clone();
     request["id"] = json!(77);
     // Every advertised tool has a concrete handler since M5; an unknown name
@@ -322,10 +322,10 @@ fn not_yet_ported_tool_returns_clean_jsonrpc_error() {
 }
 
 #[test]
-fn served_registry_equals_the_frozen_snapshot() {
+fn served_registry_preserves_frozen_names_and_active_rust_schemas() {
     let (_root, daemon) = start_daemon_on_ephemeral_port();
     let request = mcp_protocol()["target"]["tools_list"]["request"].clone();
-    let expected = mcp_protocol()["target"]["tools_list"]["response"].clone();
+    let expected = current_protocol()["target"]["tools_list"]["response"].clone();
 
     let response = post_mcp(
         &daemon,
@@ -357,4 +357,14 @@ fn served_registry_equals_the_frozen_snapshot() {
         PROTOCOL_REVISION,
         snapshot["protocol_revision"].as_str().unwrap()
     );
+}
+
+// Frozen transport envelopes remain the baseline; active Rust tools/list
+// carries the versioned input additions qualified in application_authority_context.
+fn current_protocol() -> Value {
+    let mut protocol = mcp_protocol();
+    protocol["target"]["tools_list"]["response"]["result"]["tools"] =
+        serde_json::to_value(hiero::daemon::registry::McpRegistry::embedded().list_tools())
+            .unwrap();
+    protocol
 }

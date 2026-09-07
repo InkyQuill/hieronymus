@@ -97,7 +97,27 @@ impl McpRegistry {
     pub fn embedded() -> Self {
         // The snapshot is validated by workspace tests; a panic here means the
         // frozen contract and the binary have diverged, which must never ship.
-        Self::from_snapshot_str(EMBEDDED_SNAPSHOT).expect("embedded MCP registry snapshot is valid")
+        let mut registry = Self::from_snapshot_str(EMBEDDED_SNAPSHOT)
+            .expect("embedded MCP registry snapshot is valid");
+        let extension: Value = serde_json::from_str(include_str!(
+            "../../../../compatibility/rust/authority-context-v1.json"
+        ))
+        .expect("Rust authority context schema is valid");
+        for tool in &mut registry.tools {
+            if let Some(properties) = extension["tool_properties"][&tool.name].as_object() {
+                tool.input_schema["$defs"] = extension["definitions"].clone();
+                tool.input_schema["properties"]
+                    .as_object_mut()
+                    .expect("tool properties")
+                    .extend(properties.clone());
+            }
+            if tool.name == "hieronymus_short_term_add_batch" {
+                tool.input_schema["$defs"] = extension["definitions"].clone();
+                tool.input_schema["properties"]["items"]["items"]["properties"]["claims"] =
+                    extension["batch_item_claims"].clone();
+            }
+        }
+        registry
     }
 
     pub fn list_tools(&self) -> &[ToolDefinition] {
@@ -123,12 +143,25 @@ impl McpRegistry {
     ) -> Result<Value, CallError> {
         match name {
             "hieronymus_status" => Ok(status_result()),
-            _ => match application.call(name, arguments, actor) {
-                Ok(structured) => Ok(success_envelope(structured)),
-                Err(AppError::Invalid(message)) => Err(CallError::InvalidParams(message)),
-                Err(AppError::Domain(message)) => Ok(error_result_envelope(&message)),
-                Err(AppError::NotImplemented(name)) => Err(CallError::NotPorted(name)),
-            },
+            _ => {
+                match application.call(name, arguments, actor) {
+                    Ok(structured) => Ok(success_envelope(structured)),
+                    Err(AppError::Invalid(message)) => Err(CallError::InvalidParams(message)),
+                    Err(AppError::Coherent(error)) => {
+                        let mut result = error_result_envelope(&error.to_string());
+                        result["error_code"] = serde_json::json!(match error {
+                        hieronymus::coherent_reads::CoherentReadError::StaleContext => "stale_context",
+                        hieronymus::coherent_reads::CoherentReadError::DecisionNotApplied => "decision_not_applied",
+                        hieronymus::coherent_reads::CoherentReadError::UnknownSeries(_) => "unknown_series",
+                        hieronymus::coherent_reads::CoherentReadError::MissingAuthorityState(_) => "missing_authority_state",
+                        _ => "read_failed",
+                    });
+                        Ok(result)
+                    }
+                    Err(AppError::Domain(message)) => Ok(error_result_envelope(&message)),
+                    Err(AppError::NotImplemented(name)) => Err(CallError::NotPorted(name)),
+                }
+            }
         }
     }
 

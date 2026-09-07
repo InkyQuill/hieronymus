@@ -387,6 +387,15 @@ fn reinforce_and_supersede_actions_apply_through_the_run_transaction() {
     assert_eq!(old.status, "superseded");
     let new = store.get(new_id).unwrap();
     assert_eq!(new.supersedes_crystal_id, Some(old_id));
+    assert_eq!(
+        query(
+            &config,
+            "select count(*) from claim_bindings old where old.crystal_id=?1 and not exists(select 1 from claim_bindings new where new.crystal_id=?2 and new.claim_id=old.claim_id)",
+            &[&old_id, &new_id]
+        )[0][0],
+        json!(0),
+        "Dream supersede must retain all original masks"
+    );
 
     // Reinforce projection: the clamped delta landed and the event records
     // the actual deltas, consumed exactly once.

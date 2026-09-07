@@ -549,6 +549,12 @@ fn deleted_crystal_pairs_are_skipped_with_audited_reasons() {
     let left = add_crystal(&config, "only-sense-online", texts[0]);
     let middle = add_crystal(&config, "only-sense-online", texts[1]);
     let doomed = add_crystal(&config, "only-sense-online", texts[2]);
+    // Model a legacy unbound row: bound authority history intentionally
+    // prohibits deleting its source. This test covers legacy cascade loss.
+    execute(
+        &config,
+        &format!("delete from claim_bindings where crystal_id = {doomed}"),
+    );
     for crystal_id in [left, middle, doomed] {
         add_activation(&config, session, crystal_id);
     }
@@ -1032,4 +1038,43 @@ fn batch_completion_uses_durable_totals_without_recounting_pair_history() {
     let payload: Value = serde_json::from_str(payload[0][0].as_str().unwrap()).unwrap();
     assert_eq!(payload["applied_pairs"], json!(49995000));
     assert_eq!(payload["skipped_pairs"], json!(7));
+}
+
+#[test]
+fn combination_transfers_original_claims_to_survivor() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let session = start_session(&config, "book");
+    let a = add_crystal(
+        &config,
+        "book",
+        "The same source assertion in a near duplicate crystal.",
+    );
+    let b = add_crystal(
+        &config,
+        "book",
+        "The same source assertion in a near duplicate crystal.",
+    );
+    let before = query(
+        &config,
+        "select claim_id from claim_bindings where crystal_id in (?1,?2) order by claim_id",
+        &[&a, &b],
+    );
+    assert_eq!(before.len(), 2);
+    add_activation(&config, session, a);
+    add_activation(&config, session, b);
+    let run = create_run(&config, 1);
+    open_progress(&config, run).process(1, 1).unwrap();
+    let survivor = scalar(&config, "select id from crystals where status='active'")
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        query(
+            &config,
+            "select claim_id from claim_bindings where crystal_id=?1 order by claim_id",
+            &[&survivor]
+        ),
+        before
+    );
 }
