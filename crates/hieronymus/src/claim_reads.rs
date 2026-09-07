@@ -57,8 +57,7 @@ pub fn claim_disposition(
     let Some(app) = applicability::load(db, app)? else {
         return Ok(ClaimDisposition::Unknown);
     };
-    let eligible = StoryApplicability::evaluate(db, &app, query)
-        .map_err(|_| DecisionErrorV1::ApplicabilityConflict)?;
+    let eligible = evaluate_candidate(db, &app, query)?;
     match eligible {
         Eligibility::Unknown => return Ok(ClaimDisposition::Unknown),
         Eligibility::Excluded | Eligibility::FutureOrOutsideViewpoint => {
@@ -67,33 +66,72 @@ pub fn claim_disposition(
         Eligibility::Current => {}
     }
     for effect in effect_annotations(db, claim_id)? {
-        match StoryApplicability::evaluate(db, &effect.applicability, query)
-            .map_err(|_| DecisionErrorV1::ApplicabilityConflict)?
-        {
-            Eligibility::Current => {
-                let mut excluded = false;
-                for mask in &effect.exclusions {
-                    match StoryApplicability::evaluate(db, mask, query)
-                        .map_err(|_| DecisionErrorV1::ApplicabilityConflict)?
-                    {
-                        Eligibility::Current => {
-                            excluded = true;
-                            break;
-                        }
-                        Eligibility::Unknown => return Ok(ClaimDisposition::Unknown),
-                        _ => {}
-                    }
-                }
-                if !excluded {
-                    return Ok(effect.disposition);
-                }
-            }
+        match effect_eligibility(db, &effect, query)? {
+            Eligibility::Current => return Ok(effect.disposition),
             Eligibility::Unknown => return Ok(ClaimDisposition::Unknown),
             _ => {}
         }
     }
     Ok(status_disposition(&status, qualification))
 }
+/// A valid other-timeline candidate is outside this query, whereas malformed
+/// timeline/position ownership must remain an error. Validate both timelines
+/// and the query before taking the incompatibility shortcut.
+fn evaluate_candidate(
+    db: &Connection,
+    app: &crate::story_applicability::ApplicabilityV1,
+    query: &StoryQueryV1,
+) -> Result<Eligibility, DecisionErrorV1> {
+    if app.series_id != query.series_id {
+        return Err(DecisionErrorV1::ApplicabilityConflict);
+    }
+    if let (Some(candidate), Some(requested)) = (app.timeline_id, query.timeline_id)
+        && candidate != requested
+    {
+        for (timeline, series) in [(candidate, app.series_id), (requested, query.series_id)] {
+            if !db.query_row(
+                "select exists(select 1 from story_timelines where id=?1 and series_id=?2)",
+                params![timeline, series],
+                |r| r.get::<_, bool>(0),
+            )? {
+                return Err(DecisionErrorV1::ApplicabilityConflict);
+            }
+        }
+        let mut neutral = app.clone();
+        neutral.series_id = query.series_id;
+        neutral.timeline_id = query.timeline_id;
+        neutral.volume_key = None;
+        neutral.chapter_key = None;
+        neutral.scope_predicates.clear();
+        neutral.valid_from = None;
+        neutral.valid_until = None;
+        neutral.knowledge_gates.clear();
+        StoryApplicability::evaluate(db, &neutral, query)
+            .map_err(|_| DecisionErrorV1::ApplicabilityConflict)?;
+        return Ok(Eligibility::Excluded);
+    }
+    StoryApplicability::evaluate(db, app, query).map_err(|_| DecisionErrorV1::ApplicabilityConflict)
+}
+
+fn effect_eligibility(
+    db: &Connection,
+    effect: &ClaimEffectAnnotation,
+    query: &StoryQueryV1,
+) -> Result<Eligibility, DecisionErrorV1> {
+    let eligibility = evaluate_candidate(db, &effect.applicability, query)?;
+    if eligibility != Eligibility::Current {
+        return Ok(eligibility);
+    }
+    for mask in &effect.exclusions {
+        match evaluate_candidate(db, mask, query)? {
+            Eligibility::Current => return Ok(Eligibility::Excluded),
+            Eligibility::Unknown => return Ok(Eligibility::Unknown),
+            _ => {}
+        }
+    }
+    Ok(Eligibility::Current)
+}
+
 fn status_disposition(status: &str, qualification: Option<String>) -> ClaimDisposition {
     match status {
         "current" => ClaimDisposition::Current,
@@ -273,6 +311,23 @@ pub fn read_annotation(
     }
     let disposition = rehydrate_claims(db, target, query)?;
     let source_inspection = query.mode == crate::story_applicability::QueryMode::OmniscientResearch;
+    if !source_inspection {
+        for claim in &mut claims {
+            // Only the newest applicable unmasked effect controls this query.
+            // Keep structural history, but never disclose obsolete/outside prose.
+            let mut selected = false;
+            for effect in &mut claim.effects {
+                let eligibility = effect_eligibility(db, effect, query)?;
+                let visible = !selected && eligibility == Eligibility::Current;
+                if matches!(eligibility, Eligibility::Current | Eligibility::Unknown) {
+                    selected = true;
+                }
+                if !visible && let ClaimDisposition::Qualified(values) = &mut effect.disposition {
+                    values.clear();
+                }
+            }
+        }
+    }
     if !source_inspection
         && !matches!(
             disposition,

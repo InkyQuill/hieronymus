@@ -651,3 +651,99 @@ fn facet_metadata_change_cannot_clear_same_content_claim_lineage() {
         1
     );
 }
+
+#[test]
+fn facet_source_switch_copies_all_masks_and_rejects_foreign_unbound_sources_atomically() {
+    use hieronymus::concepts::{ConceptStore, FacetFields, FacetPatch};
+    let (_root, config, mut db) = fixture();
+    db.execute_batch("insert into crystals(id,crystal_type,text,scope_type,series_slug,strength,confidence,status,created_at,updated_at) values(2,'lesson','second','series','book',0.5,0.5,'active','now','now'),(3,'lesson','foreign unbound','series','other',0.5,0.5,'active','now','now')").unwrap();
+    let tx = db.transaction().unwrap();
+    let original = capture_claim_tx(&tx, ClaimTarget::Crystal(1), &claim()).unwrap();
+    let second = capture_claim_tx(&tx, ClaimTarget::Crystal(2), &claim()).unwrap();
+    tx.commit().unwrap();
+    let store = ConceptStore::open(&config).unwrap();
+    let facet = store
+        .add_facet_with_claims(
+            1,
+            "derived",
+            &FacetFields {
+                source_crystal_id: Some(1),
+                ..Default::default()
+            },
+            0.8,
+            false,
+            &[claim()],
+        )
+        .unwrap();
+    store
+        .update_facet_with_claims(
+            facet.id,
+            &FacetPatch {
+                source_crystal_id: Some(Some(2)),
+                value: Some(Some("changed derived".into())),
+                ..Default::default()
+            },
+            &[claim()],
+        )
+        .unwrap();
+    let ids: Vec<i64> = db
+        .prepare("select claim_id from claim_bindings where facet_id=?")
+        .unwrap()
+        .query_map([facet.id], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(ids.contains(&original) && ids.contains(&second));
+    assert_eq!(
+        ids.len(),
+        4,
+        "originals and both supplemental observations survive"
+    );
+    let before = db
+        .query_row("select count(*) from memory_claims", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap();
+    assert!(
+        store
+            .add_facet_with_claims(
+                1,
+                "foreign",
+                &FacetFields {
+                    source_crystal_id: Some(3),
+                    ..Default::default()
+                },
+                0.8,
+                false,
+                &[claim()]
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .update_facet_with_claims(
+                facet.id,
+                &FacetPatch {
+                    source_crystal_id: Some(Some(3)),
+                    ..Default::default()
+                },
+                &[claim()]
+            )
+            .is_err()
+    );
+    assert_eq!(
+        db.query_row("select count(*) from memory_claims", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        db.query_row(
+            "select source_crystal_id from concept_facets where id=?",
+            [facet.id],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+}

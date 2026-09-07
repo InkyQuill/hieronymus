@@ -3,17 +3,14 @@
 //! `hieronymus_short_term_add_batch`, `hieronymus_feedback`,
 //! `hieronymus_recall`, `hieronymus_rag_import`, and `hieronymus_rag_search`.
 //!
-//! Argument structs decode exactly the frozen `input_schema` rules from
-//! `compatibility/snapshots/mcp.json` (required fields, defaults, and null
-//! rules); decoding failures are [`AppError::Invalid`]. Store rejections are
-//! [`AppError::Domain`]. All database work stays in the `hieronymus` store
-//! APIs — no SQL lives here.
+//! Argument structs preserve historical field defaults while the active Rust
+//! registry adds typed story context, ordinary claims and read dependencies.
+//! Decode errors are [`AppError::Invalid`]; coherent reads retain typed errors.
+//! All database work stays in the `hieronymus` store APIs.
 //!
-//! ADR 0011 shapes `hieronymus_recall`: the transport DTO serializes
-//! `{recall_id, deterministic_contract, results, warnings}` — the normative
-//! `results` key flattens the library's ranked hits, while the deterministic
-//! contract is the section computed before any lane fusion and is serialized
-//! whole (even when `limit` removed every advisory hit).
+//! Recall returns observed revision, deterministic contract, ranked `results`,
+//! separately labelled `non_current` rows, candidate exhaustion and warnings.
+//! The deterministic contract is computed before advisory lane fusion.
 //!
 //! Task C5 shapes the two retrieval tools' relationship to required
 //! semantics: `hieronymus_rag_search` IS semantic RAG search, so it refuses a
@@ -21,9 +18,8 @@
 //! lane ([`Application::search_rag`]), while `hieronymus_recall` keeps serving
 //! memory and deterministic terminology and reports the gap through
 //! `warnings`. The legacy
-//! `hieronymus_memory_add`/`hieronymus_memory_search` wrappers keep their
-//! Python semantics: short-term session storage and legacy entry rows, not
-//! crystal writes.
+//! `hieronymus_memory_add` stores short-term observations; memory search
+//! presents legacy entry fields inside an observed Rust response envelope.
 
 use std::path::Path;
 
@@ -267,8 +263,8 @@ fn finish_legacy_entries(mut entries: Vec<LegacyEntry>, limit: usize) -> Value {
 }
 
 /// The legacy memory search over one series: recall through the active
-/// default session when one exists (dropping advisory RAG rows, keeping the
-/// legacy entry shape), otherwise the direct context-scoped fallback.
+/// default session when one exists, otherwise through the same coherent
+/// context read. Legacy entry fields are carried in an observed envelope.
 fn memory_search(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<MemorySearch>(arguments)?;
     if args.limit < 1 {
@@ -911,9 +907,9 @@ impl Application {
     /// lane then cannot execute over a series that HAS chunks is an error
     /// too.
     ///
-    /// The response stays the bare row array the frozen `outputSchema`
-    /// describes; the accepted delta is what the rows now mean — see
-    /// `compatibility/rust/rag-search-v2.json`.
+    /// The active Rust response is an observed object containing revision,
+    /// Current/Qualified results, separately annotated non-current rows and
+    /// bounded candidate exhaustion. Frozen Python row arrays are historical.
     pub fn search_rag(&self, series: &str, query: &str, limit: usize) -> Result<Value, AppError> {
         let context =
             hieronymus::memory_models::TranslationContext::new(series, "", "", "translation");
@@ -933,6 +929,7 @@ impl Application {
             .map_err(super::recall_error)?;
         let rows: Vec<Value> = hits
             .value
+            .hits
             .iter()
             .map(|hit| {
                 let mut row = json!({
@@ -957,8 +954,10 @@ impl Application {
                 row
             })
             .collect();
-        let (current, non_current): (Vec<_>, Vec<_>) =
-            rows.into_iter().zip(&hits.value).partition(|(_, hit)| {
+        let (current, non_current): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .zip(&hits.value.hits)
+            .partition(|(_, hit)| {
                 matches!(
                     hit.chunk.claim_annotation.disposition,
                     hieronymus::claim_reads::ClaimDisposition::Current
@@ -966,7 +965,7 @@ impl Application {
                 )
             });
         Ok(
-            json!({"resulting_revision":hits.resulting_revision,"results":current.into_iter().map(|(row,_)|row).collect::<Vec<_>>(),"non_current":non_current.into_iter().map(|(row,_)|row).collect::<Vec<_>>()}),
+            json!({"resulting_revision":hits.resulting_revision,"candidate_exhausted":hits.value.candidate_exhausted,"results":current.into_iter().map(|(row,_)|row).collect::<Vec<_>>(),"non_current":non_current.into_iter().map(|(row,_)|row).collect::<Vec<_>>()}),
         )
     }
 }

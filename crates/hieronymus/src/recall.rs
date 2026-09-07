@@ -183,6 +183,15 @@ pub struct RecallResponse {
     pub warnings: Vec<RecallWarning>,
 }
 
+/// Bounded standalone search. `candidate_exhausted` means the available
+/// bounded candidates cannot fill the requested Current/Qualified limit;
+/// it also includes natural exhaustion, not a claim of exhaustive coverage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RagSearchResponse {
+    pub hits: Vec<RagSearchHit>,
+    pub candidate_exhausted: bool,
+}
+
 impl RecallHit {
     pub fn claim_annotation(&self) -> &crate::claim_reads::ClaimReadAnnotation {
         match self {
@@ -340,14 +349,17 @@ impl RecallService {
         limit: usize,
     ) -> Result<Vec<RagSearchHit>, RecallError> {
         let context = TranslationContext::new(series_slug, "", "", "translation");
-        Ok(self.search_series_context(&context, query, limit)?.value)
+        Ok(self
+            .search_series_context(&context, query, limit)?
+            .value
+            .hits)
     }
     pub fn search_series_context(
         &self,
         context: &TranslationContext,
         query: &str,
         limit: usize,
-    ) -> Result<crate::coherent_reads::Observed<Vec<RagSearchHit>>, RecallError> {
+    ) -> Result<crate::coherent_reads::Observed<RagSearchResponse>, RecallError> {
         self.search_series_context_required(context, query, limit, None)
     }
 
@@ -357,7 +369,7 @@ impl RecallService {
         query: &str,
         limit: usize,
         required_decision_id: Option<&str>,
-    ) -> Result<crate::coherent_reads::Observed<Vec<RagSearchHit>>, RecallError> {
+    ) -> Result<crate::coherent_reads::Observed<RagSearchResponse>, RecallError> {
         let observed = crate::coherent_reads::stable_read(
             &self.config,
             &context.series_slug,
@@ -373,7 +385,20 @@ impl RecallService {
         }
         Ok(crate::coherent_reads::Observed {
             resulting_revision: observed.resulting_revision,
-            value: hits,
+            value: RagSearchResponse {
+                candidate_exhausted: hits
+                    .iter()
+                    .filter(|hit| {
+                        matches!(
+                            hit.chunk.claim_annotation.disposition,
+                            crate::claim_reads::ClaimDisposition::Current
+                                | crate::claim_reads::ClaimDisposition::Qualified(_)
+                        )
+                    })
+                    .count()
+                    < limit.min(crate::rag::MAX_RAG_SEARCH_LIMIT),
+                hits,
+            },
         })
     }
     fn search_series_with_connection(
@@ -391,8 +416,8 @@ impl RecallService {
         let story_query =
             crate::story_applicability::StoryApplicability::resolve_context(connection, context)
                 .map_err(|_| crate::authority_models::DecisionErrorV1::ApplicabilityConflict)?;
-        // The lexical lane, unfiltered: a session-less search has no typed
-        // context to boost or filter with, exactly as before C5.
+        // The sessionless lexical lane uses the same resolved story
+        // applicability and bounded candidate filtering as mixed recall.
         let fts_hits = store.search_with_connection(
             connection,
             Some(&story_query),
@@ -412,11 +437,8 @@ impl RecallService {
             )
             .map(|hits| (hits, vec![]));
         };
-        // The minimal query context: the semantic lane needs the series
-        // predicate (applied INSIDE the ANN query) and the query text, and a
-        // session-less search has nothing else to give it. The empty
-        // languages keep the context from seeding language tags nothing here
-        // would filter on.
+        // Carry the supplied story context into semantic hydration too;
+        // the ANN query itself is always bounded to this series.
         let run = lane.run_with_connection(connection, &self.config, context, query, limit);
         if run.degraded {
             let reason = run
@@ -428,8 +450,8 @@ impl RecallService {
             return empty_corpus_or_refuse(&store, connection, series_slug, &reason)
                 .map(|hits| (hits, vec![]));
         }
-        // This strict API returns bare hits, so it cannot communicate repair
-        // warnings alongside a partial result as mixed recall can.
+        // The strict API rejects semantic repair warnings rather than
+        // presenting an incomplete semantic execution as success.
         let mut hits = fuse_chunk_lanes(fts_hits, run.records);
         let (mut records, mut non_current): (Vec<_>, Vec<_>) =
             rehydrate_hits(connection, advisory_hits(hits, &[]), &story_query)?

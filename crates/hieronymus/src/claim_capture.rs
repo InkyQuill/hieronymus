@@ -219,6 +219,26 @@ pub(crate) fn detach_bindings(
     Ok(())
 }
 /// Exact copies retain the same claim identity and all future scoped effects.
+/// The declared source must belong to the facet's concept scope even when
+/// it has no bindings. Copy alongside supplemental claims, never instead.
+pub(crate) fn inherit_facet_source(
+    db: &Connection,
+    facet: i64,
+    source: i64,
+) -> Result<(), DecisionErrorV1> {
+    let series: i64 = db
+        .query_row(
+            "select s.id from crystals c join series s on s.slug=c.series_slug where c.id=?",
+            [source],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(DecisionErrorV1::UnknownTarget)?;
+    validate_target(db, ClaimTarget::Facet(facet), series, None, false)?;
+    copy_bindings_tx(db, ClaimTarget::Crystal(source), ClaimTarget::Facet(facet))?;
+    Ok(())
+}
+
 pub(crate) fn copy_bindings_tx(
     db: &Connection,
     source: ClaimTarget,

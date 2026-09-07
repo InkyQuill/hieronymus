@@ -2171,3 +2171,67 @@ fn rag_search_separates_current_and_research_and_honors_receipts() {
     assert!(error.contains("required decision"));
     daemon.shutdown().unwrap();
 }
+
+#[test]
+fn rag_search_reports_exhaustion_after_512_ineligible_candidates() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    let config = HieronymusConfig::new(root.path());
+    current_story::register(&config, "demo");
+    let db = rusqlite::Connection::open(config.database_path()).unwrap();
+    let future: i64 = db
+        .query_row(
+            "select id from story_positions where chapter_key='Revelation'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let base = current_story::claim(&config, "demo", "secret secret secret");
+    let mut claims = serde_json::Map::new();
+    let mut paragraphs = vec![];
+    for index in 0..513 {
+        let mut claim = base.clone();
+        if index < 512 {
+            claim.applicability.knowledge_gates[0].known_from = Some(future);
+        } else {
+            claim.text =
+                "secret eligible orchard meadow afternoon flowers river winter distant village"
+                    .into();
+        }
+        paragraphs.push(claim.text.clone());
+        claims.insert(index.to_string(), json!([claim]));
+    }
+    let path = write_source(root.path(), "budget.txt", &paragraphs.join("\n\n"));
+    call_tool(
+        &daemon,
+        300,
+        "hieronymus_rag_import",
+        json!({"series_slug":"demo","path":path,"claims":claims}),
+    );
+    assert_eq!(
+        db.query_row("select count(*) from rag_chunks", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        513
+    );
+    wait_for_state(&daemon, "ready");
+    let result = call_tool(
+        &daemon,
+        301,
+        "hieronymus_rag_search",
+        json!({"series_slug":"demo","query":"secret secret secret","limit":1,"volume":"I","chapter":"Opening"}),
+    );
+    assert_eq!(result["results"], json!([]), "{result}");
+    assert_eq!(result["candidate_exhausted"], true, "{result}");
+    assert_eq!(result["non_current"].as_array().unwrap().len(), 1);
+    let filled = call_tool(
+        &daemon,
+        302,
+        "hieronymus_rag_search",
+        json!({"series_slug":"demo","query":"eligible","limit":1,"volume":"I","chapter":"Opening"}),
+    );
+    assert_eq!(filled["results"].as_array().unwrap().len(), 1);
+    assert_eq!(filled["candidate_exhausted"], false);
+    daemon.shutdown().unwrap();
+}

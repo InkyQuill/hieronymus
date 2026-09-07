@@ -881,3 +881,203 @@ fn required_receipt_rejects_missing_tentative_foreign_and_future_and_respects_la
         ClaimDisposition::Qualified(vec!["Mira only suspects this".into()])
     );
 }
+
+#[test]
+fn scoped_qualification_history_only_discloses_the_effect_current_for_this_query() {
+    use hieronymus::claim_reads::{ClaimTarget, read_annotation};
+    let (_dir, mut db, mut request) = fixture();
+    db.execute_batch("insert into crystals(id,crystal_type,text,scope_type,series_slug,strength,confidence,status,created_at,updated_at) values(1,'lesson','Mira knows the secret','series','book',0.5,0.5,'active','now','now'); insert into claim_bindings(claim_id,crystal_id) values(1,1); insert into knowledge_gates(applicability_id,viewpoint_kind,viewpoint_concept_id) values(1,'character',1)").unwrap();
+    let hidden = "HIDDEN_CHAPTER_REVELATION";
+    request.applicability.knowledge_gates[0].viewpoint = KnowledgeViewpoint::Narrator;
+    request.operation = OperationV1::Correct {
+        intent: CorrectionIntentV1::Fact {
+            claim_id: 1,
+            claim_revision: 1,
+            effect: FactEffect::Qualify {
+                qualification: hidden.into(),
+            },
+        },
+    };
+    origin(&db, &request);
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&request).unwrap(),
+        DecisionResultV1::Applied { .. }
+    ));
+    let query = |chapter: &str, viewpoint| StoryQueryV1 {
+        series_id: 1,
+        timeline_id: Some(1),
+        position_id: Some(if chapter == "early" { 1 } else { 2 }),
+        viewpoint,
+        scope_predicates: vec!["volume:I".into(), format!("chapter:{chapter}")],
+        mode: QueryMode::Current,
+    };
+    for q in [
+        query("early", Viewpoint::Narrator),
+        query("late", Viewpoint::Character(1)),
+    ] {
+        let annotation = read_annotation(&db, ClaimTarget::Crystal(1), &q).unwrap();
+        assert_eq!(
+            annotation.disposition,
+            hieronymus::claim_reads::ClaimDisposition::Current
+        );
+        assert!(!serde_json::to_string(&annotation).unwrap().contains(hidden));
+        let mut research = q;
+        research.mode = QueryMode::OmniscientResearch;
+        assert!(
+            serde_json::to_string(
+                &read_annotation(&db, ClaimTarget::Crystal(1), &research).unwrap()
+            )
+            .unwrap()
+            .contains(hidden)
+        );
+    }
+    let late = query("late", Viewpoint::Narrator);
+    assert!(
+        serde_json::to_string(&read_annotation(&db, ClaimTarget::Crystal(1), &late).unwrap())
+            .unwrap()
+            .contains(hidden)
+    );
+    request.decision_id = "10000000-0000-4000-8000-000000000002".into();
+    request.origin = OriginReceiptId("20000000-0000-4000-8000-000000000002".into());
+    request.expected_revision = 1;
+    request.operation = OperationV1::Correct {
+        intent: CorrectionIntentV1::Fact {
+            claim_id: 1,
+            claim_revision: 2,
+            effect: FactEffect::Qualify {
+                qualification: "CURRENT_QUALIFICATION".into(),
+            },
+        },
+    };
+    origin(&db, &request);
+    DecisionStore::new(&mut db).apply(&request).unwrap();
+    let serialized =
+        serde_json::to_string(&read_annotation(&db, ClaimTarget::Crystal(1), &late).unwrap())
+            .unwrap();
+    assert!(!serialized.contains(hidden));
+    assert!(serialized.contains("CURRENT_QUALIFICATION"));
+    // Stored receipt-mask fixture: factual ingress currently produces no
+    // exclusions, but the shared read DTO must honor valid excluded history.
+    let mut receipt: serde_json::Value = serde_json::from_str(
+        &db.query_row(
+            "select result_json from decision_records where decision_id=?",
+            [&request.decision_id],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    receipt["Applied"]["receipt"]["effective_exclusions"] =
+        serde_json::json!([request.applicability]);
+    db.execute(
+        "update decision_records set result_json=?1 where decision_id=?2",
+        params![receipt.to_string(), request.decision_id],
+    )
+    .unwrap();
+    let masked =
+        serde_json::to_string(&read_annotation(&db, ClaimTarget::Crystal(1), &late).unwrap())
+            .unwrap();
+    assert!(!masked.contains("CURRENT_QUALIFICATION"));
+    assert!(
+        masked.contains(hidden),
+        "the older unmasked qualification now controls"
+    );
+}
+
+#[test]
+fn facets_inherit_real_source_corrections_before_and_after_derivation() {
+    use hieronymus::{
+        claim_reads::{ClaimDisposition, ClaimTarget, rehydrate_claims},
+        concepts::{ConceptStore, FacetFields, FacetPatch},
+        data_root::HieronymusConfig,
+    };
+    for correct_first in [true, false] {
+        let (dir, mut db, request) = fixture();
+        let config = HieronymusConfig::new(dir.path());
+        hieronymus::registry::Registry::open(&config)
+            .unwrap()
+            .create_series("book", "Book", "en", "ru", None)
+            .unwrap();
+        db.execute_batch("insert into crystals(id,crystal_type,text,scope_type,series_slug,strength,confidence,status,created_at,updated_at) values(1,'lesson','Mira knows the secret','series','book',0.5,0.5,'active','now','now'); insert into claim_bindings(claim_id,crystal_id) values(1,1)").unwrap();
+        origin(&db, &request);
+        if correct_first {
+            DecisionStore::new(&mut db).apply(&request).unwrap();
+        }
+        let supplemental = hieronymus::claim_capture::ClaimInput {
+            text: "supplemental".into(),
+            concept_id: Some(1),
+            applicability: request.applicability.clone(),
+        };
+        let store = ConceptStore::open(&config).unwrap();
+        let context =
+            hieronymus::memory_models::TranslationContext::new("book", "en", "ru", "translation")
+                .volume("I")
+                .chapter("late");
+        let mut target =
+            hieronymus::crystals::NewCrystal::new("lesson", "secret alias independent memory");
+        target.claims = vec![supplemental.clone()];
+        let target_id = hieronymus::crystals::CrystalStore::open(&config)
+            .unwrap()
+            .add_crystal(&context, "lesson", &target)
+            .unwrap();
+        store.link_crystal(target_id, 1, "evidence", 0.8).unwrap();
+        let recall = hieronymus::recall::RecallService::open(&config).unwrap();
+        let score = |response: hieronymus::recall::RecallResponse| {
+            response
+                .hits
+                .iter()
+                .find(|h| h.item_id() == target_id)
+                .unwrap()
+                .score()
+        };
+        let baseline = score(recall.recall_context(&context, "secret alias", 5).unwrap());
+        let facet = store
+            .add_facet_with_claims(
+                1,
+                "secret alias",
+                &FacetFields {
+                    source_crystal_id: Some(1),
+                    ..Default::default()
+                },
+                0.8,
+                false,
+                std::slice::from_ref(&supplemental),
+            )
+            .unwrap();
+        if !correct_first {
+            DecisionStore::new(&mut db).apply(&request).unwrap();
+        }
+        let query = StoryQueryV1 {
+            series_id: 1,
+            timeline_id: Some(1),
+            position_id: Some(2),
+            viewpoint: Viewpoint::Narrator,
+            scope_predicates: vec!["volume:I".into(), "chapter:late".into()],
+            mode: QueryMode::Current,
+        };
+        assert_eq!(
+            rehydrate_claims(&db, ClaimTarget::Facet(facet.id), &query).unwrap(),
+            ClaimDisposition::Invalid
+        );
+        assert_eq!(
+            score(recall.recall_context(&context, "secret alias", 5).unwrap()),
+            baseline,
+            "invalid derived facet must not boost a valid linked crystal"
+        );
+        let changed = store
+            .update_facet_with_claims(
+                facet.id,
+                &FacetPatch {
+                    value: Some(Some("new secret alias".into())),
+                    ..Default::default()
+                },
+                &[supplemental],
+            )
+            .unwrap();
+        assert_eq!(
+            rehydrate_claims(&db, ClaimTarget::Facet(changed.id), &query).unwrap(),
+            ClaimDisposition::Invalid
+        );
+        assert!(db.query_row("select exists(select 1 from evidence_records where json_extract(binding_json,'$.event')='copy' and json_extract(binding_json,'$.to.id')=?1)",[facet.id],|r|r.get::<_,bool>(0)).unwrap());
+    }
+}

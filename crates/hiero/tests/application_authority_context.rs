@@ -353,3 +353,97 @@ fn withheld_application_rows_do_not_leak_prose_through_kind_or_credibility() {
     assert_eq!(row["kind"], "");
     assert_eq!(row["source_credibility"], "");
 }
+
+#[test]
+fn actual_recall_hides_outside_scoped_qualification_in_entire_response() {
+    use hieronymus::{authority::DecisionStore, authority_models::*, story_applicability::*};
+    use sha2::{Digest, Sha256};
+    let (_root, app, _) = fixture();
+    current_story::register(app.config(), "book");
+    let mut db = hieronymus::db::open_migrated(&app.config().database_path()).unwrap();
+    db.execute("insert into concepts(id,canonical_name,scope_type,scope_key,created_at,updated_at) values(1,'Mira','series','series:book','now','now')",[]).unwrap();
+    let mut claim = current_story::claim(app.config(), "book", "secret ordinary observation");
+    claim.concept_id = Some(1);
+    claim.applicability.knowledge_gates.push(KnowledgeGateV1 {
+        viewpoint: KnowledgeViewpoint::Character(1),
+        known_from: None,
+        known_until: None,
+    });
+    let mut sessions = vec![];
+    for chapter in ["Opening", "Revelation"] {
+        sessions.push(app.call("hieronymus_session_start",&json!({"series_slug":"book","volume":"I","chapter":chapter,"story_viewpoint":"Narrator"}),"agent").unwrap()["session_id"].as_i64().unwrap());
+    }
+    let mut crystal = hieronymus::crystals::NewCrystal::new("lesson", &claim.text);
+    crystal.claims = vec![claim.clone()];
+    hieronymus::crystals::CrystalStore::open(app.config())
+        .unwrap()
+        .add_crystal(
+            &hieronymus::memory_models::TranslationContext::new("book", "en", "ru", "translation"),
+            "lesson",
+            &crystal,
+        )
+        .unwrap();
+    let claim_id = db
+        .query_row("select id from memory_claims", [], |r| r.get(0))
+        .unwrap();
+    let mut applicability = claim.applicability;
+    applicability.chapter_key = Some("Revelation".into());
+    applicability.volume_key = Some("I".into());
+    applicability.knowledge_gates = vec![KnowledgeGateV1 {
+        viewpoint: KnowledgeViewpoint::Narrator,
+        known_from: None,
+        known_until: None,
+    }];
+    let hidden = "HIDDEN_QUALIFICATION_PROSE";
+    let request = DecisionRequestV1 {
+        version: 1,
+        decision_id: "10000000-0000-4000-8000-000000000001".into(),
+        expected_revision: hieronymus::coherent_reads::revision(&db, "book").unwrap(),
+        actor_kind: ActorKind::ExplicitUser,
+        origin: OriginReceiptId("20000000-0000-4000-8000-000000000001".into()),
+        evidence_refs: vec![],
+        series_id: 1,
+        concept_id: Some(1),
+        source_language: "en".into(),
+        target_language: None,
+        applicability,
+        operation: OperationV1::Correct {
+            intent: CorrectionIntentV1::Fact {
+                claim_id,
+                claim_revision: 1,
+                effect: FactEffect::Qualify {
+                    qualification: hidden.into(),
+                },
+            },
+        },
+    };
+    // Private immutable-origin fixture, not an agent-facing authority input.
+    let binding=json!({"decision_id":request.decision_id,"expected_revision":request.expected_revision,"selected_source":null,"series_id":request.series_id,"concept_id":request.concept_id,"source_language":request.source_language,"target_language":request.target_language,"applicability":request.applicability,"evidence_ids":[],"operation":request.operation}).to_string();
+    let text = "qualify this source";
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("{text}\n{binding}").as_bytes())
+    );
+    db.execute("insert into origin_receipts(id,kind,principal,event_id,text,context_json,content_hash,created_at) values(?1,'console_user','test',?1,?2,?3,?4,'now')",rusqlite::params![request.origin.0,text,binding,hash]).unwrap();
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&request).unwrap(),
+        DecisionResultV1::Applied { .. }
+    ));
+    for (session, viewpoint) in [
+        (sessions[0], json!("Narrator")),
+        (sessions[1], json!({"Character":1})),
+    ] {
+        let args = json!({"session_id":session,"series_slug":"book","query":"secret","story_viewpoint":viewpoint});
+        let response = app.call("hieronymus_recall", &args, "agent").unwrap();
+        assert!(!response.to_string().contains(hidden), "{response}");
+        assert!(!response["results"].as_array().unwrap().is_empty());
+        let mut research = args;
+        research["story_query_mode"] = json!("OmniscientResearch");
+        assert!(
+            app.call("hieronymus_recall", &research, "agent")
+                .unwrap()
+                .to_string()
+                .contains(hidden)
+        );
+    }
+}

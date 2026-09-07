@@ -1178,3 +1178,149 @@ fn research_future_source_is_separate_from_current_and_current_query_redacts_all
     assert!(chunk.display_text.starts_with("Source evidence"));
     assert!(!chunk.claim_annotation.claims.is_empty());
 }
+
+#[test]
+fn mixed_candidates_on_another_valid_timeline_do_not_abort_lexical_facet_or_semantic_reads() {
+    use hieronymus::{
+        concepts::{ConceptStore, FacetFields, NewConcept},
+        crystals::NewCrystal,
+        story_applicability::Viewpoint,
+    };
+    let fixture = fixture();
+    import_text(&fixture, "other.txt", "secret branch source");
+    import_text(&fixture, "current.txt", "secret current source");
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    db.execute(
+        "insert into story_timelines(series_id,name) values(1,'alternate')",
+        [],
+    )
+    .unwrap();
+    let other = db.last_insert_rowid();
+    db.execute("insert into story_positions(timeline_id,volume_key,chapter_key,scene_key,ordinal,evidence_id) select ?1,volume_key,chapter_key,scene_key,ordinal,evidence_id from story_positions where timeline_id=1",[other]).unwrap();
+    let concepts = ConceptStore::open(&fixture.config).unwrap();
+    let concept = concepts
+        .create_concept(
+            "branch identity",
+            &NewConcept {
+                scope_type: "series".into(),
+                scope_key: "series:demo".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let mut claim = current_story::claim(&fixture.config, "demo", "secret branch crystal");
+    claim.applicability.timeline_id = Some(other);
+    claim.concept_id = Some(concept.id);
+    let mut crystal = NewCrystal::new("lesson", "secret branch crystal");
+    crystal.claims = vec![claim.clone()];
+    let id = CrystalStore::open(&fixture.config)
+        .unwrap()
+        .add_crystal(&context(), "lesson", &crystal)
+        .unwrap();
+    concepts
+        .add_facet_with_claims(
+            concept.id,
+            "secret branch alias",
+            &FacetFields {
+                source_crystal_id: Some(id),
+                ..Default::default()
+            },
+            0.9,
+            false,
+            &[claim],
+        )
+        .unwrap();
+    db.execute("update applicabilities set timeline_id=?1 where id in(select applicability_id from memory_claims where id in(select claim_id from claim_bindings where rag_chunk_id=1))",[other]).unwrap();
+    activate_generation(&fixture);
+    let mut q = context();
+    q.story_timeline_id = Some(1);
+    q.story_viewpoint = Viewpoint::Narrator;
+    let response = armed_service(&fixture)
+        .recall_context(&q, "secret", 5)
+        .unwrap();
+    assert_eq!(rag_hit_ids(&response), vec![2]);
+    assert!(
+        response
+            .warnings
+            .iter()
+            .all(|w| w.kind != WARNING_SEMANTIC_UNAVAILABLE),
+        "alternate candidates must not degrade semantic hydration"
+    );
+    assert!(response.non_current.iter().any(|h| h.item_id() == id));
+    let mut malformed =
+        hieronymus::story_applicability::StoryApplicability::resolve_context(&db, &q).unwrap();
+    malformed.position_id = Some(
+        db.query_row(
+            "select id from story_positions where timeline_id=? limit 1",
+            [other],
+            |r| r.get(0),
+        )
+        .unwrap(),
+    );
+    assert!(
+        hieronymus::claim_reads::read_annotation(
+            &db,
+            hieronymus::claim_reads::ClaimTarget::Crystal(id),
+            &malformed
+        )
+        .is_err(),
+        "foreign position remains a query error"
+    );
+    q.story_timeline_id = Some(999999);
+    assert!(
+        armed_service(&fixture)
+            .recall_context(&q, "secret", 5)
+            .is_err()
+    );
+}
+
+#[test]
+fn observed_rag_reports_bounded_exhaustion_with_eligible_chunk_beyond_512() {
+    let fixture = fixture();
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    let future: i64 = db
+        .query_row(
+            "select id from story_positions where chapter_key='Revelation'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let base = current_story::claim(&fixture.config, "demo", "secret secret secret");
+    let mut options = RagImport::new();
+    let mut paragraphs = vec![];
+    for index in 0..513 {
+        let mut claim = base.clone();
+        if index < 512 {
+            claim.applicability.knowledge_gates[0].known_from = Some(future);
+        } else {
+            claim.text =
+                "secret eligible orchard meadow afternoon flowers river winter distant village"
+                    .into();
+        }
+        paragraphs.push(claim.text.clone());
+        options.claims.insert(index, vec![claim]);
+    }
+    let path = write_source(&fixture, "budget.txt", &paragraphs.join("\n\n"));
+    RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file("demo", &path, &options)
+        .unwrap();
+    activate_generation(&fixture);
+    let service = armed_service(&fixture);
+    let response = service
+        .search_series_context(&context(), "secret secret secret", 1)
+        .unwrap();
+    assert!(response.value.candidate_exhausted);
+    assert!(response.value.hits.iter().all(|h| h.chunk.text.is_empty()));
+    let filled = service
+        .search_series_context(&context(), "eligible", 1)
+        .unwrap();
+    assert!(!filled.value.candidate_exhausted);
+    assert!(
+        filled
+            .value
+            .hits
+            .iter()
+            .any(|h| h.chunk.text.contains("eligible"))
+    );
+}

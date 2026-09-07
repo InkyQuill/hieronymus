@@ -468,8 +468,9 @@ impl ConceptStore {
     ) -> Result<ConceptFacetRecord, ConceptError> {
         self.update_facet_with_claims(facet_id, patch, &[])
     }
-    /// Changed content becomes Unknown unless supplied with new typed claims;
-    /// immutable old claims and correction effects are retained for audit.
+    /// Replaced standalone content becomes Unknown without new typed claims.
+    /// Derived facets retain source lineage across content and source edits;
+    /// immutable old claims and correction effects remain available for audit.
     pub fn update_facet_with_claims(
         &self,
         facet_id: i64,
@@ -531,8 +532,9 @@ impl ConceptStore {
             Some(Some(is_canonical)) => is_canonical,
         };
         // Metadata cannot erase an existing correction or widen its captured
-        // applicability. Only replaced source content retires its bindings.
-        if next_value != row.value {
+        // applicability. Replaced standalone content retires its bindings;
+        // a derived facet retains its declared source lineage across edits.
+        if next_value != row.value && row.source_crystal_id.is_none() {
             crate::claim_capture::detach_bindings(
                 &transaction,
                 crate::claim_reads::ClaimTarget::Facet(facet_id),
@@ -566,6 +568,9 @@ impl ConceptStore {
         }
         if next_is_canonical {
             set_canonical_facet_with_connection(&transaction, concept_id, facet_id)?;
+        }
+        if let Some(source) = next_source_crystal_id {
+            crate::claim_capture::inherit_facet_source(&transaction, facet_id, source)?;
         }
         for claim in claims {
             crate::claim_capture::capture_claim_tx(
@@ -1057,6 +1062,9 @@ pub(crate) fn add_facet_with_connection(
     set_facet_semantic_tags(connection, facet_id, &fields.semantic_tags)?;
     if is_canonical {
         set_canonical_facet_with_connection(connection, concept_id, facet_id)?;
+    }
+    if let Some(source) = fields.source_crystal_id {
+        crate::claim_capture::inherit_facet_source(connection, facet_id, source)?;
     }
     Ok(facet_id)
 }
