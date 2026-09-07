@@ -299,6 +299,15 @@ pub fn mcp_headers(
 
 /// A browser session obtained through the real flow: bearer-authenticated
 /// grant mint, then the one-time exchange for the session cookie value.
+pub fn console_credential(daemon: &hiero::daemon::Daemon) -> hieronymus::secret::Secret<String> {
+    let config = hieronymus::data_root::load_config(Some(daemon.data_root()));
+    hiero::daemon::discovery::read_local_credential(
+        &config,
+        hiero::daemon::discovery::LocalCredential::Console,
+    )
+    .unwrap()
+}
+
 pub fn browser_session(daemon: &hiero::daemon::Daemon) -> (String, String) {
     let port = daemon.local_addr().port();
     let mint = send_request(
@@ -307,7 +316,7 @@ pub fn browser_session(daemon: &hiero::daemon::Daemon) -> (String, String) {
         "/auth/launch-grant",
         &[(
             "Authorization".to_string(),
-            format!("Bearer {}", daemon.bearer().expose_secret()),
+            format!("Bearer {}", console_credential(daemon).expose_secret()),
         )],
         b"",
     );
@@ -609,3 +618,5 @@ pub fn wait_until(condition: impl Fn() -> bool, timeout: Duration) -> bool {
     }
     condition()
 }
+
+pub mod authority;

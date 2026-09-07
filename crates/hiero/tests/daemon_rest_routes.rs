@@ -186,7 +186,10 @@ fn launch_grant_exchange_matches_frozen_target_and_waives_csrf() {
     let grant_body = |grant: &str| format!(r#"{{"launch_grant": "{grant}"}}"#).into_bytes();
     let mint_headers = vec![(
         "Authorization".to_string(),
-        format!("Bearer {}", daemon.bearer().expose_secret()),
+        format!(
+            "Bearer {}",
+            common::console_credential(&daemon).expose_secret()
+        ),
     )];
     // The oracle treats every frozen case as starting from a live grant, so
     // each case below mints its own.
@@ -699,4 +702,305 @@ fn browser_form_encoded_multiword_views_are_decoded_once() {
         );
     }
     daemon.shutdown().unwrap();
+}
+
+#[test]
+fn ordinary_mcp_bearer_cannot_mint_console_authority() {
+    let (_root, daemon) = start_daemon_on_ephemeral_port();
+    let port = daemon.local_addr().port();
+    let response = send_request(
+        port,
+        "POST",
+        "/auth/launch-grant",
+        &[
+            ("Host".into(), format!("127.0.0.1:{port}")),
+            ("Origin".into(), format!("http://127.0.0.1:{port}")),
+            (
+                "Authorization".into(),
+                format!("Bearer {}", daemon.bearer().expose_secret()),
+            ),
+        ],
+        br#"{"actor_kind":"explicit_user","source_role":"user"}"#,
+    );
+    assert_eq!(response.status, 401);
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn ordinary_mcp_bearer_cannot_submit_host_events() {
+    let (_root, daemon) = start_daemon_on_ephemeral_port();
+    let response = send_request(
+        daemon.local_addr().port(),
+        "POST",
+        "/authority/host-event",
+        &[(
+            "Authorization".into(),
+            format!("Bearer {}", daemon.bearer().expose_secret()),
+        )],
+        br#"{"source_role":"user","event_id":"copied-transcript"}"#,
+    );
+    assert_eq!(response.status, 401);
+}
+
+#[test]
+fn public_mcp_producers_then_console_and_bridge_correction() {
+    let (root, daemon) = start_daemon_on_ephemeral_port();
+    let port = daemon.local_addr().port();
+    let invoke = |name: &str, value: Value| {
+        let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":value,"_meta":{"io.modelcontextprotocol/protocolVersion":common::PROTOCOL_REVISION,"io.modelcontextprotocol/clientCapabilities":{}}}});
+        let response = send_request(
+            port,
+            "POST",
+            "/mcp",
+            &common::mcp_headers(&daemon, &[("Mcp-Method", "tools/call"), ("Mcp-Name", name)]),
+            &serde_json::to_vec(&body).unwrap(),
+        );
+        assert_eq!(response.status, 200, "{name}: {}", response.body());
+        let body = response.body();
+        assert_eq!(body["result"]["isError"], false, "{name}: {body}");
+        body["result"]["structuredContent"].clone()
+    };
+    let (draft, mut event) = common::authority::prepared_with(invoke, root.path());
+    let concept_id = draft["concept_id"].clone();
+    let activated = invoke("hieronymus_decide", draft);
+    assert!(activated.get("Applied").is_some(), "{activated}");
+    let (_, cookie) = common::browser_session(&daemon);
+    let console_headers = vec![
+        ("Cookie".into(), format!("hieronymus_session={cookie}")),
+        ("Origin".into(), same_origin(port)),
+    ];
+    for (index, case) in [
+        "hash",
+        "language",
+        "scope",
+        "multiple",
+        "quote",
+        "unsupported",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut invalid = event.clone();
+        invalid["event_id"] = json!(format!("invalid-{case}"));
+        invalid["decision_id"] = json!(format!("13000000-0000-4000-8000-{index:012}"));
+        match *case {
+            "hash" => invalid["selected_sources"][0]["content_hash"] = json!("changed"),
+            "language" => invalid["source_language"] = Value::Null,
+            "scope" => invalid["applicability"] = Value::Null,
+            "multiple" => {
+                invalid["selected_sources"] =
+                    json!([event["selected_sources"][0], event["selected_sources"][0]])
+            }
+            "quote" => invalid["text"] = json!("translate \"Alec\" as \"Б\""),
+            _ => invalid["source_language"] = json!("xx"),
+        }
+        let outcome = send_request(
+            port,
+            "POST",
+            "/api/authority/correct",
+            &console_headers,
+            &serde_json::to_vec(&invalid).unwrap(),
+        );
+        assert_eq!(
+            outcome.body()["status"],
+            "tentative",
+            "{case}: {}",
+            outcome.body()
+        );
+        if *case == "hash" {
+            assert_eq!(outcome.body()["detail"], "changed_source_hash_or_span");
+        }
+    }
+    let mut stale = event.clone();
+    stale["event_id"] = json!("stale-observation");
+    stale["decision_id"] = json!("13000000-0000-4000-8000-000000000010");
+    stale["expected_revision"] = json!(1);
+    let stale_result = send_request(
+        port,
+        "POST",
+        "/api/authority/correct",
+        &console_headers,
+        &serde_json::to_vec(&stale).unwrap(),
+    );
+    assert_eq!(stale_result.status, 409);
+    assert_eq!(
+        stale_result.body()["error"]["RevisionConflict"]["current_revision"],
+        2
+    );
+    let mut form = event.clone();
+    form["text"] = Value::Null;
+    form["structured"] = json!({"kind":"rendering","canonical":"Б","approved_variants":["Alias"],"forbidden_variants":["Bad"]});
+    let corrected = send_request(
+        port,
+        "POST",
+        "/api/authority/correct",
+        &console_headers,
+        &serde_json::to_vec(&form).unwrap(),
+    );
+    assert_eq!(corrected.status, 200, "{}", corrected.body());
+    assert!(
+        corrected.body().get("Applied").is_some(),
+        "{}",
+        corrected.body()
+    );
+    let receipt = corrected.body()["Applied"]["receipt"].clone();
+    for (rendering, valid) in [("Б", true), ("А", false)] {
+        let result = invoke(
+            "hieronymus_termbase_validate",
+            json!({"series_slug":"book","raw_text":"Alex","translated_text":rendering,"volume":"I","chapter":"1","story_timeline_id":event["applicability"]["timeline_id"],"story_scene_key":"a","required_decision_id":receipt["decision_id"]}),
+        );
+        assert_eq!(
+            result["results"].as_array().unwrap().is_empty(),
+            valid,
+            "{rendering}: {result}"
+        );
+    }
+    event["expected_revision"] = receipt["resulting_revision"].clone();
+    event["selected_rule"]["id"] = receipt["affected_rules"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()[0]
+        .clone();
+    event["selected_rule"]["revision"] = receipt["affected_rules"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()[1]
+        .clone();
+    event["decision_id"] = json!("11000000-0000-4000-8000-000000000003");
+    event["event_id"] = json!("bridge-event-2");
+    event["text"] = json!("translate this as В");
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    let token = hiero::daemon::discovery::read_local_credential(
+        &config,
+        hiero::daemon::discovery::LocalCredential::HostEvent,
+    )
+    .unwrap();
+    let bridge = send_request(
+        port,
+        "POST",
+        "/authority/host-event",
+        &[(
+            "Authorization".into(),
+            format!("Bearer {}", token.expose_secret()),
+        )],
+        &serde_json::to_vec(&event).unwrap(),
+    );
+    assert_eq!(bridge.status, 200, "{}", bridge.body());
+    assert!(bridge.body().get("Applied").is_some(), "{}", bridge.body());
+    for (rendering, valid) in [("В", true), ("Alias", true), ("Б", false), ("Bad", false)] {
+        let result = invoke(
+            "hieronymus_termbase_validate",
+            json!({"series_slug":"book","raw_text":"Alex","translated_text":rendering,"volume":"I","chapter":"1","story_timeline_id":event["applicability"]["timeline_id"],"story_scene_key":"a","required_decision_id":bridge.body()["Applied"]["receipt"]["decision_id"]}),
+        );
+        assert_eq!(
+            result["results"].as_array().unwrap().is_empty(),
+            valid,
+            "{rendering}: {result}"
+        );
+    }
+    let memory = invoke(
+        "hieronymus_short_term_add",
+        json!({"session_id":event["session_id"],"kind":"note","text":"Alex suspects it. Alex knows it.","claims":[{"text":"Alex suspects it.","concept_id":concept_id,"applicability":event["applicability"]},{"text":"Alex knows it.","concept_id":concept_id,"applicability":event["applicability"]}]}),
+    );
+    let selection_body =
+        json!({"series_id":1,"target":{"source":"short_term","id":memory["memory_id"]}});
+    let selection = send_request(
+        port,
+        "POST",
+        "/api/authority/selection",
+        &console_headers,
+        &serde_json::to_vec(&selection_body).unwrap(),
+    );
+    assert_eq!(selection.status, 200, "{}", selection.body());
+    let selection = selection.body();
+    assert_eq!(selection["claims"].as_array().unwrap().len(), 2);
+    let mut fact = event.clone();
+    fact["expected_revision"] = selection["expected_revision"].clone();
+    fact["selected_sources"] = json!([]);
+    fact["selected_rule"] = Value::Null;
+    fact["target_language"] = Value::Null;
+    fact["text"] = json!("that memory is wrong");
+    fact["selected_claims"] = json!(
+        selection["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| json!({"id":c["claim_id"],"revision":c["revision"]}))
+            .collect::<Vec<_>>()
+    );
+    fact["event_id"] = json!("ambiguous-claims");
+    fact["decision_id"] = json!("11000000-0000-4000-8000-000000000005");
+    let ambiguous = send_request(
+        port,
+        "POST",
+        "/api/authority/correct",
+        &console_headers,
+        &serde_json::to_vec(&fact).unwrap(),
+    );
+    assert_eq!(ambiguous.body()["status"], "tentative");
+    fact["selected_claims"] = json!([fact["selected_claims"][0]]);
+    fact["event_id"] = json!("selected-claim");
+    fact["decision_id"] = json!("11000000-0000-4000-8000-000000000006");
+    let invalidated = send_request(
+        port,
+        "POST",
+        "/api/authority/correct",
+        &console_headers,
+        &serde_json::to_vec(&fact).unwrap(),
+    );
+    assert_eq!(invalidated.status, 200, "{}", invalidated.body());
+    assert!(
+        invalidated.body().get("Applied").is_some(),
+        "{}",
+        invalidated.body()
+    );
+    fact["expected_revision"] =
+        invalidated.body()["Applied"]["receipt"]["resulting_revision"].clone();
+    fact["selected_claims"] = json!([{"id":selection["claims"][1]["claim_id"],"revision":selection["claims"][1]["revision"]}]);
+    fact["event_id"] = json!("qualified-claim");
+    fact["decision_id"] = json!("11000000-0000-4000-8000-000000000007");
+    fact["text"] = json!(r#"qualify that memory as "Mira suspects this; \u2603""#);
+    let qualified = send_request(
+        port,
+        "POST",
+        "/api/authority/correct",
+        &console_headers,
+        &serde_json::to_vec(&fact).unwrap(),
+    );
+    assert_eq!(qualified.status, 200, "{}", qualified.body());
+    assert!(
+        qualified.body().get("Applied").is_some(),
+        "{}",
+        qualified.body()
+    );
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    let qualification: String = db
+        .query_row(
+            "select qualification from claim_effects where effect='qualified'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(qualification, "Mira suspects this; ☃");
+    assert_eq!(
+        db.query_row("select count(*) from memory_claims", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    // Same trusted event cannot be rebound to another operation or observed revision.
+    event["text"] = json!("translate this as Forged");
+    let replay = send_request(
+        port,
+        "POST",
+        "/authority/host-event",
+        &[(
+            "Authorization".into(),
+            format!("Bearer {}", token.expose_secret()),
+        )],
+        &serde_json::to_vec(&event).unwrap(),
+    );
+    assert_eq!(replay.status, 409);
 }

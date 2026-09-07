@@ -20,3 +20,5 @@ pub mod uninstall;
 pub mod update;
 
 pub mod release_source;
+
+pub mod trusted_ingress;

@@ -9,40 +9,19 @@
 //! [`AppError::Domain`]. All database work stays in the `hieronymus` store
 //! APIs — no SQL lives here.
 //!
-//! ADR 0011 discipline, end to end:
-//!
-//! - A proposed term is a `candidate`: advisory, never enforced by
-//!   `hieronymus_termbase_contract`, until an explicit approval runs
-//!   through the audited lifecycle ([`Termbase::apply_action`]).
-//! - The actor is ALWAYS the transport-authenticated credential holder
-//!   passed to the dispatcher. The legacy wrappers carry no actor argument
-//!   and the argument structs have no actor field, so an override cannot be
-//!   decoded even in principle. Calling the explicitly named approval or
-//!   archive operation IS the explicit user operation under the
-//!   local-owner credential policy.
-//! - `hieronymus_rule_crystal_archive` resolves the structured authority
-//!   through `term_rules.rule_crystal_id` and archives authority AND
-//!   projection in one transaction via [`Termbase::apply_action`]. Unknown
-//!   or ambiguous links fail — the projection is never archived alone.
-//! - `hieronymus_rule_crystal_validate` and `hieronymus_rule_crystals_list`
-//!   are read-only advisory views over the projection.
-//! - Where the Python wrapper shapes differ from the structured authority
-//!   the public tool shapes are preserved: `hieronymus_termbase_propose`
-//!   keeps the Python `term_id` key (plus the structured rule fields the
-//!   Rust authority owns), `hieronymus_termbase_approve` keeps
-//!   `{term_id, approved}`, and the legacy `category`/`tags`/`notes`
-//!   arguments stay accepted (`category` has no structured column — the
-//!   contract renders category `rule`; `tags` land in the structured
-//!   semantic tags; `notes` lands in `term_rules.notes`).
+//! ADR0016 authority boundary: proposals remain advisory. Ordinary MCP
+//! approval/archive wrappers report unverified origin; their historical names
+//! and actor labels confer no human authority. Evidence-grounded learned work
+//! uses `hieronymus_decide`, while user corrections use the guarded ingress.
+//! Contract/validation keep coherent read context and accepted-receipt dependencies.
+//! Proposals preserve legacy fields and add the existing typed `concept_id`.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use hieronymus::crystals::CrystalStore;
-use hieronymus::memory_models::{CrystalRecord, TranslationContext};
-use hieronymus::terminology::{
-    ProposeFields, RuleAction, RuleActionRequest, Source, TermRule, Termbase, TermbaseError,
-};
+use hieronymus::memory_models::CrystalRecord;
+use hieronymus::terminology::{ProposeFields, Source, TermRule, Termbase};
 
 use super::AppError;
 use super::Application;
@@ -138,6 +117,8 @@ fn crystal_payload(crystal: &CrystalRecord) -> Value {
 #[derive(Deserialize)]
 #[allow(dead_code)] // `category` is required by the frozen schema but has no structured column (documented below).
 struct TermbasePropose {
+    #[serde(default)]
+    concept_id: Option<i64>,
     series_slug: String,
     category: String,
     source_text: String,
@@ -183,6 +164,7 @@ fn termbase_propose(
         &args.chapter,
     )?;
     let fields = ProposeFields {
+        concept_id: args.concept_id,
         // The legacy tags argument is the structured semantic-tag set (used
         // for ambiguity resolution); the legacy category argument has no
         // structured column — the authority renders category `rule`.
@@ -199,6 +181,8 @@ fn termbase_propose(
 // --------------------------------------------------- hieronymus_termbase_approve
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Validate the retained legacy input shape before reporting the policy error.
 struct TermbaseApprove {
     series_slug: String,
     term_id: i64,
@@ -212,32 +196,14 @@ struct TermbaseApprove {
     chapter: String,
 }
 
-/// The explicit approval operation: the authenticated transport actor runs
-/// the audited candidate→active transition (legacy arguments preserved; the
-/// idempotency key and expected revision are derived internally from the
-/// currently pending transition).
+/// Legacy compatibility surface: actor labels cannot bypass decision policy.
 fn termbase_approve(
-    application: &Application,
+    _application: &Application,
     arguments: &Value,
-    actor: &str,
+    _actor: &str,
 ) -> Result<Value, AppError> {
-    let args = decode::<TermbaseApprove>(arguments)?;
-    let termbase = termbase(
-        application,
-        &args.series_slug,
-        args.source_language,
-        args.target_language,
-        &args.volume,
-        &args.chapter,
-    )?;
-    termbase
-        .approve(
-            args.term_id,
-            actor,
-            "approved via hieronymus_termbase_approve",
-        )
-        .map_err(domain)?;
-    Ok(json!({"term_id": args.term_id, "approved": true}))
+    let _args = decode::<TermbaseApprove>(arguments)?;
+    Err(legacy_authority_error())
 }
 
 // -------------------------------------------------- hieronymus_termbase_contract
@@ -323,61 +289,20 @@ fn termbase_validate(application: &Application, arguments: &Value) -> Result<Val
 // ---------------------------------------------- hieronymus_rule_crystal_archive
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Validate the retained legacy input shape before reporting the policy error.
 struct RuleCrystalArchive {
     crystal_id: i64,
 }
 
-/// Archive a rule crystal THROUGH the structured authority: resolve the
-/// linked `term_rules` row, then run the audited archive action so authority
-/// and projection transition in one transaction. Unknown or ambiguous links
-/// fail — a projection is never archived alone (that would leave the
-/// authority active and enforced while its advisory rendering disappears).
+/// Applies equally to decision-owned and migration-protected legacy global rules.
 fn rule_crystal_archive(
-    application: &Application,
+    _application: &Application,
     arguments: &Value,
-    actor: &str,
+    _actor: &str,
 ) -> Result<Value, AppError> {
-    let args = decode::<RuleCrystalArchive>(arguments)?;
-    let config = application.config();
-    let crystals = CrystalStore::open(config).map_err(domain)?;
-    let crystal = crystals.get(args.crystal_id).map_err(domain)?;
-    if crystal.crystal_type != "rule" {
-        return Err(AppError::Domain(
-            "crystal is not a rule crystal".to_string(),
-        ));
-    }
-    let rule_id = match Termbase::rule_id_for_crystal(config, args.crystal_id).map_err(domain)? {
-        Some(rule_id) => rule_id,
-        // Unknown or ambiguous links fail — never guess.
-        None => return Err(domain(TermbaseError::UnlinkedCrystalLink(args.crystal_id))),
-    };
-    let context = TranslationContext::new(
-        crystal.series_slug.as_str(),
-        crystal.source_language.as_str(),
-        crystal.target_language.as_str(),
-        "translation",
-    );
-    let termbase = Termbase::open(config, &context).map_err(domain)?;
-    let rule = termbase.get_rule(rule_id).map_err(domain)?;
-    if rule.status == "archived" && crystal.status == "archived" {
-        // Safe retry: this exact transition already committed.
-        return Ok(crystal_payload(&crystal));
-    }
-    termbase
-        .apply_action(&RuleActionRequest {
-            rule_id,
-            action: RuleAction::Archive,
-            actor: actor.to_string(),
-            reason: "archived via hieronymus_rule_crystal_archive".to_string(),
-            expected_revision: rule.revision,
-            idempotency_key: format!(
-                "mcp-rule-crystal-archive:{}:{}@{}",
-                args.crystal_id, rule.status, rule.revision
-            ),
-        })
-        .map_err(domain)?;
-    let archived = crystals.get(args.crystal_id).map_err(domain)?;
-    Ok(crystal_payload(&archived))
+    let _args = decode::<RuleCrystalArchive>(arguments)?;
+    Err(legacy_authority_error())
 }
 
 // --------------------------------------------- hieronymus_rule_crystal_validate
@@ -454,4 +379,8 @@ fn read_termbase(
     )?;
     story.apply(&mut context);
     Termbase::open(application.config(), &context).map_err(domain)
+}
+
+fn legacy_authority_error() -> AppError {
+    AppError::Domain("unverified origin: legacy hard-rule mutation requires hieronymus_decide or trusted correction ingress".into())
 }

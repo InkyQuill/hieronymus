@@ -666,7 +666,8 @@ fn feedback_records_user_correction_memory() {
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].id, memory_id);
     assert_eq!(memories[0].kind, "correction");
-    assert_eq!(memories[0].source_role, "user");
+    assert_eq!(memories[0].source_role, "assistant");
+    assert_eq!(payload["status"], "tentative");
     assert_eq!(memories[0].text, "use кот, not кошка");
 }
 

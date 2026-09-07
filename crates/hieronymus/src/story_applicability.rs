@@ -37,12 +37,14 @@ pub enum KnowledgeViewpoint {
     All,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KnowledgeGateV1 {
     pub viewpoint: KnowledgeViewpoint,
     pub known_from: Option<i64>,
     pub known_until: Option<i64>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApplicabilityV1 {
     pub series_id: i64,
     pub timeline_id: Option<i64>,

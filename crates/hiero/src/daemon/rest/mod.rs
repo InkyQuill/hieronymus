@@ -38,6 +38,13 @@ pub(crate) fn handle(
 ) -> Response {
     match path {
         "/status" => status::handle(request, runtime),
+        "/authority/host-event" if request.method == "POST" => host_event(request, runtime),
+        "/api/authority/correct" if request.method == "POST" => {
+            guard_api(request, runtime, console_correction)
+        }
+        "/api/authority/selection" if request.method == "POST" => {
+            guard_api(request, runtime, console_selection)
+        }
         "/semantic/configure" => semantic::handle(request, runtime, false),
         "/semantic/acquire" => semantic::handle(request, runtime, true),
         "/recall/feedback" => feedback::handle(request, runtime),
@@ -195,7 +202,7 @@ fn handle_grant_mint(request: &Request, runtime: &DaemonRuntime) -> Response {
     if !host_is_valid(request, runtime) {
         return invalid_host();
     }
-    if !bearer_matches(request, runtime) {
+    if !credential_matches(request, &runtime.console_credential) {
         return unauthorized();
     }
     match runtime.sessions.mint_grant() {
@@ -261,6 +268,65 @@ pub(super) fn parse_query(query: &str) -> Vec<(String, String)> {
             (key.to_string(), value)
         })
         .collect()
+}
+
+/// Credential check shared by separately authenticated local authority routes.
+fn credential_matches(request: &Request, credential: &hieronymus::secret::Secret<String>) -> bool {
+    header(&request.headers, "authorization")
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|value| value == credential.expose_secret())
+}
+
+fn host_event(request: &Request, runtime: &DaemonRuntime) -> Response {
+    if !host_is_valid(request, runtime) {
+        return invalid_host();
+    }
+    if !credential_matches(request, &runtime.host_event_credential) {
+        return unauthorized();
+    }
+    correction_response(
+        request,
+        runtime,
+        crate::trusted_ingress::Principal::HostEvent,
+    )
+}
+fn console_correction(request: &Request, runtime: &DaemonRuntime) -> Response {
+    // Cookie was authenticated by guard_api. Store a hash, never a live cookie credential.
+    let identity = crate::trusted_ingress::hash(&presented_session(request).unwrap_or_default());
+    correction_response(
+        request,
+        runtime,
+        crate::trusted_ingress::Principal::Console(identity),
+    )
+}
+fn correction_response(
+    request: &Request,
+    runtime: &DaemonRuntime,
+    principal: crate::trusted_ingress::Principal,
+) -> Response {
+    let Some(body) = request_body(request) else {
+        return Response::json(400, &json!({"error":"invalid_request"}));
+    };
+    match crate::application::authority::user_correction(&runtime.application, principal, &body) {
+        Ok(value) => Response::json(200, &value),
+        Err(crate::application::AppError::Authority(error)) => {
+            Response::json(409, &json!({"error":error}))
+        }
+        Err(error) => Response::json(400, &json!({"error":error.to_string()})),
+    }
+}
+
+fn console_selection(request: &Request, runtime: &DaemonRuntime) -> Response {
+    let Some(body) = request_body(request) else {
+        return Response::json(400, &json!({"error":"invalid_request"}));
+    };
+    match crate::application::authority::user_selection(&runtime.application, &body) {
+        Ok(value) => Response::json(200, &value),
+        Err(crate::application::AppError::Authority(error)) => {
+            Response::json(409, &json!({"error":error}))
+        }
+        Err(error) => Response::json(400, &json!({"error":error.to_string()})),
+    }
 }
 
 #[cfg(test)]

@@ -251,6 +251,8 @@ pub(crate) struct DaemonRuntime {
     pub config: HieronymusConfig,
     pub registry: McpRegistry,
     pub bearer: Secret<String>,
+    pub console_credential: Secret<String>,
+    pub host_event_credential: Secret<String>,
     pub bound_address: SocketAddr,
     /// The one cancellation edge every loop in the daemon observes; shared
     /// with [`DaemonRuntime::workers`].
@@ -389,6 +391,10 @@ impl Daemon {
         // astra 11). Ownership is held, so this read-or-mint is exclusive: a
         // plain restart reuses the stored token and never rotates it.
         let bearer = discovery::ensure_installation_token(&config)?;
+        let console_credential =
+            discovery::ensure_local_credential(&config, discovery::LocalCredential::Console)?;
+        let host_event_credential =
+            discovery::ensure_local_credential(&config, discovery::LocalCredential::HostEvent)?;
 
         // From here on startup owns worker threads, so every remaining `?`
         // unwinds through `StartupGuard`: signal, join, unpublish, and only
@@ -470,6 +476,8 @@ impl Daemon {
             config,
             registry,
             bearer,
+            console_credential,
+            host_event_credential,
             bound_address,
             workers,
             idle_connections: IdleConnections::default(),

@@ -334,6 +334,17 @@ impl std::fmt::Debug for DaemonClient {
 }
 
 impl DaemonClient {
+    /// Switch only a local shell client to its separately stored authority credential.
+    pub fn with_local_credential(
+        mut self,
+        config: &HieronymusConfig,
+        kind: crate::daemon::discovery::LocalCredential,
+    ) -> Result<Self, ClientError> {
+        self.bearer = crate::daemon::discovery::read_local_credential(config, kind)
+            .map_err(|e| ClientError::Credential(e.to_string()))?;
+        Ok(self)
+    }
+
     pub fn address(&self) -> SocketAddr {
         self.address
     }

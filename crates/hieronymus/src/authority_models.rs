@@ -164,7 +164,7 @@ impl DecisionResultV1 {
         }
     }
 }
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, Serialize, thiserror::Error)]
 pub enum DecisionErrorV1 {
     #[error("unsupported decision version")]
     UnsupportedVersion,

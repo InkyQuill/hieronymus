@@ -266,6 +266,9 @@ pub(super) fn action(request: &Request, runtime: &DaemonRuntime, action: &str) -
             }
             Response::json(200, &payload)
         }
+        Err(crate::application::AppError::Authority(error)) => {
+            Response::json(409, &json!({"error": error}))
+        }
         Err(crate::application::AppError::Coherent(error)) => {
             Response::json(409, &json!({"error": error.to_string()}))
         }

@@ -338,7 +338,7 @@ fn served_registry_preserves_frozen_names_and_active_rust_schemas() {
     assert_eq!(tools, expected["result"]["tools"].as_array().unwrap());
     // Names and order must equal the manifest snapshot.
     let snapshot = common::fixture("compatibility/snapshots/mcp.json");
-    let snapshot_names: Vec<&str> = snapshot["tools"]
+    let mut snapshot_names: Vec<&str> = snapshot["tools"]
         .as_array()
         .unwrap()
         .iter()
@@ -348,10 +348,16 @@ fn served_registry_preserves_frozen_names_and_active_rust_schemas() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
+    snapshot_names.extend([
+        "hieronymus_decide",
+        "hieronymus_correct",
+        "hieronymus_order_register",
+        "hieronymus_evidence_capture",
+    ]);
     assert_eq!(served_names, snapshot_names);
     assert_eq!(
         served_names.len(),
-        snapshot["derived_tool_count"].as_u64().unwrap() as usize
+        snapshot["derived_tool_count"].as_u64().unwrap() as usize + 4
     );
     assert_eq!(
         PROTOCOL_REVISION,

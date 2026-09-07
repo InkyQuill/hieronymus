@@ -132,7 +132,36 @@ pub enum EnsureTokenError {
 pub fn ensure_installation_token(
     config: &HieronymusConfig,
 ) -> Result<Secret<String>, EnsureTokenError> {
-    let path = config.daemon_token_path();
+    ensure_token_at(config.daemon_token_path())
+}
+
+/// Separate local authority credential. Same-account shell access is trusted.
+#[derive(Debug, Clone, Copy)]
+pub enum LocalCredential {
+    Console,
+    HostEvent,
+}
+impl LocalCredential {
+    pub fn path(self, config: &HieronymusConfig) -> std::path::PathBuf {
+        config.config_root().join(match self {
+            Self::Console => "console.token",
+            Self::HostEvent => "host-event.token",
+        })
+    }
+}
+pub fn ensure_local_credential(
+    config: &HieronymusConfig,
+    kind: LocalCredential,
+) -> Result<Secret<String>, EnsureTokenError> {
+    ensure_token_at(kind.path(config))
+}
+pub fn read_local_credential(
+    config: &HieronymusConfig,
+    kind: LocalCredential,
+) -> Result<Secret<String>, CredentialError> {
+    read_token_at(kind.path(config))
+}
+fn ensure_token_at(path: std::path::PathBuf) -> Result<Secret<String>, EnsureTokenError> {
     if path.exists() {
         #[cfg(unix)]
         {
@@ -148,23 +177,27 @@ pub fn ensure_installation_token(
                 return Err(EnsureTokenError::Insecure { path, mode });
             }
         }
-        return match read_token(config) {
+        return match read_token_at(path.clone()) {
             Ok(token) => Ok(token),
             Err(CredentialError::Empty { path }) => Err(EnsureTokenError::Empty { path }),
             Err(CredentialError::Missing { path }) => Err(EnsureTokenError::Unreadable { path }),
         };
     }
     let token = generate_bearer_token()?;
-    write_token(config, &token).map_err(|source| EnsureTokenError::Write {
-        path: path.clone(),
-        source,
-    })?;
+    hieronymus::atomic::atomic_write_text(&path, token.expose_secret())
+        .and_then(|()| unix_user_only(&path))
+        .map_err(|source| EnsureTokenError::Write {
+            path: path.clone(),
+            source,
+        })?;
     Ok(token)
 }
 
 /// Read the bearer token back (trimmed).
 pub fn read_token(config: &HieronymusConfig) -> Result<Secret<String>, CredentialError> {
-    let path = config.daemon_token_path();
+    read_token_at(config.daemon_token_path())
+}
+fn read_token_at(path: std::path::PathBuf) -> Result<Secret<String>, CredentialError> {
     let text = std::fs::read_to_string(&path)
         .map_err(|_| CredentialError::Missing { path: path.clone() })?;
     let token = text.trim();

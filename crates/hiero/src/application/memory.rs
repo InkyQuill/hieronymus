@@ -479,9 +479,11 @@ fn short_term_add_batch(application: &Application, arguments: &Value) -> Result<
 // -------------------------------------------------------- hieronymus_feedback
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Feedback {
     session_id: i64,
-    correction_text: String,
+    correction_text: Option<String>,
+    decision_draft: Option<crate::trusted_ingress::DecisionDraftV1>,
 }
 
 /// The correction-text feedback tool: user correction prose recorded as a
@@ -490,17 +492,34 @@ struct Feedback {
 /// addresses a `recall_id` by activation ids.
 fn feedback(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<Feedback>(arguments)?;
+    if let Some(draft) = args.decision_draft {
+        if args.correction_text.is_some() || draft.session_id != Some(args.session_id) {
+            return Err(AppError::Invalid(
+                "typed feedback must bind this session and omit correction_text".into(),
+            ));
+        }
+        return application.call(
+            "hieronymus_correct",
+            &serde_json::to_value(draft).map_err(domain)?,
+            "ordinary-mcp",
+        );
+    }
+    let correction_text = args
+        .correction_text
+        .ok_or_else(|| AppError::Invalid("correction_text or decision_draft is required".into()))?;
     let store = workspace(application)?;
     let input = ShortTermMemoryInput {
-        source_role: "user".to_string(),
+        source_role: "assistant".to_string(),
         kind: "correction".to_string(),
-        text: args.correction_text,
+        text: correction_text,
         ..ShortTermMemoryInput::default()
     };
     let record = store
         .add_short_term_memory(args.session_id, &input)
         .map_err(domain)?;
-    Ok(json!({"memory_id": record.id}))
+    Ok(
+        json!({"memory_id": record.id, "status":"tentative", "reason":"UnverifiedOrigin", "authority_changed":false}),
+    )
 }
 
 // ---------------------------------------------------------- hieronymus_recall

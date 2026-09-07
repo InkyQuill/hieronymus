@@ -13,6 +13,8 @@
 //! to the frozen registry snapshot.
 
 pub mod admin;
+pub mod authority;
+pub mod correction_parser;
 pub mod dream;
 pub mod graph;
 pub mod memory;
@@ -39,6 +41,8 @@ use crate::daemon::dream_worker::DreamController;
 /// tool error result); `NotImplemented` marks tools no family claims yet.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    #[error(transparent)]
+    Authority(#[from] hieronymus::authority_models::DecisionErrorV1),
     #[error(transparent)]
     Coherent(#[from] hieronymus::coherent_reads::CoherentReadError),
     #[error("{0}")]
@@ -264,7 +268,8 @@ impl Application {
         arguments: &serde_json::Value,
         actor: &str,
     ) -> Result<serde_json::Value, AppError> {
-        series_sessions::dispatch(self, tool, arguments, actor)
+        authority::dispatch(self, tool, arguments)
+            .or_else(|| series_sessions::dispatch(self, tool, arguments, actor))
             .or_else(|| memory::dispatch(self, tool, arguments, actor))
             .or_else(|| terms::dispatch(self, tool, arguments, actor))
             .or_else(|| graph::dispatch(self, tool, arguments, actor))
@@ -281,6 +286,10 @@ impl Application {
     /// than a [`Self::call`] family member, but it is concrete daemon code.
     pub fn implemented_tools() -> &'static [&'static str] {
         &[
+            "hieronymus_decide",
+            "hieronymus_correct",
+            "hieronymus_order_register",
+            "hieronymus_evidence_capture",
             // series/sessions family (M1).
             "hieronymus_series_create",
             "hieronymus_series_init",
