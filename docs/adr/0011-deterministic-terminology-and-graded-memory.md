@@ -10,6 +10,14 @@ prohibits manual promotion and gives dreaming authority to activate rules.
 Rule crystals remain the searchable/advisory projection of the structured
 authority.
 
+Amended on 2026-09-06 by
+[ADR 0016](0016-autonomous-story-memory-product-vision.md). The human-only
+approval and lifecycle restrictions below are superseded: the system maintains
+rules autonomously through validated, audited operations, while explicit user
+corrections retain priority. Structured authority, separate deterministic
+contracts, and protection from passive scoring remain in force. The original
+text below is retained to explain the earlier decision.
+
 ## Context
 
 Hieronymus has two related but different responsibilities:

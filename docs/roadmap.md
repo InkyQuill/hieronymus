@@ -4,6 +4,17 @@ Hieronymus is an alpha local-first translation memory system. The Python alpha
 baseline below is closed and frozen as the behavioral reference for the Rust
 rewrite; new feature work happens in Rust after the cutover.
 
+## Product Direction
+
+[ADR 0016](adr/0016-autonomous-story-memory-product-vision.md) supersedes
+ADR 0005 and the human-only terminology lifecycle in ADR 0011. The target is
+autonomous story memory, with user corrections instead of required review,
+and agent plugins with shared workflow skills; zCode consumes the Claude plugin
+bundle. Its implementation-gap list and acceptance scenarios govern
+follow-up planning. The frozen baseline below does not require preserving
+human approval gates; this documentation change does not implement their
+replacement or alter cutover requirements.
+
 ## Rust Rewrite (active program)
 
 Normative sources: the 2026-08-31 ADRs (0008–0015) and

@@ -1,5 +1,13 @@
 # Hieronymus Agent Workflows
 
+> Product direction changed on 2026-09-06 in
+> [ADR 0016](adr/0016-autonomous-story-memory-product-vision.md). Human-approval
+> and candidate-only instructions below describe existing behavior and are
+> superseded as requirements. Plugins and skills must move to autonomous memory
+> and terminology maintenance with user correction signals. zCode consumes the
+> Claude plugin bundle and needs no separate plugin format. This document does
+> not claim that the new autonomous behavior is implemented.
+
 Hieronymus agent integrations package skills, MCP configuration, and host-specific plugin manifests
 for local coding agents. The generated assets teach agents to recall memory, distinguish active rule
 crystals from advisory memory, write short-term observations, learn material deliberately, and read

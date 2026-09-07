@@ -6,9 +6,13 @@ behavioral reference being ported, then retired at cutover.
 
 ## Normative — drives the Rust rewrite
 
-- `adr/` — decisions 0005–0015 are current (0002/0004 are retained history;
+- `adr/` — decisions 0006–0016 are current (0016 supersedes 0005 and
+  amends 0011; 0002/0004 are retained history;
   0003 is a historical data-model reference; 0008 governs the rewrite;
   0012 as amended 2026-09-03 defines light local authentication).
+- [ADR 0016](adr/0016-autonomous-story-memory-product-vision.md) — autonomous
+  story-memory product vision; takes precedence over human-review requirements
+  in earlier specifications and workflow documents.
 - `superpowers/specs/2026-08-31-rust-*.md` — the nine normative migration
   specifications (certification trimmed 2026-09-03; see amendment notes).
 - `roadmap.md` — active program: Rust rewrite slices.
@@ -30,6 +34,7 @@ passes its ported tests:
 
 ## Historical — kept for context, not needed for work
 
+- `adr/0005` — superseded product vision; replaced by ADR 0016.
 - `adr/0002`, `adr/0004` — retired terminal-UI migrations
 - `archive/` — retired documents (OpenTUI conventions)
 - `rust-migration-proposal/` — superseded design input; see

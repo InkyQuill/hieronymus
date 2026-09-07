@@ -2,6 +2,13 @@
 
 **Status:** Accepted on 2026-08-31.
 
+Amended on 2026-09-06 by
+[ADR 0016](../../adr/0016-autonomous-story-memory-product-vision.md): the
+human-only rule lifecycle policy below is superseded by autonomous, validated,
+audited maintenance with explicit user-correction priority. The remaining
+structured-authority and deterministic-enforcement requirements are retained.
+This notice changes the target design, not the current implementation.
+
 ## Goal
 
 Preserve deterministic translation rules while allowing fuzzy memory,

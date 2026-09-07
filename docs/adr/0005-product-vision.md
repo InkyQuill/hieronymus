@@ -1,17 +1,10 @@
 # Hieronymus Product Vision
 
-Status: Current product vision, amended by
-[ADR 0007](0007-provider-catalog-and-workflow-assignments.md) for provider
-catalog ownership. [ADR 0008](0008-rust-reimplementation-authority-and-cutover.md)
-supersedes the Python-authority paragraph in `## Decision`.
-[ADR 0011](0011-deterministic-terminology-and-graded-memory.md) amends
-`### Rule Crystals` by making structured rules the authority and rule crystals
-their searchable/advisory projection.
-[ADR 0014](0014-web-console-replaces-terminal-ui.md) supersedes
-the retired React/OpenTUI surface, terminal-application section, related
-install/runtime requirements, browser non-goal, and OpenTUI test references.
-`provider.conf` owns provider profiles and API keys; `dream.conf` owns workflow
-assignments, prompts, trigger settings, and caps.
+Status: Superseded and deprecated on 2026-09-06 by
+[ADR 0016: Autonomous Story Memory For Agents](0016-autonomous-story-memory-product-vision.md).
+This document is retained as historical context, not the current product vision.
+Earlier amendments were recorded in ADRs 0007, 0008, 0011, and 0014; ADR 0016
+now states the governing product intent and its relationship to those decisions.
 
 ## Context
 
