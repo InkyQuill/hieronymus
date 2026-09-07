@@ -107,7 +107,7 @@ cargo test -p hiero --features console-embed --test console_embed
 
 step "building the release binary (console-embed, $TARGET)"
 cargo build --release --locked -p hiero --features console-embed --target "$TARGET"
-binary="target/$TARGET/release/hiero"
+binary="${CARGO_TARGET_DIR:-target}/$TARGET/release/hiero"
 if [ ! -f "$binary" ]; then
   echo "error: release binary not found at $binary" >&2
   exit 1

@@ -30,7 +30,8 @@ never downgrade silently. Claude requires launcher environment `MCP_SDK_GENERATI
 and `MCP_PROTOCOL_NEGOTIATION=auto`. Codex requires `[features] mcp_2026_07_28=true`;
 the generated Codex server environment supplies `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`.
 zCode exposes a supported per-server `protocolVersion=2026-07-28` override outside the
-shared bundle; its current schema support alone is not an observed modern wire result.
+shared bundle; a disposable native zCode3.11.2 probe observed server/discover, tools/list, status and
+series_list with this override. This is protocol evidence, not candidate workflow acceptance.
 Historical P2 failures and newer qualification status are
 tracked in [host acceptance](agent-host-acceptance.md).
 

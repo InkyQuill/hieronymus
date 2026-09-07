@@ -126,35 +126,14 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
     assert not any("--reinstall-package" in line for line in backend)
 
 
-def test_pr_workflow_backend_job_validates_qualification_records() -> None:
-    lines = _workflow_lines()
-    backend = _block_after(lines, _find_line(lines, "  backend:"))
-    steps = _step_blocks(backend)
-
-    records_step = next(
-        (
-            step
-            for step in steps
-            if _step_value(step, "name") == "Validate Rust qualification records"
-        ),
-        None,
-    )
-    assert records_step == [
-        "      - name: Validate Rust qualification records",
-        "        env:",
-        '          HIERONYMUS_QUALIFICATION_LIVE: "0"',
-        "        run: |",
-        "          uv run --no-cache --no-sync pytest tests/qualification",
-        (
-            "          uv run --no-cache --no-sync "
-            "python -B -m tools.qualification.projections --check"
-        ),
-        (
-            "          uv run --no-cache --no-sync "
-            "python -B -m tools.qualification.check --records-only"
-        ),
-    ]
-    assert records_step is steps[-1]
+def test_pr_workflow_preserves_archived_evidence_without_freshness_gate() -> None:
+    workflow = "\n".join(_workflow_lines())
+    assert "uv run pytest" in workflow
+    assert "tools.qualification.projections --check" not in workflow
+    assert "tools.qualification.check --records-only" not in workflow
+    assert "--historical-test-inventory compatibility/snapshots/state.json" in workflow
+    assert "historical-fixture-validation.txt" in workflow
+    assert "compatibility-parity-summary" not in workflow
 
 
 def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:

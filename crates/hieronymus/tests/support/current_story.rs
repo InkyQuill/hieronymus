@@ -105,3 +105,24 @@ pub fn capture_chunks(config: &HieronymusConfig, slug: &str) {
         tx.commit().unwrap();
     }
 }
+
+/// Register an actual disposable manifest through the current snapshot producer.
+pub fn register_public(config: &HieronymusConfig, slug: &str, volume: &str, chapter: &str) {
+    use hieronymus::authority_producers::{EvidenceProducer, SnapshotInput};
+    use sha2::{Digest, Sha256};
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    let series: i64 = db
+        .query_row("select id from series where slug=?", [slug], |r| r.get(0))
+        .unwrap();
+    let manifest = serde_json::json!({"version":1,"series_id":series,"timeline_name":"reading","positions":[{"volume_key":volume,"chapter_key":chapter,"scene_key":""}]}).to_string();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("order.json");
+    std::fs::write(&path, &manifest).unwrap();
+    let input = SnapshotInput::File {
+        path,
+        expected_hash: format!("{:x}", Sha256::digest(manifest.as_bytes())),
+    };
+    EvidenceProducer::new(&mut db)
+        .register_manifest(series, &input, None, 0)
+        .unwrap();
+}

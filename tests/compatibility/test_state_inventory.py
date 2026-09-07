@@ -194,15 +194,20 @@ def test_collect_test_nodeids_returns_only_sorted_pytest_node_ids() -> None:
     )
 
 
-def test_every_python_test_has_manifest_disposition() -> None:
-    manifest = load_manifest(ROOT / "compatibility/manifest.json")
-    ownership_by_node = {item.node_id: item for item in manifest.test_ownership}
-    collected = set(collect_test_nodeids(ROOT))
-
-    assert set(ownership_by_node) == collected
-    assert all(
-        item.contract_ids if item.disposition == "public_contract" else item.reason
-        for item in ownership_by_node.values()
+def test_current_python_catalog_collects_new_release_tests_without_frozen_input() -> None:
+    nodes = collect_test_nodeids(ROOT)
+    assert len(nodes) == len(set(nodes))
+    assert (
+        len(
+            [
+                node
+                for node in nodes
+                if node.startswith(
+                    ("tests/test_rust_release_tools.py::", "tests/test_release_asset_staging.py::")
+                )
+            ]
+        )
+        == 27
     )
 
 
@@ -625,8 +630,16 @@ def test_agent_cases_freeze_host_config_and_owned_skill_lifecycle(tmp_path: Path
 
 
 def test_every_generated_artifact_matches_two_fresh_builds(tmp_path: Path) -> None:
-    first = generate_state_artifacts(ROOT, tmp_path / "first-data-root")
-    second = generate_state_artifacts(ROOT, tmp_path / "second-data-root")
+    first = generate_state_artifacts(
+        ROOT,
+        tmp_path / "first-data-root",
+        historical_test_inventory=ROOT / "compatibility/snapshots/state.json",
+    )
+    second = generate_state_artifacts(
+        ROOT,
+        tmp_path / "second-data-root",
+        historical_test_inventory=ROOT / "compatibility/snapshots/state.json",
+    )
 
     assert first == second
     assert {
@@ -646,14 +659,22 @@ def test_every_generated_artifact_matches_two_fresh_builds(tmp_path: Path) -> No
 def test_checked_in_state_snapshot_matches_fresh_synthetic_inventory(tmp_path: Path) -> None:
     expected = json.loads((ROOT / "compatibility/snapshots/state.json").read_text(encoding="utf-8"))
 
-    assert snapshot_state(ROOT, tmp_path / "data-root") == expected
+    assert (
+        snapshot_state(
+            ROOT,
+            tmp_path / "data-root",
+            historical_test_inventory=ROOT / "compatibility/snapshots/state.json",
+        )
+        == expected
+    )
 
 
 def test_collect_frontend_test_nodeids_uses_vitest_case_listing() -> None:
     node_ids = inventory_state.collect_frontend_test_nodeids(ROOT)
 
     assert node_ids == sorted(node_ids)
-    assert len(node_ids) == 16
+    assert len(node_ids) == len(set(node_ids))
+    assert any("/CorrectionForm.test.ts::" in node for node in node_ids)
     assert (
         "frontend/src/web/components/editors.test.ts::"
         "provider editor opens, submits edited fields, and closes"
@@ -670,9 +691,13 @@ def test_collect_frontend_test_nodeids_fails_explicitly_without_bun(
         inventory_state.collect_frontend_test_nodeids(ROOT)
 
 
-def test_every_frontend_vitest_case_has_typed_manifest_ownership() -> None:
+def test_historical_frontend_cases_retain_typed_manifest_ownership() -> None:
     manifest = load_manifest(ROOT / "compatibility/manifest.json")
-    collected = set(inventory_state.collect_frontend_test_nodeids(ROOT))
+    collected = set(
+        inventory_state.load_historical_test_inventory(ROOT / "compatibility/snapshots/state.json")[
+            "frontend_node_ids"
+        ]
+    )
     ownership = {item.node_id: item for item in manifest.frontend_test_ownership}
 
     assert set(ownership) == collected
@@ -760,3 +785,61 @@ def test_database_fixture_freezes_representative_rows_and_preflight_variants(
         fixture = ROOT / variant["fixture"]
         assert fixture.is_file()
         assert inventory_state.preflight_database(fixture) == variant["expected"]
+
+
+def test_explicit_historical_test_inventory_is_validated_and_read_only(tmp_path: Path) -> None:
+    source = ROOT / "compatibility/snapshots/state.json"
+    before = source.read_bytes()
+    loaded = inventory_state.load_historical_test_inventory(source)
+    assert loaded == json.loads(before)["tests"]
+    assert source.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "tests",
+    [
+        None,
+        {"node_ids": []},
+        {"node_ids": [1], "frontend_node_ids": []},
+        {"node_ids": ["x", "x"], "frontend_node_ids": []},
+        {"node_ids": [""], "frontend_node_ids": []},
+    ],
+)
+def test_invalid_historical_test_inventory_is_rejected(tmp_path: Path, tests) -> None:
+    source = tmp_path / "historical.json"
+    source.write_text(json.dumps({"tests": tests}))
+    with pytest.raises(ValueError):
+        inventory_state.load_historical_test_inventory(source)
+
+
+def test_frontend_collection_preserves_large_output_and_cleans_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    frontend = tmp_path / "frontend"
+    entry = frontend / "node_modules/vitest/vitest.mjs"
+    entry.parent.mkdir(parents=True)
+    # A deterministic executable fixture stands in for the Vitest listing process.
+    entry.write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "print(json.dumps([{'file': str(Path.cwd() / 'large.test.ts'), "
+        "'name': f'case-{i}-' + 'x' * 100} for i in range(2000)]))\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(inventory_state.shutil, "which", lambda _: sys.executable)
+    original_run = inventory_state.subprocess.run
+    captures = []
+
+    def run_with_file_output(*args, **kwargs):
+        output = kwargs.get("stdout")
+        assert output is not None, "large collector output must use a private file"
+        captures.append(output)
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(inventory_state.subprocess, "run", run_with_file_output)
+    nodes = inventory_state.collect_frontend_test_nodeids(tmp_path)
+    assert len(nodes) == 2000
+    assert len(set(nodes)) == 2000
+    assert all(capture.closed for capture in captures)

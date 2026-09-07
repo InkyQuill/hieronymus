@@ -151,6 +151,7 @@ fn status_route_matches_frozen_target() {
     // them as numbers. The added keys are appended explicitly, so any
     // *other* drift from the frozen body still fails this assertion.
     assert_frozen_success("http.route.get.status", &target, &fixture, |body| {
+        body["version"] = json!(env!("CARGO_PKG_VERSION"));
         body["pid"] = json!(fixture.pid);
         body["port"] = json!(fixture.port);
         body["instance_id"] = json!(record.instance_id);
@@ -497,10 +498,11 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
     let (fixture, root, _daemon) = start_daemon_with_browser_session();
     seed_synthetic_admin_data(root.path());
 
-    let expected = substitute_route_placeholders(
+    let mut expected = substitute_route_placeholders(
         &route_target("http.route.get.api.admin.dashboard")["success"]["response"]["body"],
         &fixture,
     );
+    expected["header"]["version"] = json!(format!("v{}α", env!("CARGO_PKG_VERSION")));
     let response = send_request(
         fixture.port,
         "GET",

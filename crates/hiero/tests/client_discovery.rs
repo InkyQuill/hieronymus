@@ -2,7 +2,7 @@
 use hiero::daemon::discovery::{self, DiscoveryRecord};
 use hiero::daemon::{Daemon, DaemonOptions};
 use hieronymus::data_root::HieronymusConfig;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
@@ -319,23 +319,32 @@ fn stdio_wraps_route_errors_after_successful_authenticated_startup() {
     // exercised regardless of how TCP happens to packetize this request.
     let request = serde_json::json!({"jsonrpc":"2.0", "id":7, "method":"tools/list",
         "params":{"_meta":{"fixture_padding":"x".repeat(32 * 1024)}}});
-    writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
+    let mut input = child.stdin.take().unwrap();
+    writeln!(input, "{request}").unwrap();
+    input.flush().unwrap();
+    // Keep the host session alive until this transaction completes. EOF has a
+    // separate bounded cancellation contract and must not race this mock.
+    let mut response = String::new();
+    std::io::BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut response)
+        .unwrap();
+    drop(input);
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let body: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(body["id"], 7);
     assert_eq!(body["error"]["code"], -32603);
+    assert_eq!(
+        body["error"]["message"],
+        "daemon returned an invalid or mismatched response"
+    );
     assert!(
-        body["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("unauthorized"),
-        "response: {body}; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        !body.to_string().contains("unauthorized"),
+        "route body must not leak: {body}"
     );
     responder.join().unwrap();
 }
