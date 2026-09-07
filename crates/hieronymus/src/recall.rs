@@ -355,7 +355,7 @@ impl RecallService {
             return Err(RecallError::SemanticUnavailable(warning.reason.clone()));
         }
         let mut hits = fuse_chunk_lanes(fts_hits, run.records);
-        hits.truncate(limit);
+        hits.truncate(limit.min(crate::rag::MAX_RAG_SEARCH_LIMIT));
         Ok(hits)
     }
 

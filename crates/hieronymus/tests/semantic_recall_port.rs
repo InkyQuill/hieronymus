@@ -885,3 +885,47 @@ fn strict_search_limits_disjoint_lexical_and_semantic_lanes() {
     }
     panic!("fixture must produce disjoint lanes");
 }
+
+#[test]
+fn strict_search_caps_fused_lanes_when_requested_limit_exceeds_rag_cap() {
+    let fixture = fixture();
+    let paragraphs = (0..50)
+        .map(|index| format!("Cooking Talent appears in paragraph {index}."))
+        .chain((0..50).map(|index| format!("A distant mountain rises beyond sea {index}.")))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    import_text(&fixture, "large.txt", &paragraphs);
+    activate_generation(&fixture);
+    let lexical = RagStore::open(&fixture.config)
+        .unwrap()
+        .search("demo", "Cooking", 100, &[], &[], &[])
+        .unwrap();
+    assert_eq!(lexical.len(), 50, "the public RAG search cap is 50");
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    let semantic = lane.run(
+        &fixture.config,
+        &TranslationContext::new("demo", "", "", "translation"),
+        "Cooking",
+        100,
+    );
+    assert!(!semantic.degraded);
+    assert_eq!(semantic.records.len(), 50);
+    assert!(
+        semantic
+            .records
+            .iter()
+            .any(|record| { !lexical.iter().any(|hit| hit.chunk.id == record.id) }),
+        "fixture must add semantic-only hits beyond the capped lexical lane"
+    );
+    assert_eq!(
+        armed_service(&fixture)
+            .search_series("demo", "Cooking", 100)
+            .unwrap()
+            .len(),
+        50,
+        "fusion must preserve the public cap, even above the requested lane limits"
+    );
+}
