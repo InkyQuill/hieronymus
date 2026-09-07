@@ -27,6 +27,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use hieronymus::data_root::{HieronymusConfig, load_config};
+use hieronymus::ownership::RootOwnership;
 
 use crate::app::{AppLayout, LINK_NAMES, TARGET_TRIPLE, compare_versions};
 #[cfg(test)]
@@ -414,10 +415,9 @@ fn run_update_impl(
     ));
 
     let config = load_config(options.data_root.as_deref());
-    let migration_required = match schema_gate(&config, &candidate) {
-        Ok(migration_required) => migration_required,
-        Err(error) => return Err(refused(error.to_string())),
-    };
+    // Refuse incompatible releases before stopping a live service. Recheck
+    // after ownership acquisition to close the preflight/mutation race.
+    schema_gate(&config, &candidate).map_err(|error| refused(error.to_string()))?;
 
     let mut service_options = ServiceOptions {
         data_root: config.data_root().to_path_buf(),
@@ -474,6 +474,15 @@ fn run_update_impl(
         lines.push("running daemon stopped".to_string());
     }
 
+    // Discovery can fail while a daemon or offline writer still owns the
+    // root. Only the OS lock admits mutation, including a migration-pending
+    // install. Hold it until handing the root to the managed candidate.
+    let mut ownership = Some(
+        RootOwnership::acquire(&config, "update").map_err(|error| refused(error.to_string()))?,
+    );
+    let migration_required =
+        schema_gate(&config, &candidate).map_err(|error| refused(error.to_string()))?;
+
     let version_dir = layout.version_dir(&release.version);
 
     /// What the post-switch region concluded.
@@ -521,6 +530,7 @@ fn run_update_impl(
         }
 
         let daemon_started = if manager_engaged {
+            drop(ownership.take());
             manager
                 .start()
                 .map_err(|error| format!("service start failed ({error})"))?;
@@ -586,6 +596,8 @@ fn run_update_impl(
 
     let (daemon_started, degraded) = match outcome {
         Err(cause) => {
+            // Rollback reacquires ownership after stopping the candidate.
+            drop(ownership.take());
             return Err(activation_failed(
                 manager, &layout, &config, &snapshot, &lines, cause,
             ));
@@ -734,11 +746,14 @@ fn rollback(
     manager
         .stop()
         .map_err(|error| format!("stop the candidate: {error}"))?;
+    let ownership = RootOwnership::acquire(config, "update-rollback")
+        .map_err(|error| format!("acquire data-root ownership for rollback: {error}"))?;
     restore_links_and_unit(layout, snapshot)?;
     manager
         .reload()
         .map_err(|error| format!("reload the service manager: {error}"))?;
     if snapshot.daemon_was_running {
+        drop(ownership);
         manager
             .start()
             .map_err(|error| format!("restart the previous version: {error}"))?;
@@ -1809,5 +1824,56 @@ mod tests {
         );
         assert!(all_links_point_at(&layout, "9.9.0").is_ok());
         assert!(layout.version_dir("9.9.0").join("hiero").exists());
+    }
+
+    #[test]
+    fn update_requires_ownership_after_a_manager_claims_to_stop_the_daemon() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "0.9.0", "9.9.0", 0);
+        let daemon = crate::daemon::Daemon::start(&crate::daemon::DaemonOptions {
+            data_root: options.data_root.clone(),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        // This manager acknowledges stop without releasing the daemon's lock.
+        let manager = FakeManager::default();
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+        assert!(error.to_string().contains("owns this data root"), "{error}");
+        assert_eq!(manager.calls(), vec!["stop"]);
+        assert!(all_links_point_at(&layout, "0.9.0").is_ok());
+        assert!(!layout.version_dir("9.9.0").exists());
+        daemon.shutdown().unwrap();
+    }
+
+    #[test]
+    fn rollback_owns_offline_mutations_and_releases_before_managed_restart() {
+        struct OwnershipManager<'a>(&'a HieronymusConfig);
+        impl ServiceManager for OwnershipManager<'_> {
+            fn stop(&self) -> Result<(), service::ServiceError> {
+                Ok(())
+            }
+            fn reload(&self) -> Result<(), service::ServiceError> {
+                assert!(RootOwnership::acquire(self.0, "competing-writer").is_err());
+                Ok(())
+            }
+            fn start(&self) -> Result<(), service::ServiceError> {
+                assert!(RootOwnership::acquire(self.0, "restarted-daemon").is_ok());
+                Ok(())
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+        let config = HieronymusConfig::new(temp.path().join("data"));
+        fake_live_daemon(&config, &"ab".repeat(16), "1.0.0", "ready");
+        let snapshot = snapshot_for(
+            temp.path().join("units/hieronymus.service"),
+            Some("1.0.0"),
+            true,
+        );
+        rollback(&OwnershipManager(&config), &layout, &config, &snapshot).unwrap();
+        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
+        assert!(RootOwnership::acquire(&config, "next-owner").is_ok());
     }
 }

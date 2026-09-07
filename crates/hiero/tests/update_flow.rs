@@ -718,3 +718,54 @@ fn update_rolls_back_when_the_new_binary_fails_its_health_check() {
     assert!(!app.join("versions/9.9.0").exists());
     assert!(app.join("versions/0.9.0/hiero").exists());
 }
+
+#[test]
+fn update_refuses_an_owned_root_even_when_authenticated_discovery_fails() {
+    for failure in ["credential", "missing-discovery"] {
+        let temp = tempfile::tempdir().unwrap();
+        let payload = temp.path().join("payload-9.9.0");
+        stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
+        // Without the ownership gate this path falsely reports MigrationPending
+        // and switches the installation while the old daemon still owns the root.
+        write_fake_binary(
+            &payload.join("hiero"),
+            "9.9.0",
+            &protocol_revision(),
+            supported_schema() + 1,
+            0,
+        );
+        let release = package(&payload, "9.9.0");
+        let app = seed_install(temp.path(), "0.9.0");
+        let data_root = temp.path().join("data");
+        let config = hieronymus::data_root::HieronymusConfig::new(&data_root);
+        let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+            data_root: Some(data_root.clone()),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        if failure == "credential" {
+            std::fs::write(config.daemon_token_path(), "rejected-token").unwrap();
+        } else {
+            std::fs::remove_file(config.daemon_discovery_path()).unwrap();
+        }
+        assert!(!hiero::lifecycle::probe(&config).is_live());
+        assert!(hieronymus::ownership::RootOwnership::acquire(&config, "test").is_err());
+        let (stdout, stderr, status) = run_update(
+            &release.release_dir,
+            &app,
+            &data_root,
+            &temp.path().join("units"),
+            &[],
+        );
+        assert_eq!(status.code(), Some(2), "{failure}: {stdout}\n{stderr}");
+        assert!(stderr.contains("owns this data root"), "{stderr}");
+        assert_eq!(
+            stable_target(&app, "hiero"),
+            PathBuf::from("../versions/0.9.0/hiero")
+        );
+        assert!(!app.join("versions/9.9.0").exists());
+        assert!(hieronymus::ownership::RootOwnership::acquire(&config, "test").is_err());
+        daemon.shutdown().unwrap();
+    }
+}
