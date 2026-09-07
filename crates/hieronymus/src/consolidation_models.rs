@@ -150,6 +150,10 @@ pub struct UnresolvedSignalV1 {
     pub origin: OriginReceiptId,
     pub text: String,
     pub context: serde_json::Value,
+    /// True only when context.text was identical to text and was omitted from
+    /// canonical storage. False/absent preserves old rows and structured/null text.
+    #[serde(default)]
+    pub context_text_elided: bool,
     pub reasons: Vec<crate::authority_models::TentativeReason>,
     pub detail: String,
 }
@@ -157,4 +161,25 @@ pub struct UnresolvedSignalV1 {
 #[serde(rename_all = "snake_case")]
 pub enum UnresolvedSignalKind {
     UnresolvedSignal,
+}
+
+/// Total serialized worker projection budget, including its outer envelope.
+pub const MAX_CORRECTION_CONTEXT_BYTES: usize = 512 * 1024;
+/// Reserve 64 KiB for gathering and envelope overhead after the lossless signal.
+pub const MAX_UNRESOLVED_SIGNAL_BYTES: usize = MAX_CORRECTION_CONTEXT_BYTES - 64 * 1024;
+
+impl UnresolvedSignalV1 {
+    /// Reconstruct the exact strict ingress context; never invent a text field
+    /// for structured events or accept ambiguous duplicated/elided forms.
+    pub fn submitted_context(&self) -> Option<serde_json::Value> {
+        let mut context = self.context.clone();
+        let fields = context.as_object_mut()?;
+        if self.context_text_elided {
+            if fields.contains_key("text") {
+                return None;
+            }
+            fields.insert("text".into(), serde_json::Value::String(self.text.clone()));
+        }
+        Some(context)
+    }
 }

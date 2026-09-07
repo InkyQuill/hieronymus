@@ -10,7 +10,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-const MAX_CONTEXT_BYTES: usize = 512 * 1024;
+const MAX_CONTEXT_BYTES: usize = MAX_CORRECTION_CONTEXT_BYTES;
 const MAX_RECORD_BYTES: usize = 16 * 1024;
 
 /// Only this snapshot may provide identifiers, revisions or evidence to a result.
@@ -45,7 +45,7 @@ pub fn select_correction_context(
         [&lease.decision_id],
         |r| r.get(0),
     )?;
-    if request.len() > MAX_CONTEXT_BYTES / 2 {
+    if request.len() > MAX_UNRESOLVED_SIGNAL_BYTES {
         return Err(local("correction request exceeds context bound"));
     }
     let request: Value =
@@ -65,7 +65,7 @@ pub fn select_correction_context(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         if text != signal.text
-            || serde_json::from_str::<Value>(&context).ok().as_ref() != Some(&signal.context)
+            || serde_json::from_str::<Value>(&context).ok() != signal.submitted_context()
             || crate::authority_evidence::hash(&format!("{text}\n{context}")) != digest
         {
             return Err(local("unresolved origin mismatch"));
@@ -192,11 +192,15 @@ pub fn select_correction_context(
         rules.insert(id, (revision as u64, concept, source, target));
         rule_records.push(value);
     }
+    let projection = json!({"request":request,"evidence":records,"rules":rule_records});
+    if projection.to_string().len() > MAX_CONTEXT_BYTES {
+        return Err(local("correction projection exceeds context bound"));
+    }
     Ok(CorrectionSelection {
         evidence,
         claims,
         rules,
-        projection: json!({"request":request,"evidence":records,"rules":rule_records}),
+        projection,
     })
 }
 

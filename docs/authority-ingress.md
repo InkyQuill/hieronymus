@@ -109,11 +109,18 @@ rebinding the signal. Tentative IDs cannot satisfy `required_decision_id`.
 
 The stored canonical variant has `kind:"unresolved_signal"`, `version:1`,
 `decision_id`, `origin`, full `text`, full strict submitted `context`, `reasons`, and
-`detail`; it contains no invented `operation`. The existing correction worker leases
+`detail`; it contains no invented `operation`. For prose, `context_text_elided:true`
+means the duplicate `context.text` is omitted and reconstructs exactly from `text`.
+False or absent preserves the context verbatim, including old v1 rows and structured
+inputs with null text. Origin storage still retains the full original text/context.
+The existing correction worker leases
 this job, verifies the origin text/context/hash, and includes the full signal and
 reasons in its bounded gathering context. Canonical unresolved input is capped at
-256 KiB within the existing 512 KiB context budget (resolved decision requests keep
-their 16 KiB bound). Worker output retains ordinary Dream/learned policy; it cannot
+448 KiB using a limit shared by ingress and worker, reserving 64 KiB within the
+unchanged 512 KiB total budget. The final serialized worker projection is checked
+against that total as well. One copy of the full 64 KiB raw text fits even with
+worst-case JSON control-character escaping; oversized additional context rejects
+atomically, without truncation. Resolved decision requests keep their 16 KiB bound. Worker output retains ordinary Dream/learned policy; it cannot
 turn unresolved intent into explicit user authority. Empty completion finishes that
 gathering attempt while leaving the original tentative signal/reasons available. Domain
 errors use HTTP 409 with a typed `error` (including `RevisionConflict.current_revision`);

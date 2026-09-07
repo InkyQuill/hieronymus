@@ -3,7 +3,7 @@ use super::{AppError, authority::UserCorrectionV1, domain};
 use crate::trusted_ingress::{Principal, hash, new_id};
 use hieronymus::{
     authority_models::{DecisionErrorV1, TentativeReason},
-    consolidation::UnresolvedSignalV1,
+    consolidation::{MAX_UNRESOLVED_SIGNAL_BYTES, UnresolvedSignalV1},
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
@@ -29,7 +29,7 @@ pub(super) fn replay(
             let signal: UnresolvedSignalV1 = serde_json::from_value(value).map_err(domain)?;
             if stored_kind != kind
                 || stored_principal != identity
-                || signal.context != serde_json::to_value(input).map_err(domain)?
+                || signal.submitted_context() != Some(serde_json::to_value(input).map_err(domain)?)
             {
                 return Err(AppError::Authority(DecisionErrorV1::IdempotencyConflict));
             }
@@ -76,18 +76,27 @@ pub(super) fn persist(
     let id = new_id()?;
     let now = chrono::Utc::now().to_rfc3339();
     tx.execute("insert into origin_receipts(id,kind,principal,session_id,event_id,text,context_json,content_hash,created_at) values(?,?,?,?,?,?,?,?,?)",params![id,kind,identity,input.session_id,input.event_id,text,context_text,hash(&format!("{text}\n{context_text}")),now]).map_err(domain)?;
+    let mut canonical_context = context;
+    let context_text_elided = input.text.is_some();
+    if context_text_elided {
+        canonical_context
+            .as_object_mut()
+            .expect("typed input")
+            .remove("text");
+    }
     let signal = UnresolvedSignalV1 {
         version: 1,
         kind: hieronymus::consolidation::UnresolvedSignalKind::UnresolvedSignal,
         decision_id: input.decision_id.clone(),
         origin: hieronymus::authority_models::OriginReceiptId(id.clone()),
         text: text.into(),
-        context,
+        context: canonical_context,
+        context_text_elided,
         reasons: vec![reason],
         detail: detail.into(),
     };
     let canonical = serde_json::to_string(&signal).map_err(domain)?;
-    if canonical.len() > 256 * 1024 {
+    if canonical.len() > MAX_UNRESOLVED_SIGNAL_BYTES {
         return Err(AppError::Authority(DecisionErrorV1::InvalidRequest));
     }
     let result = json!({"status":"tentative","decision_id":input.decision_id,"origin_receipt":id,"reasons":signal.reasons,"detail":detail,"authority_changed":false,"resulting_revision":revision+1,"consolidation_job_id":input.decision_id});

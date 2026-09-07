@@ -398,3 +398,195 @@ fn unresolved_signal_conflicts_staleness_and_transaction_failure_leave_no_partia
         2
     );
 }
+
+#[test]
+fn full_raw_escaped_signals_preserve_exact_context_and_fit_worker_budget() {
+    for raw in ["\n".repeat(65_536), "\0".repeat(65_536)] {
+        let (root, daemon) = common::start_daemon_on_ephemeral_port();
+        let config = HieronymusConfig::new(root.path());
+        Application::open(&config).unwrap().call("hieronymus_series_create",&json!({"slug":"book","title":"Book","source_language":"en","target_language":"ru"}),"agent").unwrap();
+        let headers = browser(&daemon);
+        let event = json!({"version":1,"decision_id":"24000000-0000-4000-8000-000000000001","event_id":"escaped-boundary","expected_revision":0,"series_id":1,"text":raw});
+        let (status, result) = post(&daemon, &headers, "/api/authority/correct", &event);
+        assert_eq!(status, 200, "valid full raw bound: {result}");
+        assert_eq!(result["status"], "tentative");
+        let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+        let (text, context): (String, String) = db
+            .query_row(
+                "select text,context_json from origin_receipts where kind='console_user'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(text.as_bytes(), raw.as_bytes());
+        let origin_context: Value = serde_json::from_str(&context).unwrap();
+        assert_eq!(origin_context["text"], event["text"]);
+        assert_eq!(
+            post(&daemon, &headers, "/api/authority/correct", &event),
+            (200, result.clone())
+        );
+        let observed = Arc::new(Mutex::new(None));
+        let seen = observed.clone();
+        let source: CorrectionSource = Arc::new(move || {
+            let seen = seen.clone();
+            CorrectionProvider {
+                slot: "default".into(),
+                fingerprint: "escaped".into(),
+                call: Ok(Box::new(move |context| {
+                    *seen.lock().unwrap() = Some(context.clone());
+                    Ok(json!({"decisions":{"version":1,"mutations":[]}}))
+                })),
+            }
+        });
+        let clock: CorrectionClock = Arc::new(chrono::Utc::now);
+        correction_worker::tick(&config, &AtomicBool::new(false), &clock, &source).unwrap();
+        let projection = observed
+            .lock()
+            .unwrap()
+            .take()
+            .expect("actual worker consumes full signal");
+        assert!(serde_json::to_vec(&projection).unwrap().len() <= 512 * 1024);
+        assert_eq!(projection["request"]["text"], event["text"]);
+        let mut reconstructed = projection["request"]["context"].clone();
+        if projection["request"]["context_text_elided"] == true {
+            reconstructed["text"] = projection["request"]["text"].clone();
+        }
+        assert_eq!(reconstructed, origin_context);
+        assert_eq!(
+            db.query_row("select state from consolidation_jobs", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "complete"
+        );
+        assert_eq!(
+            post(&daemon, &headers, "/api/authority/correct", &event),
+            (200, result)
+        );
+        assert_eq!(
+            db.query_row("select count(*) from consolidation_jobs", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("select revision from authority_state", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
+fn genuinely_over_budget_signal_context_rolls_back_every_write() {
+    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    let config = HieronymusConfig::new(root.path());
+    Application::open(&config)
+        .unwrap()
+        .call(
+            "hieronymus_series_create",
+            &json!({"slug":"book","title":"Book","source_language":"en","target_language":"ru"}),
+            "agent",
+        )
+        .unwrap();
+    let headers = browser(&daemon);
+    let event = json!({"version":1,"decision_id":"24000000-0000-4000-8000-000000000002","event_id":"x".repeat(512*1024),"expected_revision":0,"series_id":1,"text":"unresolved"});
+    let (status, result) = post(&daemon, &headers, "/api/authority/correct", &event);
+    assert_eq!(status, 409);
+    assert_eq!(result["error"], "InvalidRequest");
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    for table in ["origin_receipts", "decision_records", "consolidation_jobs"] {
+        assert_eq!(
+            db.query_row(&format!("select count(*) from {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "rollback {table}"
+        );
+    }
+    assert_eq!(
+        db.query_row("select revision from authority_state", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn old_duplicate_signal_rows_and_structured_null_context_replay_exactly() {
+    for structured in [false, true] {
+        let (root, daemon) = common::start_daemon_on_ephemeral_port();
+        let config = HieronymusConfig::new(root.path());
+        Application::open(&config).unwrap().call("hieronymus_series_create",&json!({"slug":"book","title":"Book","source_language":"en","target_language":"ru"}),"agent").unwrap();
+        let headers = browser(&daemon);
+        let mut event = json!({"version":1,"decision_id":"24000000-0000-4000-8000-000000000003","event_id":"compatibility","expected_revision":0,"series_id":1,"text":"unresolved old text"});
+        if structured {
+            event["text"] = Value::Null;
+            event["structured"] = json!({"kind":"qualify","qualification":"exact\nqualification"});
+        }
+        let (status, result) = post(&daemon, &headers, "/api/authority/correct", &event);
+        assert_eq!(status, 200, "{result}");
+        let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+        let (canonical,context):(String,String)=db.query_row("select d.canonical_request,o.context_json from decision_records d join origin_receipts o on o.id=d.origin_id",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        let original: Value = serde_json::from_str(&context).unwrap();
+        let mut canonical: Value = serde_json::from_str(&canonical).unwrap();
+        if structured {
+            assert_eq!(canonical["context_text_elided"], false);
+            assert_eq!(canonical["context"], original);
+            assert!(
+                canonical["context"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key("text")
+            );
+            assert_eq!(canonical["context"]["text"], Value::Null);
+        } else {
+            // Exact pre-fix v1 canonical representation, keeping its real minted
+            // origin/result/job. This is a storage-format compatibility fixture.
+            canonical["context"] = original.clone();
+            canonical
+                .as_object_mut()
+                .unwrap()
+                .remove("context_text_elided");
+            db.execute(
+                "update decision_records set canonical_request=?",
+                [canonical.to_string()],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            post(&daemon, &headers, "/api/authority/correct", &event),
+            (200, result.clone())
+        );
+        let observed = Arc::new(Mutex::new(None));
+        let seen = observed.clone();
+        let source: CorrectionSource = Arc::new(move || {
+            let seen = seen.clone();
+            CorrectionProvider {
+                slot: "default".into(),
+                fingerprint: "compatibility".into(),
+                call: Ok(Box::new(move |context| {
+                    *seen.lock().unwrap() = Some(context.clone());
+                    Ok(json!({"decisions":{"version":1,"mutations":[]}}))
+                })),
+            }
+        });
+        let clock: CorrectionClock = Arc::new(chrono::Utc::now);
+        correction_worker::tick(&config, &AtomicBool::new(false), &clock, &source).unwrap();
+        let projection = observed.lock().unwrap().take().unwrap();
+        assert_eq!(projection["request"], canonical);
+        let signal: hieronymus::consolidation::UnresolvedSignalV1 =
+            serde_json::from_value(projection["request"].clone()).unwrap();
+        assert_eq!(signal.submitted_context(), Some(original));
+        assert_eq!(
+            db.query_row("select state from consolidation_jobs", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "complete"
+        );
+        assert_eq!(
+            post(&daemon, &headers, "/api/authority/correct", &event),
+            (200, result)
+        );
+    }
+}
