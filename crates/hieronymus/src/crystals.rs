@@ -336,7 +336,7 @@ impl CrystalStore {
 
     /// Archive a rule crystal; non-rule crystals are rejected. Standalone
     /// maintenance entry (Python parity); the audited rule lifecycle uses
-    /// [`archive_rule_crystal_in_transaction`] so authority and projection
+    /// `archive_rule_crystal_in_transaction` so authority and projection
     /// archive in ONE transaction.
     pub fn archive_rule_crystal(&self, crystal_id: i64) -> Result<CrystalRecord, CrystalError> {
         let now = now_iso8601();

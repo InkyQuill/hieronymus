@@ -1,12 +1,12 @@
 //! Admin domain surface for the web console.
 //!
-//! * [`views`] — the read-only projections behind the ten "Memory" views
+//! * `views` — the read-only projections behind the ten "Memory" views
 //!   ([`snapshot`], [`VIEW_NAMES`]); ports the Python `AdminStore` result
 //!   shapes (plan W2).
-//! * [`actions`] — the 13 typed, audited mutations ([`run_action`],
+//! * `actions` — the 13 typed, audited mutations ([`run_action`],
 //!   [`validate_action_request`], [`ACTION_NAMES`]); the actor is always the
 //!   transport-authenticated identity, never a request field (plan W3).
-//! * [`audit`] — the shared audit-row / crystal-row / FTS / rule-guard
+//! * `audit` — the shared audit-row / crystal-row / FTS / rule-guard
 //!   helpers both surfaces use.
 
 mod actions;

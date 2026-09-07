@@ -13,8 +13,13 @@ for local coding agents. The generated assets teach agents to recall memory, dis
 crystals from advisory memory, write short-term observations, learn material deliberately, and read
 material casually.
 
-Installers write the asset bundle under the global Hieronymus config root, patch host config files
-with backups, and report installed status only when both assets and host config entries are present.
+The Rust generator writes the asset bundle under the Hieronymus config root.
+Historical Python installers described later patched host configuration; the
+Rust generator does not. Native plugin installation and MCP workflow acceptance
+are separate checks. Current Claude/Codex initialize requests do not satisfy
+mandatory MCP 2026-07-28, and zCode remains unverified. See
+[host acceptance](agent-host-acceptance.md) and the
+[installed rehearsal](rust-cutover-rehearsal.md).
 
 ## Generated plugin bundle (Rust daemon)
 
@@ -33,7 +38,7 @@ no fixed port and no baked-in bearer token, and the daemon can restart or
 move ports freely. Codex session hooks invoke the stable
 `hieronymus-agent-hook` entry point (`session-start` / `session-end`).
 
-The generated skills keep the workflow contract: English-first memory
+The current generated skills still carry the historical workflow: English-first memory
 writes, `source_role` as optional provenance only, candidate-only ingestion
 (agents record proposals and corrections but never approve terminology;
 dreaming crystallizes and a human approves), and strict concept contracts as
@@ -41,6 +46,12 @@ mandatory while crystals and lessons stay advisory. Hieronymus-owned
 integration files live in the Hieronymus config root; no source code or
 plugin files belong in book workspaces. Regenerating the bundle rewrites the
 same bytes (idempotent), and `hiero uninstall` removes it.
+
+That human-only lifecycle is superseded as a product requirement by ADR 0016.
+The accepted [authority design](superpowers/specs/2026-09-06-autonomous-authority-and-corrections.md)
+must be implemented before immediate correction and viewpoint-safe recall can
+be claimed. Existing remember/feedback and deterministic term contracts do not
+prove that new authority contract.
 
 ## Integrations
 

@@ -6,7 +6,7 @@
 //!   world);
 //! - [`Assets::Dist`] — an explicit `frontend/dist` filesystem override
 //!   (development);
-//! - the release backend (module [`embedded`], feature `console-embed`) —
+//! - the release backend (module `embedded`, feature `console-embed`) —
 //!   `frontend/dist` embedded at compile time via `rust-embed`, served in
 //!   the same fixed-set shape by [`Assets::release`].
 

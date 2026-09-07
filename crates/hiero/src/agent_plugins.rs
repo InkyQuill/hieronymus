@@ -6,7 +6,7 @@
 //! Host configuration is never rewritten here: the generated files are
 //! documentation and copy-paste sources for the user's manual host setup.
 //! The MCP registration uses the stable `hieronymus-mcp` entry point (the
-//! argv[0] link to `hiero mcp`): the stdio adapter discovers the local
+//! `argv[0]` link to `hiero mcp`): the stdio adapter discovers the local
 //! daemon through the data root's discovery record, so the generated config
 //! carries no fixed port and no baked-in bearer token.
 //!
@@ -258,7 +258,7 @@ fn mcp_config_json() -> String {
     }))
 }
 
-/// The Codex session hooks: the stable argv[0] link names that route to
+/// The Codex session hooks: the stable `argv[0]` link names that route to
 /// `hiero agent-hook`.
 fn codex_hooks_json() -> String {
     pretty_json(&serde_json::json!({

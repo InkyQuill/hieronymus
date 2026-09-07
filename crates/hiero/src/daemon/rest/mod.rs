@@ -247,14 +247,18 @@ pub(super) fn request_body(request: &Request) -> Option<Value> {
         .filter(Value::is_object)
 }
 
-/// Parse `a=b&c=d` (no percent-decoding; the daemon's query values are plain).
+/// Decode browser form-encoded query values once; path decoding is separate.
 pub(super) fn parse_query(query: &str) -> Vec<(String, String)> {
     query
         .split('&')
         .filter(|pair| !pair.is_empty())
-        .map(|pair| match pair.split_once('=') {
-            Some((key, value)) => (key.to_string(), value.to_string()),
-            None => (pair.to_string(), String::new()),
+        .map(|pair| {
+            let key = pair.split_once('=').map_or(pair, |(key, _)| key);
+            let value = url::form_urlencoded::parse(pair.as_bytes())
+                .next()
+                .map(|(_, value)| value.into_owned())
+                .unwrap_or_default();
+            (key.to_string(), value)
         })
         .collect()
 }
@@ -264,7 +268,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn query_pairs_are_split_without_decoding() {
+    fn query_values_use_browser_form_encoding_once() {
         assert_eq!(
             parse_query("view=Crystals&selected_id=1"),
             vec![
@@ -273,5 +277,15 @@ mod tests {
             ]
         );
         assert_eq!(parse_query(""), Vec::new());
+        assert_eq!(
+            parse_query("view=Dream+Runs&literal=%2B&once=%252B&path=a%2Fb&key+name=value"),
+            vec![
+                ("view".into(), "Dream Runs".into()),
+                ("literal".into(), "+".into()),
+                ("once".into(), "%2B".into()),
+                ("path".into(), "a/b".into()),
+                ("key+name".into(), "value".into()),
+            ]
+        );
     }
 }

@@ -2015,3 +2015,50 @@ fn idle_readiness_publication_cannot_overtake_a_completed_import() {
 fn post_job_readiness_publication_cannot_overtake_a_completed_import() {
     stale_ready_evidence_after_import(true);
 }
+
+#[test]
+fn migration_queued_empty_generation_settles_and_later_import_is_indexed() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let identity = TestArm::fast().identity();
+    let store = SemanticStore::open(&config).unwrap();
+    store.begin_generation("upgrade-empty", &identity).unwrap();
+    let jobs = SemanticJobStore::open(&config).unwrap();
+    let job = jobs.enqueue_rebuild("upgrade-empty", &identity).unwrap();
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
+    assert!(
+        wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(5)
+        ),
+        "migration's empty generation must settle: {:?}",
+        controller.state()
+    );
+    assert_eq!(jobs.job(&job.job_id).unwrap().unwrap().status, "cancelled");
+    assert!(
+        store.active_generation().unwrap().is_none(),
+        "empty candidate must not masquerade as an activated index"
+    );
+    hieronymus::registry::Registry::open(&config)
+        .unwrap()
+        .create_series("demo", "Demo", "ja", "en", None)
+        .unwrap();
+    let source = root.path().join("after-cutover.txt");
+    std::fs::write(&source, "The keeper watches the harbour at dusk.").unwrap();
+    hieronymus::rag::RagStore::open(&config)
+        .unwrap()
+        .import_file("demo", &source, &hieronymus::rag::RagImport::new())
+        .unwrap();
+    assert!(
+        wait_until(
+            || controller.state() == RequiredSemanticState::Ready
+                && store.active_generation().unwrap().is_some(),
+            Duration::from_secs(15)
+        ),
+        "subsequent import's durable work must be indexed: {:?}",
+        controller.state()
+    );
+    let active = store.active_generation().unwrap().unwrap();
+    assert!(active.written_count > 0);
+    group.stop_and_join().unwrap();
+}

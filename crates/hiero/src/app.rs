@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! <app>/versions/<version>/hiero            the release binary
-//! <app>/versions/<version>/hieronymus       relative link -> hiero (argv[0])
+//! <app>/versions/<version>/hieronymus       relative link -> hiero (`argv[0]`)
 //! <app>/versions/<version>/hieronymus-mcp   relative link -> hiero
 //! <app>/versions/<version>/hieronymus-agent-hook
 //! <app>/bin/<name>                          stable link -> ../versions/<version>/<name>
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 pub const TARGET_TRIPLE: &str = "x86_64-unknown-linux-gnu";
 
 /// The command link names this project owns. `hiero` is canonical; the others
-/// route through the binary's argv[0] handling. Removing any of them requires
+/// route through the binary's `argv[0]` handling. Removing any of them requires
 /// a later ADR.
 pub const LINK_NAMES: [&str; 4] = [
     "hiero",
@@ -251,7 +251,7 @@ mod tests {
     fn stable_links_point_at_the_versioned_binary_and_reruns_are_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let layout = AppLayout::new(temp.path());
-        // The versioned payload: the binary plus its relative argv[0] links.
+        // The versioned payload: the binary plus its relative `argv[0]` links.
         std::fs::create_dir_all(layout.version_dir("1.2.3")).unwrap();
         std::fs::write(layout.version_dir("1.2.3").join("hiero"), b"binary").unwrap();
 

@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod installed;
+
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};

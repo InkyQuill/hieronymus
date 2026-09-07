@@ -381,7 +381,7 @@ impl SemanticStore {
         })
     }
 
-    /// Loads the pinned [`ModelTokenizer`] from the acquired asset. Fails
+    /// Loads the pinned [`ModelTokenizer`](crate::semantic_tokenizer::ModelTokenizer) from the acquired asset. Fails
     /// closed when the asset is missing, wrongly sized, or fails its SHA-256
     /// verification against the pinned digest.
     pub fn load_model_tokenizer(

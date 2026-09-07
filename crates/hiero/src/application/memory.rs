@@ -860,7 +860,7 @@ impl Application {
     /// must never be silent.
     ///
     /// So the required service is gated first
-    /// ([`Application::require_semantic_service`]): a service that is absent,
+    /// (`Application::require_semantic_service`): a service that is absent,
     /// acquiring, rebuilding, or failed is an error carrying its own reason,
     /// not a lexical answer. A ready service with an empty series is a
     /// success with zero rows (ready-for-ingest), and a ready service whose

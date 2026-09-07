@@ -70,6 +70,7 @@ use std::time::Duration;
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::semantic_arming::{load_runtime_library, save_runtime_library};
 use hieronymus::semantic_embeddings::{EmbeddingIdentity, EmbeddingProvider};
+use hieronymus::semantic_error::SemanticError;
 use hieronymus::semantic_jobs::{
     AuthoritativeChunk, ChunkTokenizer, JobOutcome, RebuildConfig, RebuildInputs, SemanticJobStore,
 };
@@ -1002,9 +1003,28 @@ fn drive_claimable_jobs(
         pass.drove_a_job = true;
         let sample = match activation_sample(&context.inner.config, armed.tokenizer.as_mut()) {
             Ok(Some(sample)) => sample,
-            // The corpus emptied underneath us: there is nothing to activate
-            // against, and reconciliation settles the job on a later tick.
-            Ok(None) => break,
+            // Migration can queue a generation over an empty corpus. Merely
+            // breaking leaves that queued/building pair live forever: ordinary
+            // reconciliation cannot infer that there is nothing to index.
+            // Cancel this candidate through the store, then reconcile its job.
+            // A racing import retains its own durable intent; the caller
+            // re-reads current corpus coverage before publishing readiness.
+            Ok(None) => {
+                let settled = (|| -> Result<(), SemanticError> {
+                    let job = jobs.job(&job_id)?.ok_or_else(|| {
+                        SemanticError::InvalidState(format!("missing semantic job {job_id}"))
+                    })?;
+                    SemanticStore::open(&context.inner.config)?
+                        .cancel_generation(&job.generation_id)?;
+                    jobs.reconcile()?;
+                    Ok(())
+                })();
+                if let Err(error) = settled {
+                    pass.failure = Some(format!("settling empty-corpus rebuild failed: {error}"));
+                    break;
+                }
+                continue;
+            }
             Err(reason) => {
                 pass.failure = Some(reason);
                 break;

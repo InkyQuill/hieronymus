@@ -58,7 +58,7 @@ impl ModelTokenizer {
     }
 
     /// Encodes one text into Unigram token ids with the special tokens
-    /// (<s> ... </s>) added and truncation applied. Never empty: even the
+    /// (`<s> ... </s>`) added and truncation applied. Never empty: even the
     /// empty string encodes to the special-token pair.
     pub fn encode(&self, text: &str) -> Result<Vec<u32>, SemanticError> {
         self.0

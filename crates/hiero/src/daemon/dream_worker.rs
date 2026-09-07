@@ -6,7 +6,7 @@
 //! [`hieronymus::dreaming::DreamService`] run.
 //!
 //! Supervision (ADR 0009): the worker is admitted to the daemon's
-//! [`WorkerGroup`], so a graceful stop joins it before discovery is removed
+//! [`WorkerGroup`](crate::daemon::workers::WorkerGroup), so a graceful stop joins it before discovery is removed
 //! and root ownership is released. Scheduled sleeps are bounded slices on
 //! the shared stop flag's condvar, and a run in progress at shutdown stops
 //! at the next batch boundary — the batches that did run keep their durable
@@ -236,7 +236,7 @@ struct ControllerInner {
 }
 
 /// A cloneable handle to the dream controller. The worker is admitted to
-/// the daemon's [`WorkerGroup`] at [`DreamController::start`]; every handle
+/// the daemon's [`WorkerGroup`](crate::daemon::workers::WorkerGroup) at [`DreamController::start`]; every handle
 /// shares the same worker, queue, and slots.
 #[derive(Clone)]
 pub struct DreamController {

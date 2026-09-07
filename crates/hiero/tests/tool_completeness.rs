@@ -333,8 +333,12 @@ struct StdioTransport {
 
 impl StdioTransport {
     fn spawn(root: &Path) -> Self {
-        let adapter = Command::new(env!("CARGO_BIN_EXE_hiero"))
-            .args(["mcp", "--data-root", root.to_str().unwrap()])
+        Self::spawn_binary(Path::new(env!("CARGO_BIN_EXE_hiero")), root)
+    }
+
+    fn spawn_binary(binary: &Path, root: &Path) -> Self {
+        let adapter = common::installed::command(binary, root)
+            .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1214,4 +1218,54 @@ fn stale_discovery_is_rejected_by_the_tool_client() {
     daemon.shutdown().unwrap();
     std::fs::write(config.daemon_discovery_path(), saved).unwrap();
     assert!(hiero::daemon_client::DaemonClient::connect(&config).is_err());
+}
+
+/// Same registry cases and persistence assertions, executed by the installed
+/// daemon with its real bundled ONNX model. Dream replies remain a controlled
+/// loopback provider fixture; this does not qualify a commercial provider/host.
+#[test]
+#[ignore = "requires disposable installed release"]
+fn installed_registry_executes_both_transports() {
+    struct InstalledHttp<'a>(&'a hiero::daemon_client::DaemonClient);
+    impl Transport for InstalledHttp<'_> {
+        fn call_tool(&mut self, name: &str, arguments: &Value) -> Value {
+            self.0
+                .call_tool(name, arguments)
+                .expect("installed HTTP tools/call")["result"]
+                .clone()
+        }
+        fn label(&self) -> &'static str {
+            "installed-http"
+        }
+    }
+    let binary = common::installed::binary();
+    for stdio in [false, true] {
+        for case in cases() {
+            let root = tempfile::tempdir().unwrap();
+            let mut daemon = common::installed::InstalledDaemon::start(&binary, root.path());
+            let provider = DreamLoopback::start();
+            if stdio {
+                let mut transport = StdioTransport::spawn_binary(&binary, root.path());
+                run_case(&mut transport, root.path(), &case, &provider.url, &|| {
+                    daemon.ready()
+                });
+                transport.finish(&case.name);
+            } else {
+                run_case(
+                    &mut InstalledHttp(&daemon.client),
+                    root.path(),
+                    &case,
+                    &provider.url,
+                    &|| daemon.ready(),
+                );
+            }
+            daemon.client.post("/shutdown", &json!({})).unwrap();
+            daemon.wait_stopped();
+            eprintln!(
+                "installed {} {} PASS (fixture Dream provider)",
+                if stdio { "stdio" } else { "HTTP" },
+                case.name
+            );
+        }
+    }
 }

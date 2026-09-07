@@ -5,6 +5,8 @@
 //! directory; the systemd user manager is never contacted (`--unit-dir`
 //! override disables manager integration by design).
 
+mod common;
+
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,7 +14,7 @@ use std::process::Command;
 /// The real binary's identity values, so fixtures stay correct when they
 /// change upstream.
 fn real_identity() -> (String, i64) {
-    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let output = Command::new(common::installed::binary_or_development())
         .args(["version", "--json"])
         .output()
         .unwrap();
@@ -138,7 +140,7 @@ fn run_update(
     unit_dir: &Path,
     extra: &[&str],
 ) -> (String, String, std::process::ExitStatus) {
-    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let output = Command::new(common::installed::binary_or_development())
         .args([
             "update",
             "--release-dir",

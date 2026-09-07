@@ -49,6 +49,7 @@
         : (dashboard.views[0] ?? ""),
   );
   let selectedView = $state("");
+  let selectedIds = $state<Array<string | number>>([]);
   let snapshot = $state.raw<AdminSnapshot["snapshot"] | null>(null);
   let loading = $state(false);
   let error = $state("");
@@ -68,6 +69,7 @@
 
   function applySnapshot(next: AdminSnapshot["snapshot"]) {
     snapshot = next;
+    selectedIds = selectedIds.filter((id) => next.rows.some((row) => row.id === id));
   }
 
   // Every load() call takes the next sequence number; a response whose number
@@ -77,6 +79,7 @@
 
   async function load(view: string, selectedId?: string | number) {
     const sequence = ++loadSequence;
+    if (selectedView !== view) selectedIds = [];
     selectedView = view;
     loading = true;
     error = "";
@@ -143,6 +146,8 @@
       // The action result is authoritative: invalidate any in-flight load so
       // it cannot overwrite this snapshot.
       loadSequence += 1;
+      loading = false;
+      selectedIds = [];
       applySnapshot(result.snapshot);
       dialogCommand = null;
       if (result.provenance || result.reasons || result.review || result.run) {
@@ -159,6 +164,11 @@
     } finally {
       runningAction = null;
     }
+  }
+
+  function toggleSelection(row: AdminRow, checked: boolean) {
+    selectedIds = checked ? [...selectedIds, row.id] : selectedIds.filter((id) => id !== row.id);
+    if (checked && !snapshot?.selected) void load(selectedView, row.id);
   }
 
   function start(command: AdminCommand) {
@@ -227,7 +237,7 @@
             <table class="data-table min-w-[42rem] text-left"
               ><thead class="bg-surface"
                 ><tr
-                  ><th
+                  ><th class="border-b border-default px-4 py-3 text-eyebrow">Select</th><th
                     class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary"
                     >Record</th
                   ><th
@@ -248,19 +258,16 @@
                       ?.id === row.id
                       ? '[&>td]:bg-raised [&>td:first-child]:border-l-2 [&>td:first-child]:border-l-accent'
                       : ''}"
-                    role="button"
-                    tabindex="0"
-                    onclick={() => void load(selectedView, row.id)}
-                    onkeydown={(event) => {
-                      if (event.key === " ") event.preventDefault();
-                      if (event.key === "Enter" || event.key === " ")
-                        void load(selectedView, row.id);
-                    }}
-                    ><td class="px-4 py-3 text-body"
+                    ><td class="px-4 py-3">
+                      <input type="checkbox" aria-label={`Select ${row.label}`}
+                        checked={selectedIds.includes(row.id)}
+                        onchange={(event) => toggleSelection(row, event.currentTarget.checked)} />
+                    </td><td class="px-4 py-3 text-body">
+                      <button class="w-full text-left" onclick={() => void load(selectedView, row.id)}
                       ><strong class="block font-medium">{row.label}</strong
                       ><small class="mt-1 block text-caption text-secondary"
                         >{row.language_pair}</small
-                      ></td
+                      ></button></td
                     ><td class="px-4 py-3 text-body-sm text-secondary"
                       >{row.kind}</td
                     ><td class="px-4 py-3 text-body-sm text-secondary"
@@ -379,6 +386,7 @@
     command={dialogCommand}
     view={selectedView}
     row={snapshot?.selected ?? null}
+    {selectedIds}
     currentText={snapshot?.detail.body ?? ""}
     busy={runningAction !== null}
     error={dialogError}

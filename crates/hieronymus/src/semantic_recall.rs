@@ -10,8 +10,8 @@
 //! never silently mixed with a half-running lane. Corrupt hits (stale
 //! checksum, deleted chunk, foreign series or generation) are excluded and a
 //! Task 8 rebuild job is scheduled over a fresh generation; one repair runs at
-//! a time. Tokenization is the pinned WordPiece [`ModelTokenizer`](crate::
-//! semantic_tokenizer::ModelTokenizer) used identically for documents (rebuild
+//! a time. Tokenization is the pinned Unigram
+//! [`ModelTokenizer`](crate::semantic_tokenizer::ModelTokenizer) used identically for documents (rebuild
 //! jobs) and queries (this lane), so document and query embeddings stay one
 //! identity.
 

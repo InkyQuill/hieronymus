@@ -1,8 +1,10 @@
 # Compatibility freeze
 
 The checked-in manifest, snapshots, and fixtures are the reviewed Python
-reference boundary for the Rust migration. Run the read-only aggregate gate
-before submitting a change:
+reference boundary for the Rust migration. Current Rust plans and accepted
+ADR amendments govern behavior; these snapshots are historical inputs, not a
+Python parity release gate. When intentionally maintaining the retained Python
+reference, its read-only aggregate check is:
 
 ```bash
 uv run --no-cache --no-sync python -B -m tools.compatibility.check
@@ -133,3 +135,16 @@ the two ADR 0012 (2026-09-03 amendment) deltas that close that gap:
 The frozen `compatibility/snapshots/` and `compatibility/fixtures/` bytes are
 untouched; the new Rust integration coverage lives in
 `crates/hiero/tests/console_auth.rs` and `frontend/src/web/lib/bootstrap.test.ts`.
+
+### Current lifecycle and installed evidence
+
+Recall's versioned Rust DTO/semantic-readiness deltas and the console Origin
+rules above remain intentional. [ADR 0015](../docs/adr/0015-mcp-protocol-and-transport.md)
+requires MCP 2026-07-28 without a silent legacy initialize adapter.
+[ADR 0016](../docs/adr/0016-autonomous-story-memory-product-vision.md)
+supersedes human-only rule approval as product direction while retaining
+explicit-user priority, deterministic authority, evidence and audit. Its accepted
+authority design has not implemented that runtime; historical registry lifecycle
+cases passing does not establish autonomous correction/viewpoint acceptance.
+The [installed rehearsal](../docs/rust-cutover-rehearsal.md) separates package,
+real model, browser and native-host outcomes. Frozen inputs remain untouched.

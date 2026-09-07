@@ -4,72 +4,44 @@ For the long-term memory workflow, see [Memory Dreaming](memory-dreaming.md).
 
 ## Installation and Updates
 
-Install Hieronymus with:
+The Rust candidate is a Linux x86_64 archive with one native executable, four
+command names, an embedded console, and pinned semantic model/runtime assets.
+It needs no Python, Node or Bun at runtime. It is not yet cleared for product
+cutover: [the rehearsal](rust-cutover-rehearsal.md) records actual results and
+open authority, browser and agent-host gates.
+
+Install a locally built, verified release into disposable roots:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | sh
+scripts/install.sh --release-dir /path/to/release-dist \
+  --app-dir /tmp/hiero-rehearsal/app --data-root /tmp/hiero-rehearsal/data \
+  --unit-dir /tmp/hiero-rehearsal/units --no-activate
+/tmp/hiero-rehearsal/app/bin/hiero version --json
 ```
 
-The installer keeps the managed application checkout at
-`~/.local/share/hieronymus/app` and installs the `hieronymus`, `hiero`, and
-`hieronymus-mcp` console commands through `uv tool install`. If `hiero` is not
-available after installation, add `~/.local/bin` to `PATH`.
-
-In an interactive terminal, the installer asks whether to install the stable or
-dev channel. Stable installs the latest tagged alpha release and dev installs
-the latest `main` commit. Non-interactive installs default to stable. To choose
-the channel explicitly:
+The installer places each release under `app/versions/<version>` and switches
+all stable `app/bin` aliases together. `--no-activate` stages the application
+without contacting the user service manager. Launch the foreground daemon
+for a disposable rehearsal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | HIERONYMUS_INSTALL_CHANNEL=stable sh
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | HIERONYMUS_INSTALL_CHANNEL=dev sh
+/tmp/hiero-rehearsal/app/bin/hiero daemon --data-root /tmp/hiero-rehearsal/data --port 0
 ```
 
-The installer writes the selected update channel to `release.conf`, so later
-`hiero update` calls follow the same stable or dev channel.
+In another terminal, `hiero status --json --data-root <root>` reports the
+authenticated daemon's semantic state. Only `ready` satisfies required
+semantic readiness; acquiring, rebuilding and failed do not. `hiero stop
+--data-root <root>` shuts down the owner. See [Distribution](distribution.md)
+for verified source configuration, update options and recovery boundaries.
+No public release URL is inferred from these local tests.
 
-Update an installed checkout:
-
-```bash
-hiero update
-```
-
-Check for updates without applying them:
-
-```bash
-hiero update --check
-```
-
-Uninstall the app:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh
-```
-
-The non-interactive uninstall one-liner removes the app and keeps settings/data
-by default.
-
-Choose data handling explicitly:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --keep-data
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --purge-data
-```
-
-For an interactive prompt, run the managed checkout script from a terminal:
-
-```bash
-~/.local/share/hieronymus/app/uninstall.sh
-```
-
-The uninstall script only removes Hieronymus-owned install and config/data
-paths. It does not remove translation workspace directories.
-
---purge-data removes the configured data root. If HIERONYMUS_DATA_ROOT is
-set, check it before purging.
-
-Unset or check `HIERONYMUS_DATA_ROOT` before using `--purge-data` if it points
-at data you want to keep, such as a data root inside a translation workspace.
+`hiero admin --data-root <root>` and `hiero config --data-root <root>` open
+the embedded browser console through a single-use launch grant. Refreshes
+reuse the browser cookie; restarting the daemon invalidates that session and
+requires another launch. Explicit foreign Origins are refused. Generated
+plugins use the stable `hieronymus-mcp` command, but current Claude/Codex
+initialize requests are incompatible with mandatory MCP 2026-07-28; see
+[actual host evidence](agent-host-acceptance.md).
 
 ## Data Root
 

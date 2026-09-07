@@ -15,6 +15,7 @@ publish = false
 console-embed = ["dep:rust-embed"]
 
 [dependencies]
+url = "2"
 flate2 = "1"
 tar = "0.4"
 hieronymus = { path = "../hieronymus" }

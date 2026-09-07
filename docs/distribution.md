@@ -1,8 +1,8 @@
 # Distribution: build, install, update, and release (Rust era)
 
 Status: F1 packaging and verified release staging are implemented. Installed
-release qualification and the remaining product/host gates are recorded in
-`docs/agent-host-acceptance.md`; this document does not declare those gates
+release qualification is recorded in [the installed rehearsal](rust-cutover-rehearsal.md),
+and native host gates in [host acceptance](agent-host-acceptance.md); this document does not declare those gates
 passed. Current Rust plans and ADR 0016 govern the product. Historical Python
 qualification records are not release-asset inputs.
 
@@ -300,3 +300,20 @@ bracketed HTTP authority formatting are covered deterministically. The native
 IPv6 loopback test is explicit and opt-in: this qualification host permits the
 listener but times out the TCP connection before TLS (60-second bounded
 connect). That probe is recorded as unverified, not a passing IPv6 TLS claim.
+
+
+## Installed rehearsal and remaining cutover gates
+
+[The F2 rehearsal](rust-cutover-rehearsal.md) attributes each check to its actual
+archive and separates native ONNX/CLI/MCP/browser results from controlled
+provider or service-manager fixtures. Both mandatory memory lanes remain
+required. The accepted autonomous authority design and actual Claude/Codex
+initialize compatibility remain open product gates; zCode is unverified. Do not
+infer readiness for live migration or publication from the packaging checks.
+
+The installed runtime has been exercised with an empty PATH and no external
+runtime/model override. Build and browser-test tools are not runtime
+prerequisites. Local rehearsal uses explicit disposable `--app-dir`,
+`--data-root`, `--unit-dir` and `--no-activate`; it does not operate the user's
+service manager. A separately compiled test-only version qualifies the
+version transition without changing or publishing the repository version.

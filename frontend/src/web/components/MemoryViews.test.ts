@@ -336,3 +336,35 @@ test("a destructive action opens a dialog and only posts after explicit confirma
     confirmed: true,
   });
 });
+
+test("merge uses two explicitly checked records and clears selection after completion", async () => {
+  const user = userEvent.setup();
+  const second = { ...row, id: 8, label: "Crystal Beta" };
+  loadSnapshotMock.mockReset();
+  loadSnapshotMock.mockResolvedValue({ snapshot: { ...selectedSnapshot.snapshot, rows: [row, second] } });
+  runActionMock.mockResolvedValue({ result: { message: "Merged" }, snapshot: listSnapshot.snapshot });
+  render(MemoryViews, { props: { dashboard: { ...dashboard, command_options: [...dashboard.command_options, command("merge_selected", "Merge Selected", ["Crystals"], true)] }, onNotice: vi.fn() } });
+  await user.click(await screen.findByRole("checkbox", { name: "Select Crystal Alpha" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Crystal Beta" }));
+  await user.click(screen.getByRole("button", { name: "Merge Selected" }));
+  await user.type(screen.getByLabelText("Merged memory text"), "Combined evidence");
+  await user.click(screen.getByLabelText(/apply this change to the stored memory/i));
+  await user.click(screen.getAllByRole("button", { name: "Merge Selected" }).at(-1)!);
+  expect(runActionMock).toHaveBeenCalledWith("merge_selected", { view: "Crystals", ids: [7, 8], text: "Combined evidence", title: "", confirmed: true });
+  await waitFor(() => expect((screen.getByRole("checkbox", { name: "Select Crystal Alpha" }) as HTMLInputElement).checked).toBe(false));
+});
+
+test("an action result ends loading even when it supersedes an in-flight refresh", async () => {
+  const user = userEvent.setup();
+  let finishAction!: (value: AdminActionResult) => void;
+  runActionMock.mockReturnValue(new Promise(resolve => { finishAction = resolve; }));
+  const component = render(MemoryViews, { props: { dashboard, onNotice: vi.fn() } });
+  await user.click(await screen.findByRole("button", { name: /Crystal Alpha/ }));
+  await user.click(await screen.findByRole("button", { name: "Reinforce Crystal" }));
+  loadSnapshotMock.mockReturnValue(new Promise(() => {}));
+  await component.rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
+  await screen.findByText("Loading Crystals…");
+  finishAction({ result: { message: "Reinforced" }, snapshot: selectedSnapshot.snapshot });
+  await waitFor(() => expect(screen.queryByText("Loading Crystals…")).toBeNull());
+  expect(screen.getByText("Evidence")).toBeTruthy();
+});

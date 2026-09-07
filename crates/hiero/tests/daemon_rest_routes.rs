@@ -674,3 +674,29 @@ fn bearer_mint_route_never_serves_grants_without_the_token() {
     assert_eq!(unauthorized.status, 401);
     assert_eq!(unauthorized.body(), json!({"error": "unauthorized"}));
 }
+
+#[test]
+fn browser_form_encoded_multiword_views_are_decoded_once() {
+    let (fixture, _root, daemon) = start_daemon_with_browser_session();
+    for encoded in [
+        "Dream+Runs",
+        "Dream%20Runs",
+        "Short-Term+Memory",
+        "Audit+Log",
+    ] {
+        let response = send_request(
+            daemon.local_addr().port(),
+            "GET",
+            &format!("/api/admin/snapshot?view={encoded}"),
+            &browser_headers(&fixture, &[]),
+            b"",
+        );
+        assert_eq!(
+            response.status,
+            200,
+            "browser view {encoded}: {}",
+            response.body()
+        );
+    }
+    daemon.shutdown().unwrap();
+}

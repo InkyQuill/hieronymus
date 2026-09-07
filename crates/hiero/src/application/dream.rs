@@ -1,6 +1,6 @@
 //! The dream tool family (plan M5): `hieronymus_dream`, the one tool the
 //! M1–M4 families left unclaimed. Since task D5 the dispatch runs through
-//! the daemon's [`DreamController`]: the request coalesces into the one
+//! the daemon's [`DreamController`](crate::daemon::dream_worker::DreamController): the request coalesces into the one
 //! supervised worker (scheduled, admin, and MCP dream never run
 //! concurrently), providers are configured lanes resolved from
 //! `provider.conf`/`dream.conf` inside the controller's worker (ADR 0007),
