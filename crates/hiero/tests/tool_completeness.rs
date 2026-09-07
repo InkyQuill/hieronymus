@@ -20,10 +20,73 @@ use serde_json::{Value, json};
 
 use hiero::application::{AppError, Application};
 use hiero::daemon::McpRegistry;
+use hiero::daemon::semantic_worker::{ArmedPair, SemanticArm, install_test_arm};
+use hieronymus::data_root::HieronymusConfig;
+use hieronymus::semantic_embeddings::{
+    EMBEDDING_DIMENSIONS, EmbeddingProvider, FakeEmbeddingProvider,
+};
+use hieronymus::semantic_tokenizer::ModelTokenizer;
 
 mod common;
 
-use common::{mcp_headers, send_request};
+use common::{mcp_headers, send_request, wait_until};
+
+// ------------------------------------------------- the semantic prerequisite
+
+/// A deterministic offline semantic arm for the matrix daemons.
+///
+/// Task C5 made this a prerequisite rather than a nicety: `hieronymus_rag_search`
+/// is semantic RAG search, so it refuses a data root with no semantic service
+/// instead of answering with the lexical FTS lane. Every advertised tool must
+/// still EXECUTE here, so the matrix daemon arms the same fake-provider seam
+/// the semantic integration tests use — no model download, no ONNX runtime,
+/// real durable jobs and a real query lane.
+struct MatrixArm;
+
+impl SemanticArm for MatrixArm {
+    fn identity(&self) -> hieronymus::semantic_embeddings::EmbeddingIdentity {
+        FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)
+            .identity()
+            .clone()
+    }
+
+    fn precheck(&self, _config: &HieronymusConfig) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn arm(&self, _config: &HieronymusConfig) -> Result<ArmedPair, String> {
+        let tokenizer = ModelTokenizer::from_bytes(include_bytes!(
+            "../../hieronymus/tests/fixtures/minilm-tokenizer.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        Ok(ArmedPair {
+            provider: Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+            tokenizer: Box::new(tokenizer),
+        })
+    }
+}
+
+/// Start a matrix daemon whose semantic service can actually reach `ready`,
+/// and hand back the probe `run_case` waits on between setup and the case
+/// call (the setup of an import-bearing case queues a real rebuild, so
+/// readiness is reached, left, and reached again).
+fn start_matrix_daemon(root: &Path) -> (hiero::daemon::Daemon, impl Fn() -> bool + use<>) {
+    install_test_arm(root, Arc::new(MatrixArm));
+    let daemon = common::start_daemon(root);
+    let port = daemon.local_addr().port();
+    let bearer = daemon.bearer().expose_secret().clone();
+    let probe = move || {
+        let response = send_request(
+            port,
+            "GET",
+            "/status",
+            &[("Authorization".to_string(), format!("Bearer {bearer}"))],
+            b"",
+        );
+        response.status == 200 && response.body()["semantic"]["state"] == json!("ready")
+    };
+    (daemon, probe)
+}
 
 // ------------------------------------------------- the step-1 regression test
 
@@ -496,7 +559,13 @@ fn tools_call(id: i64, name: &str, arguments: &Value) -> Value {
 
 // -------------------------------------------------------------- case runner
 
-fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase, dream_url: &str) {
+fn run_case(
+    transport: &mut dyn Transport,
+    root: &Path,
+    case: &ToolCase,
+    dream_url: &str,
+    semantic_ready: &dyn Fn() -> bool,
+) {
     let label = format!("[{}] {}", transport.label(), case.name);
     let mut bindings = BTreeMap::new();
 
@@ -551,6 +620,16 @@ fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase, dream_u
             }
         }
     }
+
+    // Required semantics must be serving before the case runs: a setup
+    // import queues a real rebuild, and a tool whose contract is semantic
+    // retrieval refuses a service that is not ready (task C5). Waiting here
+    // keeps the matrix a statement about handlers rather than about timing —
+    // and fails loudly if readiness never arrives.
+    assert!(
+        wait_until(semantic_ready, Duration::from_secs(30)),
+        "{label}: the semantic service never reached ready"
+    );
 
     // The case call itself, over the transport under test.
     let arguments = substitute(&case.arguments, root, &bindings);
@@ -655,9 +734,15 @@ fn every_case_executes_over_real_http_with_persisted_mutations() {
     for case in cases() {
         let root = tempfile::tempdir().unwrap();
         let dream_provider = DreamLoopback::start();
-        let daemon = common::start_daemon(root.path());
+        let (daemon, semantic_ready) = start_matrix_daemon(root.path());
         let mut transport = HttpTransport { daemon, next_id: 0 };
-        run_case(&mut transport, root.path(), &case, &dream_provider.url);
+        run_case(
+            &mut transport,
+            root.path(),
+            &case,
+            &dream_provider.url,
+            &semantic_ready,
+        );
         transport.daemon.shutdown().unwrap();
     }
 }
@@ -668,10 +753,16 @@ fn every_case_executes_over_stdio_with_persisted_mutations() {
         let root = tempfile::tempdir().unwrap();
         // The in-process daemon publishes the discovery record the adapter
         // uses for stdio discovery (no fixed port, no baked-in credential).
-        let daemon = common::start_daemon(root.path());
+        let (daemon, semantic_ready) = start_matrix_daemon(root.path());
         let dream_provider = DreamLoopback::start();
         let mut transport = StdioTransport::spawn(root.path());
-        run_case(&mut transport, root.path(), &case, &dream_provider.url);
+        run_case(
+            &mut transport,
+            root.path(),
+            &case,
+            &dream_provider.url,
+            &semantic_ready,
+        );
         transport.finish(&format!("[stdio] {}", case.name));
         daemon.shutdown().unwrap();
     }

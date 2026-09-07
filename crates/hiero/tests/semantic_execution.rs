@@ -1329,3 +1329,373 @@ fn concurrent_queue_calls_dedup_onto_one_generation() {
         .unwrap();
     assert_eq!(building, 1, "no orphaned building candidate may survive");
 }
+
+// ------------------------------- task C5: the public semantic RAG search
+
+/// The accepted Rust delta for `hieronymus_rag_search` (review finding A5).
+/// Loaded, not restated: the fixture is the reviewed record of the envelope
+/// and the refusal, and this file proves the runtime matches it.
+const RAG_SEARCH_V2: &str = include_str!("../../../compatibility/rust/rag-search-v2.json");
+
+fn rag_search_expectation(state: &str, corpus: &str) -> Value {
+    let fixture: Value = serde_json::from_str(RAG_SEARCH_V2).unwrap();
+    assert_eq!(fixture["expectation_set"], json!("rag-search-v2"));
+    fixture["expectations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["semantic_state"] == json!(state) && entry["corpus"] == json!(corpus))
+        .unwrap_or_else(|| panic!("no rag-search-v2 expectation for {state}/{corpus}"))
+        .clone()
+}
+
+/// A tool call whose failure is the point: returns the tool-error text.
+fn call_tool_error(
+    daemon: &hiero::daemon::Daemon,
+    id: i64,
+    name: &str,
+    arguments: Value,
+) -> String {
+    let response = send_request(
+        daemon.local_addr().port(),
+        "POST",
+        "/mcp",
+        &mcp_headers(daemon, &[("Mcp-Method", "tools/call"), ("Mcp-Name", name)]),
+        &serde_json::to_vec(&tools_call(id, name, arguments)).unwrap(),
+    );
+    assert_eq!(response.status, 200, "{:?}", response.raw_body);
+    let body = response.body();
+    assert_eq!(
+        body["result"]["isError"],
+        json!(true),
+        "tool {name} was expected to fail: {body}"
+    );
+    body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn rag_search(daemon: &hiero::daemon::Daemon, id: i64, series: &str, query: &str) -> Vec<Value> {
+    let payload = call_tool(
+        daemon,
+        id,
+        "hieronymus_rag_search",
+        json!({"series_slug": series, "query": query, "limit": 5}),
+    );
+    payload
+        .as_array()
+        .unwrap_or_else(|| panic!("rag search must answer a bare row array: {payload}"))
+        .clone()
+}
+
+/// THE step-1 regression (task C5, review finding A5): a bare application
+/// with no semantic service at all must refuse strict `hieronymus_rag_search`
+/// instead of answering with the lexical FTS lane. Before C5 this call ran
+/// `RagStore::search` directly and returned an ordinary successful array, so a
+/// cold, unconfigured, or failed semantic runtime was indistinguishable from a
+/// complete answer.
+#[test]
+fn rag_search_rejects_an_unavailable_required_semantic_service() {
+    let root = tempfile::tempdir().unwrap();
+    let app = hiero::application::Application::open(&HieronymusConfig::new(root.path())).unwrap();
+    app.call(
+        "hieronymus_series_create",
+        &json!({"slug": "book", "title": "Book"}),
+        "test",
+    )
+    .unwrap();
+    let error = app
+        .call(
+            "hieronymus_rag_search",
+            &json!({"series_slug": "book", "query": "physician", "limit": 3}),
+            "test",
+        )
+        .unwrap_err();
+
+    let expectation = rag_search_expectation("absent", "any");
+    let needle = expectation["expected"]["error_contains"].as_str().unwrap();
+    assert!(
+        error.to_string().contains(needle),
+        "the refusal must carry {needle:?}: {error}"
+    );
+
+    // Argument validation still runs first, so a malformed call keeps its own
+    // diagnostic rather than being masked by the semantic gate.
+    let invalid = app
+        .call(
+            "hieronymus_rag_search",
+            &json!({"series_slug": "book", "query": "physician", "limit": 0}),
+            "test",
+        )
+        .unwrap_err();
+    assert!(
+        invalid.to_string().contains("limit must be at least 1"),
+        "{invalid}"
+    );
+}
+
+/// A semantic service that exists but cannot serve is refused with its own
+/// actionable reason — including over a series whose text IS indexed, which is
+/// exactly the case where a lexical-only answer would look complete while the
+/// paraphrase half of the corpus stayed unreachable.
+#[test]
+fn rag_search_refuses_a_semantic_service_that_is_not_ready() {
+    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    seed_series_and_session(&daemon);
+    import(
+        &daemon,
+        root.path(),
+        "chapter-1.txt",
+        "The ship's physician bandaged the drowned sailor at dawn.",
+    );
+    let state = wait_for_state(&daemon, "failed");
+    assert_eq!(state.state, "failed");
+
+    let error = call_tool_error(
+        &daemon,
+        10,
+        "hieronymus_rag_search",
+        json!({"series_slug": "demo", "query": "physician", "limit": 5}),
+    );
+    let expectation = rag_search_expectation("failed", "indexed");
+    let needle = expectation["expected"]["error_contains"].as_str().unwrap();
+    assert!(
+        error.contains(needle),
+        "the refusal must carry {needle:?}: {error}"
+    );
+    // The reason is the service's own, not a generic placeholder.
+    assert!(
+        error.contains("hiero semantic enable --runtime"),
+        "the refusal must stay actionable: {error}"
+    );
+
+    daemon.shutdown().unwrap();
+    drop(root);
+}
+
+/// The one valid empty answer: everything loaded, nothing imported yet. The
+/// controller reports ready-for-ingest, so zero rows is a complete answer, not
+/// an error.
+#[test]
+fn rag_search_over_a_ready_empty_corpus_is_an_empty_success() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    wait_for_state(&daemon, "ready");
+
+    let rows = rag_search(&daemon, 11, "demo", "physician");
+    let expectation = rag_search_expectation("ready", "empty");
+    assert_eq!(
+        expectation["expected"]["results"],
+        json!([]),
+        "the fixture pins the empty-success case"
+    );
+    assert!(rows.is_empty(), "{rows:?}");
+
+    daemon.shutdown().unwrap();
+}
+
+/// The connected search: a ready service answers with the SAME hybrid
+/// retrieval `hieronymus_recall` runs — a query with no lexical overlap still
+/// finds the chunk through the semantic lane — with `rag` provenance, the
+/// frozen row shape, and no foreign-series leak.
+#[test]
+fn rag_search_serves_semantic_rows_for_the_queried_series_only() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    call_tool(
+        &daemon,
+        12,
+        "hieronymus_series_create",
+        json!({"slug": "ghost", "title": "Ghost", "source_language": "ja", "target_language": "en"}),
+    );
+    import(
+        &daemon,
+        root.path(),
+        "chapter-1.txt",
+        "The archivist catalogued every rumour of the drowned city before the tide returned.",
+    );
+    let foreign = write_source(
+        root.path(),
+        "foreign.txt",
+        "A ledger from another series mentions the drowned city too.",
+    );
+    call_tool(
+        &daemon,
+        13,
+        "hieronymus_rag_import",
+        json!({"series_slug": "ghost", "path": foreign.to_str().unwrap()}),
+    );
+    wait_for_state(&daemon, "ready");
+
+    let rows = rag_search(&daemon, 14, "demo", "zzqxj nonlexical probe");
+    assert!(
+        !rows.is_empty(),
+        "a ready service must contribute real semantic results"
+    );
+    let expectation = rag_search_expectation("ready", "indexed");
+    // The envelope and row shape are unchanged from the frozen Python
+    // fixture: the accepted delta is what the rows MEAN, never their keys.
+    let expected_keys: Vec<&str> = expectation["expected"]["row_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| key.as_str().unwrap())
+        .collect();
+    for row in &rows {
+        let mut keys: Vec<&str> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut wanted = expected_keys.clone();
+        keys.sort_unstable();
+        wanted.sort_unstable();
+        assert_eq!(keys, wanted, "row shape drifted: {row}");
+        assert_eq!(row["source"], json!("rag"));
+        assert!(
+            row["source_ref"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("chapter-1.txt"),
+            "foreign series must never leak into a series-scoped search: {row}"
+        );
+    }
+    // Semantic provenance: the probe shares no term with the chunk, so the
+    // only lane that could have surfaced it is the semantic one.
+    assert!(
+        rows.iter().any(|row| {
+            row["rank_reason"].as_str()
+                == Some(
+                    expectation["expected"]["semantic_rank_reason"]
+                        .as_str()
+                        .unwrap(),
+                )
+                && row["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("drowned city")
+        }),
+        "semantic-matched rows must stay distinguishable: {rows:?}"
+    );
+
+    daemon.shutdown().unwrap();
+}
+
+/// Mixed recall is the other half of the contract: it never hard-fails on
+/// missing semantics — memory rows and the deterministic contract still serve
+/// — but it says so, every time. Before C5 an unarmed lane was silent.
+#[test]
+fn mixed_recall_warns_when_required_semantics_did_not_run() {
+    let root = tempfile::tempdir().unwrap();
+    let app = hiero::application::Application::open(&HieronymusConfig::new(root.path())).unwrap();
+    app.call(
+        "hieronymus_series_create",
+        &json!({"slug": "book", "title": "Book"}),
+        "test",
+    )
+    .unwrap();
+    let session = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug": "book"}),
+            "test",
+        )
+        .unwrap();
+    let session_id = session["session_id"].as_i64().unwrap();
+    app.call(
+        "hieronymus_short_term_add",
+        &json!({
+            "session_id": session_id,
+            "kind": "note",
+            "text": "The physician keeps a ledger of the drowned.",
+        }),
+        "test",
+    )
+    .unwrap();
+
+    let payload = app
+        .call(
+            "hieronymus_recall",
+            &json!({
+                "session_id": session_id,
+                "series_slug": "book",
+                "query": "physician ledger",
+                "limit": 5,
+            }),
+            "test",
+        )
+        .expect("mixed recall keeps serving what it has");
+
+    // The memory lane still answers.
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["text"].as_str().unwrap_or_default().contains("drowned")),
+        "memory rows must still be served: {payload}"
+    );
+    // ...and the response admits the semantic half never ran.
+    let warnings = payload["warnings"].as_array().unwrap();
+    assert!(
+        warnings.iter().any(|warning| warning["kind"].as_str()
+            == Some(hieronymus::recall::WARNING_SEMANTIC_UNAVAILABLE)),
+        "an absent semantic service must be reported: {payload}"
+    );
+    assert_eq!(
+        warnings.len(),
+        1,
+        "the condition is reported once, not logged: {payload}"
+    );
+}
+
+/// The complement: with a ready semantic service the warning must NOT appear,
+/// or it would be noise nobody could act on.
+#[test]
+fn mixed_recall_over_ready_semantics_carries_no_unavailable_warning() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    let session_id = seed_series_and_session(&daemon);
+    import(
+        &daemon,
+        root.path(),
+        "chapter-1.txt",
+        "The archivist catalogued every rumour of the drowned city before the tide returned.",
+    );
+    wait_for_state(&daemon, "ready");
+
+    let payload = call_tool(
+        &daemon,
+        15,
+        "hieronymus_recall",
+        json!({
+            "session_id": session_id,
+            "series_slug": "demo",
+            "query": "zzqxj nonlexical probe",
+            "limit": 5,
+        }),
+    );
+    assert!(
+        payload["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|warning| warning["kind"].as_str()
+                != Some(hieronymus::recall::WARNING_SEMANTIC_UNAVAILABLE)),
+        "a ready service must not warn: {payload}"
+    );
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["rank_reason"].as_str() == Some("rag semantic match")),
+        "the ready lane must actually contribute semantic rows: {payload}"
+    );
+
+    daemon.shutdown().unwrap();
+}

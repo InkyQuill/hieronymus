@@ -24,9 +24,10 @@ use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::memory_models::TranslationContext;
 use crate::rag::RagStore;
-use crate::rag_models::RagChunkRecord;
+use crate::rag_models::{RagChunkRecord, RagSearchHit};
 use crate::recall::{
-    RecallWarning, WARNING_REPAIR_FAILED, WARNING_REPAIR_SCHEDULED, WARNING_SEMANTIC_UNAVAILABLE,
+    RecallWarning, SemanticAvailability, WARNING_REPAIR_FAILED, WARNING_REPAIR_SCHEDULED,
+    WARNING_SEMANTIC_UNAVAILABLE,
 };
 use crate::semantic_embeddings::EmbeddingProvider;
 use crate::semantic_error::SemanticError;
@@ -70,6 +71,97 @@ pub fn rrf_fuse(fts_ranked: &[i64], semantic_ranked: &[i64]) -> Vec<(i64, f64)> 
             .then(left.0.cmp(&right.0))
     });
     fused
+}
+
+/// The reason carried when no query-time lane is armed at all: required
+/// semantics did not run, so whatever came back is the lexical half only.
+pub const NO_SEMANTIC_LANE_REASON: &str =
+    "no semantic lane is armed for this data root; required semantic retrieval did not run";
+
+/// Fuse the two advisory chunk lanes into one ranked hit list (design §Search
+/// And Fusion). Inputs are the FTS lane's hits in rank order and the semantic
+/// lane's eligible records in rank order; the output is the reciprocal-rank
+/// fused order, every hit carrying its FUSED score.
+///
+/// The FTS hit is the preferred carrier — it holds the boost context and the
+/// lane reason the frozen payloads expose — so a chunk both lanes returned
+/// keeps its FTS `reason`; a semantic-only chunk carries
+/// [`SEMANTIC_MATCH_REASON`], which is how callers tell the lanes apart in a
+/// fused response.
+///
+/// One function so both hybrid entry points fuse identically: the mixed
+/// `RecallService::recall` and the session-less
+/// `RecallService::search_series` behind `hieronymus_rag_search` (task C5).
+/// Two copies of this loop is exactly how the public search drifted onto a
+/// lexical-only path in the first place.
+pub fn fuse_chunk_lanes(
+    fts_hits: Vec<RagSearchHit>,
+    semantic_records: Vec<RagChunkRecord>,
+) -> Vec<RagSearchHit> {
+    let fts_ranked: Vec<i64> = fts_hits.iter().map(|hit| hit.chunk.id).collect();
+    let semantic_ranked: Vec<i64> = semantic_records.iter().map(|record| record.id).collect();
+    let mut carriers: HashMap<i64, RagSearchHit> = fts_hits
+        .into_iter()
+        .map(|hit| (hit.chunk.id, hit))
+        .collect();
+    for record in semantic_records {
+        carriers.entry(record.id).or_insert(RagSearchHit {
+            chunk: record,
+            score: 0.0,
+            reason: SEMANTIC_MATCH_REASON.to_string(),
+        });
+    }
+    rrf_fuse(&fts_ranked, &semantic_ranked)
+        .into_iter()
+        .map(|(chunk_id, score)| {
+            let hit = carriers
+                .remove(&chunk_id)
+                .expect("fused ids always have a lane carrier");
+            RagSearchHit { score, ..hit }
+        })
+        .collect()
+}
+
+/// Whether a mixed recall response must carry
+/// [`WARNING_SEMANTIC_UNAVAILABLE`], and with what reason (task C5, review
+/// finding A5).
+///
+/// Both working memory and semantic RAG are mandatory, so "the semantic half
+/// did not run" is a fact about the RESPONSE, not a configuration detail the
+/// caller can be left to guess at. The two inputs are the only two ways to
+/// learn it:
+///
+/// - `lane_executed` — whether this service's own query lane actually ran and
+///   searched (an unarmed lane never runs; an armed one that cannot reach its
+///   generation degrades, and already carries its own warning);
+/// - `availability` — what the owner of the shared semantic service says
+///   about it, when one is attached. A lane that ran clean over a generation
+///   that does not cover the current corpus (`Rebuilding`) is still an
+///   incomplete answer, and only the service knows that.
+///
+/// The silent case is deliberately narrow: the lane ran clean AND nothing
+/// contradicts it. Before C5 an unarmed lane was treated as a "supported
+/// degraded mode" and said nothing at all, which let a cold, misconfigured,
+/// or failed semantic runtime coexist with ordinary-looking successful
+/// results.
+pub fn incomplete_semantic_reason(
+    lane_executed: bool,
+    availability: Option<&SemanticAvailability>,
+) -> Option<String> {
+    match (lane_executed, availability) {
+        // Ran clean, and either nobody owns a service-level verdict or the
+        // owner agrees it is serving: the response is complete.
+        (true, None | Some(SemanticAvailability::Ready)) => None,
+        // The service's own verdict is the most actionable reason there is,
+        // whether or not this service's lane managed to run.
+        (_, Some(SemanticAvailability::Unavailable(reason))) => Some(reason.clone()),
+        (false, None) => Some(NO_SEMANTIC_LANE_REASON.to_string()),
+        // A service claiming readiness while nothing can answer a query is a
+        // contradiction; report it rather than pick a side silently.
+        (false, Some(SemanticAvailability::Ready)) => Some(format!(
+            "the semantic service reports ready, but {NO_SEMANTIC_LANE_REASON}"
+        )),
+    }
 }
 
 /// Rule ids of the contract terms whose forbidden variants occur in `text`.
@@ -582,6 +674,78 @@ mod tests {
         // into its single fused entry.
         let fused = rrf_fuse(&[7, 7], &[]);
         assert_eq!(fused, vec![(7, 1.0 / (RRF_K + 1.0) + 1.0 / (RRF_K + 2.0))]);
+    }
+
+    fn chunk(id: i64, text: &str) -> RagChunkRecord {
+        RagChunkRecord {
+            id,
+            source_id: 1,
+            series_slug: "demo".to_string(),
+            source_ref: "chapter.txt".to_string(),
+            chunk_kind: "text".to_string(),
+            text: text.to_string(),
+            display_text: text.to_string(),
+            location: "paragraph 1".to_string(),
+            metadata: serde_json::Map::new(),
+            language_tags: Vec::new(),
+            story_scopes: Vec::new(),
+            semantic_tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn fusion_keeps_the_fts_carrier_and_marks_semantic_only_hits() {
+        let fts = vec![RagSearchHit {
+            chunk: chunk(1, "lexical"),
+            score: 2.5,
+            reason: "rag project text match".to_string(),
+        }];
+        let semantic = vec![chunk(1, "lexical"), chunk(2, "paraphrase")];
+        let fused = fuse_chunk_lanes(fts, semantic);
+
+        let ids: Vec<i64> = fused.iter().map(|hit| hit.chunk.id).collect();
+        assert_eq!(
+            ids,
+            vec![1, 2],
+            "both-lane hit ranks above the semantic-only"
+        );
+        // The carrier's reason survives; the fused score replaces the lane
+        // score (RRF is over ranks, never raw lane scores).
+        assert_eq!(fused[0].reason, "rag project text match");
+        assert!((fused[0].score - (1.0 / (RRF_K + 1.0)) * 2.0).abs() < 1e-12);
+        assert_eq!(fused[1].reason, SEMANTIC_MATCH_REASON);
+        assert!((fused[1].score - 1.0 / (RRF_K + 2.0)).abs() < 1e-12);
+    }
+
+    /// The C5 truth table: the only silent combination is a lane that ran
+    /// clean with nothing contradicting it.
+    #[test]
+    fn incomplete_semantics_is_silent_only_when_the_lane_actually_ran() {
+        let unavailable = SemanticAvailability::Unavailable("assets are acquiring".to_string());
+
+        assert_eq!(incomplete_semantic_reason(true, None), None);
+        assert_eq!(
+            incomplete_semantic_reason(true, Some(&SemanticAvailability::Ready)),
+            None
+        );
+        assert_eq!(
+            incomplete_semantic_reason(true, Some(&unavailable)).as_deref(),
+            Some("assets are acquiring"),
+            "a clean lane over a service that is not serving is still incomplete"
+        );
+        assert_eq!(
+            incomplete_semantic_reason(false, Some(&unavailable)).as_deref(),
+            Some("assets are acquiring")
+        );
+        assert_eq!(
+            incomplete_semantic_reason(false, None).as_deref(),
+            Some(NO_SEMANTIC_LANE_REASON)
+        );
+        assert!(
+            incomplete_semantic_reason(false, Some(&SemanticAvailability::Ready))
+                .is_some_and(|reason| reason.contains(NO_SEMANTIC_LANE_REASON)),
+            "a ready service with no lane is a contradiction, not silence"
+        );
     }
 
     #[test]

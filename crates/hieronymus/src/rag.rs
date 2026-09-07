@@ -257,6 +257,22 @@ impl RagStore {
         Ok(pending_semantic_work_intent(&self.connection()?)?)
     }
 
+    /// How many authoritative chunks this series owns.
+    ///
+    /// A series with none has nothing to retrieve at all, which is the one
+    /// case where a hybrid search whose semantic half could not run may still
+    /// answer "no results" truthfully: no indexed text is being withheld.
+    /// [`crate::recall::RecallService::search_series`] consumes exactly this
+    /// distinction — everything else is a refusal, never a lexical-only
+    /// answer dressed up as a complete one.
+    pub fn series_chunk_count(&self, series_slug: &str) -> Result<i64, RagError> {
+        Ok(self.connection()?.query_row(
+            "select count(*) from rag_chunks where series_slug = ?1",
+            rusqlite::params![series_slug],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Import a RAG file into the store. Re-importing the same
     /// `(series_slug, source_ref)`: an identical checksum (and source/content
     /// type) only refreshes the chunk metadata tags; a changed import

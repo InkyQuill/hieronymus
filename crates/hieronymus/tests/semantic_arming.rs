@@ -135,8 +135,12 @@ fn seed_model_file(fixture: &Fixture) -> PathBuf {
 // Arming
 // ---------------------------------------------------------------------------
 
+/// Arming itself never fails on a missing model — that is the point of the
+/// disarmed lane state. What the disarmed service must NOT do (task C5,
+/// review finding A5) is answer as if every required lane had run: recall
+/// still serves its FTS hits, and it reports the missing semantic half.
 #[test]
-fn absent_model_disarms_to_fts_only_without_failing() {
+fn absent_model_disarms_to_a_reported_fts_only_lane_without_failing() {
     let fixture = fixture();
     import_text(&fixture, "a.txt", "Cooking Talent appears here.");
 
@@ -149,14 +153,20 @@ fn absent_model_disarms_to_fts_only_without_failing() {
         LaneState::Armed => panic!("a missing model must not arm the lane"),
     }
 
-    // The disarmed service recalls exactly like the plain FTS service: hits
-    // without a degraded warning (the lane is simply absent, per recall's
-    // supported degraded mode).
+    // The disarmed service still recalls the FTS hits — and says outright
+    // that required semantics did not run.
     let response = armed
         .service
         .recall(fixture.session_id, &context(), "Cooking Talent", 10)
         .unwrap();
-    assert!(response.warnings.is_empty(), "{:?}", response.warnings);
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE),
+        "a disarmed lane must be reported, not silent: {:?}",
+        response.warnings
+    );
     assert!(
         response
             .hits

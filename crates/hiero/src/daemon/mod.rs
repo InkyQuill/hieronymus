@@ -394,6 +394,18 @@ impl Daemon {
         application.set_rebuild_hook(Arc::new(move |series| {
             hook_controller.request_rebuild(series)
         }));
+        // The shared semantic-availability signal (task C5): the controller's
+        // required-readiness state is what `/status` serves and what the
+        // update gate consumes, so the application's strict semantic search
+        // and its mixed-recall warnings read the very same verdict instead of
+        // inferring one from "a lane was installed once".
+        let status_controller = semantic.clone();
+        application.install_semantic_status(Arc::new(move || {
+            match semantic_worker::require_semantic_ready(&status_controller.state()) {
+                Ok(()) => hieronymus::recall::SemanticAvailability::Ready,
+                Err(reason) => hieronymus::recall::SemanticAvailability::Unavailable(reason),
+            }
+        }));
 
         let instance_id = discovery::generate_instance_id()?;
         let record = DiscoveryRecord {
