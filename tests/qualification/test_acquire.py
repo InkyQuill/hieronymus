@@ -555,6 +555,69 @@ def test_onnx_runtime_extracts_validated_relative_library_symlink_chain(
     _assert_private_empty_file(destination.with_name(f"{destination.name}.tgz.part"))
 
 
+def _simulate_stale_first_extraction_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_create = acquire._create_runtime_extraction
+    real_listdir = acquire.os.listdir
+    extraction_fd: int | None = None
+    stale_listing_returned = False
+
+    def record_extraction(parent_fd: int) -> tuple[str, int, os.stat_result]:
+        nonlocal extraction_fd
+        created = real_create(parent_fd)
+        extraction_fd = created[1]
+        return created
+
+    def stale_once(path: int | str | bytes | os.PathLike[str] | os.PathLike[bytes]) -> list[str]:
+        nonlocal stale_listing_returned
+        if path == extraction_fd and not stale_listing_returned:
+            stale_listing_returned = True
+            return []
+        return real_listdir(path)
+
+    monkeypatch.setattr(acquire, "_create_runtime_extraction", record_extraction)
+    monkeypatch.setattr(acquire.os, "listdir", stale_once)
+
+
+def test_onnx_runtime_valid_archive_survives_stale_held_directory_listing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+    _simulate_stale_first_extraction_listing(monkeypatch)
+
+    destination = acquire.acquire_onnx_runtime(repo_root)
+
+    assert (destination / "lib/libonnxruntime.so").read_bytes() == b"verified runtime library"
+
+
+def test_onnx_runtime_tamper_is_rejected_after_stale_held_directory_listing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+    _simulate_stale_first_extraction_listing(monkeypatch)
+    destination = acquire.acquire_onnx_runtime(repo_root)
+    library_target = (destination / "lib/libonnxruntime.so").resolve(strict=True)
+    library_target.write_bytes(b"tampered runtime")
+
+    with pytest.raises(acquire.AcquisitionError, match="provenance"):
+        acquire.acquire_onnx_runtime(repo_root)
+
+    assert library_target.read_bytes() == b"tampered runtime"
+
+
 @pytest.mark.parametrize(
     "invalid",
     [

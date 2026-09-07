@@ -1479,7 +1479,20 @@ def _runtime_tree_digest(directory_fd: int, deadline: _Deadline) -> str:
                 raise AcquisitionError("ONNX Runtime provenance contains a special entry")
         deadline.check()
 
-    visit(directory_fd, ())
+    try:
+        traversal_fd = os.open(".", _DIRECTORY_FLAGS, dir_fd=directory_fd)
+    except OSError:
+        raise AcquisitionError("could not inspect ONNX Runtime provenance") from None
+    try:
+        traversal_root = os.fstat(traversal_fd)
+        _require_trusted_directory(traversal_root)
+        if not _same_inode(root, traversal_root) or _mount_id(directory_fd) != _mount_id(
+            traversal_fd
+        ):
+            raise AcquisitionError("ONNX Runtime provenance identity changed")
+        visit(traversal_fd, ())
+    finally:
+        os.close(traversal_fd)
     return digest.hexdigest()
 
 
