@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 use hieronymus::data_root::{HieronymusConfig, load_config};
 
 use crate::app::{AppLayout, LINK_NAMES, TARGET_TRIPLE, compare_versions};
+#[cfg(test)]
 use crate::daemon::discovery;
 use crate::daemon::registry::PROTOCOL_REVISION;
 use crate::lifecycle::{self, DiscoveryHealth};
@@ -441,7 +442,7 @@ fn run_update_impl(
         None
     };
 
-    let daemon_was_running = discovery::daemon_is_active(&config);
+    let daemon_was_running = crate::lifecycle::probe(&config).is_live();
     if daemon_was_running && !manager_engaged {
         return Err(refused(
             "a daemon is currently running and the updater cannot stop it (no service \

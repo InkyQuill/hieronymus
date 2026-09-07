@@ -468,7 +468,7 @@ fn reject_output_flag(parsed: &ParsedArguments, command: &str) -> Result<(), Str
 /// only: preflight reports the fact; locking the daemon is the write-side
 /// upgrade protocol's and the update flow's job.
 fn daemon_is_active(config: &hieronymus::data_root::HieronymusConfig) -> bool {
-    hiero::daemon::discovery::daemon_is_active(config)
+    hiero::lifecycle::probe(config).is_live()
 }
 
 /// Make a user-supplied path absolute against the current working directory.

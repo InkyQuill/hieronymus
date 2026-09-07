@@ -878,7 +878,7 @@ fn the_tool_call_cli_drives_the_daemon_boundary() {
     assert_eq!(offline.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&offline.stderr);
     assert!(
-        stderr.contains("no running local service discovered"),
+        stderr.contains("no running local daemon was discovered"),
         "{stderr}"
     );
     assert!(stderr.contains("hiero daemon"), "{stderr}");
@@ -1198,4 +1198,20 @@ fn export_cli_writes_deterministic_readonly_json() {
     assert_eq!(wrong_flag.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&wrong_flag.stderr);
     assert!(stderr.contains("--args"), "{stderr}");
+}
+
+#[test]
+fn stale_discovery_is_rejected_by_the_tool_client() {
+    let root = tempfile::tempdir().unwrap();
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().into()),
+        port: 0,
+        ..Default::default()
+    })
+    .unwrap();
+    let saved = std::fs::read(config.daemon_discovery_path()).unwrap();
+    daemon.shutdown().unwrap();
+    std::fs::write(config.daemon_discovery_path(), saved).unwrap();
+    assert!(hiero::daemon_client::DaemonClient::connect(&config).is_err());
 }

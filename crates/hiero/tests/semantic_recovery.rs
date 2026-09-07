@@ -1059,18 +1059,18 @@ fn the_v2_upgrade_marks_an_existing_generation_as_never_covered() {
         transaction.commit().unwrap();
     }
 
-    // Both markers reached 3 (`apply_steps` verifies them, but say so here so
-    // a future step cannot quietly change what this test covers).
+    // Both markers reach the current schema; the coverage invariant below
+    // remains required across every later upgrade step.
     let marked: i64 = connection
         .query_row("select schema_version from hieronymus_meta", [], |row| {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(marked, 3);
+    assert_eq!(marked, hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION);
     let user_version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(user_version, 3);
+    assert_eq!(user_version, hieronymus::db::SUPPORTED_RUST_SCHEMA_VERSION);
 
     // The pre-existing generation is on the sentinel, and it survived intact:
     // an upgrade converts schema, it does not touch coverage claims.

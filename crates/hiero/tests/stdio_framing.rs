@@ -142,8 +142,7 @@ fn stdio_adapter_fails_closed_without_discovery() {
 fn stdio_adapter_without_autostart_flag_reports_unreachable_daemon() {
     let root = tempfile::tempdir().unwrap();
 
-    // A stale discovery record for a daemon that is not running (the owner
-    // explicitly tolerates stale discovery in this slice).
+    // A stale discovery record must fail the authenticated startup check.
     let holder = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let dead_port = holder.local_addr().unwrap().port();
     drop(holder);
@@ -180,15 +179,14 @@ fn stdio_adapter_without_autostart_flag_reports_unreachable_daemon() {
         .unwrap();
     let output = child.wait_with_output().unwrap();
 
-    assert_eq!(output.status.code(), Some(0));
+    assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("unreachable"), "{stderr}");
-    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["jsonrpc"], json!("2.0"));
-    assert_eq!(response["id"], json!(1));
-    assert_eq!(response["error"]["code"], json!(-32603));
-    let message = response["error"]["message"].as_str().unwrap();
-    assert!(!message.contains("test-token-0001"), "{message}");
+    assert!(
+        stderr.contains("no running local service discovered"),
+        "{stderr}"
+    );
+    assert!(output.stdout.is_empty());
+    assert!(!stderr.contains("test-token-0001"), "{stderr}");
 }
 
 #[test]
@@ -269,13 +267,8 @@ fn stdio_adapter_start_daemon_flag_goes_through_the_service_integration() {
 }
 
 #[test]
-fn stdio_adapter_wraps_route_level_daemon_errors_as_jsonrpc() {
-    // The installation token is stable across restarts (ADR 0012 as amended),
-    // so the 401 path is reached by a deliberately rewritten credential file
-    // rather than by restarting. An adapter holding a credential the daemon
-    // does not accept receives the route-level `401 {"error":"unauthorized"}`
-    // — not a JSON-RPC envelope — and must wrap it so the NDJSON stream stays
-    // protocol-clean (ADR 0012's 401-and-reconnect rewrite).
+fn stdio_adapter_rejects_invalid_startup_credentials() {
+    // Invalid discovery credentials must be rejected before any MCP traffic.
     let root = tempfile::tempdir().unwrap();
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args([
@@ -328,25 +321,16 @@ fn stdio_adapter_wraps_route_level_daemon_errors_as_jsonrpc() {
         .unwrap()
         .write_all(request_line.as_bytes())
         .unwrap();
-    let mut line = String::new();
-    BufReader::new(adapter.stdout.as_mut().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-
-    let response: Value =
-        serde_json::from_str(line.trim_end()).expect("adapter output must stay a JSON line");
-    assert_eq!(response["jsonrpc"], json!("2.0"), "line was: {line}");
-    assert_eq!(response["id"], json!(1), "line was: {line}");
-    assert_eq!(response["error"]["code"], json!(-32603), "line was: {line}");
-    let message = response["error"]["message"].as_str().unwrap();
-    assert!(message.contains("unauthorized"), "{message}");
+    let output = adapter.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        !message.contains("stale-token"),
-        "diagnostics must not echo credentials: {message}"
+        stderr.contains("rejected this installation's credential"),
+        "{stderr}"
     );
+    assert!(!stderr.contains("stale-token"), "{stderr}");
 
-    adapter.kill().unwrap();
-    let _ = adapter.wait();
     daemon.kill().unwrap();
     let _ = daemon.wait();
 }

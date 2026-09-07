@@ -265,7 +265,7 @@ fn migrate_dry_run_reports_an_active_daemon() {
         &config,
         &hiero::daemon::DiscoveryRecord {
             discovery_version: hiero::daemon::discovery::DISCOVERY_VERSION,
-            protocol_version: "2026-07-28".to_string(),
+            protocol_version: hiero::daemon::registry::PROTOCOL_REVISION.to_string(),
             host: "127.0.0.1".to_string(),
             port,
             pid: std::process::id(),
@@ -274,6 +274,28 @@ fn migrate_dry_run_reports_an_active_daemon() {
         },
     )
     .unwrap();
+    let token = hiero::daemon::discovery::generate_bearer_token().unwrap();
+    hiero::daemon::discovery::write_token(&config, &token).unwrap();
+    let responder = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        let count = socket.read(&mut request).unwrap();
+        let request = String::from_utf8_lossy(&request[..count]);
+        assert!(request.starts_with("GET /status "));
+        assert!(request.contains(token.expose_secret().as_str()));
+        let body = serde_json::json!({
+            "instance_id": "ab".repeat(16),
+            "protocol_revision": hiero::daemon::registry::PROTOCOL_REVISION
+        })
+        .to_string();
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
     let (stdout, _stderr, status) = hiero(&[
         "migrate",
         "--dry-run",
@@ -287,4 +309,53 @@ fn migrate_dry_run_reports_an_active_daemon() {
         stdout.contains("\"refused\": \"daemon-active\""),
         "{stdout}"
     );
+    responder.join().unwrap();
+}
+
+#[test]
+fn migrate_dry_run_does_not_treat_a_foreign_listener_as_the_daemon() {
+    let root = tempfile::tempdir().unwrap();
+    write_legacy_fixture(root.path());
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    hiero::daemon::discovery::write_token(
+        &config,
+        &hiero::daemon::discovery::generate_bearer_token().unwrap(),
+    )
+    .unwrap();
+    hiero::daemon::discovery::write_discovery(
+        &config,
+        &hiero::daemon::DiscoveryRecord {
+            discovery_version: hiero::daemon::discovery::DISCOVERY_VERSION,
+            protocol_version: hiero::daemon::registry::PROTOCOL_REVISION.into(),
+            host: "127.0.0.1".into(),
+            port: listener.local_addr().unwrap().port(),
+            pid: std::process::id(),
+            instance_id: "old-instance".into(),
+            started_at: "2026-09-06T00:00:00Z".into(),
+        },
+    )
+    .unwrap();
+    let responder = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        let count = socket.read(&mut request).unwrap();
+        assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /status "));
+        socket
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .unwrap();
+    });
+    let (stdout, stderr, status) = hiero(&[
+        "migrate",
+        "--dry-run",
+        "--json",
+        "--data-root",
+        root.path().to_str().unwrap(),
+    ]);
+    assert!(status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("\"daemon_active\": false"), "{stdout}");
+    responder.join().unwrap();
 }
