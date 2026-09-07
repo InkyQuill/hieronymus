@@ -185,13 +185,7 @@ pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, D
         json!({"bound":true,"host":c.host,"host_session_id":c.host_session_id,"session_id":c.session_id,"expected_revision":c.expected_revision,"authority_changed":false}),
     )
 }
-/// One actual host invocation means one new durable ID, even for identical
-/// prompt text or a reused Codex turn_id. Retry uses the separate saved-ID path.
-pub fn submit_prompt(
-    config: &HieronymusConfig,
-    h: &str,
-    input: &Value,
-) -> Result<Value, DeliveryError> {
+fn prompt_fields<'a>(h: &str, input: &'a Value) -> Result<(&'a str, &'a str), DeliveryError> {
     host(h)?;
     if input["hook_event_name"] != "UserPromptSubmit" {
         return Err(invalid("expected UserPromptSubmit event"));
@@ -204,6 +198,35 @@ pub fn submit_prompt(
         .as_str()
         .filter(|s| !s.is_empty() && s.len() <= 65536)
         .ok_or_else(|| invalid("missing or oversized host prompt"))?;
+    Ok((session, text))
+}
+/// First-session discovery is read-only: it exposes actual host identity but
+/// cannot retain or apply an event without an explicitly bound domain context.
+pub fn handle_prompt(
+    config: &HieronymusConfig,
+    h: &str,
+    input: &Value,
+) -> Result<Value, DeliveryError> {
+    let (session, _) = prompt_fields(h, input)?;
+    if !context_path(config, h, session).try_exists()? {
+        return Ok(
+            json!({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":format!(
+                "Hieronymus bootstrap: {}. This prompt was NOT applied or retained as a correction. Use actual MCP session, immutable evidence/claim selection, bound languages/applicability and observed authority revision to construct the version:1 context for hiero agent-hook bind-context on stdin. Do not guess IDs, replay this prompt, or add prompt/actor fields to binding. A subsequent genuine UserPromptSubmit can apply after binding. No authority was minted.",
+                json!({"status":"binding_required","host":h,"host_session_id":session,"authority_changed":false})
+            )}}),
+        );
+    }
+    submit_prompt(config, h, input).map(|response| hook_output(&response))
+}
+
+/// One actual host invocation means one new durable ID, even for identical
+/// prompt text or a reused Codex turn_id. Retry uses the separate saved-ID path.
+pub fn submit_prompt(
+    config: &HieronymusConfig,
+    h: &str,
+    input: &Value,
+) -> Result<Value, DeliveryError> {
+    let (session, text) = prompt_fields(h, input)?;
     let c: HostContext = load(&context_path(config, h, session))?;
     if c.version != 1 || c.host != h || c.host_session_id != session {
         return Err(invalid("saved host/session mismatch"));

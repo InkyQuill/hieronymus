@@ -841,7 +841,7 @@ fn run_agent_hook(
                     .ok_or("user-prompt-submit requires --host")?;
                 let input =
                     delivery::read_json(std::io::stdin().lock()).map_err(|e| e.to_string())?;
-                delivery::submit_prompt(&config, host, &input).map(|v| delivery::hook_output(&v))
+                delivery::handle_prompt(&config, host, &input)
             }
             Some("retry-delivery") if parsed.hook_host.is_none() => {
                 let id = parsed

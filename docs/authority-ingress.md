@@ -134,7 +134,7 @@ draft plus exact parsed UTF-8 token spans and decoded values; receipt binding re
 and compares these against the original text. Agent requests cannot mint either user
 origin kind. No provider extraction or implicit revision rebase participates.
 
-The HTTP/stdio/console bridge tests establish server enforcement only. Actual
+The HTTP/stdio/console bridge tests establish server enforcement only.
 Task6c adds actual UserPromptSubmit stdin delivery and the dedicated console form; installed
 Claude/Codex/zCode acceptance remains a separate qualification gate.
 
@@ -212,3 +212,10 @@ IDs and rows are not the current `term_rules` authority; these IDs are never ali
 Memory views retain source records and explicitly label their status as record lifecycle,
 not claim validity. After applying a rendering, the frozen old choice is labeled
 previous rendering and the result states the current rendering.
+
+Task7 first-session bootstrap handles a missing binding read-only: actual host/session
+identity and an actionable bind-context contract appear in hook additionalContext.
+The response says binding_required and explicitly says the current prompt was not
+retained/applied. No domain session, origin, decision or delivery is invented. A
+subsequent genuine prompt can apply after explicit binding from actual MCP outputs.
+Corrupt or inaccessible existing bindings remain errors, not bootstrap success.
