@@ -42,6 +42,9 @@ pub(crate) fn handle(
         "/api/authority/correct" if request.method == "POST" => {
             guard_api(request, runtime, console_correction)
         }
+        "/api/authority/options" if request.method == "POST" => {
+            guard_api(request, runtime, console_options)
+        }
         "/api/authority/selection" if request.method == "POST" => {
             guard_api(request, runtime, console_selection)
         }
@@ -312,6 +315,16 @@ fn correction_response(
         Err(crate::application::AppError::Authority(error)) => {
             Response::json(409, &json!({"error":error}))
         }
+        Err(error) => Response::json(400, &json!({"error":error.to_string()})),
+    }
+}
+
+fn console_options(request: &Request, runtime: &DaemonRuntime) -> Response {
+    let Some(body) = request_body(request) else {
+        return Response::json(400, &json!({"error":"invalid_request"}));
+    };
+    match crate::application::authority_selection::options(&runtime.application, &body) {
+        Ok(value) => Response::json(200, &value),
         Err(error) => Response::json(400, &json!({"error":error.to_string()})),
     }
 }

@@ -30,7 +30,7 @@ const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-r
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable> [--json] [--data-root <path>] (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
-const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end> [--cwd <dir>] [--json] [--data-root <path>]";
+const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
 const UPDATE_USAGE: &str = "usage: hiero update (--release-dir <dir> | --release-url <https-base>) [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 const UNINSTALL_USAGE: &str = "usage: hiero uninstall [--yes] [--delete-data] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
@@ -71,6 +71,8 @@ struct ParsedArguments {
     miss: Option<String>,
     idempotency_key: Option<String>,
     cwd: Option<String>,
+    hook_host: Option<String>,
+    delivery_id: Option<String>,
     url: Option<String>,
     sha256: Option<String>,
     bytes: Option<String>,
@@ -108,6 +110,8 @@ fn parse_arguments(
         miss: None,
         idempotency_key: None,
         cwd: None,
+        hook_host: None,
+        delivery_id: None,
         url: None,
         sha256: None,
         bytes: None,
@@ -131,6 +135,18 @@ fn parse_arguments(
         let argument = &arguments[index];
         match argument.as_str() {
             "--json" => parsed.json = true,
+            "--host" | "--delivery-id" => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .ok_or_else(|| format!("{argument} requires a value"))?
+                    .clone();
+                if argument == "--host" {
+                    parsed.hook_host = Some(value)
+                } else {
+                    parsed.delivery_id = Some(value)
+                }
+            }
             "--data-root" => {
                 index += 1;
                 parsed.data_root = Some(
@@ -330,6 +346,11 @@ fn parse_arguments(
     if let Some(extra) = positionals.next() {
         return Err(format!("unexpected extra argument: {extra}"));
     }
+    if parsed.command.as_deref() != Some("agent-hook")
+        && (parsed.hook_host.is_some() || parsed.delivery_id.is_some())
+    {
+        return Err("--host and --delivery-id belong to agent-hook".into());
+    }
     Ok(parsed)
 }
 
@@ -501,6 +522,9 @@ fn reject_feedback_flags(parsed: &ParsedArguments, command: &str) -> Result<(), 
 /// `export`); other commands reject them instead of silently ignoring a flag
 /// the user may believe took effect.
 fn reject_headless_flags(parsed: &ParsedArguments, command: &str) -> Result<(), String> {
+    if command != "agent-hook" && (parsed.hook_host.is_some() || parsed.delivery_id.is_some()) {
+        return Err("--host and --delivery-id belong to agent-hook".into());
+    }
     reject_args_flag(parsed, command)?;
     reject_output_flag(parsed, command)
 }
@@ -796,6 +820,45 @@ fn run_agent_hook(
     reject_feedback_flags(parsed, "agent-hook")?;
     reject_headless_flags(parsed, "agent-hook")?;
     let config = load_config(data_root);
+    if matches!(
+        parsed.subcommand.as_deref(),
+        Some("bind-context" | "user-prompt-submit" | "retry-delivery")
+    ) {
+        use hiero::agent_prompt_delivery as delivery;
+        if parsed.cwd.is_some() {
+            return Err("trusted prompt commands read host context from stdin, not --cwd".into());
+        }
+        let result = match parsed.subcommand.as_deref() {
+            Some("bind-context") if parsed.hook_host.is_none() && parsed.delivery_id.is_none() => {
+                let input =
+                    delivery::read_json(std::io::stdin().lock()).map_err(|e| e.to_string())?;
+                delivery::bind_context(&config, &input)
+            }
+            Some("user-prompt-submit") if parsed.delivery_id.is_none() => {
+                let host = parsed
+                    .hook_host
+                    .as_deref()
+                    .ok_or("user-prompt-submit requires --host")?;
+                let input =
+                    delivery::read_json(std::io::stdin().lock()).map_err(|e| e.to_string())?;
+                delivery::submit_prompt(&config, host, &input).map(|v| delivery::hook_output(&v))
+            }
+            Some("retry-delivery") if parsed.hook_host.is_none() => {
+                let id = parsed
+                    .delivery_id
+                    .as_deref()
+                    .ok_or("retry-delivery requires --delivery-id")?;
+                delivery::retry_delivery(&config, id).map(|v| delivery::hook_output(&v))
+            }
+            _ => return Err("invalid trusted hook flags".into()),
+        }
+        .map_err(|e| e.to_string())?;
+        println!("{result}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    if parsed.hook_host.is_some() || parsed.delivery_id.is_some() {
+        return Err("host/delivery flags require a prompt command".into());
+    }
     let output = match parsed.subcommand.as_deref() {
         Some("session-start") => {
             let cwd = match &parsed.cwd {

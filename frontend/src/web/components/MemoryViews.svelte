@@ -9,6 +9,8 @@
     AdminRow,
     AdminSnapshot,
   } from "../lib/types";
+  import CorrectionForm from "./CorrectionForm.svelte";
+  import type { ClaimTarget } from "../lib/authority";
   import ActionDialog from "./ActionDialog.svelte";
 
   type Notice = { message: string; tone: "success" | "error" };
@@ -56,6 +58,7 @@
   let runningAction = $state<string | null>(null);
   let dialogCommand = $state<AdminCommand | null>(null);
   let dialogError = $state("");
+  let correction = $state<{ target?: ClaimTarget } | null>(null);
   let inspection = $state.raw<AdminActionResult | null>(null);
 
   function commandsFor(view: string): AdminCommand[] {
@@ -79,7 +82,7 @@
 
   async function load(view: string, selectedId?: string | number) {
     const sequence = ++loadSequence;
-    if (selectedView !== view) selectedIds = [];
+    if (selectedView !== view) { selectedIds = []; correction = null; }
     selectedView = view;
     loading = true;
     error = "";
@@ -195,6 +198,9 @@
   class="grid gap-8 lg:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]"
   aria-label="Memory views"
 >
+  {#if correction}<div class="col-span-full">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}
+  {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">Retained source records: status describes the record lifecycle, not whether its claims remain correct. Use “Correct this memory” to inspect and correct an exact claim.</p>{/if}
+  {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">Legacy rendering records are historical source inspection. Use “Correct a rendering” to view and change current authority.</p>{/if}
   <div class="self-start lg:sticky lg:top-24">
     <p
       class="mb-4 inline-block rounded-full border border-accent bg-[var(--hiero-accent-bg)] px-2.5 py-0.5 text-eyebrow uppercase tracking-[0.12em] text-accent-text"
@@ -202,9 +208,9 @@
       Memory administration
     </p>
     <h2 class="text-display">Memory views</h2>
+    <button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = {}}>Correct a rendering</button>
     <p class="mt-3 max-w-prose text-body text-secondary">
-      Find a record, read its context, then curate only the memory that needs
-      attention.
+      Find a record, read its context, and correct a rendering or claim when needed.
     </p>
     <div class="mt-6 border-t border-default pt-4 text-caption text-secondary">
       {snapshot?.rows.length ?? 0} records
@@ -263,7 +269,7 @@
                         checked={selectedIds.includes(row.id)}
                         onchange={(event) => toggleSelection(row, event.currentTarget.checked)} />
                     </td><td class="px-4 py-3 text-body">
-                      <button class="w-full text-left" onclick={() => void load(selectedView, row.id)}
+                      <button class="w-full text-left" onclick={() => { correction = null; void load(selectedView, row.id); }}
                       ><strong class="block font-medium">{row.label}</strong
                       ><small class="mt-1 block text-caption text-secondary"
                         >{row.language_pair}</small
@@ -302,6 +308,7 @@
                 {snapshot.selected.kind} · {snapshot.selected.status}
               </p>
               <h3 class="mt-1 text-h3">{snapshot.detail.title}</h3>
+              {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = { target: { source: selectedView === "Short-Term Memory" ? "short_term" : "crystal", id: Number(snapshot!.selected!.id) } }}>Correct this memory</button>{/if}
               <p class="mt-1 text-body-sm text-secondary">
                 {snapshot.detail.subtitle}
               </p>

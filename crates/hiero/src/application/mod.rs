@@ -14,6 +14,7 @@
 
 pub mod admin;
 pub mod authority;
+pub(crate) mod authority_selection;
 pub mod correction_parser;
 pub mod dream;
 pub mod graph;

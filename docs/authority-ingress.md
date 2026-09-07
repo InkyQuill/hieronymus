@@ -112,5 +112,67 @@ and compares these against the original text. Agent requests cannot mint either 
 origin kind. No provider extraction or implicit revision rebase participates.
 
 The HTTP/stdio/console bridge tests establish server enforcement only. Actual
-UserPromptSubmit stdin delivery and the dedicated console form are Task6c; installed
+Task6c adds actual UserPromptSubmit stdin delivery and the dedicated console form; installed
 Claude/Codex/zCode acceptance remains a separate qualification gate.
+
+## Installed prompt delivery and console workflow
+
+A clear host correction is applied by the trusted endpoint immediately, without
+waiting for a model or provider. Its hook output supplies `required_decision_id`
+for subsequent model reads/validation. Ordinary MCP `hieronymus_correct` remains
+an Agent operation and cannot redeem a host or console origin receipt. The phrase
+“bind an already minted receipt” describes the trusted endpoint's internal work.
+
+`hiero agent-hook bind-context --data-root <root>` reads one versioned JSON object
+from stdin. The object contains `version:1`, `host` (`claude`, `codex`, or `zcode`),
+`host_session_id`, existing numeric Hieronymus `session_id`, `series_id`, observed
+`expected_revision`, nullable language/applicability fields, `selected_sources`,
+`selected_claims`, and nullable `selected_rule`. Selection shapes match
+`UserCorrectionV1`; event IDs, prompt text, structured correction, and actor fields
+are forbidden. The installed workflow supplies these values from actual session
+and selection results. Binding validates the existing session/series/languages,
+revision, immutable source references and selected claim/rule revisions; it never
+refreshes a stale revision, invents an identity, or grants user authority.
+
+`hiero agent-hook user-prompt-submit --host claude --data-root <root>` (substitute
+`codex` or `zcode`) reads the independently supplied host stdin envelope. It requires
+`hook_event_name:"UserPromptSubmit"`, nonempty `session_id` and `prompt`, and matches
+that host/session to the saved binding. Other host metadata is not treated as
+selection or authority. Contexts and deliveries are atomically stored as 0600 files
+under `host-contexts/` and `host-deliveries/` in the application root. Credentials
+remain in the existing separate local credential files, never in these commands,
+plugin JSON or output.
+
+Each invocation creates a new UUID and saves the entire selected request before
+HTTP. Repeated identical prompts and reused Codex `turn_id` values are distinct
+invocations. `hiero agent-hook retry-delivery --delivery-id <uuid> --data-root <root>`
+resends only the saved request after an uncertain failure; an acknowledged delivery
+returns its saved result. Retry must not be implemented by invoking
+`user-prompt-submit` again. Hosts without stable per-delivery identifiers cannot
+prove whether an automatic re-invocation is a retry or a genuinely repeated event;
+this implementation makes that limit explicit instead of deduplicating by text.
+Failures retain the delivery ID for exact retry and exit nonzero. No daemon starts
+implicitly. Rebinding a session applies only to future deliveries.
+
+The common input fields follow the [Claude hook reference](https://code.claude.com/docs/en/hooks)
+and [Codex UserPromptSubmit input schema](https://github.com/openai/codex/blob/main/codex-rs/hooks/schema/generated/user-prompt-submit.command.input.schema.json).
+Output uses `hookSpecificOutput.hookEventName:"UserPromptSubmit"` and
+`additionalContext`, containing the actual result and accepted dependency ID when
+applied. Recognizing an envelope is not native-host qualification; Task7 owns
+supported installation, independently observed host delivery and S1–S7 transcripts.
+zCode's claimed Claude-format compatibility still requires that actual acceptance.
+
+The console now has a dedicated “Correct a rendering” entry and “Correct this
+memory” on supported bound memory records. `POST /api/authority/options` lists
+actual books and immutable source occurrences, optionally restricted by a typed
+memory target or actual rule ID. It is guarded like selection and mints nothing.
+The user chooses the occurrence/current rule or one exact claim, then the existing
+selection route freezes the displayed revision/context. Submission reports applied,
+tentative or conflict; retries retain the original request, while an explicit refresh
+loads a new selection. The applied rendering is displayed immediately. The old
+Renderings view is labeled historical source inspection because its `strict_terms`
+IDs and rows are not the current `term_rules` authority; these IDs are never aliased.
+
+Memory views retain source records and explicitly label their status as record lifecycle,
+not claim validity. After applying a rendering, the frozen old choice is labeled
+previous rendering and the result states the current rendering.
