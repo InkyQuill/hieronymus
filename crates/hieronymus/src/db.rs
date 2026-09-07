@@ -14,7 +14,7 @@ const TERMINOLOGY_MIGRATION_SQL: &str = include_str!("../migrations/terminology.
 /// [`crate::schema_upgrade`]; a database written by a newer binary fails
 /// closed, and a database at an older supported version is upgraded in place
 /// by the ordered runner (never opened for writes as-is).
-pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 4;
+pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 5;
 
 /// The Rust schema-version marker table. Its presence is the primary signal
 /// that a database was written by this line rather than Python.
@@ -26,7 +26,7 @@ pub const RUST_META_TABLE: &str = "hieronymus_meta";
 /// starts). This is a bounded `sqlite_master` check, never `integrity_check`
 /// or a data scan; it names the load-bearing tables from every subsystem
 /// (`migrations/global.sql` + `migrations/terminology.sql`), not all of them.
-const RUST_MANDATORY_TABLES: [&str; 23] = [
+const RUST_MANDATORY_TABLES: [&str; 41] = [
     "series",
     "task_sessions",
     "short_term_memories",
@@ -60,6 +60,25 @@ const RUST_MANDATORY_TABLES: [&str; 23] = [
     "semantic_work_intent",
     "dream_retry_state",
     "dream_link_crystals",
+    // Schema version 5: autonomous authority and durable correction work.
+    "authority_state",
+    "origin_receipts",
+    "decision_records",
+    "decision_evidence",
+    "evidence_records",
+    "story_timelines",
+    "story_positions",
+    "applicabilities",
+    "knowledge_gates",
+    "memory_claims",
+    "claim_bindings",
+    "claim_effects",
+    "rule_authority",
+    "rule_exclusions",
+    "claim_derivations",
+    "provider_recovery_state",
+    "consolidation_results",
+    "consolidation_jobs",
 ];
 /// Sentinel tables that identify a Python-era Hieronymus database. Python has
 /// no schema-version marker; the ported migration table set is the fingerprint
@@ -333,6 +352,215 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
                 "skipped_pair_count",
             ][..],
         ),
+        // Version 5 columns are load-bearing typed protocol state.
+        ("authority_state", &["series_id", "revision"][..]),
+        (
+            "origin_receipts",
+            &[
+                "id",
+                "kind",
+                "principal",
+                "session_id",
+                "event_id",
+                "text",
+                "context_json",
+                "content_hash",
+                "created_at",
+            ][..],
+        ),
+        (
+            "decision_records",
+            &[
+                "decision_id",
+                "series_id",
+                "origin_id",
+                "actor_kind",
+                "expected_revision",
+                "resulting_revision",
+                "canonical_request",
+                "result_json",
+                "status",
+                "created_at",
+            ][..],
+        ),
+        (
+            "decision_evidence",
+            &[
+                "decision_id",
+                "ordinal",
+                "kind",
+                "source_id",
+                "hash",
+                "span_start",
+                "span_end",
+            ][..],
+        ),
+        (
+            "evidence_records",
+            &[
+                "id",
+                "series_id",
+                "kind",
+                "source_identity",
+                "source_hash",
+                "span_start",
+                "span_end",
+                "content",
+                "binding_json",
+                "created_at",
+            ][..],
+        ),
+        (
+            "story_timelines",
+            &["id", "series_id", "name", "revision"][..],
+        ),
+        (
+            "story_positions",
+            &[
+                "id",
+                "timeline_id",
+                "volume_key",
+                "chapter_key",
+                "scene_key",
+                "ordinal",
+                "evidence_id",
+            ][..],
+        ),
+        (
+            "applicabilities",
+            &[
+                "id",
+                "series_id",
+                "timeline_id",
+                "volume_key",
+                "chapter_key",
+                "scope_predicates_json",
+                "valid_from",
+                "valid_until",
+                "metadata_state",
+            ][..],
+        ),
+        (
+            "knowledge_gates",
+            &[
+                "id",
+                "applicability_id",
+                "viewpoint_kind",
+                "viewpoint_concept_id",
+                "known_from",
+                "known_until",
+            ][..],
+        ),
+        (
+            "memory_claims",
+            &[
+                "id",
+                "series_id",
+                "concept_id",
+                "text",
+                "revision",
+                "status",
+                "qualification",
+                "applicability_id",
+                "evolves_from",
+                "created_at",
+                "updated_at",
+            ][..],
+        ),
+        (
+            "claim_bindings",
+            &[
+                "id",
+                "claim_id",
+                "short_term_id",
+                "crystal_id",
+                "facet_id",
+                "rag_chunk_id",
+            ][..],
+        ),
+        (
+            "claim_effects",
+            &[
+                "id",
+                "claim_id",
+                "decision_id",
+                "applicability_id",
+                "effect",
+                "qualification",
+                "supersedes_effect_id",
+            ][..],
+        ),
+        (
+            "rule_authority",
+            &[
+                "rule_id",
+                "authority",
+                "origin_id",
+                "decision_id",
+                "consolidation_result_id",
+                "applicability_id",
+                "legacy_protected",
+            ][..],
+        ),
+        (
+            "rule_exclusions",
+            &[
+                "id",
+                "rule_id",
+                "applicability_id",
+                "decision_id",
+                "consolidation_result_id",
+            ][..],
+        ),
+        (
+            "claim_derivations",
+            &[
+                "input_claim_id",
+                "output_claim_id",
+                "consolidation_result_id",
+            ][..],
+        ),
+        (
+            "provider_recovery_state",
+            &[
+                "provider_slot_id",
+                "config_fingerprint",
+                "next_recovery_at",
+                "updated_at",
+            ][..],
+        ),
+        (
+            "consolidation_results",
+            &[
+                "result_id",
+                "job_decision_id",
+                "generation",
+                "state",
+                "expected_revision",
+                "canonical_output",
+                "origin_id",
+                "completion_receipt",
+                "created_at",
+                "updated_at",
+            ][..],
+        ),
+        (
+            "consolidation_jobs",
+            &[
+                "decision_id",
+                "state",
+                "attempts",
+                "next_attempt_at",
+                "lease_until",
+                "lease_token",
+                "last_error_code",
+                "provider_slot_id",
+                "result_generation",
+                "last_attempt_at",
+                "created_at",
+                "updated_at",
+            ][..],
+        ),
         (RUST_META_TABLE, &["schema_version"][..]),
     ] {
         let present = table_columns(&connection, table).map_err(|_| SchemaDefect::Unreadable)?;
@@ -398,6 +626,21 @@ pub enum OpenMigratedError {
 pub(crate) fn apply_terminology_schema_steps(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    apply_terminology_schema_through(connection, SUPPORTED_RUST_SCHEMA_VERSION)
+}
+
+/// Import legacy rows before the v5 authority backfill runs. The caller owns
+/// the conversion and the subsequent 4 -> current steps in its transaction.
+pub(crate) fn prepare_terminology_import_schema(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<()> {
+    apply_terminology_schema_through(connection, 4)
+}
+
+fn apply_terminology_schema_through(
+    connection: &rusqlite::Connection,
+    target: i64,
+) -> rusqlite::Result<()> {
     connection.execute_batch(TERMINOLOGY_MIGRATION_SQL)?;
     connection.execute_batch(&format!(
         "create table if not exists {RUST_META_TABLE} (
@@ -418,7 +661,7 @@ pub(crate) fn apply_terminology_schema_steps(
             crate::schema_upgrade::BASELINE_SCHEMA_VERSION
         }
     };
-    crate::schema_upgrade::apply_steps(connection, from, SUPPORTED_RUST_SCHEMA_VERSION)
+    crate::schema_upgrade::apply_steps(connection, from, target)
 }
 
 /// Classify the database at `path` without writing to it.
