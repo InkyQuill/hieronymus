@@ -54,7 +54,7 @@ The worker skipped it forever because no activation sample existed, leaving
 store and reconciles the job before normal readiness re-evaluation. It does not
 activate a fictitious empty index or bypass arming, corpus revision or ownership.
 
-The final semantic-fixed `0.7.0` archive is SHA-256
+The semantic-fixed `0.7.0` archive is SHA-256
 `e7a7e08e010fc3bc8b281d90b240cd7c62432c09b553e5c52e8f10c0353a9c22`
 (533,131,348 bytes), preserved in the main repository under
 `target/release-readiness-2026-09-07/final-semantic-0.7.0/`.
@@ -74,8 +74,9 @@ refusal/rollback cases use controlled candidates and service seams, even though
 their updater executable is installed.
 The final four installed rehearsals and fifteen updater cases are recorded in
 `/tmp/hieronymus-f2-installed-complete.log`. The complete browser flow remains
-attributed to the earlier UI-fixed artifact; the final change affects semantic
-empty-generation settlement and retains identical browser sources/assets.
+attributed to the earlier UI-fixed artifact; the semantic-worker change retains
+identical browser sources/assets. The later delete-confirmation correction
+below changes the final UI and carries its own focused installed receipt.
 
 ## Acceptance outcomes
 
@@ -152,3 +153,27 @@ passed serially, and all skipped core/worker/doc targets passed separately.
 Five explicit installed live rehearsals passed separately, including real
 compiled-candidate health-failure rollback. The normal development-binary
 registry matrix is distinct from the installed baseline matrix receipt.
+
+## Review correction — destructive target confirmation
+
+Review found that the new checked selections could differ from the detail row
+named in the existing delete confirmation. The dialog now renders the same
+count and stable IDs used by the delete request. A matching detail label is
+shown alongside its ID; the detail-only fallback applies only with no checked
+IDs. Regressions first failed on the misleading display, then all 13 dialog
+and all 69 frontend tests passed, as did typecheck and the release builder's
+production frontend build, embedding checks, native inference and round-trip.
+
+The final review-fixed archive is SHA-256
+`eae0185ee5efd56fa4d9c02de021fed438b2899e3f0f374054d6ae16395b966e`
+(533,132,292 bytes), preserved in the main repository at
+`target/release-readiness-2026-09-07/final-delete-confirmation-0.7.0/`.
+A fresh disposable install reached authenticated semantic readiness. Actual
+Chromium checks retained detail A while checking B, checked two other records,
+and used detail A with no checks: each displayed count/target list exactly
+matched the real HTTP 200 deletion body. Receipt:
+`/tmp/hieronymus-f2-fix1-browser.json`. The earlier full browser and matrix
+receipts remain attributed to their original artifacts; they were not repeated
+or relabeled. The earlier `e7a7e08e…` artifact remains the semantic-worker and
+upgrade/rollback receipt. Authority/native-host/external-service gates remain
+open. No broad Rust suite was repeated for this UI/documentation correction.

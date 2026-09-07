@@ -165,6 +165,8 @@
         return (
           parts.filter((part) => part.text.trim().length > 0).length >= 2
         );
+      case "delete_selected":
+        return targetIds().length > 0;
       case "reject_proposal":
         return reason.trim().length > 0;
       default:
@@ -290,6 +292,15 @@
           onclick={addPart}>Add another part</button
         >
       </fieldset>
+    {:else if command.id === "delete_selected"}
+      <p class="text-body-sm text-secondary">
+        Deleting {targetIds().length} {targetIds().length === 1 ? "record" : "records"}.
+      </p>
+      <ul aria-label="Records to delete" class="list-disc pl-5 text-body-sm text-secondary">
+        {#each targetIds() as id (id)}
+          <li>{#if row?.id === id}{row.label} (ID: {id}){:else}Record ID: {id}{/if}</li>
+        {/each}
+      </ul>
     {:else if command.id === "approve_proposal" || command.id === "reject_proposal"}
       <label class="grid gap-1.5 text-caption text-secondary" for="action-reason">
         Reason {command.id === "reject_proposal" ? "(required)" : "(optional)"}

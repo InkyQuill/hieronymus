@@ -328,3 +328,37 @@ test("merge_selected needs at least two ids and merged text", async () => {
     confirmed: true,
   });
 });
+
+test.each([[8], [8, 9]])("delete confirmation describes checked targets %j instead of the detail row", async (...ids: number[]) => {
+  const user = userEvent.setup();
+  const onSubmit = vi.fn();
+  render(ActionDialog, {
+    props: {
+      command: command("delete_selected", "Delete Selected"),
+      view: "Crystals", row, selectedIds: ids, onSubmit, onClose: vi.fn(),
+    },
+  });
+  expect(screen.getByText(`Deleting ${ids.length} ${ids.length === 1 ? "record" : "records"}.`)).toBeTruthy();
+  const targets = screen.getByRole("list", { name: "Records to delete" });
+  expect(Array.from(targets.querySelectorAll("li"), (item) => item.textContent?.trim())).toEqual(ids.map((id) => `Record ID: ${id}`));
+  expect(targets.textContent).not.toContain(row.label);
+  const submit = screen.getByRole("button", { name: "Delete Selected" }) as HTMLButtonElement;
+  expect(submit.disabled).toBe(true);
+  await user.click(screen.getByLabelText(/apply this change to the stored memory/i));
+  await user.click(submit);
+  expect(onSubmit).toHaveBeenCalledWith({ view: "Crystals", ids, confirmed: true });
+});
+
+test("delete confirmation falls back to the detail record only without checked ids", async () => {
+  const user = userEvent.setup();
+  const onSubmit = vi.fn();
+  render(ActionDialog, { props: {
+    command: command("delete_selected", "Delete Selected"), view: "Crystals", row,
+    onSubmit, onClose: vi.fn(),
+  }});
+  expect(screen.getByText("Deleting 1 record.")).toBeTruthy();
+  expect(screen.getByRole("list", { name: "Records to delete" }).textContent).toContain("Hero name (ID: 7)");
+  await user.click(screen.getByLabelText(/apply this change to the stored memory/i));
+  await user.click(screen.getByRole("button", { name: "Delete Selected" }));
+  expect(onSubmit).toHaveBeenCalledWith({ view: "Crystals", ids: [7], confirmed: true });
+});

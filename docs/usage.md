@@ -8,7 +8,7 @@ The Rust candidate is a Linux x86_64 archive with one native executable, four
 command names, an embedded console, and pinned semantic model/runtime assets.
 It needs no Python, Node or Bun at runtime. It is not yet cleared for product
 cutover: [the rehearsal](rust-cutover-rehearsal.md) records actual results and
-open authority, browser and agent-host gates.
+open authority, native agent-host and service-manager gates.
 
 Install a locally built, verified release into disposable roots:
 
