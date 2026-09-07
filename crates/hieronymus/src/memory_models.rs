@@ -38,6 +38,10 @@ pub struct TranslationContext {
     pub language_tags: Vec<String>,
     pub story_scopes: Vec<String>,
     pub semantic_tags: Vec<String>,
+    pub story_timeline_id: Option<i64>,
+    pub story_scene_key: Option<String>,
+    pub story_viewpoint: crate::story_applicability::Viewpoint,
+    pub story_query_mode: crate::story_applicability::QueryMode,
     language_tags_explicit: bool,
     story_scopes_explicit: bool,
     semantic_tags_explicit: bool,
@@ -57,6 +61,10 @@ impl PartialEq for TranslationContext {
             && self.language_tags == other.language_tags
             && self.story_scopes == other.story_scopes
             && self.semantic_tags == other.semantic_tags
+            && self.story_timeline_id == other.story_timeline_id
+            && self.story_scene_key == other.story_scene_key
+            && self.story_viewpoint == other.story_viewpoint
+            && self.story_query_mode == other.story_query_mode
     }
 }
 
@@ -80,6 +88,10 @@ impl TranslationContext {
             language_tags: Vec::new(),
             story_scopes: Vec::new(),
             semantic_tags: Vec::new(),
+            story_timeline_id: None,
+            story_scene_key: None,
+            story_viewpoint: Default::default(),
+            story_query_mode: Default::default(),
             language_tags_explicit: false,
             story_scopes_explicit: false,
             semantic_tags_explicit: false,

@@ -47,6 +47,7 @@ pub mod semantic_store;
 pub mod semantic_tokenizer;
 pub mod short_memory;
 pub mod state_classifier;
+pub mod story_applicability;
 pub mod terminology;
 pub mod tls;
 pub mod upgrade;
