@@ -14,7 +14,7 @@ const TERMINOLOGY_MIGRATION_SQL: &str = include_str!("../migrations/terminology.
 /// [`crate::schema_upgrade`]; a database written by a newer binary fails
 /// closed, and a database at an older supported version is upgraded in place
 /// by the ordered runner (never opened for writes as-is).
-pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 3;
+pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 4;
 
 /// The Rust schema-version marker table. Its presence is the primary signal
 /// that a database was written by this line rather than Python.
@@ -26,7 +26,7 @@ pub const RUST_META_TABLE: &str = "hieronymus_meta";
 /// starts). This is a bounded `sqlite_master` check, never `integrity_check`
 /// or a data scan; it names the load-bearing tables from every subsystem
 /// (`migrations/global.sql` + `migrations/terminology.sql`), not all of them.
-const RUST_MANDATORY_TABLES: [&str; 22] = [
+const RUST_MANDATORY_TABLES: [&str; 23] = [
     "series",
     "task_sessions",
     "short_term_memories",
@@ -59,6 +59,7 @@ const RUST_MANDATORY_TABLES: [&str; 22] = [
     "corpus_revision",
     "semantic_work_intent",
     "dream_retry_state",
+    "dream_link_crystals",
 ];
 /// Sentinel tables that identify a Python-era Hieronymus database. Python has
 /// no schema-version marker; the ported migration table set is the fingerprint
@@ -298,6 +299,10 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
                 "created_at",
             ][..],
         ),
+        (
+            "dream_link_crystals",
+            &["batch_id", "member_offset", "crystal_id"][..],
+        ),
         // Schema version 3.
         ("corpus_revision", &["singleton", "revision"][..]),
         (
@@ -320,7 +325,7 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
         // Current.
         (
             "dream_link_batches",
-            &["next_left_offset", "next_right_offset"][..],
+            &["next_left_offset", "next_right_offset", "lazy_pairs"][..],
         ),
         (RUST_META_TABLE, &["schema_version"][..]),
     ] {

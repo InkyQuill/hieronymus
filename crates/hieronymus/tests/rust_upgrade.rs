@@ -1253,3 +1253,51 @@ fn a_crashed_version_1_database_is_also_left_byte_identical() {
     );
     assert!(!config(root.path()).daemon_discovery_path().exists());
 }
+
+#[test]
+fn v3_materialized_batches_upgrade_without_replaying_terminal_pairs() {
+    use hieronymus::dream_link_progress::LinkProgress;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    let mut connection = open(&config.database_path());
+    connection.execute_batch(RUST_V1_SQL).unwrap();
+    seed_v1_rows(&connection);
+    let transaction = connection.transaction().unwrap();
+    apply_steps(&transaction, 1, 3).unwrap();
+    transaction.commit().unwrap();
+    connection
+        .execute_batch(
+            "insert into dream_link_batches(id, session_id, created_cycle) values(1, 999, 1);
+      insert into dream_link_pairs(batch_id,left_id,right_id,status,applied_cycle,result_json)
+      values(1, 10001, 10002, 'applied', 1, '{}'), (1,10001,10003,'queued',null,null);",
+        )
+        .unwrap();
+    let transaction = connection.transaction().unwrap();
+    apply_steps(&transaction, 3, SUPPORTED_RUST_SCHEMA_VERSION).unwrap();
+    transaction.commit().unwrap();
+    assert_eq!(
+        scalar(&connection, "select lazy_pairs from dream_link_batches"),
+        0
+    );
+    assert_eq!(
+        scalar(&connection, "select count(*) from dream_link_crystals"),
+        0
+    );
+    let mut progress = LinkProgress::open(&config).unwrap();
+    assert_eq!(progress.process(2, 1).unwrap(), 1);
+    assert_eq!(
+        scalar(
+            &connection,
+            "select applied_cycle from dream_link_pairs where status='applied'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from dream_link_pairs where status='skipped'"
+        ),
+        1
+    );
+    assert_eq!(progress.process(3, 1).unwrap(), 0);
+}

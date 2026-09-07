@@ -171,6 +171,9 @@ pub struct DreamRunRecord {
 /// them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DrainRecord {
+    /// Overall drain state; the last batch can complete while work is pending.
+    pub outcome: String,
+    pub progress: DrainProgress,
     /// The last batch's own durable run record.
     pub record: DreamRunRecord,
     /// How many capped batches the drain ran (>= 1).
@@ -180,6 +183,35 @@ pub struct DrainRecord {
     pub created_crystal_count: i64,
     pub proposal_count: i64,
 }
+
+/// Durable semantic effects, never merely selected inputs.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct DrainProgress {
+    pub archived_inputs: i64,
+    pub feedback_events: i64,
+    pub terminalized_pairs: i64,
+    pub completed_link_batches: i64,
+}
+
+impl DrainProgress {
+    fn total(&self) -> usize {
+        (self.archived_inputs
+            + self.feedback_events
+            + self.terminalized_pairs
+            + self.completed_link_batches)
+            .max(0) as usize
+    }
+    fn add(&mut self, other: &Self) {
+        self.archived_inputs += other.archived_inputs;
+        self.feedback_events += other.feedback_events;
+        self.terminalized_pairs += other.terminalized_pairs;
+        self.completed_link_batches += other.completed_link_batches;
+    }
+}
+
+/// A single drain yields after this many bounded cycles, even under continuous
+/// input arrival. The durable backlog remains available to the next run.
+pub const MAX_DRAIN_BATCHES: usize = 128;
 
 /// The bounded drain loop: call `next` — one bounded batch, already durably
 /// recorded by the caller — until it completes nothing or `cancelled` is
@@ -677,8 +709,12 @@ impl DreamService {
         let mut created_total = 0_i64;
         let mut proposal_total = 0_i64;
         let mut last: Option<DreamRunRecord> = None;
+        let mut progress_total = DrainProgress::default();
         drain_batches(
             || {
+                if batches >= MAX_DRAIN_BATCHES {
+                    return Ok(0);
+                }
                 // Re-select between batches: stop without an empty trailing
                 // cycle once no eligible work remains. Crystallization
                 // eligibility is the backlog (or, for threshold-respecting
@@ -689,13 +725,7 @@ impl DreamService {
                 // drain with nothing to do still records one honest empty
                 // cycle, exactly like a single cycle always has.
                 if batches > 0 && !cancelled.load(std::sync::atomic::Ordering::Acquire) {
-                    let remaining = self.pending_short_term_memory_count()?;
-                    let eligible = if remaining > 0 {
-                        ignore_minimum
-                            || remaining >= self.dream_config.min_pending_short_term_memories
-                    } else {
-                        self.cycle_has_deterministic_work()?
-                    };
+                    let eligible = self.drain_work_remains(ignore_minimum)?;
                     if !eligible {
                         return Ok(0_usize);
                     }
@@ -708,7 +738,12 @@ impl DreamService {
                 // skipped row (another cycle holds the OS lock) is already
                 // durable; its zero progress stops the drain without a spin.
                 let progress = match record.status.as_str() {
-                    "completed" => record.input_count.max(0) as usize,
+                    "completed" => {
+                        let effects = self.batch_progress(&record)?;
+                        let total = effects.total();
+                        progress_total.add(&effects);
+                        total
+                    }
                     "skipped" => 0_usize,
                     other => {
                         return Err(DreamError::DrainInterrupted(format!(
@@ -729,33 +764,56 @@ impl DreamService {
                 "cancelled before the first batch".to_string(),
             ));
         };
-        // The blocked guard: the loop stopped while eligible work remained
-        // without a batch failure to name and without an honest skip row.
-        // Nothing may spin here, and a backlog behind a completed run must
-        // never read as success: record a durable failed run row naming the
-        // stall, then fail the drain.
-        if !cancelled.load(std::sync::atomic::Ordering::Acquire) && record.status != "skipped" {
-            let remaining = self.pending_short_term_memory_count()?;
-            let eligible = if ignore_minimum {
-                remaining > 0
-            } else {
-                remaining >= self.dream_config.min_pending_short_term_memories
-            };
-            if eligible {
-                let reason = format!(
-                    "drain stopped with {remaining} eligible input(s) remaining \
-                     after {batches} batch(es) of zero progress"
-                );
-                self.record_failed_run(&reason)?;
-                return Err(DreamError::DrainInterrupted(reason));
-            }
-        }
+        let remaining = self.drain_work_remains(ignore_minimum)?;
+        let outcome = if record.status == "skipped" {
+            "skipped"
+        } else if cancelled.load(std::sync::atomic::Ordering::Acquire) && remaining {
+            "interrupted"
+        } else if remaining {
+            "pending"
+        } else {
+            "completed"
+        };
         Ok(DrainRecord {
+            outcome: outcome.to_string(),
+            progress: progress_total,
             record,
             batches,
             input_count: input_total,
             created_crystal_count: created_total,
             proposal_count: proposal_total,
+        })
+    }
+
+    fn drain_work_remains(&self, ignore_minimum: bool) -> Result<bool, DreamError> {
+        let remaining = self.pending_short_term_memory_count()?;
+        Ok((remaining > 0
+            && (ignore_minimum || remaining >= self.dream_config.min_pending_short_term_memories))
+            || self.cycle_has_deterministic_work()?)
+    }
+
+    fn batch_progress(&self, record: &DreamRunRecord) -> Result<DrainProgress, DreamError> {
+        let connection = open_migrated(&self.config.database_path())?;
+        let archived: i64 = connection.query_row(
+            "select coalesce(sum(json_array_length(payload_json, '$.archived_short_term_memory_ids')), 0)
+             from dream_audit_entries where dream_run_id=?1 and event_type='phase_completed'
+             and json_extract(payload_json, '$.phase_name')='reconsolidation'", [record.id], |row| row.get(0))?;
+        let feedback_events = connection.query_row("select count(*) from memory_events where cycle_id=?1 and event_type='recalled_again' and applied=1", [record.cycle_id], |row| row.get(0))?;
+        let terminalized_pairs = connection.query_row(
+            "select count(*) from dream_link_pairs where applied_cycle=?1 and status != 'queued'",
+            [record.cycle_id],
+            |row| row.get(0),
+        )?;
+        let completed_link_batches = connection.query_row(
+            "select count(*) from dream_link_batches where completed_cycle=?1",
+            [record.cycle_id],
+            |row| row.get(0),
+        )?;
+        Ok(DrainProgress {
+            archived_inputs: record.input_count + archived,
+            feedback_events,
+            terminalized_pairs,
+            completed_link_batches,
         })
     }
 
@@ -1146,7 +1204,7 @@ impl DreamService {
     /// session-scoped working copy, an unconsumed `recalled_again` event, or
     /// queued link work. These justify a cycle even with no crystallization
     /// inputs.
-    fn cycle_has_deterministic_work(&self) -> Result<bool, DreamError> {
+    pub fn cycle_has_deterministic_work(&self) -> Result<bool, DreamError> {
         Ok(self.reconsolidation_pending()?
             || self.reinforcement_pending()?
             || self.links_pending()?)
@@ -2267,12 +2325,6 @@ impl DreamService {
     /// recorded, never silent.
     pub fn record_skipped_run(&self, reason: &str) -> Result<DreamRunRecord, DreamError> {
         self.record_negative_run("skipped", reason)
-    }
-
-    /// The blocked-drain record: a durable failed run row naming why the
-    /// drain stopped while eligible work remained (never a success claim).
-    fn record_failed_run(&self, reason: &str) -> Result<DreamRunRecord, DreamError> {
-        self.record_negative_run("failed", reason)
     }
 
     fn record_negative_run(

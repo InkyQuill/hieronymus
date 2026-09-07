@@ -69,6 +69,12 @@ const STEPS: &[Step] = &[
         sql: STEP_002_TO_003,
         converter: Some(add_corpus_revision_column),
     },
+    Step {
+        from: 3,
+        to: 4,
+        sql: include_str!("../migrations/004-lazy-dream-links.sql"),
+        converter: None,
+    },
 ];
 
 /// Step 2 -> 3's typed converter: give `semantic_generations` the

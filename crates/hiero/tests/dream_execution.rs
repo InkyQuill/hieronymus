@@ -987,8 +987,9 @@ fn shutdown_stops_the_drain_at_a_batch_boundary_with_honest_outcomes() {
     llm.release();
     let (stop_result, waiter_result) = (joiner.join().unwrap(), waiter.join().unwrap());
     stop_result.expect("the worker joins");
-    let error = waiter_result.expect_err("the interrupted drain is an honest failure");
-    assert!(error.contains("interrupted"), "{error}");
+    let drain = waiter_result.expect("the committed prefix is available");
+    assert_eq!(drain.outcome, "interrupted");
+    assert_eq!(drain.record.status, "completed");
 
     // The in-flight batch committed; the rest stays pending; no row is left
     // running.
@@ -1038,4 +1039,155 @@ fn requests_are_refused_once_shutting_down() {
         })
         .unwrap_err();
     assert!(error.contains("shutting down"), "{error}");
+}
+
+#[test]
+fn retry_backoff_is_bounded_and_not_the_two_second_urgent_gate() {
+    use hiero::daemon::dream_worker::retry_delay;
+    assert_eq!(retry_delay(0), Duration::ZERO);
+    assert_eq!(retry_delay(1), Duration::from_secs(30));
+    assert_eq!(retry_delay(2), Duration::from_secs(60));
+    assert_eq!(retry_delay(100), Duration::from_secs(1800));
+}
+
+#[test]
+fn retry_deadlines_survive_restart_and_reset_on_config_repair_and_success() {
+    use std::sync::atomic::AtomicI64;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    seed_backlog(&config, 1, 1);
+    let llm = LoopbackLlm::start_failing_after(0);
+    wire_lane(&config, &llm.url(), true, 1, 1, 5.0);
+    let seconds = Arc::new(AtomicI64::new(1_800_000_000));
+    let start = || {
+        let source_config = config.clone();
+        let source = Arc::new(move || {
+            WorkflowResolver::from_catalog(load_provider_catalog(&source_config).unwrap())
+        });
+        let time = seconds.clone();
+        let clock = Arc::new(move || {
+            chrono::DateTime::from_timestamp(time.load(Ordering::SeqCst), 0).unwrap()
+        });
+        let mut workers = WorkerGroup::new(Arc::new(AtomicBool::new(false)));
+        let controller = DreamController::start_with_provider_source_and_clock(
+            config.clone(),
+            &mut workers,
+            source,
+            clock,
+        )
+        .unwrap();
+        (workers, controller)
+    };
+    let (workers, controller) = start();
+    wait_for(|| controller.status().last.is_some(), PASS_TIMEOUT);
+    assert_eq!(
+        scalar(root.path(), "select failures from dream_retry_state"),
+        1
+    );
+    for _ in 0..20 {
+        assert!(controller.run_scheduled_tick().is_none());
+    }
+    workers.stop_and_join().unwrap();
+
+    let (workers, controller) = start();
+    assert!(
+        controller.run_scheduled_tick().is_none(),
+        "restart retains deadline"
+    );
+    seconds.fetch_add(40, Ordering::SeqCst);
+    controller.run_scheduled_tick().expect("deadline elapsed");
+    wait_for(
+        || scalar(root.path(), "select failures from dream_retry_state") == 2,
+        PASS_TIMEOUT,
+    );
+    assert!(controller.run_scheduled_tick().is_none());
+
+    // Explicit manual requests may bypass eligibility but keep failure history.
+    assert!(
+        controller
+            .request_and_wait(DreamRequest {
+                all: true,
+                manual: true
+            })
+            .is_err()
+    );
+    assert_eq!(
+        scalar(root.path(), "select failures from dream_retry_state"),
+        3
+    );
+    // Repairing even a credential on the same endpoint resets the config key.
+    let repaired_catalog = ProviderCatalog::default().with_provider(
+        "loopback-lane",
+        ProviderProfile::new("Loopback Lane", "openai", llm.url(), "repaired-key", 5.0),
+    );
+    save_provider_catalog(&config, &repaired_catalog).unwrap();
+    controller
+        .run_scheduled_tick()
+        .expect("configuration repair bypasses old deadline");
+    wait_for(
+        || {
+            controller.status().active.is_none()
+                && scalar(root.path(), "select failures from dream_retry_state") == 1
+        },
+        PASS_TIMEOUT,
+    );
+    let healthy = LoopbackLlm::start();
+    wire_lane(&config, &healthy.url(), true, 1, 1, 5.0);
+    controller
+        .run_scheduled_tick()
+        .expect("healthy replacement eligible");
+    wait_for(
+        || {
+            scalar(
+                root.path(),
+                "select count(*) from short_term_memories where archived_at is null",
+            ) == 0
+                && controller.status().active.is_none()
+        },
+        PASS_TIMEOUT,
+    );
+    assert_eq!(
+        scalar(root.path(), "select failures from dream_retry_state"),
+        0
+    );
+    workers.stop_and_join().unwrap();
+}
+
+#[test]
+fn mcp_and_admin_project_the_overall_drain_outcome() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    seed_backlog(&config, 1, 0);
+    let connection = open_migrated(&config.database_path()).unwrap();
+    connection.execute_batch("with recursive n(x) as (values(1) union all select x+1 from n where x<17)
+      insert into crystals(id,text,crystal_type,scope_type,strength,confidence,status,created_at,updated_at)
+      select x, 'text ' || x, 'lesson', 'global', 0.5, 0.5, 'active', 'now', 'now' from n;
+      insert into crystal_activations(crystal_id,session_id,recall_query,rank,score,outcome,created_at)
+      select id, 1, 'test', 0, 1, 'useful', 'now' from crystals;").unwrap();
+    let mut settings = default_dream_config();
+    settings.max_relation_records_per_pass = 1;
+    save_dream_config(&config, &settings).unwrap();
+    let mut workers = WorkerGroup::new(Arc::new(AtomicBool::new(false)));
+    let controller = DreamController::start_with_provider_source(
+        config.clone(),
+        &mut workers,
+        Arc::new(WorkflowResolver::deterministic),
+    )
+    .unwrap();
+    let app = hiero::application::Application::open(&config).unwrap();
+    app.install_dream_controller(controller.clone());
+    let result = app.call("hieronymus_dream", &json!({}), "test").unwrap();
+    assert_eq!(result["status"], json!("pending"));
+    assert_eq!(result["batch_status"], json!("completed"));
+    assert_eq!(result["progress"]["terminalized_pairs"], json!(128));
+    assert_eq!(
+        controller.status().last.unwrap().outcome.as_deref(),
+        Some("pending")
+    );
+    let result =
+        hiero::application::admin::run_action(&app, "test", "run_manual_dreaming", &json!({}))
+            .unwrap();
+    assert_eq!(result["run"]["status"], json!("completed"));
+    assert_eq!(result["run"]["progress"]["terminalized_pairs"], json!(8));
+    workers.stop_and_join().unwrap();
 }
