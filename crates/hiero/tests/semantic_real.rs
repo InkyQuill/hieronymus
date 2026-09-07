@@ -805,7 +805,7 @@ fn real_semantic_qualification() {
                 ),
             ),
         ] {
-            let outcome = std::panic::catch_unwind(|| {
+            record_case_failure(&mut failures, &expectation.query_id, tool, || {
                 let top_three_source_ids: Vec<&str> = rows
                     .iter()
                     .take(3)
@@ -870,48 +870,8 @@ fn real_semantic_qualification() {
                     }
                 }
             });
-            if outcome.is_err() {
-                failures.push(format!("{}:{tool}", expectation.query_id));
-            }
         }
-        // The learned memory is returned.
-        if let Some(memory_text) = &expectation.expected_memory_text {
-            assert!(
-                payload["results"].as_array().unwrap().iter().any(|row| {
-                    row["text"].as_str() == Some(memory_text.as_str())
-                        && row["rank_reason"].as_str() == Some(SHORT_TERM_REASON)
-                }),
-                "query {} must return the learned memory: {payload}",
-                expectation.query_id
-            );
-        }
-
-        // Active terminology stays deterministic and independent of ranking.
-        if let Some(contract) = &expectation.expected_contract_term {
-            let terms = payload["deterministic_contract"].as_array().unwrap();
-            assert!(
-                terms.iter().any(|term| {
-                    term["source_text"].as_str() == Some(contract.source_text.as_str())
-                        && term["canonical_translation"].as_str()
-                            == Some(contract.canonical_translation.as_str())
-                }),
-                "query {} must carry the approved term in the deterministic contract: {payload}",
-                expectation.query_id
-            );
-            // The term has no ranked hit requirement: ranking never depends
-            // on the contract (and the contract never silently overrides
-            // ranked text — the rows are untouched by the termbase).
-            let ranked_has_term = payload["results"].as_array().unwrap().iter().any(|row| {
-                row["text"]
-                    .as_str()
-                    .is_some_and(|text| text.contains(&contract.canonical_translation))
-            });
-            assert!(
-                !ranked_has_term,
-                "query {} ranked rows must stay independent of the deterministic contract",
-                expectation.query_id
-            );
-        }
+        collect_recall_expectation_failures(expectation, &payload, &mut failures);
     }
     eprintln!("P2 corpus failures: {failures:?}");
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
@@ -1139,7 +1099,115 @@ fn real_semantic_qualification() {
         assert!(provider.embed_query(&[invalid]).is_err());
     }
     daemon.shutdown().unwrap();
+    assert_corpus_success(&failures);
+}
+
+fn record_case_failure(
+    failures: &mut Vec<String>,
+    query_id: &str,
+    check: &str,
+    assertion: impl FnOnce() + std::panic::UnwindSafe,
+) {
+    if std::panic::catch_unwind(assertion).is_err() {
+        failures.push(format!("{query_id}:{check}"));
+    }
+}
+
+fn assert_corpus_success(failures: &[String]) {
     assert!(failures.is_empty(), "corpus failures: {failures:?}");
+}
+
+fn collect_recall_expectation_failures(
+    expectation: &QuerySpec,
+    payload: &Value,
+    failures: &mut Vec<String>,
+) {
+    // The learned memory is returned.
+    if let Some(memory_text) = &expectation.expected_memory_text {
+        record_case_failure(failures, &expectation.query_id, "memory", || {
+            assert!(
+                payload["results"].as_array().unwrap().iter().any(|row| {
+                    row["text"].as_str() == Some(memory_text.as_str())
+                        && row["rank_reason"].as_str() == Some(SHORT_TERM_REASON)
+                }),
+                "query {} must return the learned memory: {payload}",
+                expectation.query_id
+            );
+        });
+    }
+
+    // Active terminology stays deterministic and independent of ranking.
+    if let Some(contract) = &expectation.expected_contract_term {
+        record_case_failure(failures, &expectation.query_id, "contract", || {
+            let terms = payload["deterministic_contract"].as_array().unwrap();
+            assert!(
+                terms.iter().any(|term| {
+                    term["source_text"].as_str() == Some(contract.source_text.as_str())
+                        && term["canonical_translation"].as_str()
+                            == Some(contract.canonical_translation.as_str())
+                }),
+                "query {} must carry the approved term in the deterministic contract: {payload}",
+                expectation.query_id
+            );
+            // The term has no ranked hit requirement: ranking never depends
+            // on the contract (and the contract never silently overrides
+            // ranked text — the rows are untouched by the termbase).
+            let ranked_has_term = payload["results"].as_array().unwrap().iter().any(|row| {
+                row["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(&contract.canonical_translation))
+            });
+            assert!(
+                !ranked_has_term,
+                "query {} ranked rows must stay independent of the deterministic contract",
+                expectation.query_id
+            );
+        });
+    }
+}
+
+#[test]
+fn memory_and_contract_failures_preserve_later_language_outcomes() {
+    let fixture: Fixture = serde_json::from_str(FIXTURE).unwrap();
+    // Missing learned memory and contract deliberately reproduce both early
+    // recall regressions using the same checks as the live corpus loop.
+    let missing = json!({"results": [], "deterministic_contract": []});
+    let mut failures = Vec::new();
+    for expectation in &fixture.queries {
+        collect_recall_expectation_failures(expectation, &missing, &mut failures);
+        if matches!(expectation.language.as_str(), "ja" | "ru") {
+            record_case_failure(&mut failures, &expectation.query_id, "recall", || {
+                panic!("injected later-language retrieval failure");
+            });
+        }
+    }
+    assert_eq!(
+        failures,
+        [
+            "learned-memory-electrification:memory",
+            "terminology-independence:contract",
+            "ship-physician-ja-paraphrase:recall",
+            "cartographer-ja-paraphrase:recall",
+            "ship-physician-ru-paraphrase:recall",
+            "cartographer-ru-paraphrase:recall",
+        ]
+    );
+    assert!(std::panic::catch_unwind(|| assert_corpus_success(&failures)).is_err());
+
+    // A present contract with canonical text leaking into ranked evidence
+    // must also be aggregated rather than mistaken for a passing contract.
+    let expectation = fixture
+        .queries
+        .iter()
+        .find(|query| query.expected_contract_term.is_some())
+        .unwrap();
+    let polluted = json!({
+        "results": [{"text": "пенициллин"}],
+        "deterministic_contract": [{"source_text": "penicillin", "canonical_translation": "пенициллин"}],
+    });
+    let mut failures = Vec::new();
+    collect_recall_expectation_failures(expectation, &polluted, &mut failures);
+    assert_eq!(failures, ["terminology-independence:contract"]);
 }
 
 // ------------------------------------------------------------------ helpers
