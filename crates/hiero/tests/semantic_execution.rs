@@ -1840,3 +1840,77 @@ fn simultaneous_configurations_acknowledge_distinct_persisted_revisions() {
     wait_for_state(&daemon, "ready");
     daemon.shutdown().unwrap();
 }
+
+/// Pause a reload after semantic.conf is persisted and before the new arm's
+/// identity is installed. Status must never combine its old Ready state with
+/// the new revision, even while configuration and status requests overlap.
+#[test]
+fn status_never_pairs_old_readiness_with_a_new_configuration_revision() {
+    struct GatedIdentityArm {
+        delegate: Arc<dyn SemanticArm>,
+        gate:
+            std::sync::Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    }
+    impl SemanticArm for GatedIdentityArm {
+        fn identity(&self) -> hieronymus::semantic_embeddings::EmbeddingIdentity {
+            if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+            self.delegate.identity()
+        }
+        fn precheck(&self, config: &HieronymusConfig) -> Result<(), String> {
+            self.delegate.precheck(config)
+        }
+        fn arm(&self, config: &HieronymusConfig) -> Result<ArmedPair, String> {
+            self.delegate.arm(config)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    wait_for_state(&daemon, "ready");
+    let runtime = root.path().join("runtime.so");
+    std::fs::write(&runtime, b"test seam runtime").unwrap();
+    let (entered, receive_entered) = std::sync::mpsc::channel();
+    let (release, receive_release) = std::sync::mpsc::channel();
+    install_test_arm(
+        root.path(),
+        Arc::new(GatedIdentityArm {
+            delegate: TestArm::fast(),
+            gate: std::sync::Mutex::new(Some((entered, receive_release))),
+        }),
+    );
+    let observed = std::thread::scope(|scope| {
+        let configuring = scope.spawn(|| {
+            let client =
+                hiero::lifecycle::connect(&HieronymusConfig::new(root.path()), false).unwrap();
+            client
+                .post("/semantic/configure", &json!({"runtime_library": runtime}))
+                .unwrap()
+        });
+        receive_entered
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            hieronymus::semantic_arming::configuration_revision(&HieronymusConfig::new(
+                root.path()
+            ))
+            .unwrap(),
+            1
+        );
+        let observed = status_body(&daemon)["semantic"].clone();
+        release.send(()).unwrap();
+        assert_eq!(configuring.join().unwrap()["configuration_revision"], 1);
+        observed
+    });
+    assert!(
+        observed["state"] != "ready" || observed["configuration_revision"] != 1,
+        "old lane readiness was paired with an uninstalled configuration: {observed}"
+    );
+    wait_for_state(&daemon, "ready");
+    assert_eq!(
+        status_body(&daemon)["semantic"]["configuration_revision"],
+        1
+    );
+    daemon.shutdown().unwrap();
+}

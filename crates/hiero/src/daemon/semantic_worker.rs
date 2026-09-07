@@ -356,12 +356,15 @@ const REARM_POLL: Duration = Duration::from_secs(5);
 struct ControllerInner {
     config: HieronymusConfig,
     identity: Mutex<EmbeddingIdentity>,
-    state: Mutex<RequiredSemanticState>,
+    state: Mutex<ConfigurationAcknowledgement>,
     wake: std::sync::mpsc::Sender<()>,
     reload: Mutex<Option<ReloadRequest>>,
     configuration_lock: Mutex<()>,
 }
 
+/// One coherent service observation. Readiness belongs to this exact revision;
+/// callers must not combine it with an independent settings-file read.
+#[derive(Clone, Debug)]
 pub struct ConfigurationAcknowledgement {
     pub state: RequiredSemanticState,
     pub configuration_revision: u64,
@@ -431,7 +434,13 @@ impl SemanticController {
             reload: Mutex::new(None),
             configuration_lock: Mutex::new(()),
             identity: Mutex::new(identity),
-            state: Mutex::new(initial),
+            state: Mutex::new(ConfigurationAcknowledgement {
+                state: initial,
+                configuration_revision: hieronymus::semantic_arming::configuration_revision(
+                    &config,
+                )
+                .map_err(|error| error.to_string())?,
+            }),
             wake,
             config,
         });
@@ -469,8 +478,8 @@ impl SemanticController {
                     .state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if *state == RequiredSemanticState::Ready {
-                    *state = RequiredSemanticState::Rebuilding;
+                if state.state == RequiredSemanticState::Ready {
+                    state.state = RequiredSemanticState::Rebuilding;
                 }
                 drop(state);
                 let _ = self.inner.wake.send(());
@@ -514,6 +523,11 @@ impl SemanticController {
 
     /// The state `/status` serves and strict readiness gates consume.
     pub fn state(&self) -> RequiredSemanticState {
+        self.snapshot().state
+    }
+
+    /// State and revision are captured together for status and acknowledgements.
+    pub fn snapshot(&self) -> ConfigurationAcknowledgement {
         self.inner
             .state
             .lock()
@@ -523,10 +537,11 @@ impl SemanticController {
 }
 
 fn set_state(inner: &ControllerInner, state: RequiredSemanticState) {
-    *inner
+    inner
         .state
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .state = state;
 }
 
 /// Publish the verdict [`readiness_from_evidence`] reached, optionally
@@ -631,7 +646,23 @@ fn run_worker(
                 Some(runtime) => save_runtime_library(&context.inner.config, &runtime),
                 None => Ok(()),
             };
-            if result.is_ok() {
+            let result = result.and_then(|_| {
+                let revision =
+                    hieronymus::semantic_arming::configuration_revision(&context.inner.config)
+                        .map_err(|error| error.to_string())?;
+                // Publish the new revision and its unavailable state together,
+                // before resolving/arming it. A reader may still observe the
+                // old Ready revision before this point, but never Ready for the
+                // new revision until the normal evidence gate establishes it.
+                let acknowledgement = ConfigurationAcknowledgement {
+                    state: RequiredSemanticState::Acquiring,
+                    configuration_revision: revision,
+                };
+                *context
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = acknowledgement.clone();
                 context.arm = resolve_arm(&context.inner.config);
                 *context
                     .inner
@@ -644,21 +675,7 @@ fn run_worker(
                 recovery_attempted = false;
                 rearm_deadline = std::time::Instant::now();
                 rearm_blocked = false;
-                set_state(&context.inner, RequiredSemanticState::Acquiring);
-            }
-            let result = result.and_then(|_| {
-                Ok(ConfigurationAcknowledgement {
-                    state: context
-                        .inner
-                        .state
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .clone(),
-                    configuration_revision: hieronymus::semantic_arming::configuration_revision(
-                        &context.inner.config,
-                    )
-                    .map_err(|error| error.to_string())?,
-                })
+                Ok(acknowledgement)
             });
             let _ = request.reply.send(result);
         }

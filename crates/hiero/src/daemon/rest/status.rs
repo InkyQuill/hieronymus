@@ -69,7 +69,8 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
 /// An FTS-only lane surfaces as `failed` — never as ready — so strict
 /// consumers gate on `require_semantic_ready`.
 fn semantic_payload(runtime: &DaemonRuntime) -> Value {
-    let mut payload = match runtime.semantic.state() {
+    let snapshot = runtime.semantic.snapshot();
+    let mut payload = match snapshot.state {
         crate::daemon::semantic_worker::RequiredSemanticState::Acquiring => {
             json!({"state": "acquiring", "detail": Value::Null})
         }
@@ -83,9 +84,7 @@ fn semantic_payload(runtime: &DaemonRuntime) -> Value {
             json!({"state": "failed", "detail": reason})
         }
     };
-    payload["configuration_revision"] =
-        hieronymus::semantic_arming::configuration_revision(&runtime.config)
-            .map_or(Value::Null, |revision| json!(revision));
+    payload["configuration_revision"] = json!(snapshot.configuration_revision);
     payload
 }
 
