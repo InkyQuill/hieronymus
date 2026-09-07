@@ -14,16 +14,12 @@
 //! on that path only, and only after that proof.
 
 use std::io::{BufRead, Write};
-use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use hieronymus::data_root::load_config;
-use hieronymus::secret::Secret;
 
-use crate::client;
-use crate::daemon::discovery::{CredentialError, DiscoveryError, DiscoveryRecord};
-use crate::daemon::registry::PROTOCOL_REVISION;
-use crate::lifecycle::{self, DiscoveryHealth};
+use crate::daemon::discovery::{CredentialError, DiscoveryError};
+use crate::lifecycle;
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 480;
@@ -57,47 +53,17 @@ pub enum StdioError {
 
 pub fn run_stdio_adapter(options: &StdioOptions) -> Result<(), StdioError> {
     let config = load_config(options.data_root.as_deref());
-    let health = lifecycle::probe(&config);
-    let record = match health {
-        // The endpoint answered the authenticated probe as the instance the
-        // record claims: proxy to it.
-        DiscoveryHealth::Live { record, .. } => record,
-        // Autostart is the only path allowed to change anything. `connect`
-        // repairs a record the probe *proved* stale and then starts the
-        // per-user service (never a raw `hiero daemon` child: ADR 0009 makes
-        // the service integration the managed role).
-        _ if options.start_daemon => lifecycle::connect(&config, true)
-            .map_err(|error| StdioError::Spawn(error.to_string()))?
-            .record()
-            .clone(),
-        // No autostart. A record that exists but did not pass the probe is
-        // still proxied to: the adapter's contract is that every failure
-        // reaches the host as a JSON-RPC error on stdout, not as a startup
-        // exit. Only a root with nothing to connect to fails closed.
-        _ => match health.record() {
-            Some(record) => record.clone(),
-            None => {
-                return Err(StdioError::DaemonNotRunning(health.detail()));
-            }
-        },
-    };
-    let address = endpoint_address(&record)?;
-    let token = crate::daemon::discovery::read_token(&config)?;
-    proxy_stdin(&address, &token)
+    let client = lifecycle::connect(&config, options.start_daemon).map_err(|error| {
+        if options.start_daemon {
+            StdioError::Spawn(error.to_string())
+        } else {
+            StdioError::DaemonNotRunning(error.to_string())
+        }
+    })?;
+    proxy_stdin(&client)
 }
 
-fn endpoint_address(record: &DiscoveryRecord) -> Result<SocketAddr, StdioError> {
-    let ip: IpAddr = record
-        .host
-        .parse()
-        .map_err(|_| StdioError::Malformed("host is not an IP address"))?;
-    if !ip.is_loopback() {
-        return Err(StdioError::NotLoopback(record.host.clone()));
-    }
-    Ok(SocketAddr::new(ip, record.port))
-}
-
-fn proxy_stdin(address: &SocketAddr, token: &Secret<String>) -> Result<(), StdioError> {
+fn proxy_stdin(client: &lifecycle::DaemonClient) -> Result<(), StdioError> {
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
     let stdout = std::io::stdout();
@@ -140,7 +106,7 @@ fn proxy_stdin(address: &SocketAddr, token: &Secret<String>) -> Result<(), Stdio
                 let _ = writer.flush();
             }
             Ok(body) => {
-                let response = proxy_request(address, token, &body);
+                let response = proxy_request(client, &body);
                 let _ = writeln!(writer, "{response}");
                 let _ = writer.flush();
             }
@@ -154,13 +120,9 @@ fn proxy_stdin(address: &SocketAddr, token: &Secret<String>) -> Result<(), Stdio
 /// route-level errors like `401 {"error":"unauthorized"}`) becomes a clean
 /// JSON-RPC error (plus a bounded stderr diagnostic) so a batch session never
 /// corrupts its NDJSON framing.
-fn proxy_request(
-    address: &SocketAddr,
-    token: &Secret<String>,
-    body: &serde_json::Value,
-) -> serde_json::Value {
+fn proxy_request(client: &lifecycle::DaemonClient, body: &serde_json::Value) -> serde_json::Value {
     let id = body.get("id").cloned().unwrap_or(serde_json::Value::Null);
-    match forward(address, token, body) {
+    match client.forward_mcp(body) {
         Ok((_status, response_body)) => {
             match serde_json::from_slice::<serde_json::Value>(&response_body) {
                 // Well-formed JSON-RPC envelopes (including protocol errors
@@ -206,41 +168,6 @@ fn route_error_text(response: &serde_json::Value) -> String {
     }
 }
 
-fn forward(
-    address: &SocketAddr,
-    token: &Secret<String>,
-    body: &serde_json::Value,
-) -> Result<(u16, Vec<u8>), client::ClientError> {
-    let method = body.get("method").and_then(serde_json::Value::as_str);
-    let mut headers = vec![
-        ("Host".to_string(), address.to_string()),
-        (
-            "Authorization".to_string(),
-            format!("Bearer {}", token.expose_secret()),
-        ),
-        ("Content-Type".to_string(), "application/json".to_string()),
-        ("Accept".to_string(), "application/json".to_string()),
-    ];
-    let version = body
-        .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(PROTOCOL_REVISION);
-    headers.push(("MCP-Protocol-Version".to_string(), version.to_string()));
-    if let Some(method) = method {
-        headers.push(("Mcp-Method".to_string(), method.to_string()));
-        if matches!(method, "tools/call" | "resources/read" | "prompts/get")
-            && let Some(name) = body
-                .pointer("/params/name")
-                .and_then(serde_json::Value::as_str)
-        {
-            headers.push(("Mcp-Name".to_string(), name.to_string()));
-        }
-    }
-    let payload = serde_json::to_vec(body)
-        .map_err(|_| client::ClientError::Protocol("request cannot serialize"))?;
-    client::post_json(*address, "/mcp", &headers, &payload)
-}
-
 /// One bounded line on stderr; never includes the token (secrets are
 /// redacted by construction — errors here carry only transport text).
 fn diagnostic(message: &str) {
@@ -249,26 +176,4 @@ fn diagnostic(message: &str) {
         text.push('…');
     }
     eprintln!("hiero mcp: {text}");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn endpoint_must_be_loopback() {
-        let mut record = DiscoveryRecord {
-            discovery_version: 1,
-            protocol_version: PROTOCOL_REVISION.to_string(),
-            host: "10.1.2.3".to_string(),
-            port: 9768,
-            pid: 1,
-            instance_id: "ab".repeat(16),
-            started_at: "2026-09-04T00:00:00+00:00".to_string(),
-        };
-        let error = endpoint_address(&record).unwrap_err();
-        assert!(error.to_string().contains("non-loopback"), "{error}");
-        record.host = "127.0.0.1".to_string();
-        assert_eq!(endpoint_address(&record).unwrap().port(), 9768);
-    }
 }

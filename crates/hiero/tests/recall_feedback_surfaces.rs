@@ -237,7 +237,7 @@ fn cli_without_a_running_daemon_reports_how_to_start_one() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("no running local service discovered"),
+        stderr.contains("no running local daemon was discovered"),
         "{stderr}"
     );
     assert!(stderr.contains("hiero daemon"), "{stderr}");

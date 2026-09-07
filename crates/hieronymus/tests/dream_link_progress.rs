@@ -202,11 +202,11 @@ fn pairs_are_terminalized_once_across_store_reopens() {
             "select left_id, right_id, status from dream_link_pairs where batch_id = ?1 order by left_id, right_id",
             &[&batch_id]
         ),
-        vec![
-            vec![json!(crystals[0]), json!(crystals[1]), json!("applied")],
-            vec![json!(crystals[0]), json!(crystals[2]), json!("queued")],
-            vec![json!(crystals[1]), json!(crystals[2]), json!("queued")],
-        ]
+        vec![vec![
+            json!(crystals[0]),
+            json!(crystals[1]),
+            json!("applied")
+        ],]
     );
 
     // Reopen the store and spend the budget one pair at a time.
@@ -722,7 +722,7 @@ fn pair_status_failure_rolls_back_the_pair_and_retry_applies_exactly_once() {
             &config,
             "select count(*) from dream_link_pairs where status = 'queued'"
         ),
-        json!(1)
+        json!(0)
     );
     assert_eq!(
         scalar(&config, "select completed_cycle from dream_link_batches"),
@@ -842,7 +842,7 @@ fn budgeted_cycles_execute_each_pair_exactly_once() {
                     &config,
                     "select count(*) from dream_link_pairs where status = 'queued'"
                 ),
-                json!(3 - expected_links)
+                json!(0)
             );
         }
     }
@@ -881,4 +881,155 @@ fn budgeted_cycles_execute_each_pair_exactly_once() {
         scalar(&config, "select count(*) from crystal_links"),
         json!(3)
     );
+}
+
+#[test]
+fn ten_thousand_members_with_budget_one_only_materializes_one_pair() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "only-sense-online");
+    let session = start_session(&config, "only-sense-online");
+    add_crystal(&config, "only-sense-online", "seed");
+    let connection = open_migrated(&config.database_path()).unwrap();
+    connection.execute_batch("with recursive n(x) as (values(2) union all select x+1 from n where x<10000)
+      insert into crystals(id, text, crystal_type, scope_type, strength, confidence, status, created_at, updated_at)
+      select x, 'distinct text ' || x, 'lesson', 'global', 0.5, 0.5, 'active', 'now', 'now' from n;").unwrap();
+    connection.execute("insert into crystal_activations(crystal_id, session_id, recall_query, rank, score, outcome, created_at)
+      select id, ?1, 'test', 0, 1, 'useful', 'now' from crystals", [session]).unwrap();
+    let mut progress = LinkProgress::open(&config).unwrap();
+    assert_eq!(progress.process(1, 1).unwrap(), 1);
+    assert_eq!(
+        scalar(&config, "select count(*) from dream_link_pairs"),
+        json!(1)
+    );
+}
+
+#[test]
+fn pair_only_drain_advances_every_budgeted_cycle() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "only-sense-online");
+    let session = start_session(&config, "only-sense-online");
+    for text in dissimilar_texts() {
+        let crystal = add_crystal(&config, "only-sense-online", text);
+        add_activation(&config, session, crystal);
+    }
+    let mut settings = hieronymus::dream_config::default_dream_config();
+    settings.max_relation_records_per_pass = 1;
+    hieronymus::dream_config::save_dream_config(&config, &settings).unwrap();
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
+    let result = service.run_all("manual", true, false).unwrap();
+    assert_eq!(result.batches, 3);
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from dream_link_batches where completed_cycle is null"
+        ),
+        json!(0)
+    );
+}
+
+#[test]
+fn cursor_write_failure_rolls_back_effect_and_terminal_pair() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "only-sense-online");
+    let session = start_session(&config, "only-sense-online");
+    for text in &dissimilar_texts()[..2] {
+        let id = add_crystal(&config, "only-sense-online", text);
+        add_activation(&config, session, id);
+    }
+    execute(
+        &config,
+        "create trigger abort_cursor before update of next_left_offset on dream_link_batches begin select raise(abort, 'cursor blocked'); end;",
+    );
+    let mut progress = LinkProgress::open(&config).unwrap();
+    assert!(
+        progress
+            .process(1, 1)
+            .unwrap_err()
+            .to_string()
+            .contains("cursor blocked")
+    );
+    assert_eq!(
+        scalar(&config, "select count(*) from crystal_links"),
+        json!(0)
+    );
+    assert_eq!(
+        scalar(&config, "select count(*) from dream_link_pairs"),
+        json!(0)
+    );
+    assert_eq!(
+        scalar(&config, "select next_left_offset from dream_link_batches"),
+        json!(0)
+    );
+    assert_eq!(
+        scalar(&config, "select next_right_offset from dream_link_batches"),
+        json!(1)
+    );
+    execute(&config, "drop trigger abort_cursor");
+    let mut restarted = LinkProgress::open(&config).unwrap();
+    assert_eq!(restarted.process(2, 1).unwrap(), 1);
+    assert_eq!(restarted.process(3, 1).unwrap(), 0);
+}
+
+#[test]
+fn legacy_materialized_pairs_drain_before_lazy_batches() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "only-sense-online");
+    let session = start_session(&config, "only-sense-online");
+    for text in dissimilar_texts() {
+        let id = add_crystal(&config, "only-sense-online", text);
+        add_activation(&config, session, id);
+    }
+    let mut progress = LinkProgress::open(&config).unwrap();
+    assert_eq!(progress.process(1, 1).unwrap(), 1);
+    execute(
+        &config,
+        "insert into dream_link_batches(id,session_id,created_cycle) values(999,999,0)",
+    );
+    execute(
+        &config,
+        "insert into dream_link_pairs(batch_id,left_id,right_id) values(999,10001,10002)",
+    );
+    assert_eq!(progress.process(2, 1).unwrap(), 1);
+    assert_eq!(
+        scalar(
+            &config,
+            "select status from dream_link_pairs where batch_id=999"
+        ),
+        json!("skipped")
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from dream_link_pairs where batch_id=1"
+        ),
+        json!(1)
+    );
+    assert_eq!(progress.process(3, 2).unwrap(), 2);
+}
+
+#[test]
+fn batch_completion_uses_durable_totals_without_recounting_pair_history() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let run = create_run(&config, 1);
+    // The committed totals are sufficient to complete a batch, independent
+    // of its terminal history size. No quadratic fixture needs materializing.
+    execute(
+        &config,
+        "insert into dream_link_batches(id,session_id,created_cycle,applied_pair_count,skipped_pair_count) values(1,1,1,49995000,7)",
+    );
+    let mut progress = open_progress(&config, run);
+    assert_eq!(progress.process(2, 1).unwrap(), 0);
+    let payload = query(
+        &config,
+        "select payload_json from dream_audit_entries where event_type='link_batch_completed'",
+        &[],
+    );
+    let payload: Value = serde_json::from_str(payload[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(payload["applied_pairs"], json!(49995000));
+    assert_eq!(payload["skipped_pairs"], json!(7));
 }

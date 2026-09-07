@@ -268,7 +268,7 @@ fn audit_injection_inside_a_pair_transaction_keeps_committed_pairs_and_retry_com
     // The first pair's atomic commit is durable: exactly one link exists
     // with its audit entry, and its pair row is applied. The second pair's
     // transaction (link + pair status + audit) rolled back as a unit, so it
-    // stays queued with no domain effect and no audit row. The batch is
+    // retains its lazy cursor with no domain effect and no audit row. The batch is
     // still open: no activation was consumed.
     let links = query(
         &config,
@@ -285,11 +285,15 @@ fn audit_injection_inside_a_pair_transaction_keeps_committed_pairs_and_retry_com
             "select status from dream_link_pairs order by left_id, right_id",
             &[]
         ),
-        vec![
-            vec![json!("applied")],
-            vec![json!("queued")],
-            vec![json!("queued")]
-        ]
+        vec![vec![json!("applied")]]
+    );
+    assert_eq!(
+        query(
+            &config,
+            "select next_left_offset, next_right_offset from dream_link_batches",
+            &[]
+        ),
+        vec![vec![json!(0), json!(2)]]
     );
     assert_eq!(
         scalar(
@@ -308,6 +312,14 @@ fn audit_injection_inside_a_pair_transaction_keeps_committed_pairs_and_retry_com
     assert_eq!(
         scalar(&config, "select completed_cycle from dream_link_batches"),
         Value::Null
+    );
+    assert_eq!(
+        scalar(&config, "select applied_pair_count from dream_link_batches"),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(&config, "select skipped_pair_count from dream_link_batches"),
+        json!(0)
     );
     // The phase row stays untouched ('running' — deterministic phase rows are
     // never failed in bulk; the failed run row and, when writable, the

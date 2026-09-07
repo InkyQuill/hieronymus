@@ -7,20 +7,8 @@
 //!     `confirmed == true` (the confirmation is a request field; the *actor* is
 //!     always the transport-authenticated identity the REST layer passes in,
 //!     never a JSON field);
-//!   * writes its mutation and its `audit_log` row in ONE transaction, with a
-//!     single exception. `add_memory`, `edit_memory`,
-//!     `reinforce_crystal`/`decay_crystal`, `reject_proposal`,
-//!     `approve_proposal`, `split_crystal`, the crystal branches of
-//!     `delete_selected`/`merge_selected`, AND the *Concepts* branch of
-//!     `delete_selected` (an inlined `archive_concept`) are fully atomic —
-//!     every id is pre-flighted inside the transaction, then all rows mutate
-//!     and audit together, so a failure leaves nothing behind. The one
-//!     exception is the *Concepts* branch of `merge_selected`: it pre-flights
-//!     every id, then calls `ConceptStore::merge_concepts` (a large multi-step
-//!     store transaction that cannot be inlined here) once per source. If the
-//!     merges commit but the audit row then fails, the action returns an
-//!     HONEST error naming the merges that completed — it never reports a
-//!     committed merge as a full failure;
+//!   * writes each local mutation and its `audit_log` row in one transaction;
+//!     concept batches use the domain merge primitive on that transaction;
 //!   * routes rule-crystal lifecycle to plan M3 — a `rule` crystal (any status)
 //!     rejects `delete`/`merge`/`split` with a message pointing at the explicit
 //!     rule action, so a W3 action can never mint or retire a rule projection
@@ -539,12 +527,8 @@ fn delete_selected(
 /// `merge_selected({ids, text, title?, view, confirmed})` — merge distinct
 /// selected rows into a new memory.
 ///
-/// * Concepts: every id is pre-flighted (exists, mergeable) before any
-///   mutation; then each source is merged into `ids[0]` through
-///   [`ConceptStore::merge_concepts`] (a large multi-step store transaction
-///   that cannot be inlined here). If the merges land but the audit row then
-///   fails to write, the action returns an HONEST error naming the completed
-///   merges — it never reports full failure of a committed merge.
+/// * Concepts: every id is pre-flighted inside an immediate transaction;
+///   every source merges into `ids[0]`, then the audit commits with the batch.
 /// * Crystals: the Python `merge_crystals` path — distinct active/candidate
 ///   rows in a matching context, a new active crystal, the sources linked
 ///   `merged_from` and archived, one audit row, all in one transaction. A
@@ -560,69 +544,56 @@ fn merge_selected(config: &HieronymusConfig, actor: &str, args: &Value) -> Resul
                 "merge needs a source and a target concept".to_string(),
             ));
         }
+        let distinct: std::collections::BTreeSet<i64> = ids.iter().copied().collect();
+        if distinct.len() != ids.len() {
+            return Err(AppError::Invalid(
+                "concept ids must identify distinct concepts".into(),
+            ));
+        }
         let target = ids[0];
         let sources = &ids[1..];
-        // Pre-flight: the target and every source must exist and be
-        // mergeable, so the loop below cannot half-apply.
-        {
-            let connection = open_db(config)?;
-            let status_of = |id: i64| -> Result<String, AppError> {
-                connection
-                    .query_row("select status from concepts where id = ?1", [id], |row| {
-                        row.get::<_, String>(0)
-                    })
-                    .map_err(|error| match error {
-                        rusqlite::Error::QueryReturnedNoRows => {
-                            AppError::Domain(format!("unknown concept: {id}"))
-                        }
-                        _ => AppError::Domain("admin store is unavailable".to_string()),
-                    })
-            };
-            if matches!(status_of(target)?.as_str(), "archived" | "merged") {
-                return Err(AppError::Domain(
-                    "merge target concept must be active".to_string(),
-                ));
-            }
-            for source in sources {
-                if *source == target {
-                    return Err(AppError::Invalid(
-                        "a concept cannot be merged into itself".to_string(),
-                    ));
-                }
-                if matches!(status_of(*source)?.as_str(), "archived" | "merged") {
-                    return Err(AppError::Domain(format!(
-                        "concept {source} is already inactive"
-                    )));
-                }
-            }
-        }
-        let store = ConceptStore::open(config).map_err(domain)?;
-        let mut merged = Vec::new();
-        for source in sources {
-            store
-                .merge_concepts(*source, target, "merged from admin contract")
-                .map_err(domain)?;
-            merged.push(*source);
-        }
         let mut connection = open_db(config)?;
-        let transaction = connection.transaction().map_err(store_unavailable)?;
-        let audit = write_audit(
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(store_unavailable)?;
+        for id in &ids {
+            let status: String = transaction
+                .query_row("select status from concepts where id = ?1", [id], |row| {
+                    row.get(0)
+                })
+                .map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        AppError::Domain(format!("unknown concept: {id}"))
+                    }
+                    _ => store_unavailable(error),
+                })?;
+            if matches!(status.as_str(), "archived" | "merged") {
+                return Err(AppError::Domain(format!(
+                    "concept {id} is already inactive"
+                )));
+            }
+        }
+        for source in sources {
+            ConceptStore::merge_concepts_in_transaction(
+                &transaction,
+                *source,
+                target,
+                "merged from admin contract",
+            )
+            .map_err(domain)?;
+        }
+        write_audit(
             &transaction,
             actor,
             "merge",
             "concept",
             &target.to_string(),
-            &format!("merged {merged:?}"),
+            &format!("merged {sources:?}"),
             "{}",
             "{}",
         )
-        .and_then(|()| transaction.commit());
-        if audit.is_err() {
-            return Err(AppError::Domain(format!(
-                "concepts {merged:?} were merged into {target} but the audit record \
-                 could not be written"
-            )));
-        }
+        .map_err(store_unavailable)?;
+        transaction.commit().map_err(store_unavailable)?;
         return Ok(responded(
             action_result("concept", target, "merge", "Concepts merged"),
             "Concepts",
@@ -1002,6 +973,29 @@ fn approve_proposal(
             )
             .map_err(store_unavailable)?;
     }
+    // These facets preserve proposal evidence only; they do not establish
+    // deterministic terminology authority. A forbidden spelling is a note,
+    // never an approved rendering or canonical facet.
+    for (variants, kind, tag) in [
+        (&proposal.approved_variants, "rendering", "approved-variant"),
+        (&proposal.forbidden_variants, "note", "forbidden-variant"),
+    ] {
+        for variant in variants {
+            transaction
+                .execute(
+                    "insert into concept_facets(concept_id, language, facet_type, value,
+                    confidence, is_canonical, created_at, updated_at)
+                 values (?1, ?2, ?3, ?4, 0.2, 0, ?5, ?5)",
+                    rusqlite::params![concept_id, proposal.target_language, kind, variant, now],
+                )
+                .map_err(store_unavailable)?;
+            let facet_id = transaction.last_insert_rowid();
+            transaction.execute(
+                "insert into concept_facet_semantic_tags(facet_id, semantic_tag) values (?1, ?2)",
+                rusqlite::params![facet_id, tag],
+            ).map_err(store_unavailable)?;
+        }
+    }
     transaction
         .execute(
             "update strict_concept_proposals set status = 'approved', updated_at = ?1 where id = ?2",
@@ -1082,6 +1076,8 @@ fn reject_proposal(
 }
 
 struct ProposalRow {
+    approved_variants: Vec<String>,
+    forbidden_variants: Vec<String>,
     concept_text: String,
     canonical_rendering: String,
     rationale: String,
@@ -1094,11 +1090,23 @@ fn load_proposal(connection: &Connection, proposal_id: i64) -> Result<ProposalRo
     connection
         .query_row(
             "select concept_text, canonical_rendering, rationale, series_slug,
-                    target_language, status
+                    target_language, status, approved_variants_json, forbidden_variants_json
              from strict_concept_proposals where id = ?1",
             [proposal_id],
             |row| {
+                let variants = |column: &str| -> rusqlite::Result<Vec<String>> {
+                    let raw: String = row.get(column)?;
+                    serde_json::from_str(&raw).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            row.as_ref().column_index(column).unwrap_or(0),
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })
+                };
                 Ok(ProposalRow {
+                    approved_variants: variants("approved_variants_json")?,
+                    forbidden_variants: variants("forbidden_variants_json")?,
                     concept_text: row.get("concept_text")?,
                     canonical_rendering: row.get("canonical_rendering")?,
                     rationale: row.get("rationale")?,
@@ -1266,14 +1274,22 @@ fn run_manual_dreaming_action(
     transaction.commit().map_err(store_unavailable)?;
 
     let mut out = responded(
-        action_result("dream", record.id, "run", "Manual dream run complete"),
+        action_result(
+            "dream",
+            record.id,
+            "run",
+            &format!("Manual dream drain {}", drain.outcome),
+        ),
         "Dream Runs",
         Some(record.id),
     );
     out["run"] = json!({
         "id": record.id,
         "cycle_id": record.cycle_id,
-        "status": record.status,
+        "status": drain.outcome,
+        "batch_status": record.status,
+        "batches": drain.batches,
+        "progress": drain.progress,
         "provider": record.provider,
         "input_count": drain.input_count,
         "created_crystal_count": drain.created_crystal_count,

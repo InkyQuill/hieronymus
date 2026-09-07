@@ -301,6 +301,54 @@ fn recall(
     )
 }
 
+/// A tool call whose failure is the assertion: returns the tool-error text.
+fn call_tool_error(
+    daemon: &hiero::daemon::Daemon,
+    id: &mut i64,
+    name: &str,
+    arguments: Value,
+) -> String {
+    *id += 1;
+    let response = send_request(
+        daemon.local_addr().port(),
+        "POST",
+        "/mcp",
+        &mcp_headers(daemon, &[("Mcp-Method", "tools/call"), ("Mcp-Name", name)]),
+        &serde_json::to_vec(&tools_call(*id, name, arguments)).unwrap(),
+    );
+    assert_eq!(response.status, 200, "{:?}", response.raw_body);
+    let body = response.body();
+    assert_eq!(
+        body["result"]["isError"],
+        json!(true),
+        "tool {name} was expected to fail: {body}"
+    );
+    body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The public semantic RAG search (task C5): a bare row array, no session.
+fn rag_search(
+    daemon: &hiero::daemon::Daemon,
+    id: &mut i64,
+    series_slug: &str,
+    query: &str,
+) -> Vec<Value> {
+    *id += 1;
+    let payload = call_tool(
+        daemon,
+        *id,
+        "hieronymus_rag_search",
+        json!({"series_slug": series_slug, "query": query, "limit": 8}),
+    );
+    payload
+        .as_array()
+        .unwrap_or_else(|| panic!("rag search answers a bare row array: {payload}"))
+        .clone()
+}
+
 /// The RAG rows of a recall payload, in ranked order (rank 1 first).
 fn rag_rows(payload: &Value) -> Vec<&Value> {
     let mut rows: Vec<&Value> = payload["results"]
@@ -341,9 +389,6 @@ fn real_semantic_qualification() {
         stage_assets(root.path(), &models);
         let junk = root.path().join("libonnxruntime.so");
         std::fs::write(&junk, b"this is not an ELF shared object").unwrap();
-        let enable = semantic_enable(root.path(), &junk);
-        assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
-
         let port = free_port();
         let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
             .args([
@@ -365,6 +410,26 @@ fn real_semantic_qualification() {
             .unwrap()
             .trim()
             .to_string();
+        let enable = semantic_enable(root.path(), &junk);
+        assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
+        assert!(
+            enable["reason"]
+                .as_str()
+                .unwrap()
+                .contains("restart-required"),
+            "{enable}"
+        );
+        // A valid path after the failed native load cannot silently reuse the
+        // process-global poisoned library. The same daemon must request restart.
+        let repaired = semantic_enable(root.path(), &runtime);
+        assert_eq!(repaired["lane"], json!("disarmed"), "{repaired}");
+        assert!(
+            repaired["reason"]
+                .as_str()
+                .unwrap()
+                .contains("restart-required"),
+            "{repaired}"
+        );
         let failed = wait_until(
             || {
                 let response = send_request(
@@ -405,9 +470,9 @@ fn real_semantic_qualification() {
         stage_assets(root.path(), &models);
         let model_path = SemanticStore::model_path_for(&HieronymusConfig::new(root.path()));
         corrupt_file_keep_size(&model_path);
+        let daemon = start_daemon(root.path());
         let enable = semantic_enable(root.path(), &runtime);
         assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
-        let daemon = start_daemon(root.path());
         wait_for_state(&daemon, "failed");
         let dto: StatusDto = serde_json::from_value(status_body(&daemon)).unwrap();
         assert!(
@@ -417,16 +482,136 @@ fn real_semantic_qualification() {
         daemon.shutdown().unwrap();
     }
 
+    // -- 2b. Before the runtime is configured, the answers say so ---------
+    // Task C5 (review finding A5). The assets are staged but no runtime is
+    // enabled, so the daemon has model bytes and no way to run them: the
+    // exact state a fresh install sits in. Both required lanes are mandatory,
+    // so this state may not answer like a complete one — mixed recall serves
+    // what it has and reports the gap, while the strict semantic search
+    // refuses instead of quietly serving the lexical half. Nothing here loads
+    // ort (an unconfigured arm never reaches a dynamic load), so the healthy
+    // daemon below still performs the single successful in-process load.
+    {
+        let root = tempfile::tempdir().unwrap();
+        stage_assets(root.path(), &models);
+        let daemon = start_daemon(root.path());
+        let mut cold = 0_i64;
+        wait_for_state(&daemon, "failed");
+
+        let series = &fixture.series[0];
+        cold += 1;
+        call_tool(
+            &daemon,
+            cold,
+            "hieronymus_series_create",
+            json!({
+                "slug": series.slug,
+                "title": series.title,
+                "source_language": series.source_language,
+                "target_language": series.target_language,
+            }),
+        );
+        cold += 1;
+        let session = call_tool(
+            &daemon,
+            cold,
+            "hieronymus_session_start",
+            json!({"series_slug": series.slug}),
+        );
+        let session_id = session["session_id"].as_i64().unwrap();
+
+        let physician = fixture
+            .documents
+            .iter()
+            .find(|document| document.doc_id == "physician")
+            .unwrap();
+        let cold_sources = root.path().join("sources");
+        std::fs::create_dir_all(&cold_sources).unwrap();
+        let path = cold_sources.join("physician.txt");
+        std::fs::write(&path, &physician.text).unwrap();
+        cold += 1;
+        call_tool(
+            &daemon,
+            cold,
+            "hieronymus_rag_import",
+            json!({"series_slug": series.slug, "path": path.to_str().unwrap()}),
+        );
+        let memory = &fixture.memories[0];
+        cold += 1;
+        call_tool(
+            &daemon,
+            cold,
+            "hieronymus_short_term_add",
+            json!({"session_id": session_id, "kind": memory.kind, "text": memory.text}),
+        );
+
+        // Memory retrieval is lexical: use the fixture's learned-memory
+        // query, not an unrelated physician paraphrase. The strict RAG probe
+        // below independently exercises unavailable semantic retrieval.
+        let memory_query = fixture
+            .queries
+            .iter()
+            .find(|query| query.expected_memory_text.as_deref() == Some(memory.text.as_str()))
+            .expect("the fixture supplies a query for its learned memory");
+        let payload = recall(
+            &daemon,
+            &mut cold,
+            session_id,
+            &series.slug,
+            &memory_query.query,
+        );
+        assert!(
+            payload["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| warning["kind"].as_str() == Some(WARNING_SEMANTIC_UNAVAILABLE)),
+            "an unconfigured semantic runtime must be reported on recall: {payload}"
+        );
+        assert!(
+            payload["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["text"].as_str() == Some(memory.text.as_str())),
+            "memory must keep serving while semantics is down: {payload}"
+        );
+
+        // The strict semantic search refuses, actionably.
+        let error = call_tool_error(
+            &daemon,
+            &mut cold,
+            "hieronymus_rag_search",
+            json!({
+                "series_slug": series.slug,
+                "query": "Which doctor cared for the injured seaman on the ship?",
+                "limit": 8,
+            }),
+        );
+        assert!(
+            error.contains("semantic retrieval unavailable"),
+            "the refusal must name the unavailable service: {error}"
+        );
+        assert!(
+            error.contains("hiero semantic enable --runtime"),
+            "the refusal must stay actionable: {error}"
+        );
+        daemon.shutdown().unwrap();
+    }
+
     // -- 3. The healthy flow: real model, real daemon, curated corpus ------
     let root = tempfile::tempdir().unwrap();
     stage_assets(root.path(), &models);
+    let daemon = start_daemon(root.path());
+    wait_for_state(&daemon, "failed");
+    let instance_before = status_body(&daemon)["instance_id"].clone();
     let enable = semantic_enable(root.path(), &runtime);
     assert_eq!(enable["lane"], json!("armed"), "{enable}");
+    assert_eq!(status_body(&daemon)["instance_id"], instance_before);
     assert_eq!(enable["model_status"], json!("available"), "{enable}");
     assert_eq!(enable["downloaded"], json!(false), "{enable}");
     assert_eq!(enable["tokenizer_downloaded"], json!(false), "{enable}");
 
-    let daemon = start_daemon(root.path());
     let mut id = 0_i64;
 
     // Series and sessions (normal authenticated MCP operations only).
@@ -648,6 +833,58 @@ fn real_semantic_qualification() {
         }
     }
 
+    // -- 3b. The public semantic search over the real model ---------------
+    // The same curated paraphrase, through `hieronymus_rag_search` rather
+    // than recall: a session-less series+query search that must run the real
+    // semantic lane (task C5). The query shares no content word with the
+    // document, so a lexical-only implementation cannot answer it at all —
+    // which is precisely what made the pre-C5 lexical path invisible.
+    for query_id in ["physician-paraphrase", "cartographer-paraphrase"] {
+        let expectation = fixture
+            .queries
+            .iter()
+            .find(|query| query.query_id == query_id)
+            .unwrap();
+        let rows = rag_search(
+            &daemon,
+            &mut id,
+            &expectation.series_slug,
+            &expectation.query,
+        );
+        assert!(
+            !rows.is_empty(),
+            "query {query_id} must return hybrid rows: {rows:?}"
+        );
+        for row in &rows {
+            assert_eq!(row["source"], json!("rag"), "{row}");
+            // Foreign-series exclusion: `harbour-records` holds a near
+            // duplicate of the physician document, so a leak would show up
+            // here as a top hit rather than as a subtle ordering change.
+            if let Some(doc_id) = doc_id_of(row, &fixture.documents) {
+                let owner = fixture
+                    .documents
+                    .iter()
+                    .find(|document| document.doc_id == doc_id)
+                    .unwrap();
+                assert_eq!(
+                    owner.series_slug, expectation.series_slug,
+                    "query {query_id} leaked {doc_id} from {}: {rows:?}",
+                    owner.series_slug
+                );
+            }
+        }
+        // Real semantic provenance for the expected sources.
+        assert!(
+            rows.iter().any(|row| {
+                row["rank_reason"].as_str() == Some(RAG_SEMANTIC_REASON)
+                    && expectation.expected_top3_doc_ids.iter().any(|expected| {
+                        doc_id_of(row, &fixture.documents) == Some(expected.as_str())
+                    })
+            }),
+            "query {query_id} must show semantic-lane provenance ({RAG_SEMANTIC_REASON}): {rows:?}"
+        );
+    }
+
     // -- 4. Byte-fold generations are rejected, then healed by a rebuild ---
     // A legacy manifest persisted under the retired byte-fold tokenization
     // (identical to the pinned identity except the tokenizer id) is seeded
@@ -713,6 +950,21 @@ fn real_semantic_qualification() {
                 .any(|warning| warning["kind"].as_str() == Some(WARNING_SEMANTIC_UNAVAILABLE)),
             "a persisted byte-fold generation must degrade the semantic lane: {payload}"
         );
+        // ...and the strict search refuses outright rather than answering
+        // with the lexical half over a corpus whose vectors it cannot query
+        // (task C5): whether the controller has noticed yet or not, the
+        // outcome is an error, never a plausible-looking result set.
+        let error = call_tool_error(
+            &daemon,
+            &mut id,
+            "hieronymus_rag_search",
+            json!({
+                "series_slug": fixture.queries[0].series_slug,
+                "query": fixture.queries[0].query,
+                "limit": 8,
+            }),
+        );
+        assert!(!error.is_empty(), "the refusal must carry a reason");
     }
     // ...and the next normal import heals it: the durable whole-corpus
     // rebuild runs under the pinned identity and supersedes the legacy row
@@ -765,12 +1017,15 @@ fn real_semantic_qualification() {
             .query_row(
                 "select count(*) from semantic_generations
                  where generation_id = 'legacy-byte-fold'
-                   and tokenizer = ?1 and status = 'superseded'",
+                   and tokenizer = ?1 and status in ('failed', 'superseded') and active = 0",
                 rusqlite::params![BYTE_FOLD_TOKENIZER_ID],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(legacy, 1, "the legacy row keeps its byte-fold identity");
+        assert_eq!(
+            legacy, 1,
+            "the legacy row keeps its byte-fold identity and is terminal/inactive"
+        );
     }
     // The healed lane serves real semantic recall again.
     {

@@ -1203,9 +1203,10 @@ fn reconsolidation_respects_bounded_mutation_caps() {
     let mut dream_config = default_dream_config();
     dream_config.max_short_term_memories_per_run = 1;
     save_dream_config(&config, &dream_config).unwrap();
-    dream(&config);
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
+    service.run_cycle("admin", false).unwrap();
 
-    // The absolute cap bounds reconsolidation to one working copy per run.
+    // The absolute cap bounds each cycle to one working copy.
     assert_eq!(
         scalar(
             &config,
@@ -1238,6 +1239,18 @@ fn reconsolidation_respects_bounded_mutation_caps() {
              where source_crystal_id is not null and archived_at is null"
         ),
         json!(1)
+    );
+    // A subsequent drain processes the remaining bounded batch instead of
+    // stopping after deterministic progress.
+    let remainder = service.run_all("admin", true, false).unwrap();
+    assert_eq!(remainder.progress.archived_inputs, 1);
+    assert_eq!(remainder.outcome, "completed");
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from crystals where status='superseded'"
+        ),
+        json!(2)
     );
 }
 

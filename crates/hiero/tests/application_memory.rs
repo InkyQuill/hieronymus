@@ -202,8 +202,24 @@ fn recall_v2_fixture_pins_the_rust_dto() {
         if let Some(results) = expected["results"].as_array() {
             assert_eq!(recall["results"], json!(results), "{expectation}");
         }
-        if let Some(warnings) = expected["warnings"].as_array() {
-            assert_eq!(recall["warnings"], json!(warnings), "{expectation}");
+        // Warnings are pinned by KIND: the reason text belongs to whichever
+        // semantic service is attached (task C5), while the set of reported
+        // conditions is the contract.
+        if let Some(kinds) = expected["warning_kinds"].as_array() {
+            let actual: Vec<&str> = recall["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|warning| warning["kind"].as_str().unwrap())
+                .collect();
+            let wanted: Vec<&str> = kinds.iter().map(|kind| kind.as_str().unwrap()).collect();
+            assert_eq!(actual, wanted, "{expectation}: {recall}");
+            for warning in recall["warnings"].as_array().unwrap() {
+                assert!(
+                    !warning["reason"].as_str().unwrap_or_default().is_empty(),
+                    "every warning carries an actionable reason: {recall}"
+                );
+            }
         }
         // Contract rows are matched as subsets: stable fields must match
         // exactly; the storage id is deployment-order dependent.
@@ -764,8 +780,19 @@ fn rag_import_persists_chunks_and_rejects_unsupported_types() {
     assert_eq!(again["skipped"], json!(true));
 }
 
+/// Task C5 (review finding A5): `hieronymus_rag_search` IS semantic RAG
+/// search, so a bare application with no semantic service attached refuses
+/// it instead of answering with the lexical FTS lane — even over a series
+/// whose text is imported and lexically matchable, which is exactly the case
+/// where the old lexical-only array was indistinguishable from a complete
+/// hybrid answer.
+///
+/// The positive path (a ready service serving fused hybrid rows with semantic
+/// provenance and series isolation) needs a real semantic service, so it
+/// lives in `semantic_execution.rs` against the pinned
+/// `compatibility/rust/rag-search-v2.json` expectations.
 #[test]
-fn rag_search_returns_advisory_rows_for_one_series() {
+fn rag_search_refuses_an_unavailable_required_semantic_service() {
     let (root, app) = test_application();
     create_series(&app, "book", "ja", "en");
 
@@ -777,30 +804,38 @@ fn rag_search_returns_advisory_rows_for_one_series() {
         ACTOR,
     )
     .unwrap();
+    // The lexical lane would have matched this query.
+    assert!(
+        !hieronymus::rag::RagStore::open(&HieronymusConfig::new(root.path()))
+            .unwrap()
+            .search("book", "Cooking Talent", 10, &[], &[], &[])
+            .unwrap()
+            .is_empty()
+    );
 
-    let hits = app
+    let error = app
         .call(
             "hieronymus_rag_search",
             &json!({"series_slug": "book", "query": "Cooking Talent"}),
             ACTOR,
         )
-        .unwrap();
-    let rows = hits.as_array().unwrap();
-    assert_eq!(rows.len(), 1, "{hits}");
-    assert_eq!(rows[0]["source"], json!("rag"));
-    assert_eq!(rows[0]["text"], json!("Cooking Talent appears here."));
-    assert_eq!(rows[0]["rank_reason"], json!("rag project text match"));
-    assert!(rows[0]["score"].is_number());
+        .unwrap_err();
+    expect_domain(error, "semantic retrieval unavailable");
 
-    // Series isolation and limit handling.
-    let other = app
+    // A series with no chunks at all still answers empty: nothing indexed is
+    // being withheld... but only once the service itself is available, so the
+    // gate refuses this too rather than implying "no matches".
+    let empty_series = app
         .call(
             "hieronymus_rag_search",
             &json!({"series_slug": "ghost", "query": "Cooking Talent"}),
             ACTOR,
         )
-        .unwrap();
-    assert!(other.as_array().unwrap().is_empty());
+        .unwrap_err();
+    expect_domain(empty_series, "semantic retrieval unavailable");
+
+    // Argument validation stays ahead of the semantic gate, so a malformed
+    // call keeps its own frozen diagnostic.
     let error = app
         .call(
             "hieronymus_rag_search",

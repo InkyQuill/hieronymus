@@ -738,14 +738,19 @@ fn concept_detail(connection: &Connection, concept_id: i64) -> rusqlite::Result<
         return Ok(missing_detail("concept"));
     };
     let mut facet_statement = connection.prepare(
-        "select facet_type, value from concept_facets
+        "select facet_type, value,
+                coalesce((select group_concat(semantic_tag, ', ') from
+                    (select semantic_tag from concept_facet_semantic_tags
+                     where facet_id = f.id order by semantic_tag)), '') as evidence_tags
+         from concept_facets f
          where concept_id = ?1 and superseded_at is null order by id",
     )?;
-    let facets: Vec<(String, String)> = facet_statement
+    let facets: Vec<(String, String, String)> = facet_statement
         .query_map([concept_id], |row| {
             Ok((
                 row.get::<_, String>("facet_type")?,
                 row.get::<_, String>("value")?,
+                row.get::<_, String>("evidence_tags")?,
             ))
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -754,7 +759,13 @@ fn concept_detail(connection: &Connection, concept_id: i64) -> rusqlite::Result<
     // and shows `facet_type: value`.
     let facet_lines: Vec<String> = facets
         .iter()
-        .map(|(facet_type, value)| format!("{facet_type}: {value}"))
+        .map(|(facet_type, value, tags)| {
+            if tags.is_empty() {
+                format!("{facet_type}: {value}")
+            } else {
+                format!("{facet_type} [{tags}]: {value}")
+            }
+        })
         .collect();
     let body = if facet_lines.is_empty() {
         description.clone()
@@ -1003,7 +1014,8 @@ fn proposal_detail(connection: &Connection, proposal_id: i64) -> rusqlite::Resul
     let row = connection
         .query_row(
             "select concept_text, status, rationale, source_form, canonical_rendering,
-                    series_slug, source_language, target_language
+                    series_slug, source_language, target_language,
+                    approved_variants_json, forbidden_variants_json
              from strict_concept_proposals where id = ?1",
             [proposal_id],
             |row| {
@@ -1016,6 +1028,8 @@ fn proposal_detail(connection: &Connection, proposal_id: i64) -> rusqlite::Resul
                     row.get::<_, String>("series_slug")?,
                     row.get::<_, String>("source_language")?,
                     row.get::<_, String>("target_language")?,
+                    row.get::<_, String>("approved_variants_json")?,
+                    row.get::<_, String>("forbidden_variants_json")?,
                 ))
             },
         )
@@ -1030,9 +1044,17 @@ fn proposal_detail(connection: &Connection, proposal_id: i64) -> rusqlite::Resul
         series_slug,
         source,
         target,
+        approved_variants,
+        forbidden_variants,
     )) = row
     else {
         return Ok(missing_detail("proposal"));
+    };
+    // Keep malformed legacy evidence visible rather than silently dropping it.
+    let variants = |raw: String| {
+        serde_json::from_str::<Vec<String>>(&raw)
+            .map(|items| items.join("\n"))
+            .unwrap_or(raw)
     };
     Ok(detail(
         concept_text,
@@ -1041,6 +1063,8 @@ fn proposal_detail(connection: &Connection, proposal_id: i64) -> rusqlite::Resul
         vec![
             ("Source form", source_form),
             ("Rendering", rendering),
+            ("Approved variants", variants(approved_variants)),
+            ("Forbidden variants", variants(forbidden_variants)),
             ("Series", series_slug),
             ("Language", language_pair(&source, &target)),
         ],

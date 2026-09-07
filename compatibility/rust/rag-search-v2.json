@@ -1,0 +1,100 @@
+{
+  "expectation_set": "rag-search-v2",
+  "adr": "0013",
+  "review_finding": "A5",
+  "supersedes": [
+    "compatibility/fixtures/mcp/hieronymus_rag_search/wire.success.json :: the FTS-only success (a lexical-only answer is no longer a valid hieronymus_rag_search result)"
+  ],
+  "rule": "Versioned Rust expectation, separate from the frozen Python fixtures (whose bytes stay unchanged). Review finding A5: the Rust hieronymus_rag_search ran hieronymus::rag::RagStore::search directly — a lexical FTS query that neither consumed the semantic lane nor required readiness — so a missing, unconfigured, acquiring, rebuilding, or failed semantic runtime produced an ordinary successful result array and no caller could tell that the semantic half never ran. Both working memory and semantic RAG are mandatory (M2/S2 completion contract): FTS-only is not a completion or release alternative, and a temporarily degraded semantic service must report its limits rather than serve the lexical half as if it were complete. The tool now (a) gates on the shared semantic-availability signal — the daemon's semantic controller state through require_semantic_ready — and (b) serves hieronymus::recall::RecallService::search_series, the same armed semantic lane plus reciprocal-rank fusion that hieronymus_recall runs, as a session-less series+query search with no synthetic task session. THE ENVELOPE AND ROW SHAPE ARE UNCHANGED: the response is still the bare array of row objects the frozen outputSchema describes, with the same keys, so no consumer has to be rewritten. Two things change. (1) Availability: a semantic service that is absent (no daemon owns the application), acquiring, rebuilding, or failed makes the call a tool error carrying the service's own actionable reason, where it previously returned lexical rows. A ready service over a series with no indexed chunks is an empty success (ready-for-ingest), never an error; a ready service whose lane then cannot execute over a series that HAS chunks is an error, because the alternative is a lexical-only answer dressed up as a complete one. (2) Score semantics: rows are the fused hybrid result, so score is the reciprocal-rank-fusion score over the FTS and semantic lanes (RRF k=60, ranks only, never raw lane scores) rather than the raw FTS score, and rank_reason distinguishes the lanes — a chunk the FTS lane carried keeps its lexical reason (e.g. 'rag project text match'), while a chunk only the semantic lane surfaced carries 'rag semantic match'. Mixed hieronymus_recall keeps its recall-v2 DTO and never hard-fails on missing semantics — memory and deterministic terminology still serve — but its warnings now carry semantic_lane_unavailable whenever required semantics did not run over the current corpus, including the unarmed lane that recall-v2 previously recorded as silent. ADR 0013 governs semantic-index identity, series isolation, and generation discipline, all of which this delta preserves (series filtering happens inside the ANN query, generations are never mixed); the mandatory-semantics half of the rule is the owner's M2/S2 completion contract, not a claim about ADR 0013's FTS5-only release baseline, which concerns what a RELEASE may ship, not what a tool advertised as semantic RAG search may silently answer.",
+  "envelope": {
+    "shape": "array",
+    "unchanged_from_frozen_fixture": true,
+    "warnings_key": false,
+    "note": "No {results, semantic} wrapper was introduced: with the availability gate ahead of retrieval there is no partial-success path left to describe on the success side, and the frozen outputSchema (hieronymus_rag_searchOutput: {result: array of objects}) keeps describing the payload exactly."
+  },
+  "expectations": [
+    {
+      "tool": "hieronymus_rag_search",
+      "semantic_state": "absent",
+      "corpus": "any",
+      "seed": "a bare Application::open (no daemon owns it, so no semantic service is attached)",
+      "arguments": {
+        "series_slug": "book",
+        "query": "physician",
+        "limit": 3
+      },
+      "expected": {
+        "is_error": true,
+        "error_contains": "semantic retrieval unavailable"
+      }
+    },
+    {
+      "tool": "hieronymus_rag_search",
+      "semantic_state": "failed",
+      "corpus": "indexed",
+      "seed": "a daemon with no semantic runtime configured (state failed) over a series with imported chunks",
+      "arguments": {
+        "series_slug": "demo",
+        "query": "physician",
+        "limit": 5
+      },
+      "expected": {
+        "is_error": true,
+        "error_contains": "semantic retrieval unavailable",
+        "note": "The reason is the controller's own detail, so it stays actionable (`hiero semantic enable --runtime <libonnxruntime.so>`). Acquiring and rebuilding refuse the same way with their own reasons ('semantic assets are still being acquired', 'semantic indexing is still in progress')."
+      }
+    },
+    {
+      "tool": "hieronymus_rag_search",
+      "semantic_state": "ready",
+      "corpus": "empty",
+      "seed": "a ready semantic service over a series with no imported chunks",
+      "arguments": {
+        "series_slug": "demo",
+        "query": "physician",
+        "limit": 5
+      },
+      "expected": {
+        "is_error": false,
+        "results": []
+      }
+    },
+    {
+      "tool": "hieronymus_rag_search",
+      "semantic_state": "ready",
+      "corpus": "indexed",
+      "seed": "a ready semantic service over an imported chapter, plus a second series whose own chunks must never appear",
+      "arguments": {
+        "series_slug": "demo",
+        "query": "a query with no lexical overlap with the chunk",
+        "limit": 5
+      },
+      "expected": {
+        "is_error": false,
+        "row_keys": [
+          "source",
+          "id",
+          "title",
+          "kind",
+          "text",
+          "display_text",
+          "source_ref",
+          "chunk_kind",
+          "location",
+          "metadata",
+          "language_tags",
+          "story_scopes",
+          "semantic_tags",
+          "score",
+          "rank_reason"
+        ],
+        "row_subset": {
+          "source": "rag"
+        },
+        "semantic_rank_reason": "rag semantic match",
+        "lexical_rank_reason": "rag project text match",
+        "series_isolation": "every row belongs to the queried series; foreign-series chunks are excluded inside the lane query, never post-filtered"
+      }
+    }
+  ]
+}

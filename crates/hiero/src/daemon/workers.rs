@@ -14,6 +14,12 @@
 //! worker that itself spawns (or a refused admission) cannot deadlock the
 //! shutdown.
 //!
+//! The group is also the daemon's per-connection thread pool, so it would grow
+//! without bound over a long uptime if handles were only drained at shutdown.
+//! [`WorkerGroup::reap_finished`] joins the handles that have already run to
+//! completion, without touching live ones and without stopping admission; the
+//! accept loop calls it on every tick.
+//!
 //! Future controllers (D5's `DreamController`, S2's `SemanticController`)
 //! register their work here: they hand a `Send` closure to `spawn` and keep
 //! their non-`Send` providers/sessions inside the worker they own.
@@ -28,6 +34,29 @@ use std::thread::JoinHandle;
 pub struct WorkerGroup {
     stop: Arc<AtomicBool>,
     handles: Mutex<Vec<JoinHandle<()>>>,
+    /// Serializes the *join* sections of [`WorkerGroup::reap_finished`] and
+    /// [`WorkerGroup::stop_and_join`]. Both take handles out of `handles`
+    /// before joining them (joining under that lock would deadlock a worker
+    /// that spawns), so a shutdown racing a reap would otherwise take a list
+    /// the reap had already shortened and report a completed drain while the
+    /// reap was still working through its own share.
+    ///
+    /// That is an *accounting* hazard today, not a live-writer one: a reap
+    /// only ever removes handles whose closure has already returned (and
+    /// dropped everything it captured), so no thread is still doing work when
+    /// a shutdown misses it. What the mutex buys is that `stop_and_join`'s
+    /// verdict — and the `live_count()` a caller reads right after it — mean
+    /// exactly what they say, instead of "everything except whatever a reap
+    /// happens to be holding". It also keeps that guarantee if the reap ever
+    /// grows to touch handles that have not finished, which is the point at
+    /// which the ownership invariant would depend on it.
+    ///
+    /// Lock order is always `joining` → `handles`, and `handles` is never held
+    /// across a join, so no cycle exists. `reap_finished` only ever *tries*
+    /// this lock: a reap that loses to a shutdown does nothing at all (the
+    /// shutdown is about to join everything anyway), which keeps the accept
+    /// loop free of any wait.
+    joining: Mutex<()>,
 }
 
 impl WorkerGroup {
@@ -38,6 +67,7 @@ impl WorkerGroup {
         WorkerGroup {
             stop,
             handles: Mutex::new(Vec::new()),
+            joining: Mutex::new(()),
         }
     }
 
@@ -85,6 +115,77 @@ impl WorkerGroup {
             .len()
     }
 
+    /// Join the workers that have already finished, leaving live ones — and
+    /// admission — untouched. Returns how many handles were joined.
+    ///
+    /// This is the retention half of the group's contract. The daemon serves
+    /// every connection on a group thread, so without a periodic reap the
+    /// handle list grows by one entry per request for the whole daemon
+    /// lifetime. Reaping is pure maintenance: it never sets the stop flag,
+    /// never refuses a later `spawn`, and never waits on a worker that is
+    /// still running.
+    ///
+    /// Cheap and non-blocking by construction:
+    ///
+    /// - finished handles are collected under the `handles` mutex and joined
+    ///   *after* it is released, so a worker that spawns (or a caller that
+    ///   admits work) is never blocked behind a join;
+    /// - the join section is only *tried*, never awaited, so a reap that
+    ///   collides with `stop_and_join` reports `Ok(0)` and leaves the drain to
+    ///   shutdown.
+    ///
+    /// A finished worker that panicked is still removed and still joined —
+    /// losing the panic would hide a failed writer — but the call then reports
+    /// `Err("worker panicked")`, matching [`WorkerGroup::stop_and_join`].
+    /// Callers (the accept loop) log it and keep serving: one panicked
+    /// connection worker must not take the daemon down.
+    ///
+    /// **Not callable from inside a supervised worker.** Like `stop_and_join`,
+    /// this joins group threads; a worker that called it could wait on itself.
+    pub fn reap_finished(&self) -> Result<usize, String> {
+        // Try, never wait: a shutdown already holds this and is about to join
+        // everything, so there is nothing useful (and nothing safe to block
+        // the accept loop on) left to do here.
+        let _joining = match self.joining.try_lock() {
+            Ok(guard) => guard,
+            // A panic in some other join section does not corrupt the `()`
+            // behind this mutex; taking it anyway is better than never
+            // reaping again for the daemon's whole lifetime.
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(0),
+        };
+        let finished = {
+            let mut handles = self.handles.lock().unwrap_or_else(PoisonError::into_inner);
+            // Partition in place: `swap_remove` is O(1) and order carries no
+            // meaning here (handles are independent), so a busy daemon pays
+            // one pass over a short list per accept tick.
+            let mut finished = Vec::new();
+            let mut index = 0;
+            while index < handles.len() {
+                if handles[index].is_finished() {
+                    finished.push(handles.swap_remove(index));
+                } else {
+                    index += 1;
+                }
+            }
+            finished
+        };
+        // Joining outside the mutex: every handle here has already run to
+        // completion, so this is bounded regardless.
+        let mut joined = 0;
+        let mut failure = None;
+        for handle in finished {
+            joined += 1;
+            if handle.join().is_err() {
+                failure = Some("worker panicked".to_string());
+            }
+        }
+        match failure {
+            Some(message) => Err(message),
+            None => Ok(joined),
+        }
+    }
+
     /// Signal cancellation and wait for every admitted worker. Idempotent: a
     /// second call finds an empty handle list and returns `Ok`.
     ///
@@ -97,6 +198,15 @@ impl WorkerGroup {
     /// report the poison afterwards as a soft failure.
     pub fn stop_and_join(&self) -> Result<(), String> {
         self.stop.store(true, Ordering::Release);
+        // Wait out any reap that is mid-join. `reap_finished` removes handles
+        // from the list before joining them, so taking the list without this
+        // would drain only what the reap left behind and still report a
+        // complete drain — a verdict the caller acts on by releasing
+        // data-root ownership. The handles in a reap's hands have already
+        // finished, so this is about the accounting being exact rather than
+        // about a writer still running; see the `joining` field. Bounded for
+        // the same reason: a reap only ever joins work that is already done.
+        let _joining = self.joining.lock().unwrap_or_else(PoisonError::into_inner);
         // Take the handles out from under the lock before joining: a worker
         // that is still running must be able to observe the refusal path
         // (and any nested `spawn`) without blocking on this join.

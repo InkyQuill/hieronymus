@@ -69,7 +69,8 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
 /// An FTS-only lane surfaces as `failed` — never as ready — so strict
 /// consumers gate on `require_semantic_ready`.
 fn semantic_payload(runtime: &DaemonRuntime) -> Value {
-    match runtime.semantic.state() {
+    let snapshot = runtime.semantic.snapshot();
+    let mut payload = match snapshot.state {
         crate::daemon::semantic_worker::RequiredSemanticState::Acquiring => {
             json!({"state": "acquiring", "detail": Value::Null})
         }
@@ -82,7 +83,9 @@ fn semantic_payload(runtime: &DaemonRuntime) -> Value {
         crate::daemon::semantic_worker::RequiredSemanticState::Failed(reason) => {
             json!({"state": "failed", "detail": reason})
         }
-    }
+    };
+    payload["configuration_revision"] = json!(snapshot.configuration_revision);
+    payload
 }
 
 /// Builtin dream providers in the frozen order, then any catalog-only
@@ -249,8 +252,7 @@ fn load_autostart_state(config: &HieronymusConfig) -> AutostartState {
         last_skip_reason: String::new(),
         not_enough_memories_skipped_count: 0,
     };
-    let Ok(text) = std::fs::read_to_string(config.config_root().join("dream-autostart.json"))
-    else {
+    let Ok(text) = std::fs::read_to_string(config.dream_autostart_path()) else {
         return default;
     };
     let Ok(payload) = serde_json::from_str::<Value>(&text) else {

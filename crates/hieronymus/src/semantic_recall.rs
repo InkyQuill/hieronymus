@@ -24,9 +24,10 @@ use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::memory_models::TranslationContext;
 use crate::rag::RagStore;
-use crate::rag_models::RagChunkRecord;
+use crate::rag_models::{RagChunkRecord, RagSearchHit};
 use crate::recall::{
-    RecallWarning, WARNING_REPAIR_FAILED, WARNING_REPAIR_SCHEDULED, WARNING_SEMANTIC_UNAVAILABLE,
+    RecallWarning, SemanticAvailability, WARNING_REPAIR_FAILED, WARNING_REPAIR_SCHEDULED,
+    WARNING_SEMANTIC_UNAVAILABLE,
 };
 use crate::semantic_embeddings::EmbeddingProvider;
 use crate::semantic_error::SemanticError;
@@ -70,6 +71,97 @@ pub fn rrf_fuse(fts_ranked: &[i64], semantic_ranked: &[i64]) -> Vec<(i64, f64)> 
             .then(left.0.cmp(&right.0))
     });
     fused
+}
+
+/// The reason carried when no query-time lane is armed at all: required
+/// semantics did not run, so whatever came back is the lexical half only.
+pub const NO_SEMANTIC_LANE_REASON: &str =
+    "no semantic lane is armed for this data root; required semantic retrieval did not run";
+
+/// Fuse the two advisory chunk lanes into one ranked hit list (design §Search
+/// And Fusion). Inputs are the FTS lane's hits in rank order and the semantic
+/// lane's eligible records in rank order; the output is the reciprocal-rank
+/// fused order, every hit carrying its FUSED score.
+///
+/// The FTS hit is the preferred carrier — it holds the boost context and the
+/// lane reason the frozen payloads expose — so a chunk both lanes returned
+/// keeps its FTS `reason`; a semantic-only chunk carries
+/// [`SEMANTIC_MATCH_REASON`], which is how callers tell the lanes apart in a
+/// fused response.
+///
+/// One function so both hybrid entry points fuse identically: the mixed
+/// `RecallService::recall` and the session-less
+/// `RecallService::search_series` behind `hieronymus_rag_search` (task C5).
+/// Two copies of this loop is exactly how the public search drifted onto a
+/// lexical-only path in the first place.
+pub fn fuse_chunk_lanes(
+    fts_hits: Vec<RagSearchHit>,
+    semantic_records: Vec<RagChunkRecord>,
+) -> Vec<RagSearchHit> {
+    let fts_ranked: Vec<i64> = fts_hits.iter().map(|hit| hit.chunk.id).collect();
+    let semantic_ranked: Vec<i64> = semantic_records.iter().map(|record| record.id).collect();
+    let mut carriers: HashMap<i64, RagSearchHit> = fts_hits
+        .into_iter()
+        .map(|hit| (hit.chunk.id, hit))
+        .collect();
+    for record in semantic_records {
+        carriers.entry(record.id).or_insert(RagSearchHit {
+            chunk: record,
+            score: 0.0,
+            reason: SEMANTIC_MATCH_REASON.to_string(),
+        });
+    }
+    rrf_fuse(&fts_ranked, &semantic_ranked)
+        .into_iter()
+        .map(|(chunk_id, score)| {
+            let hit = carriers
+                .remove(&chunk_id)
+                .expect("fused ids always have a lane carrier");
+            RagSearchHit { score, ..hit }
+        })
+        .collect()
+}
+
+/// Whether a mixed recall response must carry
+/// [`WARNING_SEMANTIC_UNAVAILABLE`], and with what reason (task C5, review
+/// finding A5).
+///
+/// Both working memory and semantic RAG are mandatory, so "the semantic half
+/// did not run" is a fact about the RESPONSE, not a configuration detail the
+/// caller can be left to guess at. The two inputs are the only two ways to
+/// learn it:
+///
+/// - `lane_executed` — whether this service's own query lane actually ran and
+///   searched (an unarmed lane never runs; an armed one that cannot reach its
+///   generation degrades, and already carries its own warning);
+/// - `availability` — what the owner of the shared semantic service says
+///   about it, when one is attached. A lane that ran clean over a generation
+///   that does not cover the current corpus (`Rebuilding`) is still an
+///   incomplete answer, and only the service knows that.
+///
+/// The silent case is deliberately narrow: the lane ran clean AND nothing
+/// contradicts it. Before C5 an unarmed lane was treated as a "supported
+/// degraded mode" and said nothing at all, which let a cold, misconfigured,
+/// or failed semantic runtime coexist with ordinary-looking successful
+/// results.
+pub fn incomplete_semantic_reason(
+    lane_executed: bool,
+    availability: Option<&SemanticAvailability>,
+) -> Option<String> {
+    match (lane_executed, availability) {
+        // Ran clean, and either nobody owns a service-level verdict or the
+        // owner agrees it is serving: the response is complete.
+        (true, None | Some(SemanticAvailability::Ready)) => None,
+        // The service's own verdict is the most actionable reason there is,
+        // whether or not this service's lane managed to run.
+        (_, Some(SemanticAvailability::Unavailable(reason))) => Some(reason.clone()),
+        (false, None) => Some(NO_SEMANTIC_LANE_REASON.to_string()),
+        // A service claiming readiness while nothing can answer a query is a
+        // contradiction; report it rather than pick a side silently.
+        (false, Some(SemanticAvailability::Ready)) => Some(format!(
+            "the semantic service reports ready, but {NO_SEMANTIC_LANE_REASON}"
+        )),
+    }
 }
 
 /// Rule ids of the contract terms whose forbidden variants occur in `text`.
@@ -165,6 +257,10 @@ impl SemanticLane {
         query: &str,
         limit: usize,
     ) -> Result<LaneRun, String> {
+        let authoritative = RagStore::open(config).map_err(|error| error.to_string())?;
+        let revision_before = authoritative
+            .corpus_revision()
+            .map_err(|error| error.to_string())?;
         let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
         let manifest = match store.active_generation() {
             Ok(Some(manifest)) => manifest,
@@ -233,9 +329,13 @@ impl SemanticLane {
         // Stale checksums, deleted chunks, and foreign series or generations
         // are corrupt; they are excluded and schedule a rebuild.
         let chunk_ids: Vec<i64> = hits.iter().map(|hit| hit.chunk_id).collect();
-        let hydrated = RagStore::open(config)
-            .map_err(|error| error.to_string())?
+        let hydrated = authoritative
             .chunks_by_ids(&chunk_ids)
+            .map_err(|error| error.to_string())?;
+        // Corpus revisions are monotonic. Bracket execution and hydration so
+        // an import before notification, or during inference, cannot look complete.
+        let revision_after = authoritative
+            .corpus_revision()
             .map_err(|error| error.to_string())?;
         let by_id: HashMap<i64, RagChunkRecord> = hydrated
             .into_iter()
@@ -260,6 +360,16 @@ impl SemanticLane {
         }
 
         let mut warnings = Vec::new();
+        if manifest.corpus_revision != revision_before || manifest.corpus_revision != revision_after
+        {
+            // The old index remains useful to mixed recall. Strict search
+            // refuses this warning because its bare array cannot report gaps.
+            warnings.push(RecallWarning {
+                kind: WARNING_SEMANTIC_UNAVAILABLE.to_string(),
+                reason: format!("semantic generation {} covers corpus revision {}, but the query observed revisions {revision_before} through {revision_after}; a current rebuild is required", manifest.generation_id, manifest.corpus_revision),
+            });
+        }
+
         if corrupt > 0 {
             match schedule_repair(config, &lane_identity) {
                 Ok(RepairOutcome::Scheduled(generation_id)) => warnings.push(RecallWarning {
@@ -307,23 +417,57 @@ pub enum QueueOutcome {
     EmptyCorpus,
 }
 
+/// Whether a queued rebuild already covers exactly the build the caller is
+/// about to request (task C4, review finding A4).
+///
+/// This replaces the pre-C4 equivalence, which compared nothing but the frozen
+/// `expected_count` against the current authoritative chunk count. That test
+/// is unsound in both directions a real corpus moves:
+///
+/// - **replacement at equal count.** Editing a document, or swapping one for
+///   another of the same length, leaves the chunk count untouched while
+///   changing the text of every chunk it owns. The count-only check called
+///   that a dedup hit, so the queued generation — built from the OLD text —
+///   was allowed to activate and the edit was never semantically retrievable.
+/// - **a changed embedding identity.** A model, revision, dimension, or
+///   tokenizer swap makes the queued vectors unusable for this daemon's
+///   queries no matter how many chunks they cover.
+///
+/// Corpus revision plus identity is exact on both counts: the revision is
+/// bumped by every text-affecting authoritative write, and the identity is the
+/// one the vectors will actually be built under. Both must match.
+pub fn same_build_request(
+    current_revision: i64,
+    queued_revision: i64,
+    current_identity: &crate::semantic_embeddings::EmbeddingIdentity,
+    queued_identity: &crate::semantic_embeddings::EmbeddingIdentity,
+) -> bool {
+    current_revision == queued_revision && current_identity == queued_identity
+}
+
 /// Queues a whole-corpus rebuild generation plus its durable job (Task S2's
 /// post-commit queueing, also the startup recovery path for chunks with no
 /// active generation). One rebuild is in flight at a time:
 ///
-/// - a live building job whose frozen `expected_count` matches the current
-///   authoritative count is returned as-is (dedup);
-/// - a live building job whose count went stale (a concurrent import landed
-///   after the generation froze its expectation) is durably cancelled — its
-///   candidate can never cover the new chunks — and a fresh generation is
-///   queued over the whole corpus.
+/// - a live building job that already covers exactly this build request —
+///   same corpus revision, same embedding identity
+///   ([`same_build_request`]) — is returned as-is (dedup);
+/// - a live building job that does not is durably cancelled (its candidate can
+///   never cover the current corpus) and a fresh generation is queued over the
+///   whole corpus.
 ///
-/// The check, the cancel, the candidate generation, and the job insert all
-/// happen inside ONE `BEGIN IMMEDIATE` transaction, so two imports racing in
-/// this window serialize: the loser re-reads the winner's fresh job and
-/// dedups (or supersedes it) instead of queueing a second generation. Any
-/// failure rolls the whole thing back — no cancelled flag or unqueued
-/// candidate can survive a partial queueing.
+/// Either way the durable work intent is retired up to the revision now
+/// covered, so reconciliation stops re-queueing work that is queued or done
+/// while a LATER import's intent (raised after this transaction read the
+/// revision) still survives to be honoured.
+///
+/// The check, the cancel, the candidate generation, the job insert, and the
+/// intent retirement all happen inside ONE `BEGIN IMMEDIATE` transaction, so
+/// two imports racing in this window serialize: the loser re-reads the
+/// winner's fresh job and dedups (or supersedes it) instead of queueing a
+/// second generation. Any failure rolls the whole thing back — no cancelled
+/// flag, unqueued candidate, or prematurely retired intent can survive a
+/// partial queueing.
 pub fn queue_semantic_rebuild(
     config: &HieronymusConfig,
     identity: &crate::semantic_embeddings::EmbeddingIdentity,
@@ -342,29 +486,25 @@ pub fn queue_semantic_rebuild(
 
     let chunk_count: i64 =
         transaction.query_row("select count(*) from rag_chunks", [], |row| row.get(0))?;
+    let corpus_revision = crate::rag::current_corpus_revision(&transaction)?;
     if chunk_count == 0 {
+        // Nothing to index: the request IS satisfied, so the owed-work record
+        // must be retired too or reconciliation would ask forever.
+        crate::rag::clear_semantic_work_intent_through(&transaction, corpus_revision)?;
+        transaction.commit()?;
         return Ok(QueueOutcome::EmptyCorpus);
     }
 
-    let live: Option<(String, i64)> = transaction
-        .query_row(
-            "select j.job_id, g.expected_count
-             from semantic_jobs j
-             join semantic_generations g on g.generation_id = j.generation_id
-             where j.status in ('queued', 'running')
-               and g.status = 'building'
-             order by j.created_at
-             limit 1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .optional()?;
-    if let Some((job_id, expected_count)) = &live
-        && *expected_count == chunk_count
+    let live = live_building_job(&transaction)?;
+    if let Some((job_id, queued_revision, queued_identity)) = &live
+        && same_build_request(corpus_revision, *queued_revision, identity, queued_identity)
     {
-        return Ok(QueueOutcome::AlreadyQueued(job_id.clone()));
+        crate::rag::clear_semantic_work_intent_through(&transaction, corpus_revision)?;
+        let job_id = job_id.clone();
+        transaction.commit()?;
+        return Ok(QueueOutcome::AlreadyQueued(job_id));
     }
-    if let Some((job_id, _)) = &live {
+    if let Some((job_id, _, _)) = &live {
         transaction.execute(
             "update semantic_jobs set cancel_requested = 1, updated_at = ?2 where job_id = ?1",
             params![job_id, chrono::Utc::now().to_rfc3339()],
@@ -385,8 +525,76 @@ pub fn queue_semantic_rebuild(
         &generation_id,
         identity,
     )?;
+    crate::rag::clear_semantic_work_intent_through(&transaction, corpus_revision)?;
     transaction.commit()?;
     Ok(QueueOutcome::Enqueued(record.job_id))
+}
+
+/// The one live building job, with the corpus revision and full embedding
+/// identity its candidate generation was begun under. `None` means no rebuild
+/// is in flight, so nothing can be deduped against.
+///
+/// The identity is read in full (not just provider/model/dimensions like
+/// `JobIdentity`): normalization, tokenizer, and the input limits are part of
+/// what makes two sets of vectors mutually queryable, and [`same_build_request`]
+/// compares all of it.
+fn live_building_job(
+    connection: &rusqlite::Connection,
+) -> Result<Option<(String, i64, crate::semantic_embeddings::EmbeddingIdentity)>, SemanticError> {
+    let row = connection
+        .query_row(
+            "select j.job_id, g.corpus_revision, g.provider, g.model, g.model_revision,
+                    g.dimensions, g.normalization, g.tokenizer, g.max_input_tokens,
+                    g.max_batch_inputs
+             from semantic_jobs j
+             join semantic_generations g on g.generation_id = j.generation_id
+             where j.status in ('queued', 'running')
+               and g.status = 'building'
+             order by j.created_at
+             limit 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        job_id,
+        corpus_revision,
+        provider,
+        model,
+        revision,
+        dimensions,
+        normalization,
+        tokenizer,
+        max_input_tokens,
+        max_batch_inputs,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let identity = crate::semantic_embeddings::EmbeddingIdentity::new(
+        provider,
+        model,
+        revision,
+        dimensions.max(0) as usize,
+        normalization,
+        tokenizer,
+        max_input_tokens.max(0) as usize,
+        max_batch_inputs.max(0) as usize,
+    )?;
+    Ok(Some((job_id, corpus_revision, identity)))
 }
 
 /// Schedules the repair for corrupt hits: a fresh generation plus the Task 8
@@ -486,6 +694,78 @@ mod tests {
         assert_eq!(fused, vec![(7, 1.0 / (RRF_K + 1.0) + 1.0 / (RRF_K + 2.0))]);
     }
 
+    fn chunk(id: i64, text: &str) -> RagChunkRecord {
+        RagChunkRecord {
+            id,
+            source_id: 1,
+            series_slug: "demo".to_string(),
+            source_ref: "chapter.txt".to_string(),
+            chunk_kind: "text".to_string(),
+            text: text.to_string(),
+            display_text: text.to_string(),
+            location: "paragraph 1".to_string(),
+            metadata: serde_json::Map::new(),
+            language_tags: Vec::new(),
+            story_scopes: Vec::new(),
+            semantic_tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn fusion_keeps_the_fts_carrier_and_marks_semantic_only_hits() {
+        let fts = vec![RagSearchHit {
+            chunk: chunk(1, "lexical"),
+            score: 2.5,
+            reason: "rag project text match".to_string(),
+        }];
+        let semantic = vec![chunk(1, "lexical"), chunk(2, "paraphrase")];
+        let fused = fuse_chunk_lanes(fts, semantic);
+
+        let ids: Vec<i64> = fused.iter().map(|hit| hit.chunk.id).collect();
+        assert_eq!(
+            ids,
+            vec![1, 2],
+            "both-lane hit ranks above the semantic-only"
+        );
+        // The carrier's reason survives; the fused score replaces the lane
+        // score (RRF is over ranks, never raw lane scores).
+        assert_eq!(fused[0].reason, "rag project text match");
+        assert!((fused[0].score - (1.0 / (RRF_K + 1.0)) * 2.0).abs() < 1e-12);
+        assert_eq!(fused[1].reason, SEMANTIC_MATCH_REASON);
+        assert!((fused[1].score - 1.0 / (RRF_K + 2.0)).abs() < 1e-12);
+    }
+
+    /// The C5 truth table: the only silent combination is a lane that ran
+    /// clean with nothing contradicting it.
+    #[test]
+    fn incomplete_semantics_is_silent_only_when_the_lane_actually_ran() {
+        let unavailable = SemanticAvailability::Unavailable("assets are acquiring".to_string());
+
+        assert_eq!(incomplete_semantic_reason(true, None), None);
+        assert_eq!(
+            incomplete_semantic_reason(true, Some(&SemanticAvailability::Ready)),
+            None
+        );
+        assert_eq!(
+            incomplete_semantic_reason(true, Some(&unavailable)).as_deref(),
+            Some("assets are acquiring"),
+            "a clean lane over a service that is not serving is still incomplete"
+        );
+        assert_eq!(
+            incomplete_semantic_reason(false, Some(&unavailable)).as_deref(),
+            Some("assets are acquiring")
+        );
+        assert_eq!(
+            incomplete_semantic_reason(false, None).as_deref(),
+            Some(NO_SEMANTIC_LANE_REASON)
+        );
+        assert!(
+            incomplete_semantic_reason(false, Some(&SemanticAvailability::Ready))
+                .is_some_and(|reason| reason.contains(NO_SEMANTIC_LANE_REASON)),
+            "a ready service with no lane is a contradiction, not silence"
+        );
+    }
+
     #[test]
     fn conflicting_rule_ids_mark_forbidden_variants_only() {
         let contract = vec![contract_term(7, &["sorcery"]), contract_term(9, &["wyrd"])];
@@ -502,5 +782,30 @@ mod tests {
             contract_term(7, &["sorcery"]),
         ];
         assert_eq!(conflicting_rule_ids("sorcery", &duplicated), vec![7]);
+    }
+
+    /// The full truth table of the dedup predicate: revision match/mismatch
+    /// crossed with identity match/mismatch. Only the both-match corner is a
+    /// dedup hit — the pre-C4 count comparison said "already queued" for three
+    /// of these four.
+    #[test]
+    fn same_build_request_needs_both_the_revision_and_the_identity() {
+        use crate::semantic_embeddings::{EmbeddingProvider, FakeEmbeddingProvider};
+        let identity = FakeEmbeddingProvider::new(384).identity().clone();
+        let other = FakeEmbeddingProvider::new(256).identity().clone();
+        assert_ne!(identity, other);
+
+        assert!(same_build_request(9, 9, &identity, &identity));
+        assert!(!same_build_request(9, 8, &identity, &identity));
+        assert!(!same_build_request(9, 9, &identity, &other));
+        assert!(!same_build_request(9, 8, &identity, &other));
+
+        // The pre-revision sentinel is behind everything, revision 0 included.
+        assert!(!same_build_request(
+            0,
+            crate::semantic_store::UNKNOWN_CORPUS_REVISION,
+            &identity,
+            &identity
+        ));
     }
 }

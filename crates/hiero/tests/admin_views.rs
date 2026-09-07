@@ -538,6 +538,8 @@ fn view_details_match_the_python_shape() {
         vec![
             ("Source form".to_string(), "src".to_string()),
             ("Rendering".to_string(), "rend".to_string()),
+            ("Approved variants".to_string(), String::new()),
+            ("Forbidden variants".to_string(), String::new()),
             ("Series".to_string(), "main".to_string()),
             ("Language".to_string(), "ja -> en".to_string()),
         ]
@@ -580,4 +582,33 @@ fn view_details_match_the_python_shape() {
             ("Facets".to_string(), "1".to_string()),
         ]
     );
+}
+
+#[test]
+fn dream_proposal_lists_variant_evidence_and_rationale() {
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    db.execute(
+        "update strict_concept_proposals set dream_run_id=(select min(id) from dream_runs),
+        rationale='Keep the city spelling', approved_variants_json='[\"Verell\"]',
+        forbidden_variants_json='[\"Verele\"]' where concept_text='Proposal Main'",
+        [],
+    )
+    .unwrap();
+    let row = find_row(
+        &config,
+        "Proposals",
+        &json!({"series":"main"}),
+        "Proposal Main",
+    );
+    let out = snapshot(
+        &config,
+        "Proposals",
+        &json!({"series":"main","selected_id":row["id"]}),
+    )
+    .unwrap();
+    assert_eq!(out["detail"]["body"], "Keep the city spelling");
+    let fields = detail_fields(&out);
+    assert!(fields.contains(&("Approved variants".into(), "Verell".into())));
+    assert!(fields.contains(&("Forbidden variants".into(), "Verele".into())));
 }

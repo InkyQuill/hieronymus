@@ -9,9 +9,6 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use hiero::daemon::discovery::{self, DISCOVERY_VERSION, DiscoveryRecord};
-use hiero::daemon::registry::PROTOCOL_REVISION;
-
 /// The real binary's identity values, so fixtures stay correct when they
 /// change upstream.
 fn real_identity() -> (String, i64) {
@@ -445,31 +442,26 @@ fn update_refuses_running_while_a_daemon_is_active_without_a_stoppable_service()
     std::fs::create_dir_all(&data_root).unwrap();
     let unit_dir = temp.path().join("units");
 
-    // A live listener behind the discovery record: the updater cannot stop it.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let config = hieronymus::data_root::HieronymusConfig::new(&data_root);
-    discovery::write_discovery(
-        &config,
-        &DiscoveryRecord {
-            discovery_version: DISCOVERY_VERSION,
-            protocol_version: PROTOCOL_REVISION.to_string(),
-            host: "127.0.0.1".to_string(),
-            port,
-            pid: std::process::id(),
-            instance_id: "ab".repeat(16),
-            started_at: "2026-09-04T00:00:00+00:00".to_string(),
-        },
-    )
+    // An authenticated, matching daemon is active, but there is no service
+    // definition through which the updater may stop it.
+    let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(data_root.clone()),
+        port: 0,
+        ..Default::default()
+    })
     .unwrap();
 
-    let (_, stderr, status) = run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
-    assert_eq!(status.code(), Some(2), "{stderr}");
+    let config = hieronymus::data_root::HieronymusConfig::new(&data_root);
+    assert!(hiero::lifecycle::probe(&config).is_live());
+    let (stdout, stderr, status) =
+        run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
+    assert_eq!(status.code(), Some(2), "{stdout}\n{stderr}");
     assert!(stderr.contains("daemon is currently running"), "{stderr}");
     assert_eq!(
         stable_target(&app, "hiero"),
         PathBuf::from("../versions/0.9.0/hiero")
     );
+    daemon.shutdown().unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -725,4 +717,55 @@ fn update_rolls_back_when_the_new_binary_fails_its_health_check() {
     );
     assert!(!app.join("versions/9.9.0").exists());
     assert!(app.join("versions/0.9.0/hiero").exists());
+}
+
+#[test]
+fn update_refuses_an_owned_root_even_when_authenticated_discovery_fails() {
+    for failure in ["credential", "missing-discovery"] {
+        let temp = tempfile::tempdir().unwrap();
+        let payload = temp.path().join("payload-9.9.0");
+        stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
+        // Without the ownership gate this path falsely reports MigrationPending
+        // and switches the installation while the old daemon still owns the root.
+        write_fake_binary(
+            &payload.join("hiero"),
+            "9.9.0",
+            &protocol_revision(),
+            supported_schema() + 1,
+            0,
+        );
+        let release = package(&payload, "9.9.0");
+        let app = seed_install(temp.path(), "0.9.0");
+        let data_root = temp.path().join("data");
+        let config = hieronymus::data_root::HieronymusConfig::new(&data_root);
+        let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+            data_root: Some(data_root.clone()),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        if failure == "credential" {
+            std::fs::write(config.daemon_token_path(), "rejected-token").unwrap();
+        } else {
+            std::fs::remove_file(config.daemon_discovery_path()).unwrap();
+        }
+        assert!(!hiero::lifecycle::probe(&config).is_live());
+        assert!(hieronymus::ownership::RootOwnership::acquire(&config, "test").is_err());
+        let (stdout, stderr, status) = run_update(
+            &release.release_dir,
+            &app,
+            &data_root,
+            &temp.path().join("units"),
+            &[],
+        );
+        assert_eq!(status.code(), Some(2), "{failure}: {stdout}\n{stderr}");
+        assert!(stderr.contains("owns this data root"), "{stderr}");
+        assert_eq!(
+            stable_target(&app, "hiero"),
+            PathBuf::from("../versions/0.9.0/hiero")
+        );
+        assert!(!app.join("versions/9.9.0").exists());
+        assert!(hieronymus::ownership::RootOwnership::acquire(&config, "test").is_err());
+        daemon.shutdown().unwrap();
+    }
 }

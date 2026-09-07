@@ -2,11 +2,21 @@
 //! chunk metadata side tables. Behavior ported from Python `rag_store.py`,
 //! `rag_parsing.py`, and `rag_conversion.py` over the shared
 //! `rag_sources`/`rag_chunks` schema.
+//!
+//! This module also owns the **corpus revision** and the **semantic work
+//! intent** (schema version 3; task C4, review finding A4). Both are written
+//! inside the SAME transaction as the authoritative chunk rows they describe,
+//! which is the whole point: the pre-C4 import committed its chunks and only
+//! then queued the semantic rebuild out of band, so a crash — or a plain
+//! enqueue failure — in that window left new text unindexed while an older
+//! generation stayed `active` and the controller still reported `Ready`. There
+//! is no such window when the record of the owed work commits with the work
+//! itself.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params, params_from_iter};
 use serde_json::{Map, Value};
 
 use crate::data_root::HieronymusConfig;
@@ -15,6 +25,11 @@ use crate::rag_models::{RagChunkRecord, RagImportResult, RagSearchHit, RagSource
 use crate::short_memory::search_expression;
 
 pub const MAX_RAG_CHUNK_CHARS: usize = 1200;
+/// The managed directory under the data root holding normalized copies of
+/// imported RAG sources. Named here so callers that must recognize the
+/// installation's own files (`hiero export`'s destination guard) cannot drift
+/// out of sync with the writer below.
+pub const RAG_NORMALIZED_DIR: &str = "rag-normalized";
 /// Shared search-depth bound: both advisory lanes (FTS and semantic) cap
 /// their candidate lists identically so reciprocal rank fusion sees evenly
 /// deep lane rankings.
@@ -100,6 +115,118 @@ impl RagImport {
     }
 }
 
+/// How long a RAG writer waits for a competing writer's transaction before
+/// giving up. Concurrent imports contend for one `BEGIN IMMEDIATE` lock; the
+/// timeout lets them serialize instead of failing, which is what makes the
+/// corpus revision monotonic under concurrency rather than merely
+/// non-decreasing-when-lucky.
+const RAG_WRITE_BUSY_TIMEOUT_MS: i64 = 5_000;
+
+/// The authoritative corpus revision: a monotonic counter over every RAG
+/// change that alters indexable text.
+///
+/// A MISSING row reads as revision 0. The `corpus_revision` table is created
+/// empty by the v3 migration on purpose — the Rust→Rust upgrade verification
+/// requires every table a schema step introduces to be empty (a step adds
+/// tables, never authoritative rows), so the seed row would have failed it.
+/// Absence is a real value here anyway: "no text change has been recorded",
+/// which is exactly what revision 0 means. Note that 0 is still strictly
+/// greater than the `-1` sentinel a pre-C4 generation carries, so such a
+/// generation reads as stale and is rebuilt.
+pub fn current_corpus_revision(connection: &Connection) -> rusqlite::Result<i64> {
+    connection.query_row(
+        "select coalesce((select revision from corpus_revision where singleton = 1), 0)",
+        [],
+        |row| row.get(0),
+    )
+}
+
+/// The durably recorded "an import happened, semantic indexing is owed"
+/// revision, if any. `None` means no indexing is outstanding.
+///
+/// This is what survives a lost worker wakeup: the import wrote it inside its
+/// authoritative transaction, so startup and periodic reconciliation can queue
+/// the rebuild from SQLite alone — even when *some* older generation is still
+/// sitting in the active slot and every other signal looks healthy.
+pub fn pending_semantic_work_intent(connection: &Connection) -> rusqlite::Result<Option<i64>> {
+    connection
+        .query_row(
+            "select revision from semantic_work_intent where singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
+/// Bump the corpus revision and record the semantic work intent for the new
+/// revision, returning it. MUST be called inside the caller's authoritative
+/// transaction — that is the entire guarantee.
+///
+/// An autocommit connection is REFUSED, not merely asserted against. This
+/// function is the linchpin of review finding A4: on autocommit the bump and
+/// the intent would land as their own two commits, separate from the chunk
+/// rows they describe, which reopens exactly the torn-write window C4 exists
+/// to close — a crash between them leaves the corpus changed with no record
+/// that indexing is owed. A `debug_assert!` compiles to nothing in release, so
+/// a future caller would reopen that window in production with no signal at
+/// all. The check runs once per import and costs nothing measurable.
+///
+/// Shaped as the `SQLITE_MISUSE` SQLite itself returns for this category of
+/// mistake (the same shape `schema_upgrade::refused` uses), so it flows
+/// through every existing `rusqlite::Result` path and surfaces as
+/// [`RagError::Database`] unchanged.
+///
+/// Only the latest revision matters, so the intent row is coalesced by an
+/// upsert rather than accumulated: reconciliation needs "indexing is owed up
+/// to revision N", not a queue of every import that ever happened. `max` in
+/// the upsert is belt-and-braces against an out-of-order writer; revisions are
+/// already monotonic because the bump and the intent share one write lock.
+pub(crate) fn record_corpus_change(connection: &Connection) -> rusqlite::Result<i64> {
+    if connection.is_autocommit() {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+            Some(
+                "the corpus revision bump and the semantic work intent must commit with the \
+                 authoritative rows they describe, so they require a caller-owned transaction, \
+                 not autocommit"
+                    .to_string(),
+            ),
+        ));
+    }
+    connection.execute(
+        "insert into corpus_revision(singleton, revision) values (1, 1)
+         on conflict(singleton) do update set revision = revision + 1",
+        [],
+    )?;
+    let revision = current_corpus_revision(connection)?;
+    connection.execute(
+        "insert into semantic_work_intent(singleton, revision, requested_at)
+         values (1, ?1, ?2)
+         on conflict(singleton) do update set
+           revision = max(semantic_work_intent.revision, excluded.revision),
+           requested_at = excluded.requested_at",
+        params![revision, now_iso8601()],
+    )?;
+    Ok(revision)
+}
+
+/// Retire the work intent once a queued or active generation covers it.
+///
+/// The `revision <= ?1` predicate is what makes this safe against a racing
+/// import: an intent that was re-raised to a HIGHER revision after the caller
+/// read its coverage is left alone, so no owed indexing is ever cleared by a
+/// generation that does not cover it.
+pub(crate) fn clear_semantic_work_intent_through(
+    connection: &Connection,
+    covered_revision: i64,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "delete from semantic_work_intent where singleton = 1 and revision <= ?1",
+        params![covered_revision],
+    )?;
+    Ok(())
+}
+
 /// RAG store over the data-root database.
 pub struct RagStore {
     config: HieronymusConfig,
@@ -118,11 +245,58 @@ impl RagStore {
         Ok(open_migrated(Path::new(&path))?)
     }
 
+    /// The current authoritative corpus revision (see
+    /// [`current_corpus_revision`]).
+    pub fn corpus_revision(&self) -> Result<i64, RagError> {
+        Ok(current_corpus_revision(&self.connection()?)?)
+    }
+
+    /// The durably recorded owed-indexing revision, if any (see
+    /// [`pending_semantic_work_intent`]).
+    pub fn semantic_work_intent(&self) -> Result<Option<i64>, RagError> {
+        Ok(pending_semantic_work_intent(&self.connection()?)?)
+    }
+
+    /// How many authoritative chunks this series owns.
+    ///
+    /// A series with none has nothing to retrieve at all, which is the one
+    /// case where a hybrid search whose semantic half could not run may still
+    /// answer "no results" truthfully: no indexed text is being withheld.
+    /// [`crate::recall::RecallService::search_series`] consumes exactly this
+    /// distinction — everything else is a refusal, never a lexical-only
+    /// answer dressed up as a complete one.
+    pub fn series_chunk_count(&self, series_slug: &str) -> Result<i64, RagError> {
+        Ok(self.connection()?.query_row(
+            "select count(*) from rag_chunks where series_slug = ?1",
+            rusqlite::params![series_slug],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Import a RAG file into the store. Re-importing the same
     /// `(series_slug, source_ref)`: an identical checksum (and source/content
     /// type) only refreshes the chunk metadata tags; a changed import
     /// atomically replaces the source with its chunks and derived rows. A
     /// source that fails to parse never touches the database.
+    ///
+    /// Every outcome that changes indexable text — a new source, or a replaced
+    /// one (whose chunk count may go up, down, or stay exactly the same) —
+    /// bumps the corpus revision and records the semantic work intent INSIDE
+    /// this transaction (`record_corpus_change`). The identical-checksum
+    /// refresh deliberately does not: it rewrites metadata tags only, so the
+    /// active generation's vectors and fingerprints stay exactly as valid as
+    /// they were, and bumping there would order a pointless rebuild on every
+    /// re-import.
+    ///
+    /// A source that parses to zero chunks never reaches any of this:
+    /// [`load_rag_file`] rejects it as an invalid source before the connection
+    /// is opened. So a committed non-skipped import always added at least one
+    /// chunk, and this path can never empty the corpus.
+    ///
+    /// Parsing, normalization, and every other expensive step happen BEFORE
+    /// the connection is opened, so the write transaction spans nothing but
+    /// SQLite work. Nothing here embeds, and no inference ever runs under this
+    /// lock.
     pub fn import_file(
         &self,
         series_slug: &str,
@@ -134,7 +308,7 @@ impl RagStore {
             None => path.display().to_string(),
         };
         let normalized =
-            normalize_rag_source(path, &self.config.data_root().join("rag-normalized"))?;
+            normalize_rag_source(path, &self.config.data_root().join(RAG_NORMALIZED_DIR))?;
         let source_type_hint = if normalized.path == path {
             import.source_type.as_str()
         } else {
@@ -163,7 +337,14 @@ impl RagStore {
         let clean_semantic_tags = clean_text_values(&import.semantic_tags);
 
         let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
+        // `Immediate` plus a busy timeout: the transaction below reads before
+        // it writes, so a deferred one would take the write lock late and two
+        // racing imports could deadlock on the upgrade (`SQLITE_BUSY` is not
+        // retryable there). Taking the write lock up front makes concurrent
+        // imports serialize, which is what keeps the corpus revision strictly
+        // monotonic and every work intent durable.
+        connection.pragma_update(None, "busy_timeout", RAG_WRITE_BUSY_TIMEOUT_MS)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let existing = source_row(&transaction, series_slug, &clean_source_ref)?;
 
         if let Some(row) = &existing {
@@ -256,6 +437,9 @@ impl RagStore {
                 )?;
             }
         }
+        // The authoritative rows and the record of the semantic work they owe
+        // commit together, or neither does.
+        record_corpus_change(&transaction)?;
         transaction.commit()?;
 
         Ok(RagImportResult {
@@ -1918,6 +2102,51 @@ fn decode_entity_at(characters: &[char], start: usize) -> Option<(String, usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The A4 linchpin, enforced at runtime rather than asserted in debug
+    /// builds only: an autocommit connection is refused, so the revision bump
+    /// and the work intent can never land as commits separate from the chunk
+    /// rows they describe. A `debug_assert!` here would compile away in
+    /// release and let a future caller silently reopen the torn-write window.
+    #[test]
+    fn record_corpus_change_refuses_an_autocommit_connection() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "create table corpus_revision (
+                     singleton integer primary key check (singleton = 1),
+                     revision integer not null
+                 );
+                 create table semantic_work_intent (
+                     singleton integer primary key check (singleton = 1),
+                     revision integer not null,
+                     requested_at text not null
+                 );",
+            )
+            .unwrap();
+
+        // Autocommit: refused, and nothing is written.
+        assert!(connection.is_autocommit());
+        let error = record_corpus_change(&connection).unwrap_err();
+        assert!(
+            error.to_string().contains("caller-owned transaction"),
+            "{error}"
+        );
+        assert_eq!(current_corpus_revision(&connection).unwrap(), 0);
+        assert!(pending_semantic_work_intent(&connection).unwrap().is_none());
+
+        // Inside a transaction: accepted, and both rows land together.
+        let transaction = connection.transaction().unwrap();
+        assert_eq!(record_corpus_change(&transaction).unwrap(), 1);
+        assert_eq!(current_corpus_revision(&transaction).unwrap(), 1);
+        assert_eq!(
+            pending_semantic_work_intent(&transaction).unwrap(),
+            Some(1),
+            "the intent commits with the revision it describes"
+        );
+        transaction.commit().unwrap();
+        assert_eq!(current_corpus_revision(&connection).unwrap(), 1);
+    }
 
     #[test]
     fn sha256_hex_matches_known_vector() {

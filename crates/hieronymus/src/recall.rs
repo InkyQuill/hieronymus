@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::concepts::ConceptStore;
@@ -10,7 +11,10 @@ use crate::feedback::RECALLED_AGAIN_DELTAS;
 use crate::memory_models::{CrystalRecord, ShortTermMemoryRecord, TranslationContext};
 use crate::rag::RagStore;
 use crate::rag_models::{RagChunkRecord, RagSearchHit};
-use crate::semantic_recall::{SEMANTIC_MATCH_REASON, SemanticLane, conflicting_rule_ids, rrf_fuse};
+use crate::semantic_recall::{
+    NO_SEMANTIC_LANE_REASON, SemanticLane, conflicting_rule_ids, fuse_chunk_lanes,
+    incomplete_semantic_reason,
+};
 use crate::terminology::{ContractTerm, Termbase, TermbaseError};
 use crate::workspace::WorkspaceStore;
 
@@ -76,6 +80,14 @@ pub enum RecallError {
     Rag(#[from] crate::rag::RagError),
     #[error(transparent)]
     Terminology(#[from] TermbaseError),
+    /// A strict hybrid search could not run its required semantic half over a
+    /// series that HAS indexed text (task C5). Never returned by
+    /// [`RecallService::recall`], which degrades with a warning instead: the
+    /// difference is that mixed recall still carries memory and deterministic
+    /// terminology, while a session-less chunk search has nothing left to
+    /// answer with but the lexical half it must not pass off as complete.
+    #[error("required semantic retrieval is unavailable: {0}")]
+    SemanticUnavailable(String),
 }
 
 /// One ranked recall hit (ADR 0011: flat graded list; the deterministic
@@ -115,13 +127,39 @@ pub struct RecallWarning {
     pub reason: String,
 }
 
-/// The semantic lane could not run; the response carries FTS results only.
+/// Required semantics did not run over the current corpus, so the response is
+/// INCOMPLETE: the semantic lane never searched (unarmed, or armed and unable
+/// to reach its generation), or the shared semantic service reports that it
+/// cannot serve the current corpus yet. Whatever ranked rows ride along are
+/// the lexical half only and must never be read as a complete answer (task
+/// C5, review finding A5).
 pub const WARNING_SEMANTIC_UNAVAILABLE: &str = "semantic_lane_unavailable";
 /// Corrupt semantic hits were excluded and a rebuild was scheduled (or one is
 /// already in progress).
 pub const WARNING_REPAIR_SCHEDULED: &str = "semantic_repair_scheduled";
 /// Corrupt semantic hits were excluded but scheduling the rebuild failed.
 pub const WARNING_REPAIR_FAILED: &str = "semantic_repair_failed";
+
+/// What the shared semantic service can do for a query right now, as its
+/// owner sees it.
+///
+/// Deliberately two states rather than a copy of the daemon's controller
+/// vocabulary (`Acquiring`/`Rebuilding`/`Ready`/`Failed`): this crate must not
+/// learn the daemon's job states, and retrieval treats every non-ready one
+/// identically — required semantics cannot be counted on, and the caller has
+/// to be told. The `Unavailable` payload is the owner's actionable reason,
+/// passed through verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SemanticAvailability {
+    Ready,
+    Unavailable(String),
+}
+
+/// The installed availability probe: cheap, read once per query. The daemon
+/// installs a closure over its semantic controller's state; a caller with no
+/// semantic service installs nothing, and `None` is itself a fact (see
+/// [`crate::semantic_recall::incomplete_semantic_reason`]).
+pub type SemanticStatusHook = Arc<dyn Fn() -> SemanticAvailability + Send + Sync>;
 
 /// One recall invocation: its durable `recall_id`, the deterministic term
 /// contract computed from the query/source context BEFORE any lane fusion
@@ -194,13 +232,29 @@ impl SortKey {
 
 /// Recall service: bounded multi-lane retrieval combining the long-term FTS
 /// lane, the session short-term lane, and the RAG lane behind the Python
-/// `_merge_ranked_items` semantics. An unarmed semantic lane is the supported
-/// degraded mode (no warning: the lane is simply absent); an armed lane that
-/// cannot run (no active generation, identity mismatch, index loss) degrades
-/// with a structured warning and FTS-only results.
+/// `_merge_ranked_items` semantics.
+///
+/// Semantic discipline (task C5, review finding A5). Both working memory and
+/// semantic RAG are mandatory, so an absent semantic half is never a silent
+/// "supported degraded mode" — it is a reported limitation of the response:
+///
+/// - [`Self::recall`] always serves what it has (memory rows and the
+///   deterministic term contract keep working) and adds
+///   [`WARNING_SEMANTIC_UNAVAILABLE`] whenever required semantics did not run
+///   over the current corpus: an unarmed lane, an armed lane that degraded
+///   (no active generation, identity mismatch, index loss), or an attached
+///   semantic service reporting anything but ready;
+/// - [`Self::search_series`] — the session-less chunk search behind the public
+///   `hieronymus_rag_search` tool — has no other lane to fall back on, so the
+///   same condition is an error rather than a lexical-only answer. Its one
+///   honest empty case is a series with no indexed chunks at all.
 pub struct RecallService {
     config: HieronymusConfig,
     semantic_lane: Option<SemanticLane>,
+    /// The shared availability probe, when the owner of the semantic service
+    /// installed one. Independent of `semantic_lane`: the lane is what this
+    /// process can execute, this is what the service says it can serve.
+    semantic_status: Option<SemanticStatusHook>,
 }
 
 impl RecallService {
@@ -209,6 +263,7 @@ impl RecallService {
         Ok(Self {
             config: config.clone(),
             semantic_lane: None,
+            semantic_status: None,
         })
     }
 
@@ -218,6 +273,90 @@ impl RecallService {
     pub fn with_semantic_lane(mut self, lane: SemanticLane) -> Self {
         self.semantic_lane = Some(lane);
         self
+    }
+
+    /// Installs the shared semantic-availability probe (task C5). Builder
+    /// form of [`Self::set_semantic_status`].
+    pub fn with_semantic_status(mut self, hook: SemanticStatusHook) -> Self {
+        self.set_semantic_status(hook);
+        self
+    }
+
+    /// Installs (or replaces) the shared semantic-availability probe. Taken
+    /// by `&mut self` because the owner keeps one long-lived service behind a
+    /// lock and re-arms its lane in place.
+    pub fn set_semantic_status(&mut self, hook: SemanticStatusHook) {
+        self.semantic_status = Some(hook);
+    }
+
+    /// The service owner's current verdict, or `None` when no semantic
+    /// service is attached to this recall service.
+    pub fn semantic_availability(&self) -> Option<SemanticAvailability> {
+        self.semantic_status.as_ref().map(|hook| hook())
+    }
+
+    /// Standalone hybrid chunk search over one series: the FTS chunk lane
+    /// fused with the semantic chunk lane by reciprocal rank, with no
+    /// session, no short-term or long-term lane, no term contract, and no
+    /// recall ledger. This is what the public `hieronymus_rag_search` tool
+    /// serves (task C5); before it existed that tool queried
+    /// `RagStore::search` directly and answered lexical-only rows with no way
+    /// for a caller to tell that semantics never ran.
+    ///
+    /// Strictness is the point. The required semantic half either runs, or
+    /// this fails:
+    ///
+    /// - the lane ran: the fused hybrid rows come back, semantic-only rows
+    ///   marked by [`crate::semantic_recall::SEMANTIC_MATCH_REASON`];
+    /// - the lane did not run and the series owns NO chunks: an empty result
+    ///   is complete and true (the ready-for-ingest case — nothing indexed is
+    ///   being withheld);
+    /// - the lane did not run and the series owns chunks:
+    ///   [`RecallError::SemanticUnavailable`], carrying the lane's own reason.
+    ///
+    /// Whether the *service* is allowed to be queried at all is a separate,
+    /// earlier gate the caller applies over [`Self::semantic_availability`]
+    /// (`hiero`'s `Application::search_rag`): this method is about execution.
+    pub fn search_series(
+        &self,
+        series_slug: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<RagSearchHit>, RecallError> {
+        if limit == 0 {
+            return Err(RecallError::LimitTooSmall);
+        }
+        let store = RagStore::open(&self.config)?;
+        // The lexical lane, unfiltered: a session-less search has no typed
+        // context to boost or filter with, exactly as before C5.
+        let fts_hits = store.search(series_slug, query, limit, &[], &[], &[])?;
+        let Some(lane) = &self.semantic_lane else {
+            return empty_corpus_or_refuse(&store, series_slug, NO_SEMANTIC_LANE_REASON);
+        };
+        // The minimal query context: the semantic lane needs the series
+        // predicate (applied INSIDE the ANN query) and the query text, and a
+        // session-less search has nothing else to give it. The empty
+        // languages keep the context from seeding language tags nothing here
+        // would filter on.
+        let context = TranslationContext::new(series_slug, "", "", "translation");
+        let run = lane.run(&self.config, &context, query, limit);
+        if run.degraded {
+            let reason = run
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
+                .map(|warning| warning.reason.clone())
+                .unwrap_or_else(|| "the semantic lane could not run".to_string());
+            return empty_corpus_or_refuse(&store, series_slug, &reason);
+        }
+        // This strict API returns bare hits, so it cannot communicate repair
+        // warnings alongside a partial result as mixed recall can.
+        if let Some(warning) = run.warnings.first() {
+            return Err(RecallError::SemanticUnavailable(warning.reason.clone()));
+        }
+        let mut hits = fuse_chunk_lanes(fts_hits, run.records);
+        hits.truncate(limit.min(crate::rag::MAX_RAG_SEARCH_LIMIT));
+        Ok(hits)
     }
 
     pub fn recall(
@@ -386,54 +525,49 @@ impl RecallService {
             &rag_semantic_tags,
         )?;
 
-        let (rag_hits, lane_warnings) = match &self.semantic_lane {
-            None => (advisory_hits(fts_hits, &contract), Vec::new()),
+        let (rag_hits, mut warnings, lane_executed) = match &self.semantic_lane {
+            None => (advisory_hits(fts_hits, &contract), Vec::new(), false),
             Some(lane) => {
                 let run = lane.run(&self.config, context, query, limit);
                 if run.degraded {
                     // Missing semantic state: the FTS results ride along
                     // untouched, exactly as in the unarmed service, with the
                     // structured degraded-mode warning on the response.
-                    (advisory_hits(fts_hits, &contract), run.warnings)
+                    (advisory_hits(fts_hits, &contract), run.warnings, false)
                 } else {
-                    let fts_ranked: Vec<i64> = fts_hits.iter().map(|hit| hit.chunk.id).collect();
-                    let semantic_ranked: Vec<i64> =
-                        run.records.iter().map(|record| record.id).collect();
-                    // The FTS hit is the preferred carrier (it holds the
-                    // boost context); semantic-only chunks carry the semantic
-                    // reason.
-                    let mut carriers: std::collections::HashMap<i64, RagSearchHit> = fts_hits
+                    let fused = fuse_chunk_lanes(fts_hits, run.records)
                         .into_iter()
-                        .map(|hit| (hit.chunk.id, hit))
-                        .collect();
-                    for record in run.records {
-                        carriers.entry(record.id).or_insert(RagSearchHit {
-                            chunk: record,
-                            score: 0.0,
-                            reason: SEMANTIC_MATCH_REASON.to_string(),
-                        });
-                    }
-                    let fused = rrf_fuse(&fts_ranked, &semantic_ranked)
-                        .into_iter()
-                        .map(|(chunk_id, score)| {
-                            let hit = carriers
-                                .remove(&chunk_id)
-                                .expect("fused ids always have a lane carrier");
-                            RecallHit::Rag {
-                                conflicts_with_rule_ids: conflicting_rule_ids(
-                                    &hit.chunk.text,
-                                    &contract,
-                                ),
-                                chunk: hit.chunk,
-                                score,
-                                reason: hit.reason,
-                            }
+                        .map(|hit| RecallHit::Rag {
+                            conflicts_with_rule_ids: conflicting_rule_ids(
+                                &hit.chunk.text,
+                                &contract,
+                            ),
+                            chunk: hit.chunk,
+                            score: hit.score,
+                            reason: hit.reason,
                         })
                         .collect();
-                    (fused, run.warnings)
+                    (fused, run.warnings, true)
                 }
             }
         };
+
+        // Task C5 (review finding A5): required semantics that did not run is
+        // reported, never inferred from the absence of a warning. A degraded
+        // lane already pushed its own `semantic_lane_unavailable` above, so
+        // the kind is added at most once — the warning list is a set of
+        // conditions, not a log.
+        if let Some(reason) =
+            incomplete_semantic_reason(lane_executed, self.semantic_availability().as_ref())
+            && !warnings
+                .iter()
+                .any(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
+        {
+            warnings.push(RecallWarning {
+                kind: WARNING_SEMANTIC_UNAVAILABLE.to_string(),
+                reason,
+            });
+        }
 
         let mut selected = merge_ranked_items(memory, rag_hits, limit);
 
@@ -443,9 +577,25 @@ impl RecallService {
             recall_id,
             deterministic_contract: contract,
             hits: selected,
-            warnings: lane_warnings,
+            warnings,
         })
     }
+}
+
+/// The one honest empty answer for a strict hybrid search whose semantic half
+/// did not run: a series with no authoritative chunks has nothing to
+/// retrieve, so "no results" withholds nothing. Any other series would be
+/// answered with the lexical lane alone, which is precisely the outcome task
+/// C5 exists to make impossible.
+fn empty_corpus_or_refuse(
+    store: &RagStore,
+    series_slug: &str,
+    reason: &str,
+) -> Result<Vec<RagSearchHit>, RecallError> {
+    if store.series_chunk_count(series_slug)? == 0 {
+        return Ok(Vec::new());
+    }
+    Err(RecallError::SemanticUnavailable(reason.to_string()))
 }
 
 /// Fused-hit metadata without fusion: the FTS lane's hits with their

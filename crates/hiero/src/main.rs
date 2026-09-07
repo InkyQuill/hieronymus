@@ -24,7 +24,7 @@ const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (o
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
 const TOOL_CALL_USAGE: &str = "usage: hiero tool-call <tool> [--args <json>] [--json] [--data-root <path>] [--start-daemon] (calls the advertised MCP tool through the local daemon's authenticated /mcp route)";
-const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy)";
+const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--force] [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy. An existing destination is refused unless --force replaces it, and no path this installation owns is ever a legal destination)";
 const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
@@ -84,6 +84,9 @@ struct ParsedArguments {
     delete_data: bool,
     args_json: Option<String>,
     output: Option<String>,
+    /// `hiero export --force`: replace an existing destination instead of
+    /// refusing it. Never relaxes the destination guard itself.
+    force: bool,
 }
 
 fn parse_arguments(
@@ -116,6 +119,7 @@ fn parse_arguments(
         delete_data: false,
         args_json: None,
         output: None,
+        force: false,
     };
     let mut positionals: Vec<String> = Vec::new();
     let mut index = 0;
@@ -282,6 +286,7 @@ fn parse_arguments(
                         .clone(),
                 );
             }
+            "--force" => parsed.force = true,
             value if value.starts_with('-') => {
                 return Err(format!("unknown option: {value}"));
             }
@@ -463,7 +468,7 @@ fn reject_output_flag(parsed: &ParsedArguments, command: &str) -> Result<(), Str
 /// only: preflight reports the fact; locking the daemon is the write-side
 /// upgrade protocol's and the update flow's job.
 fn daemon_is_active(config: &hieronymus::data_root::HieronymusConfig) -> bool {
-    hiero::daemon::discovery::daemon_is_active(config)
+    hiero::lifecycle::probe(config).is_live()
 }
 
 /// Make a user-supplied path absolute against the current working directory.
@@ -616,151 +621,78 @@ fn run_semantic_enable(
     parsed: &ParsedArguments,
     config: &hieronymus::data_root::HieronymusConfig,
 ) -> Result<ExitCode, String> {
-    use hieronymus::semantic_model::{
-        DEFAULT_MODEL_URL, HttpModelTransport, MODEL_BYTES, MODEL_SHA256, ModelStatus,
-    };
-
-    let store = hieronymus::semantic_store::SemanticStore::open(config)
+    let client = hiero::lifecycle::connect(config, false).map_err(|error| error.to_string())?;
+    // Relative CLI paths have an explicit base: the invoking process cwd.
+    // Persist only a canonical absolute path, never a daemon-dependent one.
+    let runtime = parsed
+        .runtime
+        .as_ref()
+        .map(|path| {
+            std::fs::canonicalize(path).map_err(|error| format!("runtime_library: {error}"))
+        })
+        .transpose()?;
+    let mut result = client
+        .post_with_timeout(
+            "/semantic/acquire",
+            &serde_json::json!({
+                "url": parsed.url, "sha256": parsed.sha256, "bytes": parsed.bytes,
+            }),
+            std::time::Duration::from_secs(1210),
+        )
         .map_err(|error| error.to_string())?;
-    let url = parsed.url.as_deref().unwrap_or(DEFAULT_MODEL_URL);
-    let expected_sha = parsed.sha256.as_deref().unwrap_or(MODEL_SHA256);
-    let expected_bytes = match &parsed.bytes {
-        None => MODEL_BYTES,
-        Some(text) => text
-            .parse::<u64>()
-            .map_err(|_| format!("--bytes requires a byte count, got {text}"))?,
-    };
-    // With an explicit `--bytes` override, availability is judged solely
-    // against that expectation and the user's checksum: a file that merely
-    // matches the pinned size says nothing about the requested artifact, so
-    // skipping the download would report an unverified `--sha256` as
-    // available. The pinned default keeps Task 7's cheap size pre-check
-    // (cryptographic verification happens at provider load).
-    let local_status = || match &parsed.bytes {
-        Some(_) => match std::fs::metadata(store.model_path()) {
-            Ok(metadata) if metadata.len() == expected_bytes => {
-                match hieronymus::semantic_model::sha256_file(&store.model_path()) {
-                    Ok(digest) if digest == expected_sha.trim().to_ascii_lowercase() => {
-                        ModelStatus::Available
-                    }
-                    Ok(digest) => ModelStatus::Invalid(format!(
-                        "model file checksum mismatch: expected {expected_sha}, got {digest}"
-                    )),
-                    Err(error) => {
-                        ModelStatus::Invalid(format!("model file could not be hashed: {error}"))
-                    }
-                }
-            }
-            Ok(metadata) => ModelStatus::Invalid(format!(
-                "model file is {} bytes, expected {expected_bytes}",
-                metadata.len()
-            )),
-            Err(_) => ModelStatus::Missing,
-        },
-        None => store.model_status(),
-    };
-
-    // Explicit acquisition: download only when the local file is missing or
-    // fails its size pre-check; a healthy model is never re-fetched.
-    let mut downloaded = false;
-    if local_status() != ModelStatus::Available {
-        let transport = HttpModelTransport::new(std::time::Duration::from_secs(600));
-        store
-            .acquire_model_verifying(&transport, url, expected_sha, expected_bytes)
-            .map_err(|error| error.to_string())?;
-        downloaded = true;
-    }
-    // The tokenizer asset rides the same explicit acquisition with the same
-    // discipline, always pinned: with explicit artifact overrides in play the
-    // caller manages artifacts themselves (and the loopback test harness must
-    // never egress), so the tokenizer is fetched only in pinned-default mode.
-    let pinned_defaults = parsed.url.is_none() && parsed.sha256.is_none() && parsed.bytes.is_none();
-    let mut tokenizer_downloaded = false;
-    if pinned_defaults && store.tokenizer_status() != ModelStatus::Available {
-        let transport = HttpModelTransport::new(std::time::Duration::from_secs(600));
-        store
-            .acquire_tokenizer(
-                &transport,
-                hieronymus::semantic_model::DEFAULT_TOKENIZER_URL,
-            )
-            .map_err(|error| error.to_string())?;
-        tokenizer_downloaded = true;
-    }
-    let final_status = local_status();
-
-    // Arming verification needs the ONNX runtime library; without it the
-    // model is acquired but the lane verdict stays honestly disarmed. A
-    // provided runtime is persisted in the semantic settings file so the
-    // daemon validates and reuses it across restarts (Task S2).
-    let mut runtime_saved = false;
-    let verdict = match &parsed.runtime {
+    let configured = match runtime {
         Some(runtime) => {
-            let path = std::path::Path::new(runtime);
-            hieronymus::semantic_arming::save_runtime_library(config, path)?;
-            runtime_saved = true;
-            hieronymus::semantic_arming::arming_verdict(config, path)
-        }
-        None => hieronymus::semantic_arming::LaneState::Disarmed {
-            reason: "onnx runtime library not provided; pass --runtime <lib> to verify arming"
-                .to_string(),
-        },
-    };
-    let runtime_verified = parsed.runtime.is_some();
-
-    if parsed.json {
-        let payload = serde_json::json!({
-            "model_status": model_status_name(&final_status),
-            "model_detail": model_status_detail(&final_status),
-            "downloaded": downloaded,
-            "tokenizer_downloaded": tokenizer_downloaded,
-            "tokenizer_path": store.tokenizer_path(),
-            "model_path": store.model_path(),
-            "runtime_verified": runtime_verified,
-            "runtime_saved": runtime_saved,
-            "lane": verdict.as_str(),
-            "reason": match &verdict {
-                hieronymus::semantic_arming::LaneState::Armed => serde_json::Value::Null,
-                hieronymus::semantic_arming::LaneState::Disarmed { reason } => {
-                    serde_json::Value::String(reason.clone())
+            let mut configured = client
+                .post(
+                    "/semantic/configure",
+                    &serde_json::json!({"runtime_library": runtime}),
+                )
+                .map_err(|error| error.to_string())?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while configured["state"] == "acquiring" && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let status = client.get("/status").map_err(|error| error.to_string())?;
+                if configured["configuration_revision"]
+                    != status["semantic"]["configuration_revision"]
+                {
+                    return Err(
+                        "semantic configuration changed concurrently; inspect daemon status".into(),
+                    );
                 }
-            },
-        });
-        println!("{payload}");
-    } else if downloaded {
-        println!(
-            "semantic model acquired: {} (checksum verified)",
-            store.model_path().display()
-        );
-        print_lane_verdict(&verdict);
-    } else {
-        match &final_status {
-            ModelStatus::Available => {
-                println!(
-                    "semantic model already acquired: {}",
-                    store.model_path().display()
-                );
+                configured["state"] = status["semantic"]["state"].clone();
+                configured["detail"] = status["semantic"]["detail"].clone();
             }
-            ModelStatus::Invalid(reason) => {
-                println!("semantic model could not be verified: {reason}");
-            }
-            ModelStatus::Missing => {
-                println!("semantic model missing: {}", store.model_path().display());
-            }
+            configured
         }
-        print_lane_verdict(&verdict);
+        None => {
+            serde_json::json!({"state": "failed", "detail": "runtime not provided; pass --runtime <lib> to configure the daemon"})
+        }
+    };
+    let ready = configured["state"] == "ready";
+    result["runtime_saved"] = serde_json::json!(parsed.runtime.is_some());
+    result["runtime_verified"] = serde_json::json!(ready);
+    result["lane"] = serde_json::json!(if ready { "armed" } else { "disarmed" });
+    result["reason"] = configured["detail"].clone();
+    result["state"] = configured["state"].clone();
+    result["configuration_revision"] = configured["configuration_revision"].clone();
+    if parsed.json {
+        println!("{result}");
+    } else {
+        println!(
+            "semantic model {}: {}",
+            if result["downloaded"] == true {
+                "acquired"
+            } else {
+                "already acquired"
+            },
+            result["model_path"]
+        );
+        println!(
+            "daemon semantic state: {} ({})",
+            result["state"], result["reason"]
+        );
     }
     Ok(ExitCode::SUCCESS)
-}
-
-fn print_lane_verdict(verdict: &hieronymus::semantic_arming::LaneState) {
-    match verdict {
-        hieronymus::semantic_arming::LaneState::Armed => {
-            println!("lane armed: the semantic lane will fuse into recall");
-        }
-        hieronymus::semantic_arming::LaneState::Disarmed { reason } => {
-            println!("lane disarmed: {reason}");
-        }
-    }
 }
 
 fn model_status_name(status: &hieronymus::semantic_model::ModelStatus) -> &'static str {
@@ -1088,6 +1020,8 @@ fn run_tool_call(
 
 /// The `export` subcommand: serialize the memory content tables to JSON at an
 /// explicit destination. Read-only by design — never a live database copy.
+/// A destination this installation owns is always refused; an existing file is
+/// refused unless `--force` asks for it to be replaced.
 fn run_export(
     parsed: &ParsedArguments,
     data_root: Option<&std::path::Path>,
@@ -1104,7 +1038,12 @@ fn run_export(
         .ok_or_else(|| format!("export requires --output <path>; {EXPORT_USAGE}"))?;
     let destination = absolute_path(output);
     let config = load_config(data_root);
-    let report = hiero::export::run(&config, &destination).map_err(|error| error.to_string())?;
+    let report = if parsed.force {
+        hiero::export::run_overwriting(&config, &destination)
+    } else {
+        hiero::export::run(&config, &destination)
+    }
+    .map_err(|error| error.to_string())?;
     if parsed.json {
         let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         println!("{text}");

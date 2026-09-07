@@ -2239,6 +2239,7 @@ dependencies = [
  "home",
  "rusqlite",
  "rust-embed",
+ "rustix",
  "serde",
  "serde_json",
  "sha1",

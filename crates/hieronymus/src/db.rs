@@ -14,7 +14,7 @@ const TERMINOLOGY_MIGRATION_SQL: &str = include_str!("../migrations/terminology.
 /// [`crate::schema_upgrade`]; a database written by a newer binary fails
 /// closed, and a database at an older supported version is upgraded in place
 /// by the ordered runner (never opened for writes as-is).
-pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 2;
+pub const SUPPORTED_RUST_SCHEMA_VERSION: i64 = 4;
 
 /// The Rust schema-version marker table. Its presence is the primary signal
 /// that a database was written by this line rather than Python.
@@ -26,7 +26,7 @@ pub const RUST_META_TABLE: &str = "hieronymus_meta";
 /// starts). This is a bounded `sqlite_master` check, never `integrity_check`
 /// or a data scan; it names the load-bearing tables from every subsystem
 /// (`migrations/global.sql` + `migrations/terminology.sql`), not all of them.
-const RUST_MANDATORY_TABLES: [&str; 19] = [
+const RUST_MANDATORY_TABLES: [&str; 23] = [
     "series",
     "task_sessions",
     "short_term_memories",
@@ -49,6 +49,17 @@ const RUST_MANDATORY_TABLES: [&str; 19] = [
     "dream_link_members",
     "dream_link_pairs",
     "term_rule_actions",
+    // Schema version 3 (`migrations/003-runtime-recovery.sql`): the durable
+    // runtime-recovery state. Named here for the same reason as the v2 tables
+    // — a v2 database carries the marker but none of them, so it can never
+    // verify as the current schema and is routed to the ordered upgrade.
+    // `semantic_generations`/`semantic_jobs` are deliberately absent: those are
+    // created lazily when a data root first arms semantics, so their absence is
+    // a normal state, not a schema defect.
+    "corpus_revision",
+    "semantic_work_intent",
+    "dream_retry_state",
+    "dream_link_crystals",
 ];
 /// Sentinel tables that identify a Python-era Hieronymus database. Python has
 /// no schema-version marker; the ported migration table set is the fingerprint
@@ -286,6 +297,40 @@ pub fn verify_current_rust_schema(path: &Path) -> Result<(), SchemaDefect> {
                 "request_canonical",
                 "result_json",
                 "created_at",
+            ][..],
+        ),
+        (
+            "dream_link_crystals",
+            &["batch_id", "member_offset", "crystal_id"][..],
+        ),
+        // Schema version 3.
+        ("corpus_revision", &["singleton", "revision"][..]),
+        (
+            "semantic_work_intent",
+            &["singleton", "revision", "requested_at"][..],
+        ),
+        (
+            "dream_retry_state",
+            &[
+                "singleton",
+                "failures",
+                "next_attempt_at",
+                "config_fingerprint",
+            ][..],
+        ),
+        // `dream_link_batches` appears a second time on purpose: once above
+        // for the columns version 2 created, and here for the offset columns
+        // version 3 added by `alter table`. A database that stopped between
+        // the two steps therefore fails this check instead of classifying as
+        // Current.
+        (
+            "dream_link_batches",
+            &[
+                "next_left_offset",
+                "next_right_offset",
+                "lazy_pairs",
+                "applied_pair_count",
+                "skipped_pair_count",
             ][..],
         ),
         (RUST_META_TABLE, &["schema_version"][..]),

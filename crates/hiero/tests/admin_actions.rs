@@ -1142,3 +1142,235 @@ fn an_unknown_action_is_not_implemented() {
         hiero::application::AppError::NotImplemented(_)
     ));
 }
+
+fn seed_merge_evidence(db: &Connection) {
+    seed_extra_concepts(db);
+    for (id, value) in [(1, "Alto"), (2, "Verel"), (3, "Kess")] {
+        db.execute(
+            "insert into concept_facets(id, concept_id, language, facet_type, value,
+            confidence, is_canonical, created_at, updated_at)
+            values (?1, ?1, 'en', 'rendering', ?2, 0.7, 1, ?3, ?3)",
+            rusqlite::params![id, value, TS],
+        )
+        .unwrap();
+        db.execute("insert into concept_facet_story_scopes(facet_id, story_scope) values (?1, 'chapter:1')", [id]).unwrap();
+        db.execute("insert into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
+            values (1, ?1, 'mentions', 0.7, ?2)", rusqlite::params![id, TS]).unwrap();
+    }
+}
+
+fn merge_state(db: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+    [
+        "concepts",
+        "concept_facets",
+        "concept_facet_story_scopes",
+        "concept_facet_language_tags",
+        "concept_facet_semantic_tags",
+        "concept_semantic_tags",
+        "crystal_concepts",
+        "audit_log",
+    ]
+    .into_iter()
+    .map(|table| {
+        let mut stmt = db
+            .prepare(&format!("select * from {table} order by rowid"))
+            .unwrap();
+        let columns = stmt.column_count();
+        stmt.query_map([], |row| (0..columns).map(|i| row.get(i)).collect())
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    })
+    .collect()
+}
+
+fn assert_merge_rollback(trigger: &str, ids: Value) {
+    let fx = setup();
+    let db = db(&fx);
+    seed_merge_evidence(&db);
+    // The merge also creates a former-label facet; rollback must remove its
+    // FTS entry, not merely restore the re-parented existing facets.
+    db.execute(
+        "update concepts set canonical_name='Riverlabel' where id=3",
+        [],
+    )
+    .unwrap();
+    db.execute("insert into concept_semantic_tags(concept_id, tag, confidence, created_at) values (3, 'river', 0.7, ?1)", [TS]).unwrap();
+    let before = merge_state(&db);
+    db.execute_batch(trigger).unwrap();
+    assert!(
+        run(
+            &fx,
+            "merge_selected",
+            json!({"ids":ids,"view":"Concepts","confirmed":true})
+        )
+        .is_err()
+    );
+    assert_eq!(merge_state(&db), before);
+    assert_eq!(
+        count(
+            &db,
+            "select count(*) from concept_facet_fts where concept_facet_fts match 'Riverlabel'"
+        ),
+        0
+    );
+    for term in ["Alto", "Verel", "Kess"] {
+        assert_eq!(
+            db.query_row(
+                "select count(*) from concept_facet_fts where concept_facet_fts match ?1",
+                [term],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        let concept_term = if term == "Kess" { "Riverlabel" } else { term };
+        assert_eq!(
+            db.query_row(
+                "select count(*) from concepts_fts where concepts_fts match ?1",
+                [concept_term],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
+fn concept_merge_rolls_back_when_audit_fails() {
+    assert_merge_rollback(
+        "CREATE TRIGGER reject_audit BEFORE INSERT ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit failure'); END;",
+        json!([1, 2, 3]),
+    );
+}
+
+#[test]
+fn concept_merge_rolls_back_when_late_source_fails() {
+    assert_merge_rollback(
+        "CREATE TRIGGER reject_last_merge BEFORE UPDATE OF status ON concepts
+        WHEN OLD.id = 3 AND NEW.status = 'merged'
+        BEGIN SELECT RAISE(ABORT, 'late source failure'); END;",
+        json!([1, 2, 3]),
+    );
+}
+
+#[test]
+fn concept_merge_rejects_repeated_sources_before_writes() {
+    assert_merge_rollback("", json!([1, 2, 2]));
+}
+
+#[test]
+fn concept_merge_keeps_target_canonical_and_moves_scoped_source_evidence() {
+    let fx = setup();
+    let db = db(&fx);
+    seed_merge_evidence(&db);
+    run(
+        &fx,
+        "merge_selected",
+        json!({"ids":[1,2,3],"view":"Concepts","confirmed":true}),
+    )
+    .unwrap();
+    assert_eq!(
+        count(
+            &db,
+            "select count(*) from concept_facets where concept_id=1"
+        ),
+        3
+    );
+    assert_eq!(
+        count(
+            &db,
+            "select count(*) from concept_facets where concept_id=1 and is_canonical=1 and value='Alto'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(&db, "select count(*) from concept_facet_story_scopes"),
+        3
+    );
+    assert_eq!(
+        count(
+            &db,
+            "select count(*) from crystal_concepts where concept_id=1"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &db,
+            "select count(*) from concepts where status='merged' and merged_into_concept_id=1"
+        ),
+        2
+    );
+}
+
+#[test]
+fn dream_proposal_materialization_preserves_variant_evidence() {
+    let fx = setup();
+    let db = db(&fx);
+    db.execute(
+        "update strict_concept_proposals set approved_variants_json='[\"Verell\"]',
+        forbidden_variants_json='[\"Verele\"]' where id=1",
+        [],
+    )
+    .unwrap();
+    let out = run(&fx, "approve_proposal", json!({"id":1})).unwrap();
+    let id = out["result"]["concept_id"].as_i64().unwrap();
+    let store = hieronymus::concepts::ConceptStore::open(&fx.config).unwrap();
+    assert_eq!(store.get(id).unwrap().description, "City name proposal");
+    let facets = store.list_facets(id).unwrap();
+    let view = hiero::application::admin::snapshot(
+        &fx.config,
+        "Concepts",
+        &json!({"series":"s1", "selected_id":id.to_string()}),
+    )
+    .unwrap();
+    assert!(
+        view["detail"]["body"]
+            .as_str()
+            .unwrap()
+            .contains("note [forbidden-variant]: Verele")
+    );
+    assert!(
+        facets
+            .iter()
+            .find(|f| f.value == "Verell")
+            .unwrap()
+            .semantic_tags
+            .contains(&"approved-variant".into())
+    );
+    assert!(
+        facets
+            .iter()
+            .find(|f| f.value == "Verele")
+            .unwrap()
+            .semantic_tags
+            .contains(&"forbidden-variant".into())
+    );
+    assert!(
+        !facets
+            .iter()
+            .any(|f| f.value == "Verele" && (f.is_canonical || f.facet_type == "rendering"))
+    );
+
+    assert!(facets.iter().any(|f| f.value == "Verel" && f.is_canonical));
+    assert!(
+        facets
+            .iter()
+            .any(|f| f.value == "Verell" && f.facet_type == "rendering" && !f.is_canonical)
+    );
+    assert!(
+        facets
+            .iter()
+            .any(|f| f.value == "Verele" && f.facet_type == "note" && !f.is_canonical)
+    );
+    assert_eq!(
+        count(
+            &db,
+            "select count(*) from concept_facet_semantic_tags where semantic_tag='forbidden-variant'"
+        ),
+        1
+    );
+}

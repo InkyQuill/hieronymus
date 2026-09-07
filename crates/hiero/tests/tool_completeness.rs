@@ -20,10 +20,73 @@ use serde_json::{Value, json};
 
 use hiero::application::{AppError, Application};
 use hiero::daemon::McpRegistry;
+use hiero::daemon::semantic_worker::{ArmedPair, SemanticArm, install_test_arm};
+use hieronymus::data_root::HieronymusConfig;
+use hieronymus::semantic_embeddings::{
+    EMBEDDING_DIMENSIONS, EmbeddingProvider, FakeEmbeddingProvider,
+};
+use hieronymus::semantic_tokenizer::ModelTokenizer;
 
 mod common;
 
-use common::{mcp_headers, send_request};
+use common::{mcp_headers, send_request, wait_until};
+
+// ------------------------------------------------- the semantic prerequisite
+
+/// A deterministic offline semantic arm for the matrix daemons.
+///
+/// Task C5 made this a prerequisite rather than a nicety: `hieronymus_rag_search`
+/// is semantic RAG search, so it refuses a data root with no semantic service
+/// instead of answering with the lexical FTS lane. Every advertised tool must
+/// still EXECUTE here, so the matrix daemon arms the same fake-provider seam
+/// the semantic integration tests use — no model download, no ONNX runtime,
+/// real durable jobs and a real query lane.
+struct MatrixArm;
+
+impl SemanticArm for MatrixArm {
+    fn identity(&self) -> hieronymus::semantic_embeddings::EmbeddingIdentity {
+        FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)
+            .identity()
+            .clone()
+    }
+
+    fn precheck(&self, _config: &HieronymusConfig) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn arm(&self, _config: &HieronymusConfig) -> Result<ArmedPair, String> {
+        let tokenizer = ModelTokenizer::from_bytes(include_bytes!(
+            "../../hieronymus/tests/fixtures/minilm-tokenizer.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        Ok(ArmedPair {
+            provider: Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+            tokenizer: Box::new(tokenizer),
+        })
+    }
+}
+
+/// Start a matrix daemon whose semantic service can actually reach `ready`,
+/// and hand back the probe `run_case` waits on between setup and the case
+/// call (the setup of an import-bearing case queues a real rebuild, so
+/// readiness is reached, left, and reached again).
+fn start_matrix_daemon(root: &Path) -> (hiero::daemon::Daemon, impl Fn() -> bool + use<>) {
+    install_test_arm(root, Arc::new(MatrixArm));
+    let daemon = common::start_daemon(root);
+    let port = daemon.local_addr().port();
+    let bearer = daemon.bearer().expose_secret().clone();
+    let probe = move || {
+        let response = send_request(
+            port,
+            "GET",
+            "/status",
+            &[("Authorization".to_string(), format!("Bearer {bearer}"))],
+            b"",
+        );
+        response.status == 200 && response.body()["semantic"]["state"] == json!("ready")
+    };
+    (daemon, probe)
+}
 
 // ------------------------------------------------- the step-1 regression test
 
@@ -496,7 +559,13 @@ fn tools_call(id: i64, name: &str, arguments: &Value) -> Value {
 
 // -------------------------------------------------------------- case runner
 
-fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase, dream_url: &str) {
+fn run_case(
+    transport: &mut dyn Transport,
+    root: &Path,
+    case: &ToolCase,
+    dream_url: &str,
+    semantic_ready: &dyn Fn() -> bool,
+) {
     let label = format!("[{}] {}", transport.label(), case.name);
     let mut bindings = BTreeMap::new();
 
@@ -551,6 +620,16 @@ fn run_case(transport: &mut dyn Transport, root: &Path, case: &ToolCase, dream_u
             }
         }
     }
+
+    // Required semantics must be serving before the case runs: a setup
+    // import queues a real rebuild, and a tool whose contract is semantic
+    // retrieval refuses a service that is not ready (task C5). Waiting here
+    // keeps the matrix a statement about handlers rather than about timing —
+    // and fails loudly if readiness never arrives.
+    assert!(
+        wait_until(semantic_ready, Duration::from_secs(30)),
+        "{label}: the semantic service never reached ready"
+    );
 
     // The case call itself, over the transport under test.
     let arguments = substitute(&case.arguments, root, &bindings);
@@ -655,9 +734,15 @@ fn every_case_executes_over_real_http_with_persisted_mutations() {
     for case in cases() {
         let root = tempfile::tempdir().unwrap();
         let dream_provider = DreamLoopback::start();
-        let daemon = common::start_daemon(root.path());
+        let (daemon, semantic_ready) = start_matrix_daemon(root.path());
         let mut transport = HttpTransport { daemon, next_id: 0 };
-        run_case(&mut transport, root.path(), &case, &dream_provider.url);
+        run_case(
+            &mut transport,
+            root.path(),
+            &case,
+            &dream_provider.url,
+            &semantic_ready,
+        );
         transport.daemon.shutdown().unwrap();
     }
 }
@@ -668,10 +753,16 @@ fn every_case_executes_over_stdio_with_persisted_mutations() {
         let root = tempfile::tempdir().unwrap();
         // The in-process daemon publishes the discovery record the adapter
         // uses for stdio discovery (no fixed port, no baked-in credential).
-        let daemon = common::start_daemon(root.path());
+        let (daemon, semantic_ready) = start_matrix_daemon(root.path());
         let dream_provider = DreamLoopback::start();
         let mut transport = StdioTransport::spawn(root.path());
-        run_case(&mut transport, root.path(), &case, &dream_provider.url);
+        run_case(
+            &mut transport,
+            root.path(),
+            &case,
+            &dream_provider.url,
+            &semantic_ready,
+        );
         transport.finish(&format!("[stdio] {}", case.name));
         daemon.shutdown().unwrap();
     }
@@ -787,7 +878,7 @@ fn the_tool_call_cli_drives_the_daemon_boundary() {
     assert_eq!(offline.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&offline.stderr);
     assert!(
-        stderr.contains("no running local service discovered"),
+        stderr.contains("no running local daemon was discovered"),
         "{stderr}"
     );
     assert!(stderr.contains("hiero daemon"), "{stderr}");
@@ -991,29 +1082,86 @@ fn export_cli_writes_deterministic_readonly_json() {
         .unwrap();
 
     let database_bytes = std::fs::read(config.database_path()).unwrap();
-    let output_path = root.path().join("export").join("memory.json");
-    let run_export = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let export_to = |destination: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_hiero"))
             .args([
                 "export",
                 "--output",
-                output_path.to_str().unwrap(),
+                destination.to_str().unwrap(),
                 "--data-root",
                 root.path().to_str().unwrap(),
                 "--json",
             ])
             .output()
-            .unwrap();
+            .unwrap()
+    };
+    let run_export = |destination: &std::path::Path| {
+        let output = export_to(destination);
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        std::fs::read_to_string(&output_path).unwrap()
+        std::fs::read_to_string(destination).unwrap()
     };
-    let first = run_export();
-    let second = run_export();
+    // Determinism is compared across two fresh destinations: an export never
+    // overwrites, so re-running onto the same path is a refusal, not a rewrite
+    // (finding A1 — the destination guard).
+    let output_path = root.path().join("export").join("memory.json");
+    let first = run_export(&output_path);
+    let second = run_export(&root.path().join("export").join("memory-again.json"));
     assert_eq!(first, second, "export must be byte-deterministic");
+
+    // Re-exporting onto an existing file is refused, and leaves it intact.
+    let existing = export_to(&output_path);
+    assert!(!existing.status.success());
+    assert!(
+        String::from_utf8_lossy(&existing.stderr).contains("already exists"),
+        "{}",
+        String::from_utf8_lossy(&existing.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&output_path).unwrap(), first);
+
+    // `--force` is the deliberate overwrite affordance the refusal points at.
+    let forced = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "export",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&output_path).unwrap(), first);
+
+    // The authoritative database is never a legal destination — with or
+    // without `--force`.
+    let onto_database = export_to(&config.database_path());
+    assert!(!onto_database.status.success());
+    let forced_onto_database = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "export",
+            "--output",
+            config.database_path().to_str().unwrap(),
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!forced_onto_database.status.success());
+    assert_eq!(
+        database_bytes,
+        std::fs::read(config.database_path()).unwrap(),
+        "a refused export must leave the database byte-identical"
+    );
     let document: Value = serde_json::from_str(&first).unwrap();
     assert_eq!(document["format"], json!(hiero::export::EXPORT_FORMAT));
     assert_eq!(document["tables"]["series"][0]["slug"], json!("book"));
@@ -1050,4 +1198,20 @@ fn export_cli_writes_deterministic_readonly_json() {
     assert_eq!(wrong_flag.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&wrong_flag.stderr);
     assert!(stderr.contains("--args"), "{stderr}");
+}
+
+#[test]
+fn stale_discovery_is_rejected_by_the_tool_client() {
+    let root = tempfile::tempdir().unwrap();
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().into()),
+        port: 0,
+        ..Default::default()
+    })
+    .unwrap();
+    let saved = std::fs::read(config.daemon_discovery_path()).unwrap();
+    daemon.shutdown().unwrap();
+    std::fs::write(config.daemon_discovery_path(), saved).unwrap();
+    assert!(hiero::daemon_client::DaemonClient::connect(&config).is_err());
 }

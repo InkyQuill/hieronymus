@@ -62,6 +62,106 @@ pub fn generation_table_exists(root: &Path, generation: &str) -> bool {
     table_dir(root, generation).is_dir()
 }
 
+/// Read-only, time-bounded evidence that an existing table matches its
+/// durable manifest. Never use `VectorIndex::open` for diagnostics: it creates
+/// tables, which can turn missing derived data into a misleading empty index.
+pub fn generation_table_intact(
+    root: &Path,
+    generation: &str,
+    identity: &EmbeddingIdentity,
+    expected_count: u64,
+) -> bool {
+    if validate_generation_id(generation).is_err() || !generation_table_exists(root, generation) {
+        return false;
+    }
+    runtime().block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let connection = connect(root.to_str()?).execute().await.ok()?;
+            let table = connection
+                .open_table(table_name_for(generation))
+                .execute()
+                .await
+                .ok()?;
+            if table.schema().await.ok()?.as_ref() != row_schema(identity.dimensions()).as_ref()
+                || table.count_rows(None).await.ok()? as u64 != expected_count
+            {
+                return None;
+            }
+            // The durable manifest carries the complete embedding identity;
+            // every row must agree on the identity columns stored in Lance.
+            let quote = |value: &str| value.replace('\'', "''");
+            let mismatch = format!(
+                "generation_id != '{}' OR model != '{}' OR model_revision != '{}'",
+                quote(generation),
+                quote(identity.model()),
+                quote(identity.revision())
+            );
+            if table.count_rows(Some(mismatch)).await.ok()? != 0 {
+                return None;
+            }
+            if expected_count > 0 {
+                // Metadata and scalar columns can survive loss of ANN files.
+                // Exercise the same filtered vector path as serving queries,
+                // using a real stored row so the probe must return a hit.
+                let samples = table
+                    .query()
+                    .select(Select::Columns(vec![
+                        "series_slug".into(),
+                        VECTOR_COLUMN.into(),
+                    ]))
+                    .limit(1)
+                    .execute()
+                    .await
+                    .ok()?
+                    .try_collect::<Vec<RecordBatch>>()
+                    .await
+                    .ok()?;
+                let sample = samples.iter().find(|batch| batch.num_rows() > 0)?;
+                let series = column::<StringArray>(sample, "series_slug").ok()?.value(0);
+                let values = column::<FixedSizeListArray>(sample, VECTOR_COLUMN)
+                    .ok()?
+                    .value(0);
+                let vector = values
+                    .as_any()
+                    .downcast_ref::<Float32Array>()?
+                    .values()
+                    .to_vec();
+                if vector.len() != identity.dimensions()
+                    || vector.iter().any(|value| !value.is_finite())
+                    || vector.iter().all(|value| *value == 0.0)
+                {
+                    return None;
+                }
+                let mut query = table
+                    .query()
+                    .nearest_to(vector)
+                    .ok()?
+                    .column(VECTOR_COLUMN)
+                    .only_if(series_predicate(series).ok()?)
+                    .limit(1);
+                if table.index_stats(ANN_INDEX_NAME).await.ok()?.is_some() {
+                    query = query
+                        .nprobes(ANN_NUM_PROBES)
+                        .refine_factor(ANN_REFINE_FACTOR);
+                }
+                let batches = query
+                    .execute()
+                    .await
+                    .ok()?
+                    .try_collect::<Vec<RecordBatch>>()
+                    .await
+                    .ok()?;
+                if decode_hits(batches).ok()?.is_empty() {
+                    return None;
+                }
+            }
+            Some(())
+        })
+        .await
+        .is_ok_and(|result| result.is_some())
+    })
+}
+
 /// Process-wide runtime bridging the synchronous library surface onto
 /// LanceDB's async API. One runtime, created on first use, lives for the
 /// process lifetime.

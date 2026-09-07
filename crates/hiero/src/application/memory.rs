@@ -13,7 +13,14 @@
 //! `{recall_id, deterministic_contract, results, warnings}` — the normative
 //! `results` key flattens the library's ranked hits, while the deterministic
 //! contract is the section computed before any lane fusion and is serialized
-//! whole (even when `limit` removed every advisory hit). The legacy
+//! whole (even when `limit` removed every advisory hit).
+//!
+//! Task C5 shapes the two retrieval tools' relationship to required
+//! semantics: `hieronymus_rag_search` IS semantic RAG search, so it refuses a
+//! semantic service that cannot serve rather than answering with the lexical
+//! lane ([`Application::search_rag`]), while `hieronymus_recall` keeps serving
+//! memory and deterministic terminology and reports the gap through
+//! `warnings`. The legacy
 //! `hieronymus_memory_add`/`hieronymus_memory_search` wrappers keep their
 //! Python semantics: short-term session storage and legacy entry rows, not
 //! crystal writes.
@@ -30,6 +37,8 @@ use hieronymus::recall::{RecallHit, RecallResponse};
 use hieronymus::registry::{Registry, Series};
 use hieronymus::short_memory::search_expression;
 use hieronymus::workspace::{ShortTermMemoryInput, WorkspaceStore};
+
+use crate::daemon::semantic_worker::EMPTY_CORPUS_JOB_ID;
 
 use super::AppError;
 use super::Application;
@@ -531,6 +540,14 @@ fn default_recall_limit() -> i64 {
 /// arguments and override mismatches are rejections), and the ADR 0011 DTO —
 /// `{recall_id, deterministic_contract, results, warnings}` where the
 /// contract is returned whole even when `limit` removed all advisory hits.
+///
+/// Mixed recall never hard-fails on missing semantics (that is the strict
+/// `hieronymus_rag_search` contract instead): memory rows and the
+/// deterministic terminology contract still run and still return. What it
+/// does do since task C5 is say so — `warnings` carries
+/// `semantic_lane_unavailable` whenever required semantics did not run over
+/// the current corpus, whether the lane is unarmed, degraded, or the shared
+/// semantic service reports it cannot serve yet.
 fn recall(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RecallArgs>(arguments)?;
     let series = series_context(application, &args.series_slug)?;
@@ -697,14 +714,41 @@ fn default_source_type() -> String {
     "auto".to_string()
 }
 
+/// The three honest answers to "is the new text semantically indexed?".
+/// Serialized as `semantic_indexing` so no caller has to infer it from the
+/// shape of another field.
+const INDEXING_QUEUED: &str = "queued";
+const INDEXING_OWED: &str = "owed";
+const INDEXING_NOT_REQUIRED: &str = "not-required";
+
 /// Import a text/markdown/glossary file through the RAG store: the store
 /// resolves the actual parser and source type from the file, persists chunks
 /// with their typed tags, and treats identical checksum re-imports as
-/// metadata refreshes. Unsupported types are clean tool errors. After the
-/// authoritative commit a durable semantic rebuild is queued through the
-/// daemon's semantic controller (Task S2); when no daemon owns this
-/// application the field is `null` and startup reconciliation covers the
-/// chunks later.
+/// metadata refreshes. Unsupported types are clean tool errors.
+///
+/// The authoritative transaction also records the corpus-revision bump and the
+/// durable semantic work intent (`RagStore::import_file`), so the owed
+/// indexing is committed with the chunks that owe it. Queueing the rebuild
+/// through the daemon's semantic controller afterwards is a best-effort
+/// *notification* — a fast path, not the record.
+///
+/// Task C4 (review finding A4) is about what this call then TELLS the caller.
+/// The pre-C4 payload put an enqueue failure into `semantic_rebuild_job` as
+/// `{"error": ...}` on an otherwise-successful result, which reads as success
+/// to anything that does not inspect the field's type — the exact shape that
+/// let unindexed text look indexed. Now `semantic_indexing` states the outcome
+/// outright: `queued` (the rebuild is in the durable queue, `semantic_rebuild_job`
+/// carries its id), `owed` (the intent is durably recorded but this call could
+/// not queue it — no daemon owns this application, or the enqueue failed with
+/// `semantic_indexing_error`; reconciliation will queue it), or `not-required`
+/// (there is no indexing to do — an identical-checksum metadata refresh
+/// changed no indexable text, or there were no chunks to index at all).
+///
+/// `semantic_rebuild_job` is a job id or `null`, never anything else, and it
+/// is a string exactly when `semantic_indexing` is `queued`. The controller's
+/// internal `rebuild:empty-corpus` marker is therefore mapped to
+/// `not-required` with a `null` job rather than leaked: it is the worker's own
+/// no-op signal, not a durable job a caller could ever look up.
 fn rag_import(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagImportArgs>(arguments)?;
     let import = RagImport {
@@ -718,19 +762,38 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
         .map_err(domain)?
         .import_file(&args.series_slug, Path::new(&args.path), &import)
         .map_err(domain)?;
-    // Queue only when new authoritative rows landed: a metadata refresh of
-    // an identical checksum never changes chunk text, so the active
-    // generation's fingerprints stay valid.
-    let rebuild_job = if result.skipped || result.chunk_count == 0 {
-        Value::Null
+    // Notify only when indexable text actually changed. The gate is exactly
+    // the one the store used to bump the corpus revision: a skipped
+    // (identical-checksum) import refreshed metadata tags only, everything
+    // else moved the revision.
+    //
+    // The pre-C4 gate also tested `chunk_count == 0`, which was dead code:
+    // `load_rag_file` rejects a source that parses to zero chunks before the
+    // import transaction is even opened, so a committed non-skipped import
+    // always added at least one chunk.
+    let (rebuild_job, indexing, indexing_error) = if result.skipped {
+        (Value::Null, INDEXING_NOT_REQUIRED, None)
     } else {
         match application.request_rebuild(&args.series_slug) {
-            Some(Ok(job_id)) => json!(job_id),
-            Some(Err(error)) => json!({"error": error}),
-            None => Value::Null,
+            // The controller found no chunks to index and answered with its
+            // internal no-op marker, which is not a durable job id and must
+            // never be handed to a caller as one. Unreachable through this
+            // path today (see above), so this is the belt-and-braces half of
+            // the "a job id or null, never anything else" contract rather than
+            // a scenario — if the corpus can ever be emptied out from under an
+            // import, the payload stays honest instead of advertising a job
+            // nobody can look up.
+            Some(Ok(job_id)) if job_id == EMPTY_CORPUS_JOB_ID => {
+                (Value::Null, INDEXING_NOT_REQUIRED, None)
+            }
+            Some(Ok(job_id)) => (json!(job_id), INDEXING_QUEUED, None),
+            // The import is committed and the intent is durable; what must not
+            // happen is reporting this as a queued job.
+            Some(Err(error)) => (Value::Null, INDEXING_OWED, Some(error)),
+            None => (Value::Null, INDEXING_OWED, None),
         }
     };
-    Ok(json!({
+    let mut payload = json!({
         "source_id": result.source.id,
         "series_slug": result.source.series_slug,
         "source_ref": result.source.source_ref,
@@ -743,7 +806,12 @@ fn rag_import(application: &Application, arguments: &Value) -> Result<Value, App
         "normalized_path": result.normalized_path,
         "normalized_format": result.normalized_format,
         "semantic_rebuild_job": rebuild_job,
-    }))
+        "semantic_indexing": indexing,
+    });
+    if let Some(error) = indexing_error {
+        payload["semantic_indexing_error"] = json!(error);
+    }
+    Ok(payload)
 }
 
 // ------------------------------------------------------- hieronymus_rag_search
@@ -760,49 +828,76 @@ fn default_rag_search_limit() -> i64 {
     10
 }
 
-/// The advisory FTS chunk lane for one series (Python `rag_hit_payload`
-/// rows). Semantic RAG search stays the armed semantic lane inside recall;
-/// per the recall-v2 expectation, an armed-but-unavailable lane degrades
-/// explicitly with a structured `semantic_lane_unavailable` warning, while
-/// an unarmed lane is simply absent — the recall response then serves the
-/// lexical rows with no warning at all.
+/// The public semantic RAG search tool: argument decoding plus the strict
+/// semantic gate, then the shared hybrid retrieval in
+/// [`Application::search_rag`].
+///
+/// Argument validation stays ahead of the gate so a malformed call keeps its
+/// frozen diagnostic ("limit must be at least 1") whatever the semantic
+/// service is doing.
 fn rag_search(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<RagSearchArgs>(arguments)?;
     if args.limit < 1 {
         return Err(AppError::Domain("limit must be at least 1".to_string()));
     }
-    let hits = RagStore::open(application.config())
-        .map_err(domain)?
-        .search(
-            &args.series_slug,
-            &args.query,
-            args.limit as usize,
-            &[],
-            &[],
-            &[],
-        )
-        .map_err(domain)?;
-    Ok(Value::Array(
-        hits.iter()
-            .map(|hit| {
-                json!({
-                    "source": "rag",
-                    "id": hit.chunk.id,
-                    "title": hit.chunk.title(),
-                    "kind": hit.chunk.kind(),
-                    "text": hit.chunk.text,
-                    "display_text": hit.chunk.display_text,
-                    "source_ref": hit.chunk.source_ref,
-                    "chunk_kind": hit.chunk.chunk_kind,
-                    "location": hit.chunk.location,
-                    "metadata": hit.chunk.metadata,
-                    "language_tags": hit.chunk.language_tags,
-                    "story_scopes": hit.chunk.story_scopes,
-                    "semantic_tags": hit.chunk.semantic_tags,
-                    "score": hit.score,
-                    "rank_reason": hit.reason,
+    application.search_rag(&args.series_slug, &args.query, args.limit as usize)
+}
+
+impl Application {
+    /// Semantic (hybrid) RAG search over one series, with NO synthetic task
+    /// session: the shared armed semantic lane fused with the FTS chunk lane
+    /// by reciprocal rank, exactly as `hieronymus_recall` fuses them
+    /// (`RecallService::search_series`).
+    ///
+    /// Task C5 (review finding A5) is about what this call refuses to do.
+    /// Before it, `hieronymus_rag_search` opened `RagStore` and ran the
+    /// lexical FTS query directly: it neither consumed the semantic lane nor
+    /// required readiness, so a missing, unconfigured, or failed semantic
+    /// runtime produced ordinary successful search results and the caller had
+    /// no way to tell that the semantic half never ran. Since both working
+    /// memory and semantic RAG are mandatory — FTS-only is not a completion
+    /// or release alternative — that is exactly the shape of degradation that
+    /// must never be silent.
+    ///
+    /// So the required service is gated first
+    /// ([`Application::require_semantic_service`]): a service that is absent,
+    /// acquiring, rebuilding, or failed is an error carrying its own reason,
+    /// not a lexical answer. A ready service with an empty series is a
+    /// success with zero rows (ready-for-ingest), and a ready service whose
+    /// lane then cannot execute over a series that HAS chunks is an error
+    /// too.
+    ///
+    /// The response stays the bare row array the frozen `outputSchema`
+    /// describes; the accepted delta is what the rows now mean — see
+    /// `compatibility/rust/rag-search-v2.json`.
+    pub fn search_rag(&self, series: &str, query: &str, limit: usize) -> Result<Value, AppError> {
+        self.require_semantic_service()?;
+        let hits = self
+            .recall()
+            .search_series(series, query, limit)
+            .map_err(domain)?;
+        Ok(Value::Array(
+            hits.iter()
+                .map(|hit| {
+                    json!({
+                        "source": "rag",
+                        "id": hit.chunk.id,
+                        "title": hit.chunk.title(),
+                        "kind": hit.chunk.kind(),
+                        "text": hit.chunk.text,
+                        "display_text": hit.chunk.display_text,
+                        "source_ref": hit.chunk.source_ref,
+                        "chunk_kind": hit.chunk.chunk_kind,
+                        "location": hit.chunk.location,
+                        "metadata": hit.chunk.metadata,
+                        "language_tags": hit.chunk.language_tags,
+                        "story_scopes": hit.chunk.story_scopes,
+                        "semantic_tags": hit.chunk.semantic_tags,
+                        "score": hit.score,
+                        "rank_reason": hit.reason,
+                    })
                 })
-            })
-            .collect(),
-    ))
+                .collect(),
+        ))
+    }
 }

@@ -62,7 +62,30 @@ contract is computed from the query/source context before any lane fusion,
 returned separately from the ranked `results`, and serialized whole even when
 `limit` removed every advisory hit. The Python fixture's bare ranked list
 remains the frozen reference for the Python tool; Rust consumers read the
-versioned delta.
+versioned delta. Since task C5 the same file also pins the `warnings` rule:
+`semantic_lane_unavailable` is emitted whenever required semantics did not run
+over the current corpus — an unarmed query lane included, which the pre-C5
+expectation recorded as a silent supported mode. Warnings are pinned by kind
+(`warning_kinds`); the reason text belongs to whichever semantic service is
+attached and is deliberately not frozen.
+
+### Semantic RAG search (`rust/rag-search-v2.json`, ADR 0013 / review finding A5)
+
+`hieronymus_rag_search` keeps the frozen envelope — the bare row array the
+frozen `hieronymus_rag_searchOutput` schema describes, with the same row keys
+— and changes two things. It now serves the same armed semantic lane plus
+reciprocal-rank fusion `hieronymus_recall` runs (a session-less series+query
+search, no synthetic task session), so `score` is the RRF score over both
+lanes rather than the raw FTS score and `rank_reason` distinguishes them
+(`rag semantic match` for a semantic-only row). And it requires the semantic
+service: absent, acquiring, rebuilding, or failed semantics is a tool error
+carrying the service's own actionable reason, where the pre-C5 tool answered
+with lexical FTS rows that no caller could tell apart from a complete hybrid
+answer. A ready service over a series with no indexed chunks stays an empty
+success. The mandatory-semantics half of that rule is the owner's M2/S2
+completion contract, not a reinterpretation of ADR 0013's FTS5-only release
+baseline: that baseline governs what a release may ship, not what a tool
+advertised as semantic RAG search may silently answer.
 
 `hieronymus_concept_proposals_list` has a documented scope delta of the same
 kind: the Rust tool returns only the strict half of the Python response — the
@@ -70,6 +93,17 @@ safe DTO projection of the pending `strict_concept_proposals` rows. The
 Python tool also merges recent dream-audit concept-suggestion payloads into
 the same list; that dream-audit merge lands with the dreaming plan, so until
 then Rust consumers see only the strict proposals.
+
+`hieronymus_rag_import` carries additive Rust-only keys with no versioned
+expectation file, because the frozen Python boundary pins no response shape
+for them: `semantic_rebuild_job` (task S2) and, alongside it,
+`semantic_indexing` plus the conditional `semantic_indexing_error` (task C4).
+`semantic_indexing` is always present and is one of `queued`, `owed`, or
+`not-required`; `semantic_rebuild_job` is a durable job id exactly when the
+value is `queued` and `null` otherwise — never a structured error object, and
+never the controller's internal `rebuild:empty-corpus` marker. Python has no
+semantic indexing lane at all, so these keys add to the response and change
+nothing a Python consumer reads.
 
 ### Web console authentication (`rust/console-auth.json`, ADR 0012)
 

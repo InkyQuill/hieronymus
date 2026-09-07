@@ -54,6 +54,38 @@ const WORKER_SLICE: Duration = Duration::from_millis(250);
 /// anchor semantics).
 const SCHEDULE_GATE: Duration = Duration::from_secs(2);
 
+/// Exponential outage delay; the scheduler's urgent gate cannot bypass it.
+pub fn retry_delay(failures: u32) -> Duration {
+    if failures == 0 {
+        return Duration::ZERO;
+    }
+    Duration::from_secs(
+        (30_u64.saturating_mul(1_u64 << failures.saturating_sub(1).min(6))).min(1800),
+    )
+}
+
+/// Wall clock injection keeps durable retry deadlines testable across restarts.
+pub type RetryClock = Arc<dyn Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync>;
+
+fn config_fingerprint(config: &HieronymusConfig) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    for path in [config.dream_config_path(), config.provider_config_path()] {
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                digest.update((bytes.len() as u64).to_le_bytes());
+                digest.update(bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                digest.update(b"missing");
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    // Credentials participate in repair detection, but only the digest is stored.
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 /// A request for dream work. `manual` bypasses the global automatic-
 /// scheduling switch (`dream.conf` `enabled`) but never the per-workflow
 /// assignments — the fail-closed `enabled_choices` gate stays authoritative.
@@ -78,8 +110,8 @@ pub struct DreamRunStatus {
     pub run_id: String,
     /// `"manual"`, `"scheduled"`, `"urgent"`, or `"backlog_escape"`.
     pub trigger: String,
-    /// The final run-row status (`"completed"`, `"skipped"`, `"failed"`),
-    /// or `"interrupted"` when a shutdown cut the drain short. `None` while
+    /// The overall drain outcome (`"completed"`, `"pending"`, `"skipped"`,
+    /// `"failed"`), or `"interrupted"` when shutdown cut the drain short. `None` while
     /// the run is still active.
     pub outcome: Option<String>,
     /// Totals of the finished drain (`None` while active).
@@ -199,6 +231,8 @@ struct ControllerInner {
     events: Arc<AdminEventHub>,
     config: HieronymusConfig,
     source: ProviderSource,
+    clock: RetryClock,
+    retry_storage_failed: AtomicBool,
 }
 
 /// A cloneable handle to the dream controller. The worker is admitted to
@@ -251,6 +285,21 @@ impl DreamController {
         workers: &mut super::workers::WorkerGroup,
         source: ProviderSource,
     ) -> Result<Self, String> {
+        Self::start_with_provider_source_and_clock(
+            config,
+            workers,
+            source,
+            Arc::new(chrono::Utc::now),
+        )
+    }
+
+    /// Explicit test seam for persisted retry eligibility; production uses UTC.
+    pub fn start_with_provider_source_and_clock(
+        config: HieronymusConfig,
+        workers: &mut super::workers::WorkerGroup,
+        source: ProviderSource,
+        clock: RetryClock,
+    ) -> Result<Self, String> {
         let events = Arc::new(AdminEventHub::default());
         let inner = Arc::new(ControllerInner {
             state: Mutex::new(ControllerState {
@@ -264,6 +313,8 @@ impl DreamController {
             events,
             config,
             source,
+            clock,
+            retry_storage_failed: AtomicBool::new(false),
         });
         let controller = DreamController { inner };
         let worker = controller.clone();
@@ -389,11 +440,18 @@ impl DreamController {
         if !dream_config.enabled {
             return None;
         }
-        let pending = pending_short_term_memory_count(&self.inner.config).ok()?;
-        if pending == 0 {
-            // Nothing pending: no run and no skip row (Python's
-            // no-pending-memory stand-down).
+        if !self.retry_eligible().ok()? {
             return None;
+        }
+        let pending = pending_short_term_memory_count(&self.inner.config).ok()?;
+        if pending == 0 || pending < dream_config.min_pending_short_term_memories {
+            let service = DreamService::open(&self.inner.config, (self.inner.source)()).ok()?;
+            if service.cycle_has_deterministic_work().ok()? {
+                return self.submit_scheduled("scheduled", false);
+            }
+            if pending == 0 {
+                return None;
+            }
         }
         let skips = consecutive_not_enough_memories_skips(&self.inner.config).unwrap_or(0);
         match scheduled_decision(&dream_config, pending, skips) {
@@ -415,7 +473,7 @@ impl DreamController {
     }
 
     fn submit_scheduled(&self, trigger: &'static str, ignore_minimum: bool) -> Option<DreamTicket> {
-        if self.inner.stop.load(Ordering::Acquire) {
+        if !self.retry_eligible().unwrap_or(false) || self.inner.stop.load(Ordering::Acquire) {
             return None;
         }
         let (ticket, _) = self.submit(RunPlan {
@@ -423,6 +481,84 @@ impl DreamController {
             ignore_minimum,
         });
         Some(ticket)
+    }
+
+    /// Configuration repair resets the streak atomically; an unreadable store
+    /// fails closed instead of turning an outage into a hot retry loop.
+    fn retry_eligible(&self) -> Result<bool, String> {
+        if self.inner.retry_storage_failed.load(Ordering::Acquire) {
+            return Err(
+                "automatic dreaming paused: retry state could not be persisted".to_string(),
+            );
+        }
+        let fingerprint = config_fingerprint(&self.inner.config)?;
+        let mut connection =
+            open_migrated(&self.inner.config.database_path()).map_err(|e| e.to_string())?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        transaction.execute("insert into dream_retry_state(singleton, failures, next_attempt_at, config_fingerprint)
+          values(1, 0, null, ?1) on conflict(singleton) do update set failures=0, next_attempt_at=null, config_fingerprint=excluded.config_fingerprint
+          where dream_retry_state.config_fingerprint != excluded.config_fingerprint", [&fingerprint]).map_err(|e| e.to_string())?;
+        let deadline: Option<String> = transaction
+            .query_row(
+                "select next_attempt_at from dream_retry_state where singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())?;
+        match deadline {
+            None => Ok(true),
+            Some(value) => Ok(chrono::DateTime::parse_from_rfc3339(&value)
+                .map_err(|e| e.to_string())?
+                <= (self.inner.clock)()),
+        }
+    }
+
+    fn retry_wakeup_due(&self) -> bool {
+        use rusqlite::OptionalExtension;
+        let Ok(connection) = open_migrated(&self.inner.config.database_path()) else {
+            return false;
+        };
+        let row = connection.query_row("select failures, next_attempt_at, config_fingerprint from dream_retry_state where singleton=1", [], |row| Ok((row.get::<_, u32>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?))).optional();
+        let Ok(Some((failures, deadline, fingerprint))) = row else {
+            return false;
+        };
+        if failures == 0 {
+            return false;
+        }
+        config_fingerprint(&self.inner.config).is_ok_and(|current| current != fingerprint)
+            || deadline
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(&value).ok())
+                .is_some_and(|deadline| deadline <= (self.inner.clock)())
+    }
+
+    fn record_retry_outcome(&self, fingerprint: &str, failed: bool) -> Result<(), String> {
+        let mut connection =
+            open_migrated(&self.inner.config.database_path()).map_err(|e| e.to_string())?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        use rusqlite::OptionalExtension;
+        let previous: u32 = transaction.query_row("select failures from dream_retry_state where singleton=1 and config_fingerprint=?1", [fingerprint], |row| row.get(0)).optional().map_err(|e| e.to_string())?.unwrap_or(0);
+        let failures = if failed {
+            previous.saturating_add(1)
+        } else {
+            0
+        };
+        // Positive bounded jitter (0–10%), capped at the maximum delay.
+        let mut random = [0_u8; 1];
+        let _ = getrandom::fill(&mut random);
+        let seconds = retry_delay(failures).as_secs();
+        let jittered = (seconds + seconds * u64::from(random[0] % 11) / 100).min(1800);
+        let deadline = failed.then(|| {
+            ((self.inner.clock)() + chrono::Duration::seconds(jittered as i64)).to_rfc3339()
+        });
+        transaction.execute("insert into dream_retry_state(singleton, failures, next_attempt_at, config_fingerprint)
+          values(1, ?1, ?2, ?3) on conflict(singleton) do update set failures=excluded.failures, next_attempt_at=excluded.next_attempt_at, config_fingerprint=excluded.config_fingerprint",
+          rusqlite::params![failures, deadline, fingerprint]).map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ControllerState> {
@@ -496,7 +632,7 @@ impl DreamController {
                 now.duration_since(anchor) >= interval
             }
         };
-        if due {
+        if due || self.retry_wakeup_due() {
             self.run_scheduled_tick();
             Some(now)
         } else {
@@ -555,6 +691,7 @@ impl DreamController {
     fn execute(&self, pending: &(String, RunPlan, Arc<RunSlot>), stop: &AtomicBool) {
         let (run_id, plan, slot) = pending;
         let trigger = plan.trigger;
+        let fingerprint = config_fingerprint(&self.inner.config);
         self.inner
             .events
             .publish("dream_started", json!({ "trigger": trigger }));
@@ -579,6 +716,25 @@ impl DreamController {
             }
         };
 
+        if let Ok(fingerprint) = &fingerprint
+            && (outcome.is_err()
+                || outcome
+                    .as_ref()
+                    .is_ok_and(|drain| drain.outcome == "completed"))
+        {
+            let failed = outcome.is_err();
+            if let Err(error) = self.record_retry_outcome(fingerprint, failed) {
+                self.inner
+                    .retry_storage_failed
+                    .store(true, Ordering::Release);
+                eprintln!("hiero dream worker: could not persist retry state: {error}");
+            } else {
+                self.inner
+                    .retry_storage_failed
+                    .store(false, Ordering::Release);
+            }
+        }
+
         // The wait answer and the events tell the same story: a drain the
         // shutdown cut short is an interrupted run, not a completion.
         let (slot_outcome, final_outcome) = match outcome {
@@ -589,19 +745,10 @@ impl DreamController {
                 );
                 (Ok(drain), "skipped".to_string())
             }
-            Ok(drain) if stop.load(Ordering::Acquire) && self.eligible_work_remains() => {
-                let remaining =
-                    pending_short_term_memory_count(&self.inner.config).unwrap_or_default();
-                let error = format!(
-                    "dream drain was interrupted by daemon shutdown with {remaining} \
-                     input(s) still pending after {} batch(es)",
-                    drain.batches
-                );
-                self.inner.events.publish(
-                    "dream_failed",
-                    json!({ "trigger": trigger, "error": error }),
-                );
-                (Err(error), "interrupted".to_string())
+            Ok(drain) if matches!(drain.outcome.as_str(), "pending" | "interrupted") => {
+                let state = drain.outcome.clone();
+                self.inner.events.publish("dream_paused", json!({ "trigger": trigger, "status": state, "batches": drain.batches, "progress": drain.progress }));
+                (Ok(drain), state)
             }
             Ok(drain) => {
                 self.inner.events.publish(
@@ -661,13 +808,6 @@ impl DreamController {
         service
             .run_draining(plan.trigger, plan.ignore_minimum, stop)
             .map_err(|error| self.redact_error(&error))
-    }
-
-    /// Whether crystallization-eligible work still remains (the shutdown
-    /// interruption check; a plain race on the count is harmless — the
-    /// durable rows are the truth).
-    fn eligible_work_remains(&self) -> bool {
-        pending_short_term_memory_count(&self.inner.config).is_ok_and(|count| count > 0)
     }
 
     /// Error text for events, redacted exactly like the dreaming core so

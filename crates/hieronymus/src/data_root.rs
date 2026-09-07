@@ -60,6 +60,12 @@ impl HieronymusConfig {
         self.config_root().join("semantic")
     }
 
+    /// The daemon's dream autostart record: last start, last error, and the
+    /// skip bookkeeping `GET /status` reports.
+    pub fn dream_autostart_path(&self) -> PathBuf {
+        self.config_root().join("dream-autostart.json")
+    }
+
     /// Non-secret discovery record published by `hiero daemon` (ADR 0009,
     /// ADR 0012 as amended 2026-09-03). Kept separate from the bearer token.
     pub fn daemon_discovery_path(&self) -> PathBuf {

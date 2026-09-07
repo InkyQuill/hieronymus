@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::secret::Secret;
 
-use crate::client::{ClientError, request_json, request_json_within};
+use crate::client::{ClientError, request_json_within};
 use crate::daemon::discovery::{
     self, CredentialError, DiscoveryError, DiscoveryRecord, read_discovery, read_token,
 };
@@ -182,7 +182,7 @@ impl DiscoveryHealth {
                 live_protocol,
             } => format!(
                 "the daemon at {}:{} serves protocol {live_protocol}, \
-                 but the discovery record claims {}",
+                 but the discovery record claims {} and this client requires {PROTOCOL_REVISION}",
                 record.host, record.port, record.protocol_version
             ),
             DiscoveryHealth::Live { record, .. } => format!(
@@ -195,7 +195,10 @@ impl DiscoveryHealth {
     fn into_client_error(self) -> ClientError {
         match self {
             DiscoveryHealth::NoCredential { detail, .. } => ClientError::Credential(detail),
-            other => ClientError::NotDiscovered(other.detail()),
+            other => ClientError::NotDiscovered(format!(
+                "{}; start it with `hiero start` or `hiero daemon`",
+                other.detail()
+            )),
         }
     }
 }
@@ -262,7 +265,7 @@ pub fn probe(config: &HieronymusConfig) -> DiscoveryHealth {
                 .and_then(Value::as_str)
                 .unwrap_or("<absent>")
                 .to_string();
-            if live_protocol != record.protocol_version {
+            if live_protocol != record.protocol_version || live_protocol != PROTOCOL_REVISION {
                 return DiscoveryHealth::ProtocolMismatch {
                     record,
                     live_protocol,
@@ -336,6 +339,52 @@ impl DaemonClient {
         &self.record
     }
 
+    /// Forward an MCP envelope using the same authenticated connection as native routes.
+    pub fn forward_mcp(&self, body: &Value) -> Result<(u16, Vec<u8>), ClientError> {
+        let mut headers = bearer_headers(self.address, &self.bearer);
+        let version = body
+            .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")
+            .and_then(Value::as_str)
+            .unwrap_or(PROTOCOL_REVISION);
+        headers.push(("MCP-Protocol-Version".into(), version.into()));
+        if let Some(method) = body.get("method").and_then(Value::as_str) {
+            headers.push(("Mcp-Method".into(), method.into()));
+            if matches!(method, "tools/call" | "resources/read" | "prompts/get")
+                && let Some(name) = body.pointer("/params/name").and_then(Value::as_str)
+            {
+                headers.push(("Mcp-Name".into(), name.into()));
+            }
+        }
+        let payload = serde_json::to_vec(body)
+            .map_err(|_| ClientError::Protocol("request cannot serialize"))?;
+        crate::client::post_json(self.address, "/mcp", &headers, &payload)
+    }
+
+    /// One stateless tool call, returning the MCP result envelope.
+    pub fn call_tool(&self, name: &str, arguments: &Value) -> Result<Value, ClientError> {
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments, "_meta": {
+                "io.modelcontextprotocol/protocolVersion": PROTOCOL_REVISION,
+                "io.modelcontextprotocol/clientCapabilities": {}
+            }}
+        });
+        let (status, raw) = self.forward_mcp(&body)?;
+        let value: Value = serde_json::from_slice(&raw)
+            .map_err(|_| ClientError::Protocol("response body is not JSON"))?;
+        if !(200..300).contains(&status) {
+            return Err(ClientError::Status {
+                status,
+                detail: value
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("daemon rejected the MCP request")
+                    .replace(self.bearer.expose_secret().as_str(), "[REDACTED]"),
+            });
+        }
+        Ok(value)
+    }
+
     /// POST a JSON body to an authenticated route and return the response.
     pub fn post(&self, path: &str, body: &Value) -> Result<Value, ClientError> {
         self.send("POST", path, body)
@@ -347,17 +396,38 @@ impl DaemonClient {
     }
 
     fn send(&self, method: &str, path: &str, body: &Value) -> Result<Value, ClientError> {
+        self.send_with_timeout(method, path, body, Duration::from_secs(10))
+    }
+
+    /// Explicit acquisition uses a bounded deadline for both asset downloads.
+    pub fn post_with_timeout(
+        &self,
+        path: &str,
+        body: &Value,
+        timeout: Duration,
+    ) -> Result<Value, ClientError> {
+        self.send_with_timeout("POST", path, body, timeout)
+    }
+
+    fn send_with_timeout(
+        &self,
+        method: &str,
+        path: &str,
+        body: &Value,
+        timeout: Duration,
+    ) -> Result<Value, ClientError> {
         let payload = match body {
             Value::Null => Vec::new(),
             other => serde_json::to_vec(other)
                 .map_err(|_| ClientError::Protocol("request cannot serialize"))?,
         };
-        let (status, raw) = request_json(
+        let (status, raw) = request_json_within(
             method,
             self.address,
             path,
             &bearer_headers(self.address, &self.bearer),
             &payload,
+            timeout,
         )?;
         let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
         if !(200..300).contains(&status) {

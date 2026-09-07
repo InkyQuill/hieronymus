@@ -200,20 +200,59 @@ fn degraded_lane_returns_fts_results_with_a_structured_warning() {
     assert_eq!(generations, 0);
 }
 
+/// An unarmed lane is NOT a silent supported mode (task C5, review finding
+/// A5): the FTS lane still answers, but the response says outright that
+/// required semantics never ran. Until C5 this case carried no warning at
+/// all, so a cold or misconfigured semantic runtime was indistinguishable
+/// from a complete hybrid answer.
 #[test]
-fn recall_without_a_semantic_lane_has_no_warnings() {
+fn recall_without_a_semantic_lane_reports_the_missing_lane() {
     let fixture = fixture();
     import_text(&fixture, "a.txt", "Cooking Talent appears here.");
     let response = RecallService::open(&fixture.config)
         .unwrap()
         .recall(fixture.session_id, &context(), "Cooking Talent", 10)
         .unwrap();
-    assert!(warnings_of(&response).is_empty());
+    let unavailable: Vec<&RecallWarning> = warnings_of(&response)
+        .iter()
+        .filter(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
+        .collect();
+    assert_eq!(unavailable.len(), 1, "{:?}", warnings_of(&response));
+    assert!(!unavailable[0].reason.is_empty());
     assert!(
         response
             .hits
             .iter()
             .any(|hit| matches!(hit, RecallHit::Rag { .. }))
+    );
+}
+
+/// The service-level half of the same fact: the lane ran clean, but the owner
+/// of the shared semantic service reports it cannot serve the current corpus
+/// (an in-flight rebuild, an acquiring runtime, a failure). The answer is
+/// still incomplete, so it is still reported — the lane's own success is not
+/// evidence that every required lane ran.
+#[test]
+fn recall_reports_a_semantic_service_that_is_not_ready() {
+    use hieronymus::recall::SemanticAvailability;
+
+    let fixture = fixture();
+    import_text(&fixture, "a.txt", "Cooking Talent appears here.");
+    let response = RecallService::open(&fixture.config)
+        .unwrap()
+        .with_semantic_status(std::sync::Arc::new(|| {
+            SemanticAvailability::Unavailable("semantic indexing is still in progress".to_string())
+        }))
+        .recall(fixture.session_id, &context(), "Cooking Talent", 10)
+        .unwrap();
+    let unavailable: Vec<&RecallWarning> = warnings_of(&response)
+        .iter()
+        .filter(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
+        .collect();
+    assert_eq!(unavailable.len(), 1, "{:?}", warnings_of(&response));
+    assert_eq!(
+        unavailable[0].reason, "semantic indexing is still in progress",
+        "the service's own reason rides through verbatim"
     );
 }
 
@@ -662,4 +701,351 @@ fn armed_lane_leaves_long_term_boosts_and_activations_unchanged() {
         )
         .unwrap();
     assert_eq!(count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Session-less hybrid search (task C5)
+// ---------------------------------------------------------------------------
+
+/// `search_series` is the session-less half of the same hybrid retrieval:
+/// FTS chunk lane fused with the semantic chunk lane, series-isolated, with
+/// no session, no ledger, and no deterministic contract. A query with no
+/// lexical overlap can only have come from the semantic lane, which is what
+/// makes the tool's provenance marker meaningful.
+#[test]
+fn search_series_fuses_both_chunk_lanes_within_one_series() {
+    use hieronymus::semantic_recall::SEMANTIC_MATCH_REASON;
+
+    let fixture = fixture();
+    import_text(&fixture, "a.txt", "Cooking Talent appears here.");
+    // A second series whose chunks must never appear in a demo search.
+    Registry::open(&fixture.config)
+        .unwrap()
+        .create_series("ghost", "ghost", "ja", "en", None)
+        .unwrap();
+    let foreign = write_source(&fixture, "b.txt", "Cooking Talent appears here too.");
+    RagStore::open(&fixture.config)
+        .unwrap()
+        .import_file("ghost", &foreign, &RagImport::new())
+        .unwrap();
+    activate_generation(&fixture);
+
+    let service = armed_service(&fixture);
+
+    // The lexical carrier keeps its lane reason when both lanes agree.
+    let lexical = service.search_series("demo", "Cooking Talent", 10).unwrap();
+    assert!(!lexical.is_empty());
+    for hit in &lexical {
+        assert_eq!(
+            hit.chunk.series_slug, "demo",
+            "foreign series must never leak: {hit:?}"
+        );
+        // RRF scores are bounded by the sum of two rank-1 contributions.
+        assert!(hit.score > 0.0 && hit.score <= 2.0 / 61.0, "{hit:?}");
+    }
+
+    // Semantic-only provenance: nothing in the query occurs in the chunk.
+    let semantic = service
+        .search_series("demo", "zzqxj nonlexical probe", 10)
+        .unwrap();
+    assert!(
+        semantic
+            .iter()
+            .any(|hit| hit.reason == SEMANTIC_MATCH_REASON),
+        "the semantic lane must surface the chunk: {semantic:?}"
+    );
+    assert!(
+        semantic.iter().all(|hit| hit.chunk.series_slug == "demo"),
+        "{semantic:?}"
+    );
+}
+
+/// The refusal: a series that HAS indexed text may never be answered with the
+/// lexical half alone, because a caller cannot tell that answer apart from a
+/// complete one. This is review finding A5 at the library boundary.
+#[test]
+fn search_series_refuses_a_lexical_only_answer_over_indexed_text() {
+    let fixture = fixture();
+    import_text(&fixture, "a.txt", "Cooking Talent appears here.");
+
+    let error = RecallService::open(&fixture.config)
+        .unwrap()
+        .search_series("demo", "Cooking Talent", 10)
+        .expect_err("an unarmed lane cannot serve a strict hybrid search");
+    assert!(
+        matches!(
+            error,
+            hieronymus::recall::RecallError::SemanticUnavailable(_)
+        ),
+        "{error:?}"
+    );
+    // The FTS lane would have answered this query; that is the point.
+    assert!(
+        !RagStore::open(&fixture.config)
+            .unwrap()
+            .search("demo", "Cooking Talent", 10, &[], &[], &[])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// The one honest empty answer: a series with no chunks has nothing to
+/// retrieve, so an empty result withholds nothing even with the semantic half
+/// missing (the ready-for-ingest case).
+#[test]
+fn search_series_answers_empty_for_a_series_with_no_chunks() {
+    let fixture = fixture();
+    let rows = RecallService::open(&fixture.config)
+        .unwrap()
+        .search_series("demo", "Cooking Talent", 10)
+        .expect("an empty series is a complete empty answer");
+    assert!(rows.is_empty());
+
+    // Limit validation stays ahead of everything else.
+    assert!(matches!(
+        RecallService::open(&fixture.config)
+            .unwrap()
+            .search_series("demo", "Cooking Talent", 0),
+        Err(hieronymus::recall::RecallError::LimitTooSmall)
+    ));
+}
+
+#[test]
+fn strict_search_refuses_corrupt_hits_even_when_repair_fails() {
+    for fail_repair in [false, true] {
+        let fixture = fixture();
+        import_text(&fixture, "a.txt", "Alpha paragraph one.");
+        activate_generation(&fixture);
+        let connection = rusqlite::Connection::open(fixture.config.database_path()).unwrap();
+        connection
+            .execute(
+                "update rag_chunks set text = 'Changed text', display_text = 'Changed text'",
+                [],
+            )
+            .unwrap();
+        if fail_repair {
+            connection.execute_batch("create trigger reject_repair before insert on semantic_generations begin select raise(abort, 'repair blocked'); end;").unwrap();
+        }
+        let error = armed_service(&fixture)
+            .search_series("demo", "Alpha", 10)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                hieronymus::recall::RecallError::SemanticUnavailable(_)
+            ),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(if fail_repair { "failed" } else { "scheduled" }),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn strict_search_limits_disjoint_lexical_and_semantic_lanes() {
+    let fixture = fixture();
+    import_text(&fixture, "a.txt", "Cooking Talent appears here.");
+    import_text(&fixture, "b.txt", "A distant mountain beyond the sea.");
+    activate_generation(&fixture);
+    let service = armed_service(&fixture);
+    // Find a query whose semantic winner differs from the sole lexical hit.
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    for suffix in 0..100 {
+        let query = format!("Cooking {}", "AND ".repeat(suffix));
+        let run = lane.run(
+            &fixture.config,
+            &TranslationContext::new("demo", "", "", "translation"),
+            &query,
+            1,
+        );
+        if run
+            .records
+            .first()
+            .is_some_and(|record| record.source_ref.ends_with("b.txt"))
+        {
+            assert_eq!(
+                RagStore::open(&fixture.config)
+                    .unwrap()
+                    .search("demo", &query, 1, &[], &[], &[])
+                    .unwrap()
+                    .len(),
+                1,
+                "fixture must also have a lexical hit"
+            );
+            assert_eq!(service.search_series("demo", &query, 1).unwrap().len(), 1);
+            return;
+        }
+    }
+    panic!("fixture must produce disjoint lanes");
+}
+
+#[test]
+fn strict_search_caps_fused_lanes_when_requested_limit_exceeds_rag_cap() {
+    let fixture = fixture();
+    let paragraphs = (0..50)
+        .map(|index| format!("Cooking Talent appears in paragraph {index}."))
+        .chain((0..50).map(|index| format!("A distant mountain rises beyond sea {index}.")))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    import_text(&fixture, "large.txt", &paragraphs);
+    activate_generation(&fixture);
+    let lexical = RagStore::open(&fixture.config)
+        .unwrap()
+        .search("demo", "Cooking", 100, &[], &[], &[])
+        .unwrap();
+    assert_eq!(lexical.len(), 50, "the public RAG search cap is 50");
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    let semantic = lane.run(
+        &fixture.config,
+        &TranslationContext::new("demo", "", "", "translation"),
+        "Cooking",
+        100,
+    );
+    assert!(!semantic.degraded);
+    assert_eq!(semantic.records.len(), 50);
+    assert!(
+        semantic
+            .records
+            .iter()
+            .any(|record| { !lexical.iter().any(|hit| hit.chunk.id == record.id) }),
+        "fixture must add semantic-only hits beyond the capped lexical lane"
+    );
+    assert_eq!(
+        armed_service(&fixture)
+            .search_series("demo", "Cooking", 100)
+            .unwrap()
+            .len(),
+        50,
+        "fusion must preserve the public cap, even above the requested lane limits"
+    );
+}
+
+/// A newly added source leaves every old indexed hit/checksum intact. The
+/// execution boundary must still report incomplete semantic coverage even
+/// when the daemon has not yet received its import notification.
+#[test]
+fn a_new_source_requires_current_generation_coverage_for_strict_search() {
+    let fixture = fixture();
+    import_text(
+        &fixture,
+        "old.txt",
+        "The first scroll describes the cathedral.",
+    );
+    activate_generation(&fixture);
+    let service = armed_service(&fixture);
+    assert!(
+        !service
+            .search_series("demo", "cathedral", 10)
+            .unwrap()
+            .is_empty()
+    );
+    import_text(
+        &fixture,
+        "new.txt",
+        "A new scroll names the drowned cathedral.",
+    );
+
+    let error = service.search_series("demo", "cathedral", 10).unwrap_err();
+    assert!(error.to_string().contains("corpus revision"), "{error}");
+    let response = service
+        .recall(fixture.session_id, &context(), "cathedral", 10)
+        .unwrap();
+    assert!(!rag_hit_ids(&response).is_empty());
+    assert!(
+        warnings_of(&response)
+            .iter()
+            .any(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE
+                && warning.reason.contains("corpus revision"))
+    );
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    let run = lane.run(&fixture.config, &context(), "cathedral", 10);
+    assert!(!run.degraded, "the older index is still queryable");
+    assert!(
+        !run.records.is_empty(),
+        "mixed recall retains valid old semantic hits"
+    );
+    assert!(
+        run.warnings
+            .iter()
+            .any(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
+    );
+}
+
+#[test]
+fn an_import_during_query_embedding_cannot_return_complete_strict_results() {
+    struct ImportingProvider {
+        inner: FakeEmbeddingProvider,
+        config: HieronymusConfig,
+        source: PathBuf,
+    }
+    impl EmbeddingProvider for ImportingProvider {
+        fn identity(&self) -> &hieronymus::semantic_embeddings::EmbeddingIdentity {
+            self.inner.identity()
+        }
+        fn embed_document(
+            &mut self,
+            tokens: &[u32],
+        ) -> Result<Vec<f32>, hieronymus::semantic_error::SemanticError> {
+            self.inner.embed_document(tokens)
+        }
+        fn embed_query(
+            &mut self,
+            tokens: &[u32],
+        ) -> Result<Vec<f32>, hieronymus::semantic_error::SemanticError> {
+            RagStore::open(&self.config)
+                .unwrap()
+                .import_file("demo", &self.source, &RagImport::new())
+                .unwrap();
+            self.inner.embed_query(tokens)
+        }
+    }
+    let fixture = fixture();
+    import_text(
+        &fixture,
+        "old.txt",
+        "The first scroll describes the cathedral.",
+    );
+    activate_generation(&fixture);
+    let source = write_source(
+        &fixture,
+        "late.txt",
+        "The late scroll names the drowned cathedral.",
+    );
+    let service = RecallService::open(&fixture.config)
+        .unwrap()
+        .with_semantic_lane(SemanticLane::new(
+            Box::new(ImportingProvider {
+                inner: FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS),
+                config: fixture.config.clone(),
+                source,
+            }),
+            Box::new(model_tokenizer()),
+        ));
+    let error = service.search_series("demo", "cathedral", 10).unwrap_err();
+    assert!(error.to_string().contains("corpus revision"), "{error}");
+    assert!(
+        RagStore::open(&fixture.config)
+            .unwrap()
+            .corpus_revision()
+            .unwrap()
+            > SemanticStore::open(&fixture.config)
+                .unwrap()
+                .active_generation()
+                .unwrap()
+                .unwrap()
+                .corpus_revision
+    );
 }

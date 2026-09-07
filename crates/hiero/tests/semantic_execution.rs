@@ -17,13 +17,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hiero::daemon::semantic_worker::{
-    ArmedPair, EMPTY_CORPUS_JOB_ID, RequiredSemanticState, SemanticArm, SemanticController,
-    install_test_arm, require_semantic_ready,
+    ArmedPair, EMPTY_CORPUS_JOB_ID, ReadinessEvidence, RequiredSemanticState, SemanticArm,
+    SemanticController, install_test_arm, readiness_from_evidence, require_semantic_ready,
 };
+use hiero::daemon::workers::WorkerGroup;
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::semantic_embeddings::{EmbeddingProvider, FakeEmbeddingProvider};
 use hieronymus::semantic_error::SemanticError;
 use hieronymus::semantic_jobs::SemanticJobStore;
+use hieronymus::semantic_recall::SemanticLane;
 use hieronymus::semantic_store::SemanticStore;
 use hieronymus::semantic_tokenizer::ModelTokenizer;
 use serde::Deserialize;
@@ -40,6 +42,66 @@ fn required_semantics_cannot_be_reported_ready_when_disarmed() {
     );
     assert!(require_semantic_ready(&RequiredSemanticState::Rebuilding).is_err());
     assert!(require_semantic_ready(&RequiredSemanticState::Ready).is_ok());
+}
+
+/// Task C3's regression (review finding A3): readiness is a claim that a
+/// query can be answered, so a controller with no installed query lane can
+/// never report `Ready` — not even over an empty corpus, where every other
+/// signal says "nothing to do".
+#[test]
+fn ready_requires_an_installed_query_lane() {
+    let evidence = ReadinessEvidence {
+        query_installed: false,
+        corpus_empty: true,
+        generation_valid: false,
+        rebuild_pending: false,
+    };
+    assert_ne!(
+        readiness_from_evidence(&evidence),
+        RequiredSemanticState::Ready
+    );
+}
+
+/// The whole truth table of the pure decision core: every combination of the
+/// four facts, so no branch can drift into an optimistic default.
+#[test]
+fn readiness_from_evidence_covers_every_combination() {
+    for corpus_empty in [false, true] {
+        for generation_valid in [false, true] {
+            for rebuild_pending in [false, true] {
+                let disarmed = ReadinessEvidence {
+                    query_installed: false,
+                    corpus_empty,
+                    generation_valid,
+                    rebuild_pending,
+                };
+                // No lane installed dominates everything else.
+                assert!(
+                    matches!(
+                        readiness_from_evidence(&disarmed),
+                        RequiredSemanticState::Failed(_)
+                    ),
+                    "{disarmed:?} must not pass"
+                );
+
+                let armed = ReadinessEvidence {
+                    query_installed: true,
+                    ..disarmed
+                };
+                let expected = if rebuild_pending {
+                    // A queued or in-flight rebuild is reported as such even
+                    // when an older generation still serves: strict callers
+                    // must wait for the current target.
+                    RequiredSemanticState::Rebuilding
+                } else if corpus_empty || generation_valid {
+                    RequiredSemanticState::Ready
+                } else {
+                    RequiredSemanticState::Failed("no valid current semantic generation".into())
+                };
+                assert_eq!(readiness_from_evidence(&armed), expected, "{armed:?}");
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------ injection harness
@@ -122,38 +184,56 @@ struct TestArm {
     failures_remaining: usize,
     per_embed_delay: Duration,
     permanent_failure: bool,
+    /// How many `arm()` calls succeed before every later one fails. `None`
+    /// means all of them do. The worker arms twice per attempt — once for the
+    /// indexing pair, once for the query lane — so `Some(1)` is exactly the
+    /// C3 regression: the indexing lane loads, the query lane does not.
+    successful_arms: Option<usize>,
+    arms_seen: AtomicUsize,
 }
 
 impl TestArm {
-    fn fast() -> Arc<dyn SemanticArm> {
-        Arc::new(Self {
+    fn new() -> Self {
+        Self {
             failures_remaining: 0,
             per_embed_delay: Duration::ZERO,
             permanent_failure: false,
-        })
+            successful_arms: None,
+            arms_seen: AtomicUsize::new(0),
+        }
+    }
+
+    fn fast() -> Arc<dyn SemanticArm> {
+        Arc::new(Self::new())
     }
 
     fn delayed(per_embed_delay: Duration) -> Arc<dyn SemanticArm> {
         Arc::new(Self {
-            failures_remaining: 0,
             per_embed_delay,
-            permanent_failure: false,
+            ..Self::new()
         })
     }
 
     fn flaky(failures_remaining: usize) -> Arc<dyn SemanticArm> {
         Arc::new(Self {
             failures_remaining,
-            per_embed_delay: Duration::ZERO,
-            permanent_failure: false,
+            ..Self::new()
         })
     }
 
     fn failing() -> Arc<dyn SemanticArm> {
         Arc::new(Self {
-            failures_remaining: 0,
-            per_embed_delay: Duration::ZERO,
             permanent_failure: true,
+            ..Self::new()
+        })
+    }
+
+    /// Arms exactly `successful_arms` times, then refuses. Used to fail the
+    /// query lane while the indexing lane succeeds.
+    fn arming_only(successful_arms: usize) -> Arc<dyn SemanticArm> {
+        Arc::new(Self {
+            successful_arms: Some(successful_arms),
+            ..Self::new()
         })
     }
 }
@@ -168,6 +248,12 @@ impl SemanticArm for TestArm {
     }
 
     fn arm(&self, _config: &HieronymusConfig) -> Result<ArmedPair, String> {
+        let seen = self.arms_seen.fetch_add(1, Ordering::SeqCst);
+        if let Some(budget) = self.successful_arms
+            && seen >= budget
+        {
+            return Err("scripted arm failure".to_string());
+        }
         let provider = if self.permanent_failure {
             ScriptedProvider::permanently_failing()
         } else {
@@ -187,6 +273,109 @@ impl SemanticArm for TestArm {
 fn start_semantic_daemon(root: &Path, arm: Arc<dyn SemanticArm>) -> hiero::daemon::Daemon {
     install_test_arm(root, arm);
     start_daemon(root)
+}
+
+// ------------------------------------------------- controller-level harness
+
+/// A supervised controller with no HTTP surface, so a test can own the
+/// query-lane install callback (the C3 readiness fact) directly.
+fn start_controller(
+    config: &HieronymusConfig,
+    arm: Arc<dyn SemanticArm>,
+    install: Box<dyn Fn(SemanticLane) -> Result<(), String> + Send>,
+) -> (WorkerGroup, SemanticController) {
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut group = WorkerGroup::new(Arc::clone(&stop));
+    let controller =
+        SemanticController::start_with(config.clone(), &mut group, arm, install).unwrap();
+    (group, controller)
+}
+
+/// An install callback that counts its calls and answers `Ok` for the first
+/// `succeed_for` of them, then `Err`. `succeed_for = usize::MAX` never fails.
+fn counting_install(
+    calls: Arc<AtomicUsize>,
+    succeed_for: usize,
+) -> Box<dyn Fn(SemanticLane) -> Result<(), String> + Send> {
+    Box::new(move |_lane| {
+        let seen = calls.fetch_add(1, Ordering::SeqCst);
+        if seen < succeed_for {
+            Ok(())
+        } else {
+            Err("scripted install failure".to_string())
+        }
+    })
+}
+
+fn wait_for_controller(controller: &SemanticController, wanted: &RequiredSemanticState) -> bool {
+    wait_until(|| &controller.state() == wanted, Duration::from_secs(20))
+}
+
+/// Seed an authoritative corpus (series plus one imported file) with no
+/// daemon: the controller-level tests need real `rag_chunks` rows.
+fn seed_offline_corpus(config: &HieronymusConfig, root: &Path, text: &str) {
+    hieronymus::registry::Registry::open(config)
+        .unwrap()
+        .create_series("demo", "Demo", "ja", "en", None)
+        .unwrap();
+    let source = root.join("offline.txt");
+    std::fs::write(&source, text).unwrap();
+    hieronymus::rag::RagStore::open(config)
+        .unwrap()
+        .import_file("demo", &source, &hieronymus::rag::RagImport::new())
+        .unwrap();
+}
+
+/// Hand-write an ACTIVE generation manifest row under `identity` with no
+/// vector index behind it. This is exactly the shape a byte-fold-era
+/// database, a model swap, or a wiped index directory leaves behind: a row
+/// that exists and answers `active_generation()` while every query against it
+/// is empty or wrong.
+fn forge_active_generation(
+    config: &HieronymusConfig,
+    generation_id: &str,
+    identity: &hieronymus::semantic_embeddings::EmbeddingIdentity,
+) {
+    SemanticStore::open(config)
+        .unwrap()
+        .begin_generation(generation_id, identity)
+        .unwrap();
+    let connection = rusqlite::Connection::open(config.database_path()).unwrap();
+    connection
+        .execute(
+            "update semantic_generations set status = 'active', active = 1
+             where generation_id = ?1",
+            [generation_id],
+        )
+        .unwrap();
+}
+
+/// The identity of a byte-fold-era generation: every field of the running
+/// identity except the tokenizer, which the `semantic_generations` migration
+/// back-fills with `byte-fold-v1`. Different embeddings, same manifest shape.
+fn byte_fold_variant(
+    identity: &hieronymus::semantic_embeddings::EmbeddingIdentity,
+) -> hieronymus::semantic_embeddings::EmbeddingIdentity {
+    hieronymus::semantic_embeddings::EmbeddingIdentity::new(
+        identity.provider(),
+        identity.model(),
+        identity.revision(),
+        identity.dimensions(),
+        identity.normalization(),
+        hieronymus::semantic_embeddings::BYTE_FOLD_TOKENIZER_ID,
+        identity.max_input_tokens(),
+        identity.max_batch_inputs(),
+    )
+    .unwrap()
+}
+
+fn manifest_status(config: &HieronymusConfig, generation_id: &str) -> (String, bool) {
+    let manifest = SemanticStore::open(config)
+        .unwrap()
+        .generation_manifest(generation_id)
+        .unwrap()
+        .expect("the manifest row survives invalidation");
+    (manifest.status, manifest.active)
 }
 
 // -------------------------------------------------------- HTTP helpers
@@ -557,7 +746,19 @@ fn cancel_stops_the_rebuild_and_a_retry_rebuilds() {
         store.active_generation().unwrap().is_none(),
         "a cancelled candidate must never activate"
     );
-    wait_for_state(&daemon, "ready");
+    // C3: a cancelled FIRST rebuild leaves nothing serving — no older
+    // generation, a non-empty corpus — so the honest verdict is `failed`.
+    // The pre-C3 loop reported `ready` here from the cancellation alone.
+    let cancelled = wait_for_state(&daemon, "failed");
+    assert!(
+        cancelled
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("no valid current semantic generation"),
+        "the cancellation must be reported as an uncovered corpus: {cancelled:?}"
+    );
+    assert!(require_semantic_ready(&cancelled.required()).is_err());
 
     // Retry: new authoritative rows queue a fresh rebuild that completes.
     import(
@@ -635,9 +836,11 @@ fn worker_failures_retry_then_fail_honestly() {
     failing.shutdown().unwrap();
 }
 
-/// Two imports back to back: the first rebuild's frozen expectation goes
-/// stale, is durably cancelled, and one fresh whole-corpus rebuild covers
-/// both sources.
+/// Two imports back to back: the second import moves the corpus revision past
+/// what the first rebuild's candidate covers, so that candidate is durably
+/// cancelled and one fresh whole-corpus rebuild covers both sources. (Task C4
+/// replaced the frozen `expected_count` comparison this used to turn on; an
+/// equal count is not coverage.)
 #[test]
 fn concurrent_imports_converge_on_one_current_generation() {
     let root = tempfile::tempdir().unwrap();
@@ -714,15 +917,7 @@ fn a_stale_foreign_lease_is_taken_over_after_expiry() {
     jobs.claim_lease(&job.job_id, "foreign-worker:1", Duration::from_secs(1))
         .unwrap();
 
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut group = hiero::daemon::workers::WorkerGroup::new(Arc::clone(&stop));
-    let controller = SemanticController::start_with(
-        config.clone(),
-        &mut group,
-        TestArm::fast(),
-        Box::new(|_| {}),
-    )
-    .unwrap();
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
 
     // The takeover completes once the foreign lease lapses.
     assert!(
@@ -757,25 +952,310 @@ fn a_stale_foreign_lease_is_taken_over_after_expiry() {
 fn an_empty_corpus_rebuild_request_is_a_no_op_marker() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut group = hiero::daemon::workers::WorkerGroup::new(Arc::clone(&stop));
-    let controller = SemanticController::start_with(
-        config.clone(),
-        &mut group,
-        TestArm::fast(),
-        Box::new(|_| {}),
-    )
-    .unwrap();
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
     assert!(
-        wait_until(
-            || controller.state() == RequiredSemanticState::Ready,
-            Duration::from_secs(10)
-        ),
+        wait_for_controller(&controller, &RequiredSemanticState::Ready),
         "an armed controller over an empty corpus is ready: {:?}",
         controller.state()
     );
     let job_id = controller.request_rebuild("any-series").unwrap();
     assert_eq!(job_id, EMPTY_CORPUS_JOB_ID);
+    group.stop_and_join().unwrap();
+}
+
+// ------------------------------------------- Task C3: readiness is evidence
+
+/// The A3 regression at controller level: the indexing lane arms, the QUERY
+/// lane does not. The pre-C3 worker dropped that second `Err` and went on to
+/// advertise `Ready` with zero query-lane installations.
+#[test]
+fn a_query_lane_that_cannot_arm_is_never_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let installs = Arc::new(AtomicUsize::new(0));
+    // One successful arm: the indexing pair. The query pair is refused.
+    let (group, controller) = start_controller(
+        &config,
+        TestArm::arming_only(1),
+        counting_install(Arc::clone(&installs), usize::MAX),
+    );
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(10)
+        ),
+        "an uninstalled query lane must fail: {:?}",
+        controller.state()
+    );
+    assert_eq!(
+        installs.load(Ordering::SeqCst),
+        0,
+        "no lane may reach the application when the query pair never armed"
+    );
+    // The corpus is empty, i.e. every other signal says ready-for-ingest.
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "readiness must never be reported without an installed lane: {:?}",
+        controller.state()
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(detail.contains("scripted arm failure"), "{detail}");
+
+    group.stop_and_join().unwrap();
+}
+
+/// The application refusing the lane is the same readiness fact as a lane
+/// that could not be armed: the controller reports its cause, not `Ready`.
+#[test]
+fn an_install_failure_is_never_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let installs = Arc::new(AtomicUsize::new(0));
+    let (group, controller) = start_controller(
+        &config,
+        TestArm::fast(),
+        counting_install(Arc::clone(&installs), 0),
+    );
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(10)
+        ),
+        "a refused lane must fail: {:?}",
+        controller.state()
+    );
+    assert!(
+        installs.load(Ordering::SeqCst) >= 1,
+        "the install was tried"
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(detail.contains("scripted install failure"), "{detail}");
+
+    group.stop_and_join().unwrap();
+}
+
+/// A completed rebuild whose query-lane replacement fails is NOT ready: the
+/// generation activated, but queries would still run on the superseded lane.
+/// The pre-C3 code dropped this error and published `Ready`.
+#[test]
+fn a_failed_query_lane_replacement_after_a_rebuild_is_never_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "The replacement lane must be installed before this generation counts as ready.",
+    );
+    let installs = Arc::new(AtomicUsize::new(0));
+    // The first install (initial arming) succeeds; the post-activation
+    // replacement does not.
+    let (group, controller) = start_controller(
+        &config,
+        TestArm::fast(),
+        counting_install(Arc::clone(&installs), 1),
+    );
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(20)
+        ),
+        "a lost query lane must fail: {:?}",
+        controller.state()
+    );
+    // The rebuild really did finish: this is not a rebuild failure being
+    // mistaken for a lane failure.
+    let store = SemanticStore::open(&config).unwrap();
+    assert!(
+        store.active_generation().unwrap().is_some(),
+        "the rebuild activated a generation"
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(detail.contains("scripted install failure"), "{detail}");
+
+    group.stop_and_join().unwrap();
+}
+
+/// A manifest row is not evidence. A generation whose vector index did not
+/// survive on disk is invalidated (it loses the active slot, it is not
+/// relabelled) and rebuilt from the authoritative rows — which never left
+/// SQLite, so this is recovery, not data loss.
+#[test]
+fn a_generation_whose_index_vanished_is_invalidated_and_rebuilt() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "The index directory vanished, but the authoritative chunks never did.",
+    );
+    forge_active_generation(&config, "stale-gen", &TestArm::fast().identity());
+    assert!(
+        !SemanticStore::open(&config)
+            .unwrap()
+            .active_generation_intact()
+            .unwrap(),
+        "the forged generation has no index behind it"
+    );
+
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_for_controller(&controller, &RequiredSemanticState::Ready),
+        "the recovery rebuild settles ready: {:?}",
+        controller.state()
+    );
+    let active = SemanticStore::open(&config)
+        .unwrap()
+        .active_generation()
+        .unwrap()
+        .expect("a rebuilt generation is active");
+    assert_ne!(
+        active.generation_id, "stale-gen",
+        "the stale generation must be replaced, never relabelled"
+    );
+    assert_eq!(
+        manifest_status(&config, "stale-gen"),
+        ("failed".to_string(), false),
+        "the invalidated generation is terminal and out of the active slot"
+    );
+
+    group.stop_and_join().unwrap();
+}
+
+/// The same invalidation with nothing able to rebuild: the verdict stays
+/// `Failed` with the rebuild's own cause. Proves the stale generation is
+/// never counted as serving while it waits.
+#[test]
+fn a_stale_generation_with_no_usable_rebuild_reports_failed() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "Nothing can rebuild this corpus, so nothing may report it ready.",
+    );
+    forge_active_generation(&config, "stale-gen", &TestArm::fast().identity());
+
+    let (group, controller) = start_controller(&config, TestArm::failing(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(20)
+        ),
+        "an uncovered corpus must fail: {:?}",
+        controller.state()
+    );
+    assert!(
+        SemanticStore::open(&config)
+            .unwrap()
+            .active_generation()
+            .unwrap()
+            .is_none(),
+        "the unusable generation left the active slot"
+    );
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "a stale generation may never be reported ready: {:?}",
+        controller.state()
+    );
+
+    group.stop_and_join().unwrap();
+}
+
+/// A byte-fold-era manifest (the `tokenizer` column back-filled with
+/// `byte-fold-v1`) is a DIFFERENT embedding identity: its vectors cannot
+/// answer this daemon's queries. Startup must not accept it as ready just
+/// because the row exists.
+#[test]
+fn a_byte_fold_manifest_is_never_ready_at_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    seed_offline_corpus(
+        &config,
+        root.path(),
+        "Byte-fold vectors cannot answer model-tokenizer queries.",
+    );
+    let byte_fold = byte_fold_variant(&TestArm::fast().identity());
+    forge_active_generation(&config, "byte-fold-gen", &byte_fold);
+    assert_ne!(byte_fold, TestArm::fast().identity());
+
+    let (group, controller) = start_controller(&config, TestArm::failing(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(20)
+        ),
+        "an identity-mismatched generation must fail: {:?}",
+        controller.state()
+    );
+    assert_eq!(
+        manifest_status(&config, "byte-fold-gen"),
+        ("failed".to_string(), false),
+        "the mismatched generation is invalidated, not relabelled"
+    );
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "a foreign-identity generation may never be reported ready: {:?}",
+        controller.state()
+    );
+
+    group.stop_and_join().unwrap();
+}
+
+/// An unreadable authoritative database is not an empty corpus and not a
+/// quiet queue: the controller surfaces the store error instead of settling
+/// on the ready-for-ingest branch.
+#[test]
+fn an_unreadable_store_reports_failed_with_its_cause() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let database = config.database_path();
+    std::fs::create_dir_all(database.parent().unwrap()).unwrap();
+    std::fs::write(&database, b"this is emphatically not a SQLite database").unwrap();
+
+    let (group, controller) = start_controller(&config, TestArm::fast(), Box::new(|_| Ok(())));
+
+    assert!(
+        wait_until(
+            || matches!(controller.state(), RequiredSemanticState::Failed(_)),
+            Duration::from_secs(10)
+        ),
+        "a corrupt store must fail: {:?}",
+        controller.state()
+    );
+    let RequiredSemanticState::Failed(detail) = controller.state() else {
+        panic!("failed state expected: {:?}", controller.state());
+    };
+    assert!(!detail.is_empty(), "the store error must be surfaced");
+    assert!(
+        !wait_until(
+            || controller.state() == RequiredSemanticState::Ready,
+            Duration::from_secs(2)
+        ),
+        "a corrupt store may never be reported ready: {:?}",
+        controller.state()
+    );
+
     group.stop_and_join().unwrap();
 }
 
@@ -848,4 +1328,690 @@ fn concurrent_queue_calls_dedup_onto_one_generation() {
         )
         .unwrap();
     assert_eq!(building, 1, "no orphaned building candidate may survive");
+}
+
+// ------------------------------- task C5: the public semantic RAG search
+
+/// The accepted Rust delta for `hieronymus_rag_search` (review finding A5).
+/// Loaded, not restated: the fixture is the reviewed record of the envelope
+/// and the refusal, and this file proves the runtime matches it.
+const RAG_SEARCH_V2: &str = include_str!("../../../compatibility/rust/rag-search-v2.json");
+
+fn rag_search_expectation(state: &str, corpus: &str) -> Value {
+    let fixture: Value = serde_json::from_str(RAG_SEARCH_V2).unwrap();
+    assert_eq!(fixture["expectation_set"], json!("rag-search-v2"));
+    fixture["expectations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["semantic_state"] == json!(state) && entry["corpus"] == json!(corpus))
+        .unwrap_or_else(|| panic!("no rag-search-v2 expectation for {state}/{corpus}"))
+        .clone()
+}
+
+/// A tool call whose failure is the point: returns the tool-error text.
+fn call_tool_error(
+    daemon: &hiero::daemon::Daemon,
+    id: i64,
+    name: &str,
+    arguments: Value,
+) -> String {
+    let response = send_request(
+        daemon.local_addr().port(),
+        "POST",
+        "/mcp",
+        &mcp_headers(daemon, &[("Mcp-Method", "tools/call"), ("Mcp-Name", name)]),
+        &serde_json::to_vec(&tools_call(id, name, arguments)).unwrap(),
+    );
+    assert_eq!(response.status, 200, "{:?}", response.raw_body);
+    let body = response.body();
+    assert_eq!(
+        body["result"]["isError"],
+        json!(true),
+        "tool {name} was expected to fail: {body}"
+    );
+    body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn rag_search(daemon: &hiero::daemon::Daemon, id: i64, series: &str, query: &str) -> Vec<Value> {
+    let payload = call_tool(
+        daemon,
+        id,
+        "hieronymus_rag_search",
+        json!({"series_slug": series, "query": query, "limit": 5}),
+    );
+    payload
+        .as_array()
+        .unwrap_or_else(|| panic!("rag search must answer a bare row array: {payload}"))
+        .clone()
+}
+
+/// THE step-1 regression (task C5, review finding A5): a bare application
+/// with no semantic service at all must refuse strict `hieronymus_rag_search`
+/// instead of answering with the lexical FTS lane. Before C5 this call ran
+/// `RagStore::search` directly and returned an ordinary successful array, so a
+/// cold, unconfigured, or failed semantic runtime was indistinguishable from a
+/// complete answer.
+#[test]
+fn rag_search_rejects_an_unavailable_required_semantic_service() {
+    let root = tempfile::tempdir().unwrap();
+    let app = hiero::application::Application::open(&HieronymusConfig::new(root.path())).unwrap();
+    app.call(
+        "hieronymus_series_create",
+        &json!({"slug": "book", "title": "Book"}),
+        "test",
+    )
+    .unwrap();
+    let error = app
+        .call(
+            "hieronymus_rag_search",
+            &json!({"series_slug": "book", "query": "physician", "limit": 3}),
+            "test",
+        )
+        .unwrap_err();
+
+    let expectation = rag_search_expectation("absent", "any");
+    let needle = expectation["expected"]["error_contains"].as_str().unwrap();
+    assert!(
+        error.to_string().contains(needle),
+        "the refusal must carry {needle:?}: {error}"
+    );
+
+    // Argument validation still runs first, so a malformed call keeps its own
+    // diagnostic rather than being masked by the semantic gate.
+    let invalid = app
+        .call(
+            "hieronymus_rag_search",
+            &json!({"series_slug": "book", "query": "physician", "limit": 0}),
+            "test",
+        )
+        .unwrap_err();
+    assert!(
+        invalid.to_string().contains("limit must be at least 1"),
+        "{invalid}"
+    );
+}
+
+/// A semantic service that exists but cannot serve is refused with its own
+/// actionable reason — including over a series whose text IS indexed, which is
+/// exactly the case where a lexical-only answer would look complete while the
+/// paraphrase half of the corpus stayed unreachable.
+#[test]
+fn rag_search_refuses_a_semantic_service_that_is_not_ready() {
+    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    seed_series_and_session(&daemon);
+    import(
+        &daemon,
+        root.path(),
+        "chapter-1.txt",
+        "The ship's physician bandaged the drowned sailor at dawn.",
+    );
+    let state = wait_for_state(&daemon, "failed");
+    assert_eq!(state.state, "failed");
+
+    let error = call_tool_error(
+        &daemon,
+        10,
+        "hieronymus_rag_search",
+        json!({"series_slug": "demo", "query": "physician", "limit": 5}),
+    );
+    let expectation = rag_search_expectation("failed", "indexed");
+    let needle = expectation["expected"]["error_contains"].as_str().unwrap();
+    assert!(
+        error.contains(needle),
+        "the refusal must carry {needle:?}: {error}"
+    );
+    // The reason is the service's own, not a generic placeholder.
+    assert!(
+        error.contains("hiero semantic enable --runtime"),
+        "the refusal must stay actionable: {error}"
+    );
+
+    daemon.shutdown().unwrap();
+    drop(root);
+}
+
+/// The one valid empty answer: everything loaded, nothing imported yet. The
+/// controller reports ready-for-ingest, so zero rows is a complete answer, not
+/// an error.
+#[test]
+fn rag_search_over_a_ready_empty_corpus_is_an_empty_success() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    wait_for_state(&daemon, "ready");
+
+    let rows = rag_search(&daemon, 11, "demo", "physician");
+    let expectation = rag_search_expectation("ready", "empty");
+    assert_eq!(
+        expectation["expected"]["results"],
+        json!([]),
+        "the fixture pins the empty-success case"
+    );
+    assert!(rows.is_empty(), "{rows:?}");
+
+    daemon.shutdown().unwrap();
+}
+
+/// The connected search: a ready service answers with the SAME hybrid
+/// retrieval `hieronymus_recall` runs — a query with no lexical overlap still
+/// finds the chunk through the semantic lane — with `rag` provenance, the
+/// frozen row shape, and no foreign-series leak.
+#[test]
+fn rag_search_serves_semantic_rows_for_the_queried_series_only() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    call_tool(
+        &daemon,
+        12,
+        "hieronymus_series_create",
+        json!({"slug": "ghost", "title": "Ghost", "source_language": "ja", "target_language": "en"}),
+    );
+    import(
+        &daemon,
+        root.path(),
+        "chapter-1.txt",
+        "The archivist catalogued every rumour of the drowned city before the tide returned.",
+    );
+    let foreign = write_source(
+        root.path(),
+        "foreign.txt",
+        "A ledger from another series mentions the drowned city too.",
+    );
+    call_tool(
+        &daemon,
+        13,
+        "hieronymus_rag_import",
+        json!({"series_slug": "ghost", "path": foreign.to_str().unwrap()}),
+    );
+    wait_for_state(&daemon, "ready");
+
+    let rows = rag_search(&daemon, 14, "demo", "zzqxj nonlexical probe");
+    assert!(
+        !rows.is_empty(),
+        "a ready service must contribute real semantic results"
+    );
+    let expectation = rag_search_expectation("ready", "indexed");
+    // The envelope and row shape are unchanged from the frozen Python
+    // fixture: the accepted delta is what the rows MEAN, never their keys.
+    let expected_keys: Vec<&str> = expectation["expected"]["row_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| key.as_str().unwrap())
+        .collect();
+    for row in &rows {
+        let mut keys: Vec<&str> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut wanted = expected_keys.clone();
+        keys.sort_unstable();
+        wanted.sort_unstable();
+        assert_eq!(keys, wanted, "row shape drifted: {row}");
+        assert_eq!(row["source"], json!("rag"));
+        assert!(
+            row["source_ref"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("chapter-1.txt"),
+            "foreign series must never leak into a series-scoped search: {row}"
+        );
+    }
+    // Semantic provenance: the probe shares no term with the chunk, so the
+    // only lane that could have surfaced it is the semantic one.
+    assert!(
+        rows.iter().any(|row| {
+            row["rank_reason"].as_str()
+                == Some(
+                    expectation["expected"]["semantic_rank_reason"]
+                        .as_str()
+                        .unwrap(),
+                )
+                && row["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("drowned city")
+        }),
+        "semantic-matched rows must stay distinguishable: {rows:?}"
+    );
+
+    daemon.shutdown().unwrap();
+}
+
+/// Mixed recall is the other half of the contract: it never hard-fails on
+/// missing semantics — memory rows and the deterministic contract still serve
+/// — but it says so, every time. Before C5 an unarmed lane was silent.
+#[test]
+fn mixed_recall_warns_when_required_semantics_did_not_run() {
+    let root = tempfile::tempdir().unwrap();
+    let app = hiero::application::Application::open(&HieronymusConfig::new(root.path())).unwrap();
+    app.call(
+        "hieronymus_series_create",
+        &json!({"slug": "book", "title": "Book"}),
+        "test",
+    )
+    .unwrap();
+    let session = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug": "book"}),
+            "test",
+        )
+        .unwrap();
+    let session_id = session["session_id"].as_i64().unwrap();
+    app.call(
+        "hieronymus_short_term_add",
+        &json!({
+            "session_id": session_id,
+            "kind": "note",
+            "text": "The physician keeps a ledger of the drowned.",
+        }),
+        "test",
+    )
+    .unwrap();
+
+    let payload = app
+        .call(
+            "hieronymus_recall",
+            &json!({
+                "session_id": session_id,
+                "series_slug": "book",
+                "query": "physician ledger",
+                "limit": 5,
+            }),
+            "test",
+        )
+        .expect("mixed recall keeps serving what it has");
+
+    // The memory lane still answers.
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["text"].as_str().unwrap_or_default().contains("drowned")),
+        "memory rows must still be served: {payload}"
+    );
+    // ...and the response admits the semantic half never ran.
+    let warnings = payload["warnings"].as_array().unwrap();
+    assert!(
+        warnings.iter().any(|warning| warning["kind"].as_str()
+            == Some(hieronymus::recall::WARNING_SEMANTIC_UNAVAILABLE)),
+        "an absent semantic service must be reported: {payload}"
+    );
+    assert_eq!(
+        warnings.len(),
+        1,
+        "the condition is reported once, not logged: {payload}"
+    );
+}
+
+/// The complement: with a ready semantic service the warning must NOT appear,
+/// or it would be noise nobody could act on.
+#[test]
+fn mixed_recall_over_ready_semantics_carries_no_unavailable_warning() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    let session_id = seed_series_and_session(&daemon);
+    import(
+        &daemon,
+        root.path(),
+        "chapter-1.txt",
+        "The archivist catalogued every rumour of the drowned city before the tide returned.",
+    );
+    wait_for_state(&daemon, "ready");
+
+    let payload = call_tool(
+        &daemon,
+        15,
+        "hieronymus_recall",
+        json!({
+            "session_id": session_id,
+            "series_slug": "demo",
+            "query": "zzqxj nonlexical probe",
+            "limit": 5,
+        }),
+    );
+    assert!(
+        payload["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|warning| warning["kind"].as_str()
+                != Some(hieronymus::recall::WARNING_SEMANTIC_UNAVAILABLE)),
+        "a ready service must not warn: {payload}"
+    );
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["rank_reason"].as_str() == Some("rag semantic match")),
+        "the ready lane must actually contribute semantic rows: {payload}"
+    );
+
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn configure_reloads_the_same_authenticated_daemon() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_daemon(root.path());
+    wait_for_state(&daemon, "failed");
+    let config = HieronymusConfig::new(root.path());
+    let runtime = root.path().join("runtime.so");
+    std::fs::write(&runtime, b"test seam runtime").unwrap();
+    let body = serde_json::to_vec(&json!({"runtime_library": runtime})).unwrap();
+    let denied = send_request(
+        daemon.local_addr().port(),
+        "POST",
+        "/semantic/configure",
+        &[],
+        &body,
+    );
+    assert_eq!(denied.status, 401);
+    assert!(!root.path().join("semantic.conf").exists());
+    install_test_arm(root.path(), TestArm::fast());
+    let client = hiero::lifecycle::connect(&config, false).unwrap();
+    let before = client.get("/status").unwrap()["instance_id"].clone();
+    let configured = client
+        .post("/semantic/configure", &json!({"runtime_library": runtime}))
+        .unwrap();
+    assert_eq!(configured["configuration_revision"], 1);
+    wait_for_state(&daemon, "ready");
+    assert_eq!(client.get("/status").unwrap()["instance_id"], before);
+    assert!(
+        hieronymus::semantic_arming::load_runtime_library(&config)
+            .unwrap()
+            .unwrap()
+            .is_absolute()
+    );
+    let saved = std::fs::read(root.path().join("semantic.conf")).unwrap();
+    assert!(
+        client
+            .post(
+                "/semantic/configure",
+                &json!({"runtime_library": "relative.so"})
+            )
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("semantic.conf")).unwrap(),
+        saved
+    );
+    let second = root.path().join("runtime-two.so");
+    std::fs::write(&second, b"test seam runtime").unwrap();
+    let configured = client
+        .post("/semantic/configure", &json!({"runtime_library": second}))
+        .unwrap();
+    assert_eq!(configured["configuration_revision"], 2);
+    wait_for_state(&daemon, "ready");
+    daemon.shutdown().unwrap();
+    let restarted = start_daemon(root.path());
+    wait_for_state(&restarted, "ready");
+    restarted.shutdown().unwrap();
+}
+
+#[test]
+fn semantic_configuration_guards_precede_mutations() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_daemon(root.path());
+    let bearer = (
+        "Authorization".to_string(),
+        format!("Bearer {}", daemon.bearer().expose_secret()),
+    );
+    for path in ["/semantic/configure", "/semantic/acquire"] {
+        let wrong_method = send_request(daemon.local_addr().port(), "GET", path, &[], b"{}");
+        assert_eq!(wrong_method.status, 404);
+        let wrong_host = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            &[("Host".into(), "foreign.invalid".into())],
+            b"{}",
+        );
+        assert_eq!(wrong_host.status, 400);
+        assert_eq!(wrong_host.body()["error"], "invalid_host");
+        let foreign_origin = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            &[
+                bearer.clone(),
+                ("Origin".into(), "http://foreign.invalid".into()),
+            ],
+            b"{}",
+        );
+        assert_eq!(foreign_origin.status, 403);
+        let invalid_body = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            std::slice::from_ref(&bearer),
+            b"[]",
+        );
+        assert_eq!(invalid_body.status, 400);
+    }
+    assert!(!root.path().join("semantic.conf").exists());
+    assert!(!SemanticStore::model_path_for(&HieronymusConfig::new(root.path())).exists());
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn simultaneous_configurations_acknowledge_distinct_persisted_revisions() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    let runtime = root.path().join("runtime.so");
+    std::fs::write(&runtime, b"test seam runtime").unwrap();
+    let mut revisions = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let root = root.path();
+                let runtime = &runtime;
+                scope.spawn(move || {
+                    let client =
+                        hiero::lifecycle::connect(&HieronymusConfig::new(root), false).unwrap();
+                    client
+                        .post("/semantic/configure", &json!({"runtime_library": runtime}))
+                        .unwrap()["configuration_revision"]
+                        .as_u64()
+                        .unwrap()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    revisions.sort_unstable();
+    assert_eq!(revisions, [1, 2, 3, 4]);
+    assert_eq!(
+        status_body(&daemon)["semantic"]["configuration_revision"],
+        4
+    );
+    wait_for_state(&daemon, "ready");
+    daemon.shutdown().unwrap();
+}
+
+/// Pause a reload after semantic.conf is persisted and before the new arm's
+/// identity is installed. Status must never combine its old Ready state with
+/// the new revision, even while configuration and status requests overlap.
+#[test]
+fn status_never_pairs_old_readiness_with_a_new_configuration_revision() {
+    struct GatedIdentityArm {
+        delegate: Arc<dyn SemanticArm>,
+        gate:
+            std::sync::Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    }
+    impl SemanticArm for GatedIdentityArm {
+        fn identity(&self) -> hieronymus::semantic_embeddings::EmbeddingIdentity {
+            if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+            self.delegate.identity()
+        }
+        fn precheck(&self, config: &HieronymusConfig) -> Result<(), String> {
+            self.delegate.precheck(config)
+        }
+        fn arm(&self, config: &HieronymusConfig) -> Result<ArmedPair, String> {
+            self.delegate.arm(config)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    wait_for_state(&daemon, "ready");
+    let runtime = root.path().join("runtime.so");
+    std::fs::write(&runtime, b"test seam runtime").unwrap();
+    let (entered, receive_entered) = std::sync::mpsc::channel();
+    let (release, receive_release) = std::sync::mpsc::channel();
+    install_test_arm(
+        root.path(),
+        Arc::new(GatedIdentityArm {
+            delegate: TestArm::fast(),
+            gate: std::sync::Mutex::new(Some((entered, receive_release))),
+        }),
+    );
+    let observed = std::thread::scope(|scope| {
+        let configuring = scope.spawn(|| {
+            let client =
+                hiero::lifecycle::connect(&HieronymusConfig::new(root.path()), false).unwrap();
+            client
+                .post("/semantic/configure", &json!({"runtime_library": runtime}))
+                .unwrap()
+        });
+        receive_entered
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            hieronymus::semantic_arming::configuration_revision(&HieronymusConfig::new(
+                root.path()
+            ))
+            .unwrap(),
+            1
+        );
+        let observed = status_body(&daemon)["semantic"].clone();
+        release.send(()).unwrap();
+        assert_eq!(configuring.join().unwrap()["configuration_revision"], 1);
+        observed
+    });
+    assert!(
+        observed["state"] != "ready" || observed["configuration_revision"] != 1,
+        "old lane readiness was paired with an uninstalled configuration: {observed}"
+    );
+    wait_for_state(&daemon, "ready");
+    assert_eq!(
+        status_body(&daemon)["semantic"]["configuration_revision"],
+        1
+    );
+    daemon.shutdown().unwrap();
+}
+
+/// Freeze the same publication primitive on both worker paths. The second
+/// barrier holds the worker after publishing, so another tick cannot conceal
+/// even a momentary false Ready from the authenticated status assertion.
+fn stale_ready_evidence_after_import(post_job: bool) {
+    use hiero::daemon::semantic_worker::install_test_readiness_observer;
+    use std::sync::mpsc;
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    wait_for_state(&daemon, "ready");
+    if !post_job {
+        import(
+            &daemon,
+            root.path(),
+            "first.txt",
+            "The first indexed scroll.",
+        );
+        wait_for_state(&daemon, "ready");
+    }
+
+    let (arrived, arrivals) = mpsc::channel();
+    let (release, releases) = mpsc::channel();
+    let releases = std::sync::Mutex::new(releases);
+    let phase = AtomicUsize::new(0);
+    install_test_readiness_observer(
+        root.path(),
+        Arc::new(move |evidence, after| {
+            if evidence.corpus_empty
+                || readiness_from_evidence(evidence) != RequiredSemanticState::Ready
+            {
+                return;
+            }
+            let expected = usize::from(after);
+            if phase
+                .compare_exchange(expected, expected + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                arrived.send(after).unwrap();
+                releases
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(20))
+                    .unwrap();
+            }
+        }),
+    );
+    if post_job {
+        import(
+            &daemon,
+            root.path(),
+            "first.txt",
+            "The first indexed scroll.",
+        );
+    }
+    assert!(!arrivals.recv_timeout(Duration::from_secs(20)).unwrap());
+    import(
+        &daemon,
+        root.path(),
+        "late.txt",
+        "The late scroll names a drowned cathedral.",
+    );
+    assert_eq!(status_body(&daemon)["semantic"]["state"], "rebuilding");
+    release.send(()).unwrap();
+    assert!(arrivals.recv_timeout(Duration::from_secs(20)).unwrap());
+    assert_eq!(status_body(&daemon)["semantic"]["state"], "rebuilding");
+    let error = call_tool_error(
+        &daemon,
+        90,
+        "hieronymus_rag_search",
+        json!({"series_slug": "demo", "query": "drowned cathedral", "limit": 5}),
+    );
+    assert!(error.contains("in progress"), "{error}");
+    release.send(()).unwrap();
+    wait_for_state(&daemon, "ready");
+    let config = HieronymusConfig::new(root.path());
+    assert_eq!(
+        SemanticStore::open(&config)
+            .unwrap()
+            .active_generation()
+            .unwrap()
+            .unwrap()
+            .corpus_revision,
+        hieronymus::rag::RagStore::open(&config)
+            .unwrap()
+            .corpus_revision()
+            .unwrap()
+    );
+    assert!(!rag_search(&daemon, 91, "demo", "drowned cathedral").is_empty());
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn idle_readiness_publication_cannot_overtake_a_completed_import() {
+    stale_ready_evidence_after_import(false);
+}
+
+#[test]
+fn post_job_readiness_publication_cannot_overtake_a_completed_import() {
+    stale_ready_evidence_after_import(true);
 }

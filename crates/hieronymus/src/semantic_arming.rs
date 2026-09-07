@@ -36,27 +36,69 @@ pub fn semantic_config_path(config: &HieronymusConfig) -> PathBuf {
     config.config_root().join("semantic.conf")
 }
 
-/// Persists the configured ONNX runtime location for this data root.
+#[derive(Debug, thiserror::Error)]
+pub enum SemanticConfigError {
+    #[error("cannot read semantic configuration: {0}")]
+    Read(#[from] std::io::Error),
+    #[error("invalid semantic configuration: {0}")]
+    Invalid(String),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeConfiguration {
+    runtime_library: PathBuf,
+    #[serde(default)]
+    configuration_revision: u64,
+}
+
+fn load_configuration(
+    config: &HieronymusConfig,
+) -> Result<Option<RuntimeConfiguration>, SemanticConfigError> {
+    let text = match std::fs::read_to_string(semantic_config_path(config)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let settings: RuntimeConfiguration =
+        toml::from_str(&text).map_err(|error| SemanticConfigError::Invalid(error.to_string()))?;
+    if !settings.runtime_library.is_absolute() {
+        return Err(SemanticConfigError::Invalid(
+            "runtime_library must be an absolute path".into(),
+        ));
+    }
+    Ok(Some(settings))
+}
+
+/// Owner-only persistence. Callers must hold the root's writer authority.
+/// Resolve symlinks once so restart never depends on the daemon's cwd.
 pub fn save_runtime_library(config: &HieronymusConfig, runtime: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(config.config_root())
-        .map_err(|error| format!("semantic.conf directory: {error}"))?;
+    if !runtime.is_absolute() || !runtime.is_file() {
+        return Err("runtime_library must name an existing absolute file".into());
+    }
+    let runtime = runtime.canonicalize().map_err(|error| error.to_string())?;
+    let revision = configuration_revision(config)
+        .map_err(|error| error.to_string())?
+        .checked_add(1)
+        .ok_or("semantic configuration revision exhausted")?;
+    std::fs::create_dir_all(config.config_root()).map_err(|error| error.to_string())?;
     let text = format!(
-        "runtime_library = {}\n",
-        toml::Value::String(runtime.display().to_string())
+        "runtime_library = {}\nconfiguration_revision = {revision}\n",
+        toml::Value::String(runtime.to_string_lossy().into_owned())
     );
     crate::atomic::atomic_write_text(&semantic_config_path(config), &text)
         .map_err(|error| format!("semantic.conf write failed: {error}"))
 }
 
-/// The persisted ONNX runtime location, when one was configured.
-pub fn load_runtime_library(config: &HieronymusConfig) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(semantic_config_path(config)).ok()?;
-    let table = text.parse::<toml::Table>().ok()?;
-    table
-        .get("runtime_library")?
-        .as_str()
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
+pub fn configuration_revision(config: &HieronymusConfig) -> Result<u64, SemanticConfigError> {
+    Ok(load_configuration(config)?.map_or(0, |settings| settings.configuration_revision))
+}
+
+/// Missing configuration is distinct from unreadable or malformed settings.
+pub fn load_runtime_library(
+    config: &HieronymusConfig,
+) -> Result<Option<PathBuf>, SemanticConfigError> {
+    Ok(load_configuration(config)?.map(|settings| settings.runtime_library))
 }
 
 /// The outcome of arming: a recall service plus whether the semantic lane is

@@ -88,7 +88,10 @@ fn dream(application: &Application, arguments: &Value) -> Result<Value, AppError
     let record = &drain.record;
     Ok(json!({
         "cycle_id": record.cycle_id,
-        "status": record.status,
+        "status": drain.outcome,
+        "batch_status": record.status,
+        "batches": drain.batches,
+        "progress": drain.progress,
         "provider": record.provider,
         "input_count": drain.input_count,
         "created_crystal_count": drain.created_crystal_count,

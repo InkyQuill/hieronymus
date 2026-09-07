@@ -1275,27 +1275,45 @@ impl ConceptStore {
         &self,
         source_concept_id: i64,
         target_concept_id: i64,
-        _reason: &str,
+        reason: &str,
     ) -> Result<(), ConceptError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        Self::merge_concepts_in_transaction(
+            &transaction,
+            source_concept_id,
+            target_concept_id,
+            reason,
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Merge within the caller's transaction, allowing a batch and its audit
+    /// to commit together. Returns the target as visible in that transaction.
+    pub fn merge_concepts_in_transaction(
+        transaction: &rusqlite::Transaction<'_>,
+        source_concept_id: i64,
+        target_concept_id: i64,
+        _reason: &str,
+    ) -> Result<ConceptRecord, ConceptError> {
         if source_concept_id == target_concept_id {
             return Err(ConceptError::Invalid(
                 "source and target concepts must differ".to_string(),
             ));
         }
         let now = now_iso8601();
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
-        let source = require_active_concept(&transaction, source_concept_id)?;
-        let target = require_concept_fields(&transaction, target_concept_id)?;
+        let source = require_active_concept(transaction, source_concept_id)?;
+        let target = require_concept_fields(transaction, target_concept_id)?;
         if is_inactive_status(&target.status) {
             return Err(ConceptError::Invalid(
                 "merge target concept must be active".to_string(),
             ));
         }
 
-        if !facet_value_exists(&transaction, source_concept_id, &source.canonical_name)? {
+        if !facet_value_exists(transaction, source_concept_id, &source.canonical_name)? {
             ensure_facet(
-                &transaction,
+                transaction,
                 target_concept_id,
                 &source.canonical_name,
                 "former_label",
@@ -1340,7 +1358,7 @@ impl ConceptStore {
             "delete from crystal_concepts where concept_id = ?1",
             [source_concept_id],
         )?;
-        move_facets_to_target(&transaction, source_concept_id, target_concept_id, &now)?;
+        move_facets_to_target(transaction, source_concept_id, target_concept_id, &now)?;
 
         let tags: Vec<(String, f64, String)> = {
             let mut statement = transaction.prepare(
@@ -1375,9 +1393,9 @@ impl ConceptStore {
              where id = ?4",
             rusqlite::params![CONCEPT_MERGED, target_concept_id, now, source_concept_id],
         )?;
-        refresh_concept_status(&transaction, target_concept_id, &now)?;
-        transaction.commit()?;
-        Ok(())
+        refresh_concept_status(transaction, target_concept_id, &now)?;
+        let target = require_concept_fields(transaction, target_concept_id)?;
+        concept_record_from_row(transaction, &target)
     }
 
     /// Attach a crystal as linked evidence of an active concept; relinking

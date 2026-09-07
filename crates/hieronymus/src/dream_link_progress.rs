@@ -6,20 +6,12 @@
 //! count still stamped every selected activation consumed
 //! (`crystal_activations.cycle_id`), permanently dropping the unprocessed
 //! pairs. Here the eligible activations of one session are snapshotted into
-//! ONE durable batch ([`crate::db`] schema v2 `dream_link_batches` /
-//! `dream_link_members`) whose unique unordered pairs are materialized as
-//! `queued` rows (`dream_link_pairs`). Every budgeted pair commits its
-//! reinforcement, its pair-row terminalization (status / applied_cycle /
-//! result_json), and its audit entry in ONE immediate transaction (the task
-//! D3 primitives), so an exhausted budget or a crash leaves the remaining
-//! pairs queued and the next cycle resumes exactly where the previous one
-//! stopped. A batch's activations are stamped consumed only when its last
-//! pair is applied or explicitly skipped (deleted crystals produce audited
-//! skip tombstones, never silent drops), in the same transaction as the
-//! batch completion. An open batch is resumed, never re-snapshotted: work
-//! already committed is never recreated from still-unconsumed activations.
-
-use std::collections::BTreeSet;
+//! ONE durable batch with activation membership and deletion-safe crystal
+//! identities. Cursor offsets enumerate unique pairs lazily; only terminal
+//! pairs occupy `dream_link_pairs`. Each effect, terminal row, cursor advance,
+//! and audit commits atomically, so budget exhaustion or a crash resumes
+//! without replay. Legacy materialized batches retain their queued rows and
+//! drain first. Activations are consumed only after the final pair completes.
 
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -43,6 +35,9 @@ const LINK_WEIGHT_MAX: f64 = 1.0;
 
 /// `crystal_links.link_type` for hebbian co-activation links.
 const CO_ACTIVATION_LINK_TYPE: &str = "co_activation";
+
+const BATCH_PAIR_TOTALS_SQL: &str =
+    "select applied_pair_count, skipped_pair_count from dream_link_batches where id=?1";
 
 /// Unique unordered pairs of the given ids in deterministic order: ids are
 /// deduplicated and sorted, then paired as (smaller, larger) — the
@@ -195,6 +190,8 @@ impl LinkProgress {
     /// call — not selected activations. A zero budget consumes nothing: no
     /// batch is created, no pair is touched, no activation is stamped.
     pub fn process(&mut self, cycle: i64, pair_budget: usize) -> Result<usize, DreamError> {
+        self.terminalized_in_call = 0;
+        self.summary = LinkProgressSummary::default();
         if pair_budget == 0 {
             return Ok(0);
         }
@@ -205,7 +202,7 @@ impl LinkProgress {
 
         // Resume open batches (oldest first): a batch with queued pairs is
         // continued where the previous call stopped, never re-snapshotted.
-        for batch_id in open_batch_ids(&connection)? {
+        for batch_id in open_batch_ids(&connection, pair_budget)? {
             if budget == 0 {
                 break;
             }
@@ -216,7 +213,7 @@ impl LinkProgress {
         // unconsumed useful activations and no open batch (session
         // isolation: activations from different sessions never share one).
         if budget > 0 {
-            for session_id in sessions_without_open_batch(&connection)? {
+            for session_id in sessions_without_open_batch(&connection, budget)? {
                 if budget == 0 {
                     break;
                 }
@@ -240,30 +237,27 @@ impl LinkProgress {
         cycle: i64,
         budget: &mut usize,
     ) -> Result<(), DreamError> {
-        // An open batch whose pairs are all terminal (e.g. a crash between
-        // the last pair commit and batch completion) completes without new
-        // pair work.
-        if queued_pair_count(connection, batch_id)? == 0 {
-            self.complete_batch(connection, batch_id, cycle)?;
-            return Ok(());
-        }
-        let queued = queued_pairs(connection, batch_id)?;
-        for (left, right) in queued {
+        loop {
+            // Legacy materialized work is read one row at a time, before any
+            // lazy cursor work. Never load a quadratic queued-pair vector.
+            let queued = queued_pair(connection, batch_id)?;
+            let lazy = lazy_pair(connection, batch_id)?;
+            let pair = queued.or(lazy);
+            let Some((left, right)) = pair else {
+                self.complete_batch(connection, batch_id, cycle)?;
+                return Ok(());
+            };
             if *budget == 0 {
                 return Ok(());
             }
             self.terminalize_pair(connection, batch_id, cycle, left, right)?;
             *budget -= 1;
-            if queued_pair_count(connection, batch_id)? == 0 {
-                self.complete_batch(connection, batch_id, cycle)?;
-            }
         }
-        Ok(())
     }
 
     /// Snapshot one session's unconsumed useful activations into a durable
-    /// batch: UNIQUE activation membership, unique unordered crystal pairs
-    /// materialized as queued rows. One immediate transaction, so a crash
+    /// batch: UNIQUE activation membership and sorted crystal identities.
+    /// Pair enumeration itself is lazy. One immediate transaction, so a crash
     /// leaves either no batch or a complete one. `None` when the session has
     /// no unconsumed activations (no batch is created).
     fn snapshot_batch(
@@ -273,43 +267,30 @@ impl LinkProgress {
         session_id: i64,
     ) -> Result<Option<i64>, DreamError> {
         Ok(commit_audited(connection, |transaction| {
-            let activations: Vec<(i64, i64)> = {
-                let mut statement = transaction.prepare(
-                    "select id, crystal_id from crystal_activations
-                     where outcome = 'useful' and cycle_id is null and session_id = ?1
-                     order by id",
-                )?;
-                let rows =
-                    statement.query_map([session_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
-                rows.collect::<Result<Vec<_>, _>>()?
-            };
-            if activations.is_empty() {
+            let exists: bool = transaction.query_row(
+                "select exists(select 1 from crystal_activations where outcome='useful' and cycle_id is null and session_id=?1)",
+                [session_id], |row| row.get(0))?;
+            if !exists {
                 return Ok(None);
             }
-            let mut member_ids = BTreeSet::new();
-            let mut crystal_ids = BTreeSet::new();
-            for (activation_id, crystal_id) in activations {
-                member_ids.insert(activation_id);
-                crystal_ids.insert(crystal_id);
-            }
             transaction.execute(
-                "insert into dream_link_batches(session_id, created_cycle) values (?1, ?2)",
+                "insert into dream_link_batches(session_id, created_cycle, lazy_pairs) values (?1, ?2, 1)",
                 rusqlite::params![session_id, cycle],
             )?;
             let batch_id = transaction.last_insert_rowid();
-            for activation_id in &member_ids {
-                transaction.execute(
-                    "insert into dream_link_members(batch_id, activation_id) values (?1, ?2)",
-                    rusqlite::params![batch_id, activation_id],
-                )?;
-            }
-            let crystals: Vec<i64> = crystal_ids.into_iter().collect();
-            for (left, right) in canonical_pairs(&crystals) {
-                transaction.execute(
-                    "insert into dream_link_pairs(batch_id, left_id, right_id) values (?1, ?2, ?3)",
-                    rusqlite::params![batch_id, left, right],
-                )?;
-            }
+            transaction.execute(
+                "insert into dream_link_members(batch_id, activation_id)
+                 select ?1, id from crystal_activations where outcome='useful' and cycle_id is null and session_id=?2",
+                rusqlite::params![batch_id, session_id])?;
+            // Linear snapshot work, entirely in SQLite. No pair cross join,
+            // and no Rust vector proportional to the number of activations.
+            transaction.execute(
+                "insert into dream_link_crystals(batch_id, member_offset, crystal_id)
+                 select ?1, row_number() over (order by crystal_id)-1, crystal_id
+                 from (select distinct ca.crystal_id from crystal_activations ca
+                   join dream_link_members m on m.activation_id=ca.id where m.batch_id=?1)",
+                [batch_id],
+            )?;
             Ok(Some(batch_id))
         })?)
     }
@@ -329,6 +310,11 @@ impl LinkProgress {
     ) -> Result<(), DreamError> {
         let combination_budget = self.combination_budget;
         let effect: PairEffect = commit_audited(connection, |transaction| {
+            // Both insertion and cursor movement belong to the same effect
+            // transaction. A failed audit/status write rolls all of them back.
+            transaction.execute(
+                "insert or ignore into dream_link_pairs(batch_id, left_id, right_id) values(?1, ?2, ?3)",
+                rusqlite::params![batch_id, left, right])?;
             let cores = load_crystal_cores(transaction, &[(left, right)]).map_err(tx_error)?;
             let effect = match (cores.get(&left), cores.get(&right)) {
                 (Some(left_core), Some(right_core)) => {
@@ -364,7 +350,7 @@ impl LinkProgress {
                     PairEffect::Skipped { missing }
                 }
             };
-            // Fail closed: the queued pair row must be the one this commit
+            // Fail closed: the pair row must be the one this commit
             // terminalizes; a missing row is corruption, not a skip, and the
             // whole pair transaction (reinforcement included) rolls back.
             let changed = transaction.execute(
@@ -386,6 +372,16 @@ impl LinkProgress {
                     "queued link pair ({left}, {right}) of batch {batch_id} is missing"
                 ))));
             }
+            transaction.execute(
+                "update dream_link_batches set
+                 next_left_offset = case when next_right_offset + 1 >= (select max(member_offset)+1 from dream_link_crystals where batch_id=?1) then next_left_offset+1 else next_left_offset end,
+                 next_right_offset = case when next_right_offset + 1 >= (select max(member_offset)+1 from dream_link_crystals where batch_id=?1) then next_left_offset+2 else next_right_offset+1 end
+                 where id=?1 and lazy_pairs=1",
+                [batch_id])?;
+            transaction.execute(
+                "update dream_link_batches set applied_pair_count = applied_pair_count + (?2 = 'applied'),
+                 skipped_pair_count = skipped_pair_count + (?2 = 'skipped') where id = ?1",
+                rusqlite::params![batch_id, effect.status()])?;
             self.append_pair_audit(transaction, batch_id, cycle, left, right, &effect)
                 .map_err(tx_error)?;
             Ok(effect)
@@ -478,32 +474,15 @@ impl LinkProgress {
                  where id = ?2 and completed_cycle is null",
                 rusqlite::params![cycle, batch_id],
             )?;
-            let counts: Vec<(String, i64)> = {
-                let mut statement = transaction.prepare(
-                    "select status, count(*) from dream_link_pairs
-                     where batch_id = ?1 group by status order by status",
-                )?;
-                let rows = statement.query_map([batch_id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            let (applied, skipped): (i64, i64) =
+                transaction.query_row(BATCH_PAIR_TOTALS_SQL, [batch_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
                 })?;
-                rows.collect::<Result<Vec<_>, _>>()?
-            };
-            let applied = counts
-                .iter()
-                .find(|(status, _)| status == "applied")
-                .map_or(0, |(_, count)| *count);
-            let skipped = counts
-                .iter()
-                .find(|(status, _)| status == "skipped")
-                .map_or(0, |(_, count)| *count);
-            let members: Vec<i64> = {
-                let mut statement = transaction.prepare(
-                    "select activation_id from dream_link_members
-                     where batch_id = ?1 order by activation_id",
-                )?;
-                let rows = statement.query_map([batch_id], |row| row.get(0))?;
-                rows.collect::<Result<Vec<_>, _>>()?
-            };
+            let member_count: i64 = transaction.query_row(
+                "select count(*) from dream_link_members where batch_id=?1",
+                [batch_id],
+                |row| row.get(0),
+            )?;
             if let Some((run_id, phase_run_id)) = self.run {
                 DreamAuditStore::append_in_transaction(
                     transaction,
@@ -516,7 +495,7 @@ impl LinkProgress {
                         "batch_id": batch_id,
                         "session_id": session_id,
                         "completed_cycle": cycle,
-                        "activation_ids": members,
+                        "activation_count": member_count,
                         "applied_pairs": applied,
                         "skipped_pairs": skipped,
                     }),
@@ -530,12 +509,12 @@ impl LinkProgress {
 }
 
 /// The open batches in resume order (creation order).
-fn open_batch_ids(connection: &Connection) -> Result<Vec<i64>, DreamError> {
+fn open_batch_ids(connection: &Connection, limit: usize) -> Result<Vec<i64>, DreamError> {
     let mut statement = connection.prepare(
         "select id from dream_link_batches
-         where completed_cycle is null order by id",
+         where completed_cycle is null order by lazy_pairs, id limit ?1",
     )?;
-    let rows = statement.query_map([], |row| row.get(0))?;
+    let rows = statement.query_map([limit as i64], |row| row.get(0))?;
     let mut ids = Vec::new();
     for row in rows {
         ids.push(row?);
@@ -545,7 +524,10 @@ fn open_batch_ids(connection: &Connection) -> Result<Vec<i64>, DreamError> {
 
 /// Sessions with unconsumed useful activations but no open batch, in
 /// deterministic (session id) order.
-fn sessions_without_open_batch(connection: &Connection) -> Result<Vec<i64>, DreamError> {
+fn sessions_without_open_batch(
+    connection: &Connection,
+    limit: usize,
+) -> Result<Vec<i64>, DreamError> {
     let mut statement = connection.prepare(
         "select distinct ca.session_id
          from crystal_activations ca
@@ -554,9 +536,9 @@ fn sessions_without_open_batch(connection: &Connection) -> Result<Vec<i64>, Drea
              select 1 from dream_link_batches b
              where b.session_id = ca.session_id and b.completed_cycle is null
            )
-         order by ca.session_id",
+         order by ca.session_id limit ?1",
     )?;
-    let rows = statement.query_map([], |row| row.get(0))?;
+    let rows = statement.query_map([limit as i64], |row| row.get(0))?;
     let mut ids = Vec::new();
     for row in rows {
         ids.push(row?);
@@ -564,28 +546,30 @@ fn sessions_without_open_batch(connection: &Connection) -> Result<Vec<i64>, Drea
     Ok(ids)
 }
 
-fn queued_pair_count(connection: &Connection, batch_id: i64) -> Result<usize, DreamError> {
-    let count: i64 = connection.query_row(
-        "select count(*) from dream_link_pairs
-         where batch_id = ?1 and status = 'queued'",
-        [batch_id],
-        |row| row.get(0),
-    )?;
-    Ok(count.max(0) as usize)
+fn queued_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i64)>, DreamError> {
+    use rusqlite::OptionalExtension;
+    Ok(connection
+        .query_row(
+            "select left_id, right_id from dream_link_pairs
+      where batch_id=?1 and status='queued' order by left_id, right_id limit 1",
+            [batch_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
 }
 
-fn queued_pairs(connection: &Connection, batch_id: i64) -> Result<Vec<(i64, i64)>, DreamError> {
-    let mut statement = connection.prepare(
-        "select left_id, right_id from dream_link_pairs
-         where batch_id = ?1 and status = 'queued'
-         order by left_id, right_id",
-    )?;
-    let rows = statement.query_map([batch_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
-    let mut pairs = Vec::new();
-    for row in rows {
-        pairs.push(row?);
-    }
-    Ok(pairs)
+fn lazy_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i64)>, DreamError> {
+    use rusqlite::OptionalExtension;
+    Ok(connection
+        .query_row(
+            "select l.crystal_id, r.crystal_id from dream_link_batches b
+      join dream_link_crystals l on l.batch_id=b.id and l.member_offset=b.next_left_offset
+      join dream_link_crystals r on r.batch_id=b.id and r.member_offset=b.next_right_offset
+      where b.id=?1 and b.lazy_pairs=1",
+            [batch_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
 }
 
 /// Minimal crystal projection for combination decisions.
@@ -797,5 +781,42 @@ mod tests {
     #[test]
     fn canonical_pairs_are_sorted_smaller_first() {
         assert_eq!(canonical_pairs(&[9, 4]), vec![(4, 9)]);
+    }
+    #[test]
+    fn completion_total_lookup_has_constant_vm_work_as_history_grows() {
+        use rusqlite::{Connection, StatementStatus};
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("create table dream_link_batches(id integer primary key, applied_pair_count integer, skipped_pair_count integer);
+          insert into dream_link_batches values(1,100,0);
+          create table dream_link_pairs(batch_id integer, left_id integer, right_id integer, status text);
+          create index queue on dream_link_pairs(batch_id,status,left_id,right_id);").unwrap();
+        let mut steps = Vec::new();
+        for count in [100, 10000] {
+            connection
+                .execute(
+                    "with recursive n(x) as (values(1) union all select x+1 from n where x<?1)
+              insert into dream_link_pairs select 1, 0, x, 'applied' from n",
+                    [count],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "update dream_link_batches set applied_pair_count=?1 where id=1",
+                    [count],
+                )
+                .unwrap();
+            let mut statement = connection.prepare(super::BATCH_PAIR_TOTALS_SQL).unwrap();
+            let total: i64 = statement.query_row([1], |row| row.get(0)).unwrap();
+            assert_eq!(total, count);
+            steps.push(statement.get_status(StatementStatus::VmStep));
+        }
+        assert_eq!(
+            steps[0], steps[1],
+            "terminal history must not increase completion query work"
+        );
+        assert!(
+            steps[1] < 100,
+            "single batch lookup must be bounded: {steps:?}"
+        );
     }
 }

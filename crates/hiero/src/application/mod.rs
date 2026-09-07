@@ -23,7 +23,7 @@ use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard};
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::memory_models::TranslationContext;
-use hieronymus::recall::RecallService;
+use hieronymus::recall::{RecallService, SemanticAvailability, SemanticStatusHook};
 use hieronymus::semantic_recall::SemanticLane;
 
 /// Post-commit rebuild notifier installed by the daemon (Task S2): RAG
@@ -57,6 +57,14 @@ pub struct Application {
     config: HieronymusConfig,
     recall: RwLock<RecallService>,
     rebuild_hook: RwLock<Option<RebuildHook>>,
+    /// The daemon's semantic-readiness probe (task C5), installed by
+    /// [`crate::daemon::Daemon::start`] over its semantic controller. It is
+    /// remembered here as well as handed to the recall service, because a
+    /// later lane installation rebuilds that service and must not drop it.
+    /// When absent — a bare `Application::open` that is not serving a daemon
+    /// — there is no semantic service at all, and strict semantic search
+    /// fails closed rather than answering lexically.
+    semantic_status: RwLock<Option<SemanticStatusHook>>,
     /// The daemon's dream controller (task D5), installed by
     /// [`crate::daemon::Daemon::start`] exactly once. When absent — a bare
     /// `Application::open` that is not serving a daemon — the dream
@@ -86,6 +94,7 @@ impl Application {
             config: config.clone(),
             recall: RwLock::new(recall),
             rebuild_hook: RwLock::new(None),
+            semantic_status: RwLock::new(None),
             dream: OnceLock::new(),
         })
     }
@@ -107,19 +116,101 @@ impl Application {
     /// Installs (or refreshes) the query-time semantic lane. Called by the
     /// semantic controller on first arming and on every verified generation
     /// activation, so queries always run on a coherent identity and
-    /// generation. A failed reopen keeps the previous service in place.
-    pub fn install_semantic_lane(&self, lane: SemanticLane) {
-        let Ok(mut guard) = self.recall.write() else {
-            return;
-        };
-        if let Ok(service) = RecallService::open(&self.config) {
-            *guard = service.with_semantic_lane(lane);
-        } else {
-            eprintln!(
-                "hiero daemon: semantic lane install skipped (could not reopen the recall \
-                 service over {})",
+    /// generation.
+    ///
+    /// A failed reopen keeps the previous service in place and is reported to
+    /// the caller: whether a query lane is installed is the load-bearing fact
+    /// behind `RequiredSemanticState::Ready` (Task C3), so swallowing this
+    /// error would let the controller advertise a lane that never arrived.
+    pub fn install_semantic_lane(&self, lane: SemanticLane) -> Result<(), String> {
+        let mut guard = self
+            .recall
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let service = RecallService::open(&self.config).map_err(|error| {
+            format!(
+                "could not reopen the recall service over {}: {error}",
                 self.config.database_path().display()
-            );
+            )
+        })?;
+        let mut service = service.with_semantic_lane(lane);
+        // The reopen builds a fresh service, so the installed availability
+        // probe has to be carried over or a lane refresh would silently make
+        // recall stop consuming the shared semantic status (task C5).
+        if let Some(hook) = self
+            .semantic_status
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+        {
+            service.set_semantic_status(hook);
+        }
+        *guard = service;
+        Ok(())
+    }
+
+    /// Installs the shared semantic-readiness probe (task C5, review finding
+    /// A5): the daemon's analogue of [`Self::set_rebuild_hook`], reading its
+    /// semantic controller's `RequiredSemanticState` through
+    /// `require_semantic_ready`.
+    ///
+    /// This is the single seam by which the application learns whether
+    /// required semantics can actually serve a query. `install_semantic_lane`
+    /// only ever said that a lane was armed, which is not the same claim: a
+    /// lane can be armed over a generation that does not cover the current
+    /// corpus, and a cold or failed runtime arms nothing at all while lexical
+    /// search keeps answering.
+    ///
+    /// Installing is order-independent with respect to lane installation:
+    /// whichever lands second re-applies the other.
+    ///
+    /// The two locks are taken one at a time on purpose. `install_semantic_lane`
+    /// holds the recall write guard and then reads this field, so holding this
+    /// field's guard while waiting for the recall lock here would be a lock
+    /// order inversion between two paths the semantic worker can drive
+    /// concurrently.
+    pub fn install_semantic_status(&self, hook: SemanticStatusHook) {
+        {
+            let mut remembered = self
+                .semantic_status
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *remembered = Some(Arc::clone(&hook));
+        }
+        self.recall
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .set_semantic_status(hook);
+    }
+
+    /// The shared semantic service's verdict, or `None` when no semantic
+    /// service is attached to this application.
+    pub(crate) fn semantic_availability(&self) -> Option<SemanticAvailability> {
+        let guard = self
+            .semantic_status
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.as_ref().map(|hook| hook())
+    }
+
+    /// The strict gate for tools whose contract IS semantic retrieval: the
+    /// service must be attached and ready, or the call fails with the
+    /// service's own actionable reason.
+    ///
+    /// A missing hook is a failure, not a pass. The owner constraint is that
+    /// both working memory and semantic RAG are mandatory — FTS-only is not a
+    /// release alternative — so "no semantic service is attached" cannot be
+    /// answered with lexical rows that look exactly like complete ones.
+    pub(crate) fn require_semantic_service(&self) -> Result<(), AppError> {
+        match self.semantic_availability() {
+            Some(SemanticAvailability::Ready) => Ok(()),
+            Some(SemanticAvailability::Unavailable(reason)) => Err(AppError::Domain(reason)),
+            None => Err(AppError::Domain(
+                "semantic retrieval unavailable: no semantic service is attached to this data \
+                 root; semantic RAG search requires a running daemon with semantics enabled \
+                 (`hiero semantic enable --runtime <libonnxruntime.so>`)"
+                    .to_string(),
+            )),
         }
     }
 
@@ -134,7 +225,15 @@ impl Application {
     /// Queues a durable semantic rebuild through the installed hook (used by
     /// RAG import after its authoritative commit). `None` when no daemon
     /// owns this application; hook failures surface to the caller without
-    /// failing the import — startup/periodic reconciliation recovers.
+    /// failing the import.
+    ///
+    /// Both non-queued outcomes are safe to report rather than retry here
+    /// (task C4): the import wrote a durable `semantic_work_intent` inside its
+    /// own transaction, so the owed indexing is recorded in SQLite whether or
+    /// not this best-effort notification lands, and startup/periodic
+    /// reconciliation queues it from that record. What callers must NOT be
+    /// told is that indexing was queued when it was not — see
+    /// `memory::rag_import`.
     pub(crate) fn request_rebuild(&self, series_slug: &str) -> Option<Result<String, String>> {
         let guard = self
             .rebuild_hook
