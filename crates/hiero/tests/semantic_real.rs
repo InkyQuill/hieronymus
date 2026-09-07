@@ -389,9 +389,6 @@ fn real_semantic_qualification() {
         stage_assets(root.path(), &models);
         let junk = root.path().join("libonnxruntime.so");
         std::fs::write(&junk, b"this is not an ELF shared object").unwrap();
-        let enable = semantic_enable(root.path(), &junk);
-        assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
-
         let port = free_port();
         let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
             .args([
@@ -413,6 +410,26 @@ fn real_semantic_qualification() {
             .unwrap()
             .trim()
             .to_string();
+        let enable = semantic_enable(root.path(), &junk);
+        assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
+        assert!(
+            enable["reason"]
+                .as_str()
+                .unwrap()
+                .contains("restart-required"),
+            "{enable}"
+        );
+        // A valid path after the failed native load cannot silently reuse the
+        // process-global poisoned library. The same daemon must request restart.
+        let repaired = semantic_enable(root.path(), &runtime);
+        assert_eq!(repaired["lane"], json!("disarmed"), "{repaired}");
+        assert!(
+            repaired["reason"]
+                .as_str()
+                .unwrap()
+                .contains("restart-required"),
+            "{repaired}"
+        );
         let failed = wait_until(
             || {
                 let response = send_request(
@@ -453,9 +470,9 @@ fn real_semantic_qualification() {
         stage_assets(root.path(), &models);
         let model_path = SemanticStore::model_path_for(&HieronymusConfig::new(root.path()));
         corrupt_file_keep_size(&model_path);
+        let daemon = start_daemon(root.path());
         let enable = semantic_enable(root.path(), &runtime);
         assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
-        let daemon = start_daemon(root.path());
         wait_for_state(&daemon, "failed");
         let dto: StatusDto = serde_json::from_value(status_body(&daemon)).unwrap();
         assert!(
@@ -528,13 +545,20 @@ fn real_semantic_qualification() {
             json!({"session_id": session_id, "kind": memory.kind, "text": memory.text}),
         );
 
-        // Mixed recall still serves memory, and admits the semantic gap.
+        // Memory retrieval is lexical: use the fixture's learned-memory
+        // query, not an unrelated physician paraphrase. The strict RAG probe
+        // below independently exercises unavailable semantic retrieval.
+        let memory_query = fixture
+            .queries
+            .iter()
+            .find(|query| query.expected_memory_text.as_deref() == Some(memory.text.as_str()))
+            .expect("the fixture supplies a query for its learned memory");
         let payload = recall(
             &daemon,
             &mut cold,
             session_id,
             &series.slug,
-            "Which doctor cared for the injured seaman on the ship?",
+            &memory_query.query,
         );
         assert!(
             payload["warnings"]
@@ -578,13 +602,16 @@ fn real_semantic_qualification() {
     // -- 3. The healthy flow: real model, real daemon, curated corpus ------
     let root = tempfile::tempdir().unwrap();
     stage_assets(root.path(), &models);
+    let daemon = start_daemon(root.path());
+    wait_for_state(&daemon, "failed");
+    let instance_before = status_body(&daemon)["instance_id"].clone();
     let enable = semantic_enable(root.path(), &runtime);
     assert_eq!(enable["lane"], json!("armed"), "{enable}");
+    assert_eq!(status_body(&daemon)["instance_id"], instance_before);
     assert_eq!(enable["model_status"], json!("available"), "{enable}");
     assert_eq!(enable["downloaded"], json!(false), "{enable}");
     assert_eq!(enable["tokenizer_downloaded"], json!(false), "{enable}");
 
-    let daemon = start_daemon(root.path());
     let mut id = 0_i64;
 
     // Series and sessions (normal authenticated MCP operations only).
@@ -990,12 +1017,15 @@ fn real_semantic_qualification() {
             .query_row(
                 "select count(*) from semantic_generations
                  where generation_id = 'legacy-byte-fold'
-                   and tokenizer = ?1 and status = 'superseded'",
+                   and tokenizer = ?1 and status in ('failed', 'superseded') and active = 0",
                 rusqlite::params![BYTE_FOLD_TOKENIZER_ID],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(legacy, 1, "the legacy row keeps its byte-fold identity");
+        assert_eq!(
+            legacy, 1,
+            "the legacy row keeps its byte-fold identity and is terminal/inactive"
+        );
     }
     // The healed lane serves real semantic recall again.
     {

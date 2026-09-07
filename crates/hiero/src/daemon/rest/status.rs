@@ -69,7 +69,7 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
 /// An FTS-only lane surfaces as `failed` — never as ready — so strict
 /// consumers gate on `require_semantic_ready`.
 fn semantic_payload(runtime: &DaemonRuntime) -> Value {
-    match runtime.semantic.state() {
+    let mut payload = match runtime.semantic.state() {
         crate::daemon::semantic_worker::RequiredSemanticState::Acquiring => {
             json!({"state": "acquiring", "detail": Value::Null})
         }
@@ -82,7 +82,11 @@ fn semantic_payload(runtime: &DaemonRuntime) -> Value {
         crate::daemon::semantic_worker::RequiredSemanticState::Failed(reason) => {
             json!({"state": "failed", "detail": reason})
         }
-    }
+    };
+    payload["configuration_revision"] =
+        hieronymus::semantic_arming::configuration_revision(&runtime.config)
+            .map_or(Value::Null, |revision| json!(revision));
+    payload
 }
 
 /// Builtin dream providers in the frozen order, then any catalog-only

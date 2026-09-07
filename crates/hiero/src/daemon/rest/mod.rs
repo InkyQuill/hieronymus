@@ -18,6 +18,7 @@
 pub(crate) mod admin;
 pub(crate) mod feedback;
 pub(crate) mod providers;
+mod semantic;
 pub(crate) mod settings;
 pub(crate) mod status;
 
@@ -37,6 +38,8 @@ pub(crate) fn handle(
 ) -> Response {
     match path {
         "/status" => status::handle(request, runtime),
+        "/semantic/configure" => semantic::handle(request, runtime, false),
+        "/semantic/acquire" => semantic::handle(request, runtime, true),
         "/recall/feedback" => feedback::handle(request, runtime),
         "/auth/launch-grant" => handle_grant_mint(request, runtime),
         "/auth/launch-grant/exchange" => handle_grant_exchange(request, runtime),

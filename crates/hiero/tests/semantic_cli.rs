@@ -23,6 +23,22 @@ use hieronymus::workspace::WorkspaceStore;
 use sha2::Digest;
 
 fn hiero(arguments: &[&str]) -> (String, String, std::process::ExitStatus) {
+    let _daemon = if arguments.get(1) == Some(&"enable") {
+        let root = arguments
+            .windows(2)
+            .find(|args| args[0] == "--data-root")
+            .unwrap()[1];
+        Some(
+            hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+                data_root: Some(root.into()),
+                port: 0,
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+    } else {
+        None
+    };
     let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(arguments)
         .output()
@@ -419,4 +435,115 @@ fn enable_with_bytes_override_detects_a_checksum_mismatched_file() {
     assert_eq!(payload["model_status"], "available", "{payload}");
     assert_eq!(server.request_count(), 1);
     assert_eq!(std::fs::read(store.model_path()).unwrap(), right);
+}
+
+#[test]
+fn malformed_semantic_configuration_is_not_absence() {
+    use hieronymus::semantic_arming::load_runtime_library;
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    assert!(load_runtime_library(&config).unwrap().is_none());
+    for text in [
+        "runtime_library = [",
+        "runtime_library = 3",
+        "",
+        "runtime_library = 'relative.so'",
+    ] {
+        std::fs::write(root.path().join("semantic.conf"), text).unwrap();
+        assert!(load_runtime_library(&config).is_err(), "{text}");
+        assert!(
+            hieronymus::state_classifier::classify(&config).is_err(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn enable_without_an_owner_does_not_create_state() {
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "semantic",
+            "enable",
+            "--data-root",
+            root.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn cancelled_cli_leaves_acquisition_under_daemon_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+        data_root: Some(root.path().into()),
+        port: 0,
+        ..Default::default()
+    })
+    .unwrap();
+    let body = b"owner completes this verified staged model";
+    let (sha, size) = artifact(body);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/model.onnx", listener.local_addr().unwrap());
+    let (started, receive_started) = std::sync::mpsc::channel();
+    let (release, receive_release) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        socket.read(&mut request).unwrap();
+        started.send(()).unwrap();
+        receive_release
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        socket.write_all(body).unwrap();
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args([
+            "semantic",
+            "enable",
+            "--json",
+            "--url",
+            &url,
+            "--sha256",
+            &sha,
+            "--bytes",
+            &size,
+            "--data-root",
+            root.path().to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    receive_started
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+            data_root: Some(root.path().into()),
+            port: 0,
+            ..Default::default()
+        })
+        .is_err()
+    );
+    release.send(()).unwrap();
+    server.join().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let model = SemanticStore::model_path_for(&config);
+    while !model.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(std::fs::read(model).unwrap(), body);
+    assert!(!root.path().join("semantic.conf").exists());
+    daemon.shutdown().unwrap();
 }

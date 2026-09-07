@@ -194,6 +194,8 @@ fn classify_database(config: &HieronymusConfig) -> Result<StartupState, Classify
 /// `config_migration_required`; a malformed, unknown, or newer marker is a
 /// fail-closed `invalid` verdict.
 fn classify_config(config: &HieronymusConfig) -> Result<(), ClassifyError> {
+    crate::semantic_arming::load_runtime_library(config)
+        .map_err(|error| map_config_error("semantic.conf", false, &error.to_string()))?;
     if let Err(error) = crate::dream_config::resolve_dream_config_readonly(config) {
         return Err(map_config_error(
             "dream.conf",

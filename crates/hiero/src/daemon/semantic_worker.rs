@@ -193,6 +193,10 @@ impl OnnxArm {
     }
 }
 
+// ort caches its native library process-wide. A failed initialization or a
+// request for another library requires an explicit supervised process restart.
+static NATIVE_RUNTIME: Mutex<Option<(PathBuf, bool)>> = Mutex::new(None);
+
 impl SemanticArm for OnnxArm {
     fn identity(&self) -> EmbeddingIdentity {
         hieronymus::semantic_embeddings::OnnxEmbeddingProvider::static_identity()
@@ -231,9 +235,36 @@ impl SemanticArm for OnnxArm {
 
     fn arm(&self, config: &HieronymusConfig) -> Result<ArmedPair, String> {
         let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
-        let provider = store
-            .load_embedding_provider(&self.runtime)
+        self.precheck(config)?;
+        let checksum = hieronymus::semantic_model::sha256_file(&store.model_path())
             .map_err(|error| error.to_string())?;
+        if checksum != hieronymus::semantic_model::MODEL_SHA256 {
+            return Err("model checksum mismatch; reacquire the pinned model".into());
+        }
+        let mut native = NATIVE_RUNTIME.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((path, failed)) = native.as_ref()
+            && (*failed || *path != self.runtime)
+        {
+            return Err("restart-required: ONNX runtime was already initialized with a different path or failed to load; run `hiero restart` explicitly".into());
+        }
+        *native = Some((self.runtime.clone(), true));
+        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store.load_embedding_provider(&self.runtime)
+        }));
+        let provider = match loaded {
+            Ok(Ok(provider)) => provider,
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "restart-required: ONNX initialization failed: {error}; run `hiero restart` explicitly"
+                ));
+            }
+            Err(_) => return Err(
+                "restart-required: ONNX initialization panicked; run `hiero restart` explicitly"
+                    .into(),
+            ),
+        };
+        *native = Some((self.runtime.clone(), false));
+        drop(native);
         let tokenizer = store
             .load_model_tokenizer()
             .map_err(|error| error.to_string())?;
@@ -247,7 +278,7 @@ impl SemanticArm for OnnxArm {
 /// The unconfigured arm: no runtime location was persisted. Queues jobs under
 /// the pinned identity (so a later-configured daemon rebuilds them) but never
 /// arms, keeping the state honestly `Failed`.
-struct UnconfiguredArm;
+struct UnconfiguredArm(Option<String>);
 
 impl SemanticArm for UnconfiguredArm {
     fn identity(&self) -> EmbeddingIdentity {
@@ -255,6 +286,9 @@ impl SemanticArm for UnconfiguredArm {
     }
 
     fn precheck(&self, _config: &HieronymusConfig) -> Result<(), String> {
+        if let Some(reason) = &self.0 {
+            return Err(reason.clone());
+        }
         Err(
             "onnx runtime library is not configured; run `hiero semantic enable --runtime <lib>` \
              once to persist its location"
@@ -304,8 +338,9 @@ pub(crate) fn resolve_arm(config: &HieronymusConfig) -> Arc<dyn SemanticArm> {
         return arm;
     }
     match load_runtime_library(config) {
-        Some(runtime) => Arc::new(OnnxArm::new(runtime)),
-        None => Arc::new(UnconfiguredArm),
+        Ok(Some(runtime)) => Arc::new(OnnxArm::new(runtime)),
+        Ok(None) => Arc::new(UnconfiguredArm(None)),
+        Err(error) => Arc::new(UnconfiguredArm(Some(error.to_string()))),
     }
 }
 
@@ -320,9 +355,21 @@ const REARM_POLL: Duration = Duration::from_secs(5);
 
 struct ControllerInner {
     config: HieronymusConfig,
-    identity: EmbeddingIdentity,
+    identity: Mutex<EmbeddingIdentity>,
     state: Mutex<RequiredSemanticState>,
     wake: std::sync::mpsc::Sender<()>,
+    reload: Mutex<Option<ReloadRequest>>,
+    configuration_lock: Mutex<()>,
+}
+
+pub struct ConfigurationAcknowledgement {
+    pub state: RequiredSemanticState,
+    pub configuration_revision: u64,
+}
+
+struct ReloadRequest {
+    runtime: Option<PathBuf>,
+    reply: std::sync::mpsc::Sender<Result<ConfigurationAcknowledgement, String>>,
 }
 
 /// Handle to the supervised semantic worker. Cheap to clone; every clone
@@ -381,7 +428,9 @@ impl SemanticController {
         };
         let (wake, wake_rx) = std::sync::mpsc::channel::<()>();
         let inner = Arc::new(ControllerInner {
-            identity,
+            reload: Mutex::new(None),
+            configuration_lock: Mutex::new(()),
+            identity: Mutex::new(identity),
             state: Mutex::new(initial),
             wake,
             config,
@@ -398,8 +447,15 @@ impl SemanticController {
     /// recovered by startup/periodic reconciliation because the queueing
     /// itself is durable SQLite state.
     pub fn request_rebuild(&self, _series: &str) -> Result<String, String> {
-        let outcome = queue_semantic_rebuild(&self.inner.config, &self.inner.identity)
-            .map_err(|error| error.to_string())?;
+        let outcome = queue_semantic_rebuild(
+            &self.inner.config,
+            &self
+                .inner
+                .identity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        )
+        .map_err(|error| error.to_string())?;
         match outcome {
             hieronymus::semantic_recall::QueueOutcome::Enqueued(job_id)
             | hieronymus::semantic_recall::QueueOutcome::AlreadyQueued(job_id) => {
@@ -424,6 +480,36 @@ impl SemanticController {
                 Ok(EMPTY_CORPUS_JOB_ID.to_string())
             }
         }
+    }
+
+    /// Configuration writes and reloads are serialized through the owned worker.
+    /// The acknowledgement means the old lane has lost readiness and the worker
+    /// has re-resolved settings; it never claims that inference has succeeded.
+    pub fn configure(&self, runtime: PathBuf) -> Result<ConfigurationAcknowledgement, String> {
+        self.reload(Some(runtime))
+    }
+
+    pub fn reload_configuration(&self) -> Result<(), String> {
+        self.reload(None).map(|_| ())
+    }
+
+    fn reload(&self, runtime: Option<PathBuf>) -> Result<ConfigurationAcknowledgement, String> {
+        let _serial = self
+            .inner
+            .configuration_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let (reply, receive) = std::sync::mpsc::channel();
+        *self.inner.reload.lock().map_err(|e| e.to_string())? =
+            Some(ReloadRequest { runtime, reply });
+        self.inner
+            .wake
+            .send(())
+            .map_err(|_| "semantic worker stopped".to_string())?;
+        receive.recv_timeout(Duration::from_secs(8)).map_err(|_| {
+            "semantic reload acknowledgement timed out; inspect daemon status before retrying"
+                .to_string()
+        })?
     }
 
     /// The state `/status` serves and strict readiness gates consume.
@@ -496,7 +582,7 @@ fn run_worker(
     install: Box<dyn Fn(SemanticLane) -> Result<(), String> + Send>,
     wake_rx: std::sync::mpsc::Receiver<()>,
 ) {
-    let context = WorkerContext {
+    let mut context = WorkerContext {
         inner,
         arm,
         install,
@@ -523,6 +609,7 @@ fn run_worker(
     // tick that cannot queue yet.
     let mut recovery_owed = false;
     let mut rearm_deadline = std::time::Instant::now();
+    let mut rearm_blocked = false;
     let stop_flag = Arc::clone(&stop);
     let rebuild = RebuildConfig {
         stop_check: Some(Arc::new(move || stop_flag.load(Ordering::Acquire))),
@@ -531,6 +618,49 @@ fn run_worker(
     loop {
         if stop.load(Ordering::Acquire) {
             break;
+        }
+
+        let reload = context
+            .inner
+            .reload
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(request) = reload {
+            let result = match request.runtime {
+                Some(runtime) => save_runtime_library(&context.inner.config, &runtime),
+                None => Ok(()),
+            };
+            if result.is_ok() {
+                context.arm = resolve_arm(&context.inner.config);
+                *context
+                    .inner
+                    .identity
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = context.arm.identity();
+                pair = None;
+                query_installed = false;
+                failure_detail = None;
+                recovery_attempted = false;
+                rearm_deadline = std::time::Instant::now();
+                rearm_blocked = false;
+                set_state(&context.inner, RequiredSemanticState::Acquiring);
+            }
+            let result = result.and_then(|_| {
+                Ok(ConfigurationAcknowledgement {
+                    state: context
+                        .inner
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone(),
+                    configuration_revision: hieronymus::semantic_arming::configuration_revision(
+                        &context.inner.config,
+                    )
+                    .map_err(|error| error.to_string())?,
+                })
+            });
+            let _ = request.reply.send(result);
         }
 
         // 1. Durable recovery first: reconcile crash residue (expired leases,
@@ -566,7 +696,7 @@ fn run_worker(
         //    heal the Failed state without a restart). BOTH lanes have to
         //    load and the query lane has to be accepted — see
         //    [`arm_both_lanes`].
-        if pair.is_none() && rearm_deadline <= std::time::Instant::now() {
+        if pair.is_none() && !rearm_blocked && rearm_deadline <= std::time::Instant::now() {
             set_state(&context.inner, RequiredSemanticState::Acquiring);
             match arm_both_lanes(&context) {
                 Ok(indexing) => {
@@ -575,6 +705,7 @@ fn run_worker(
                     failure_detail = None;
                 }
                 Err(reason) => {
+                    rearm_blocked = reason.contains("restart-required:");
                     query_installed = false;
                     fail(&context.inner, &mut failure_detail, reason);
                     rearm_deadline = std::time::Instant::now() + REARM_POLL;
@@ -627,7 +758,14 @@ fn run_worker(
             && (!evidence.corpus_empty || recovery_owed)
             && (!recovery_attempted || recovery_owed)
         {
-            match queue_semantic_rebuild(&context.inner.config, &context.inner.identity) {
+            match queue_semantic_rebuild(
+                &context.inner.config,
+                &context
+                    .inner
+                    .identity
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()),
+            ) {
                 Ok(
                     hieronymus::semantic_recall::QueueOutcome::Enqueued(_)
                     | hieronymus::semantic_recall::QueueOutcome::AlreadyQueued(_),
@@ -1014,7 +1152,7 @@ fn assess_active_generation(
     let Some(active) = manifest else {
         return Ok((false, None));
     };
-    let unusable = if active.identity != inner.identity {
+    let unusable = if active.identity != *inner.identity.lock().unwrap_or_else(|e| e.into_inner()) {
         Some(format!(
             "semantic generation {} was built under a different embedding identity ({} {}@{}, {} \
              dims, {} tokenizer) than the daemon runs; it was invalidated and must be rebuilt",

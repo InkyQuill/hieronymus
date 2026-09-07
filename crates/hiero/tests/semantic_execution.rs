@@ -1699,3 +1699,144 @@ fn mixed_recall_over_ready_semantics_carries_no_unavailable_warning() {
 
     daemon.shutdown().unwrap();
 }
+
+#[test]
+fn configure_reloads_the_same_authenticated_daemon() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_daemon(root.path());
+    wait_for_state(&daemon, "failed");
+    let config = HieronymusConfig::new(root.path());
+    let runtime = root.path().join("runtime.so");
+    std::fs::write(&runtime, b"test seam runtime").unwrap();
+    let body = serde_json::to_vec(&json!({"runtime_library": runtime})).unwrap();
+    let denied = send_request(
+        daemon.local_addr().port(),
+        "POST",
+        "/semantic/configure",
+        &[],
+        &body,
+    );
+    assert_eq!(denied.status, 401);
+    assert!(!root.path().join("semantic.conf").exists());
+    install_test_arm(root.path(), TestArm::fast());
+    let client = hiero::lifecycle::connect(&config, false).unwrap();
+    let before = client.get("/status").unwrap()["instance_id"].clone();
+    let configured = client
+        .post("/semantic/configure", &json!({"runtime_library": runtime}))
+        .unwrap();
+    assert_eq!(configured["configuration_revision"], 1);
+    wait_for_state(&daemon, "ready");
+    assert_eq!(client.get("/status").unwrap()["instance_id"], before);
+    assert!(
+        hieronymus::semantic_arming::load_runtime_library(&config)
+            .unwrap()
+            .unwrap()
+            .is_absolute()
+    );
+    let saved = std::fs::read(root.path().join("semantic.conf")).unwrap();
+    assert!(
+        client
+            .post(
+                "/semantic/configure",
+                &json!({"runtime_library": "relative.so"})
+            )
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("semantic.conf")).unwrap(),
+        saved
+    );
+    let second = root.path().join("runtime-two.so");
+    std::fs::write(&second, b"test seam runtime").unwrap();
+    let configured = client
+        .post("/semantic/configure", &json!({"runtime_library": second}))
+        .unwrap();
+    assert_eq!(configured["configuration_revision"], 2);
+    wait_for_state(&daemon, "ready");
+    daemon.shutdown().unwrap();
+    let restarted = start_daemon(root.path());
+    wait_for_state(&restarted, "ready");
+    restarted.shutdown().unwrap();
+}
+
+#[test]
+fn semantic_configuration_guards_precede_mutations() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_daemon(root.path());
+    let bearer = (
+        "Authorization".to_string(),
+        format!("Bearer {}", daemon.bearer().expose_secret()),
+    );
+    for path in ["/semantic/configure", "/semantic/acquire"] {
+        let wrong_method = send_request(daemon.local_addr().port(), "GET", path, &[], b"{}");
+        assert_eq!(wrong_method.status, 404);
+        let wrong_host = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            &[("Host".into(), "foreign.invalid".into())],
+            b"{}",
+        );
+        assert_eq!(wrong_host.status, 400);
+        assert_eq!(wrong_host.body()["error"], "invalid_host");
+        let foreign_origin = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            &[
+                bearer.clone(),
+                ("Origin".into(), "http://foreign.invalid".into()),
+            ],
+            b"{}",
+        );
+        assert_eq!(foreign_origin.status, 403);
+        let invalid_body = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            std::slice::from_ref(&bearer),
+            b"[]",
+        );
+        assert_eq!(invalid_body.status, 400);
+    }
+    assert!(!root.path().join("semantic.conf").exists());
+    assert!(!SemanticStore::model_path_for(&HieronymusConfig::new(root.path())).exists());
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn simultaneous_configurations_acknowledge_distinct_persisted_revisions() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    let runtime = root.path().join("runtime.so");
+    std::fs::write(&runtime, b"test seam runtime").unwrap();
+    let mut revisions = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let root = root.path();
+                let runtime = &runtime;
+                scope.spawn(move || {
+                    let client =
+                        hiero::lifecycle::connect(&HieronymusConfig::new(root), false).unwrap();
+                    client
+                        .post("/semantic/configure", &json!({"runtime_library": runtime}))
+                        .unwrap()["configuration_revision"]
+                        .as_u64()
+                        .unwrap()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    revisions.sort_unstable();
+    assert_eq!(revisions, [1, 2, 3, 4]);
+    assert_eq!(
+        status_body(&daemon)["semantic"]["configuration_revision"],
+        4
+    );
+    wait_for_state(&daemon, "ready");
+    daemon.shutdown().unwrap();
+}

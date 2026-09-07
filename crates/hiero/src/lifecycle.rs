@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::secret::Secret;
 
-use crate::client::{ClientError, request_json, request_json_within};
+use crate::client::{ClientError, request_json_within};
 use crate::daemon::discovery::{
     self, CredentialError, DiscoveryError, DiscoveryRecord, read_discovery, read_token,
 };
@@ -347,17 +347,38 @@ impl DaemonClient {
     }
 
     fn send(&self, method: &str, path: &str, body: &Value) -> Result<Value, ClientError> {
+        self.send_with_timeout(method, path, body, Duration::from_secs(10))
+    }
+
+    /// Explicit acquisition uses a bounded deadline for both asset downloads.
+    pub fn post_with_timeout(
+        &self,
+        path: &str,
+        body: &Value,
+        timeout: Duration,
+    ) -> Result<Value, ClientError> {
+        self.send_with_timeout("POST", path, body, timeout)
+    }
+
+    fn send_with_timeout(
+        &self,
+        method: &str,
+        path: &str,
+        body: &Value,
+        timeout: Duration,
+    ) -> Result<Value, ClientError> {
         let payload = match body {
             Value::Null => Vec::new(),
             other => serde_json::to_vec(other)
                 .map_err(|_| ClientError::Protocol("request cannot serialize"))?,
         };
-        let (status, raw) = request_json(
+        let (status, raw) = request_json_within(
             method,
             self.address,
             path,
             &bearer_headers(self.address, &self.bearer),
             &payload,
+            timeout,
         )?;
         let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
         if !(200..300).contains(&status) {
