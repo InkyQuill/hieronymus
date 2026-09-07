@@ -155,77 +155,6 @@ pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_app_dir_matches_the_historical_managed_install() {
-        let root = default_app_dir();
-        assert!(root.ends_with(".local/share/hieronymus/app"), "{root:?}");
-    }
-
-    #[test]
-    fn stable_links_point_at_the_versioned_binary_and_reruns_are_idempotent() {
-        let temp = tempfile::tempdir().unwrap();
-        let layout = AppLayout::new(temp.path());
-        // The versioned payload: the binary plus its relative argv[0] links.
-        std::fs::create_dir_all(layout.version_dir("1.2.3")).unwrap();
-        std::fs::write(layout.version_dir("1.2.3").join("hiero"), b"binary").unwrap();
-
-        layout.switch_stable_links("1.2.3").unwrap();
-        layout.switch_stable_links("1.2.3").unwrap();
-
-        for name in LINK_NAMES {
-            let link = layout.stable_link(name);
-            let target = std::fs::read_link(&link).unwrap();
-            assert_eq!(
-                target,
-                std::path::Path::new("../versions/1.2.3").join(name),
-                "{link:?}"
-            );
-            let leftovers: Vec<_> = std::fs::read_dir(layout.bin_dir())
-                .unwrap()
-                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-                .collect();
-            assert_eq!(leftovers.len(), LINK_NAMES.len(), "no switch leftovers");
-        }
-        assert_eq!(layout.current_version().as_deref(), Some("1.2.3"));
-    }
-
-    #[test]
-    fn switching_versions_moves_every_link() {
-        let temp = tempfile::tempdir().unwrap();
-        let layout = AppLayout::new(temp.path());
-        for version in ["1.0.0", "2.0.0"] {
-            std::fs::create_dir_all(layout.version_dir(version)).unwrap();
-        }
-        layout.switch_stable_links("1.0.0").unwrap();
-        layout.switch_stable_links("2.0.0").unwrap();
-        assert_eq!(layout.current_version().as_deref(), Some("2.0.0"));
-        assert_eq!(
-            std::fs::read_link(layout.stable_link("hieronymus-mcp")).unwrap(),
-            std::path::Path::new("../versions/2.0.0/hieronymus-mcp")
-        );
-    }
-
-    #[test]
-    fn current_version_is_none_without_a_stable_link() {
-        let temp = tempfile::tempdir().unwrap();
-        let layout = AppLayout::new(temp.path());
-        assert_eq!(layout.current_version(), None);
-    }
-
-    #[test]
-    fn version_compare_is_numeric_per_component() {
-        use std::cmp::Ordering;
-        assert_eq!(compare_versions("1.10.0", "1.9.0"), Ordering::Greater);
-        assert_eq!(compare_versions("1.0.0", "1.0.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1.0", "1.0.0"), Ordering::Less);
-        assert_eq!(compare_versions("2.0.0", "10.0.0"), Ordering::Less);
-    }
-}
-
 /// Verify the qualified payload and execute real native document/query
 /// inference. Used by the release builder and bootstrap before activation.
 pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> {
@@ -306,4 +235,75 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
         serde_json::json!({"model": MODEL_NAME, "revision": MODEL_REVISION,
         "runtime_version": RUNTIME_VERSION, "target": TARGET_TRIPLE, "sha256": hashes}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_app_dir_matches_the_historical_managed_install() {
+        let root = default_app_dir();
+        assert!(root.ends_with(".local/share/hieronymus/app"), "{root:?}");
+    }
+
+    #[test]
+    fn stable_links_point_at_the_versioned_binary_and_reruns_are_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = AppLayout::new(temp.path());
+        // The versioned payload: the binary plus its relative argv[0] links.
+        std::fs::create_dir_all(layout.version_dir("1.2.3")).unwrap();
+        std::fs::write(layout.version_dir("1.2.3").join("hiero"), b"binary").unwrap();
+
+        layout.switch_stable_links("1.2.3").unwrap();
+        layout.switch_stable_links("1.2.3").unwrap();
+
+        for name in LINK_NAMES {
+            let link = layout.stable_link(name);
+            let target = std::fs::read_link(&link).unwrap();
+            assert_eq!(
+                target,
+                std::path::Path::new("../versions/1.2.3").join(name),
+                "{link:?}"
+            );
+            let leftovers: Vec<_> = std::fs::read_dir(layout.bin_dir())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(leftovers.len(), LINK_NAMES.len(), "no switch leftovers");
+        }
+        assert_eq!(layout.current_version().as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn switching_versions_moves_every_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = AppLayout::new(temp.path());
+        for version in ["1.0.0", "2.0.0"] {
+            std::fs::create_dir_all(layout.version_dir(version)).unwrap();
+        }
+        layout.switch_stable_links("1.0.0").unwrap();
+        layout.switch_stable_links("2.0.0").unwrap();
+        assert_eq!(layout.current_version().as_deref(), Some("2.0.0"));
+        assert_eq!(
+            std::fs::read_link(layout.stable_link("hieronymus-mcp")).unwrap(),
+            std::path::Path::new("../versions/2.0.0/hieronymus-mcp")
+        );
+    }
+
+    #[test]
+    fn current_version_is_none_without_a_stable_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = AppLayout::new(temp.path());
+        assert_eq!(layout.current_version(), None);
+    }
+
+    #[test]
+    fn version_compare_is_numeric_per_component() {
+        use std::cmp::Ordering;
+        assert_eq!(compare_versions("1.10.0", "1.9.0"), Ordering::Greater);
+        assert_eq!(compare_versions("1.0.0", "1.0.0"), Ordering::Equal);
+        assert_eq!(compare_versions("1.0", "1.0.0"), Ordering::Less);
+        assert_eq!(compare_versions("2.0.0", "10.0.0"), Ordering::Less);
+    }
 }
