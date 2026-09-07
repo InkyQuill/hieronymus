@@ -1137,3 +1137,82 @@ fn live_onnx_provider_embeds_normalized_384_vectors() {
     let query = provider.embed_query(&tokens).unwrap();
     assert_eq!(query, first);
 }
+
+#[test]
+fn active_probe_rejects_empty_and_corrupt_lance_directories() {
+    let fixture = fixture();
+    import_source(&fixture, "a.txt", "First paragraph.");
+    let store = SemanticStore::open(&fixture.config).unwrap();
+    let mut provider = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS);
+    store
+        .begin_generation("gen-a", provider.identity())
+        .unwrap();
+    drain_generation(&store, "gen-a", &mut provider, 2);
+    store
+        .activate_generation(
+            "gen-a",
+            &mut provider,
+            &SemanticSample {
+                series_slug: fixture.series_slug.clone(),
+                token_ids: tokens_for("chunk-1"),
+            },
+        )
+        .unwrap();
+    assert!(
+        SemanticStore::probe_active_generation(&fixture.config)
+            .unwrap()
+            .1
+    );
+    let connection = rusqlite::Connection::open(fixture.config.database_path()).unwrap();
+    connection
+        .execute(
+            "update semantic_generations set expected_count = expected_count + 1 where active = 1",
+            [],
+        )
+        .unwrap();
+    assert!(
+        !SemanticStore::probe_active_generation(&fixture.config)
+            .unwrap()
+            .1
+    );
+    connection.execute("update semantic_generations set expected_count = expected_count - 1, model = 'wrong-model' where active = 1", []).unwrap();
+    assert!(
+        !SemanticStore::probe_active_generation(&fixture.config)
+            .unwrap()
+            .1
+    );
+    connection
+        .execute(
+            "update semantic_generations set model = ?1 where active = 1",
+            [provider.identity().model()],
+        )
+        .unwrap();
+    assert!(
+        SemanticStore::probe_active_generation(&fixture.config)
+            .unwrap()
+            .1
+    );
+    let table = std::fs::read_dir(store.index_root())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "lance"))
+        .unwrap();
+    std::fs::remove_dir_all(&table).unwrap();
+    std::fs::create_dir(&table).unwrap();
+    for corrupt in [false, true] {
+        if corrupt {
+            std::fs::write(table.join("garbage"), b"not a Lance dataset").unwrap();
+        }
+        assert!(
+            !SemanticStore::probe_active_generation(&fixture.config)
+                .unwrap()
+                .1
+        );
+        assert!(!store.active_generation_intact().unwrap());
+        assert_eq!(
+            std::fs::read_dir(&table).unwrap().count(),
+            usize::from(corrupt),
+            "probing must not create an index"
+        );
+    }
+}

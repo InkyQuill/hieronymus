@@ -27,7 +27,7 @@ use crate::db::open_migrated;
 use crate::semantic_embeddings::{EmbeddingIdentity, EmbeddingProvider, OnnxEmbeddingProvider};
 use crate::semantic_error::SemanticError;
 use crate::semantic_index::{
-    IndexRow, VectorIndex, drop_generation_table, generation_table_exists, validate_slug,
+    IndexRow, VectorIndex, drop_generation_table, generation_table_intact, validate_slug,
 };
 use crate::semantic_model::{
     MODEL_BYTES, MODEL_NAME, MODEL_SHA256, ModelAcquisition, ModelStatus, TOKENIZER_BYTES,
@@ -1004,10 +1004,15 @@ impl SemanticStore {
             None => None,
         };
         let intact = match &manifest {
-            Some(active) => generation_table_exists(
-                &config.semantic_root().join("lancedb"),
-                &active.generation_id,
-            ),
+            Some(active) => {
+                active.written_count == active.expected_count
+                    && generation_table_intact(
+                        &config.semantic_root().join("lancedb"),
+                        &active.generation_id,
+                        &active.identity,
+                        active.expected_count,
+                    )
+            }
             None => true,
         };
         Ok((manifest, intact))
@@ -1034,16 +1039,19 @@ impl SemanticStore {
         }
     }
 
-    /// Whether the active generation's table survived on disk. Losing the
-    /// complete LanceDB directory reports `false`; the recovery is a rebuild
+    /// Whether the existing table opens and matches the durable manifest's
+    /// count and stored identity. Missing or corrupt data reports `false`; the recovery is a rebuild
     /// (the authoritative rows never left SQLite), never data loss.
     pub fn active_generation_intact(&self) -> Result<bool, SemanticError> {
         match self.active_generation()? {
             None => Ok(true),
-            Some(active) => Ok(generation_table_exists(
-                &self.index_root(),
-                &active.generation_id,
-            )),
+            Some(active) => Ok(active.written_count == active.expected_count
+                && generation_table_intact(
+                    &self.index_root(),
+                    &active.generation_id,
+                    &active.identity,
+                    active.expected_count,
+                )),
         }
     }
 
