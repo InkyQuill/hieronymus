@@ -372,3 +372,85 @@ fn exact_identity_scope_and_unknown_endpoints() {
         Eligibility::Unknown
     );
 }
+
+#[test]
+fn explicit_identity_whitespace_round_trips_without_aliasing() {
+    let (_dir, db) = fixture();
+    for (id, volume, chapter) in [
+        (20, "Book I", "III"),
+        (21, "Book I", "III "),
+        (22, " Book I", " III"),
+    ] {
+        db.execute("insert into story_positions(id,timeline_id,volume_key,chapter_key,ordinal,evidence_id) values(?1,1,?2,?3,?1,1)", rusqlite::params![id, volume, chapter]).unwrap();
+        let context = TranslationContext::new("book", "en", "ru", "translate")
+            .volume(volume)
+            .chapter(chapter);
+        assert!(context.story_scopes.contains(&format!("chapter:{chapter}")));
+        assert!(context.story_scopes.contains(&format!("volume:{volume}")));
+        let q = StoryApplicability::resolve_context(&db, &context).unwrap();
+        assert_eq!(q.position_id, Some(id));
+        let legacy = TranslationContext::new("book", "en", "ru", "translate").with_metadata(
+            None,
+            Some(vec![
+                format!("volume:{volume}"),
+                format!("chapter:{chapter}"),
+            ]),
+            None,
+        );
+        assert_eq!(
+            StoryApplicability::resolve_context(&db, &legacy)
+                .unwrap()
+                .position_id,
+            Some(id)
+        );
+        assert!(q.scope_predicates.contains(&format!("volume:{volume}")));
+        assert!(q.scope_predicates.contains(&format!("chapter:{chapter}")));
+        let mut a = app();
+        a.volume_key = Some(volume.into());
+        a.chapter_key = Some(chapter.into());
+        a.valid_from = Some(id);
+        a.knowledge_gates = vec![KnowledgeGateV1 {
+            viewpoint: KnowledgeViewpoint::All,
+            known_from: Some(id),
+            known_until: None,
+        }];
+        assert_eq!(
+            StoryApplicability::evaluate(&db, &a, &q).unwrap(),
+            Eligibility::Current
+        );
+        a.scope_predicates = vec![format!("chapter:{chapter}")];
+        assert_eq!(
+            StoryApplicability::evaluate(&db, &a, &q).unwrap(),
+            Eligibility::Current
+        );
+    }
+}
+
+#[test]
+fn explicit_identity_overrides_legacy_scope_keys_but_absent_identity_uses_them() {
+    let (_dir, db) = fixture();
+    let c = TranslationContext::new("book", "en", "ru", "translate")
+        .volume("Book I")
+        .chapter("p3")
+        .with_metadata(
+            None,
+            Some(vec!["chapter:p4".into(), " arc:Orchard ".into()]),
+            None,
+        );
+    let q = StoryApplicability::resolve_context(&db, &c).unwrap();
+    assert_eq!(q.position_id, Some(3));
+    assert!(q.scope_predicates.contains(&"chapter:p3".into()));
+    assert!(!q.scope_predicates.contains(&"chapter:p4".into()));
+    assert!(q.scope_predicates.contains(&"arc:Orchard".into()));
+    let legacy = TranslationContext::new("book", "en", "ru", "translate").with_metadata(
+        None,
+        Some(vec!["volume:Book I".into(), "chapter:p4".into()]),
+        None,
+    );
+    assert_eq!(
+        StoryApplicability::resolve_context(&db, &legacy)
+            .unwrap()
+            .position_id,
+        Some(4)
+    );
+}

@@ -23,6 +23,23 @@ pub fn normalize_string_tuple<'a>(
     normalized
 }
 
+/// Normalize additional predicates while preserving exact identity-key payloads.
+/// Whitespace inside `volume:` and `chapter:` labels belongs to the identity.
+pub(crate) fn normalize_story_scopes<'a>(values: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut result = Vec::new();
+    for value in values {
+        let value = if value.starts_with("volume:") || value.starts_with("chapter:") {
+            value
+        } else {
+            value.trim()
+        };
+        if !value.is_empty() && !result.iter().any(|item| item == value) {
+            result.push(value.to_owned());
+        }
+    }
+    result
+}
+
 /// The translation task context. Constructing one normalizes typed metadata:
 /// story scopes seed from `volume:`/`chapter:` when not given explicitly,
 /// language tags seed from the default directions, semantic tags from `tags`.
@@ -122,11 +139,11 @@ impl TranslationContext {
         }
         if !self.story_scopes_explicit {
             let mut seeds: Vec<String> = Vec::new();
-            if !self.volume.trim().is_empty() {
-                seeds.push(format!("volume:{}", self.volume.trim()));
+            if !self.volume.is_empty() {
+                seeds.push(format!("volume:{}", self.volume));
             }
-            if !self.chapter.trim().is_empty() {
-                seeds.push(format!("chapter:{}", self.chapter.trim()));
+            if !self.chapter.is_empty() {
+                seeds.push(format!("chapter:{}", self.chapter));
             }
             self.story_scopes = seeds;
         }
@@ -149,7 +166,7 @@ impl TranslationContext {
             self.language_tags_explicit = true;
         }
         if let Some(scopes) = story_scopes {
-            self.story_scopes = normalize_string_tuple(scopes.iter().map(String::as_str), false);
+            self.story_scopes = normalize_story_scopes(scopes.iter().map(String::as_str));
             self.story_scopes_explicit = true;
         }
         if let Some(tags) = semantic_tags {

@@ -1,5 +1,5 @@
 //! Deterministic narrative order, world validity and positive viewpoint knowledge.
-use crate::memory_models::{TranslationContext, normalize_string_tuple};
+use crate::memory_models::{TranslationContext, normalize_story_scopes};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 
@@ -205,15 +205,12 @@ impl StoryApplicability {
                 .collect::<Result<Vec<_>, _>>()?;
             if ids.len() == 1 { Some(ids[0]) } else { None }
         };
-        let mut scopes = normalize_string_tuple(c.story_scopes.iter().map(String::as_str), false);
-        for (prefix, key) in [("volume:", &c.volume), ("chapter:", &c.chapter)] {
-            if !key.is_empty() {
-                scopes.push(format!("{prefix}{key}"));
+        let legacy_scopes = normalize_story_scopes(c.story_scopes.iter().map(String::as_str));
+        let key = |prefix: &str, explicit: &str| -> Result<Option<String>, ApplicabilityError> {
+            if !explicit.is_empty() {
+                return Ok(Some(explicit.to_owned()));
             }
-        }
-        scopes = normalize_string_tuple(scopes.iter().map(String::as_str), false);
-        let key = |prefix: &str| -> Result<Option<String>, ApplicabilityError> {
-            let keys: std::collections::BTreeSet<_> = scopes
+            let keys: std::collections::BTreeSet<_> = legacy_scopes
                 .iter()
                 .filter_map(|s| s.strip_prefix(prefix))
                 .collect();
@@ -222,8 +219,17 @@ impl StoryApplicability {
             }
             Ok(keys.first().map(|s| s.to_string()))
         };
-        let volume = key("volume:")?;
-        let chapter = key("chapter:")?;
+        let volume = key("volume:", &c.volume)?;
+        let chapter = key("chapter:", &c.chapter)?;
+        let mut scopes: Vec<String> = legacy_scopes
+            .into_iter()
+            .filter(|s| !s.starts_with("volume:") && !s.starts_with("chapter:"))
+            .collect();
+        for (prefix, value) in [("volume:", &volume), ("chapter:", &chapter)] {
+            if let Some(value) = value {
+                scopes.push(format!("{prefix}{value}"));
+            }
+        }
         let scene = c.story_scene_key.as_deref();
         let position_id = if let (Some(t), Some(ch)) = (timeline_id, chapter) {
             let mut s=db.prepare("select id from story_positions where timeline_id=?1 and chapter_key=?2 and (?3 is null or volume_key=?3) and (?4 is null or scene_key=?4)")?;
@@ -270,8 +276,7 @@ impl StoryApplicability {
         if a.timeline_id.is_some() && q.timeline_id.is_some() && a.timeline_id != q.timeline_id {
             return Err(ApplicabilityError::WrongTimeline);
         }
-        let mut required =
-            normalize_string_tuple(a.scope_predicates.iter().map(String::as_str), false);
+        let mut required = normalize_story_scopes(a.scope_predicates.iter().map(String::as_str));
         if let Some(v) = &a.volume_key {
             required.push(format!("volume:{v}"));
         }
