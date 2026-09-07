@@ -1562,7 +1562,7 @@ mod tests {
         );
         let script = format!(
             "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  \
-             doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
+             release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
         );
         std::fs::write(path, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
@@ -1590,6 +1590,8 @@ mod tests {
         let payload = temp.join("payload");
         std::fs::create_dir_all(&payload).unwrap();
         fake_hiero(&payload.join("hiero"), candidate, doctor_exit);
+        // Fixture candidate returns this manifest; native inference is covered by the installed package test.
+        std::fs::write(payload.join("assets.json"), "{}\n").unwrap();
         for name in LINK_NAMES.iter().skip(1) {
             std::os::unix::fs::symlink("hiero", payload.join(name)).unwrap();
         }
@@ -1603,6 +1605,7 @@ mod tests {
             .arg("-C")
             .arg(&payload)
             .args([
+                "assets.json",
                 "hiero",
                 "hieronymus",
                 "hieronymus-agent-hook",

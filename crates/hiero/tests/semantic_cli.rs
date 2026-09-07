@@ -131,7 +131,10 @@ fn status_on_a_fresh_root_reports_the_missing_model() {
     assert!(status.success(), "{stdout}{stderr}");
     assert!(stdout.contains("missing"), "{stdout}");
     assert!(stdout.contains("fts-only"), "{stdout}");
-    assert!(stdout.contains("wordpiece"), "{stdout}");
+    assert!(
+        stdout.contains(hieronymus::semantic_tokenizer::MINILM_TOKENIZER_ID),
+        "{stdout}"
+    );
 
     let (stdout, _, status) = hiero(&["semantic", "status", "--json", "--data-root", data_root]);
     assert!(status.success(), "{stdout}");

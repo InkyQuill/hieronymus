@@ -43,7 +43,7 @@ fn write_fake_binary(path: &Path, version: &str, protocol: &str, schema: i64, do
          \"supported_schema_version\": {schema}}}"
     );
     let script = format!(
-        "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
+        "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
     );
     std::fs::write(path, script).unwrap();
     use std::os::unix::fs::PermissionsExt;
@@ -57,6 +57,8 @@ fn write_fake_binary(path: &Path, version: &str, protocol: &str, schema: i64, do
 fn stage_payload(payload: &Path, binary: &Path) {
     std::fs::create_dir_all(payload).unwrap();
     std::fs::copy(binary, payload.join("hiero")).unwrap();
+    // Match the fake candidate asset probe while preserving the production gate.
+    std::fs::write(payload.join("assets.json"), "{}\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = std::fs::metadata(payload.join("hiero"))
         .unwrap()
@@ -80,6 +82,7 @@ fn package(payload: &Path, version: &str) -> FakeRelease {
         .arg("-C")
         .arg(payload)
         .args([
+            "assets.json",
             "hiero",
             "hieronymus",
             "hieronymus-agent-hook",

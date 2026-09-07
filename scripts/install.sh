@@ -155,11 +155,46 @@ trap 'rm -rf "$work"' EXIT
 # ---------------------------------------------------------------------------
 step "2. fetch the release metadata and archive"
 # ---------------------------------------------------------------------------
-json_field() {
-  # Extract a top-level string field from release.json without jq.
-  grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" |
-    head -n 1 |
-    sed 's/.*:[[:space:]]*"//; s/"$//'
+# Bootstrap accepts the flat, unescaped metadata emitted by release-build.sh.
+# Reject unsupported JSON representations instead of interpreting them differently
+# from the typed verifier. This trusted parser runs before any archive executable.
+read_metadata() {
+  [ "$(wc -c < "$1")" -le 65536 ] || fatal "release metadata exceeds size limit"
+  LC_ALL=C awk -v target="$TARGET" -v channel="$CHANNEL" -v remote="$2" '
+    function fail() { print "invalid release metadata (including signature policy)" > "/dev/stderr"; exit 1 }
+    function space() { sub(/^[ \t\r\n]*/, "", input) }
+    function take(c) { space(); if (substr(input,1,1) != c) fail(); input=substr(input,2) }
+    function string( value) {
+      space()
+      if (!match(input, /^"[A-Za-z0-9_.+-]+"/)) fail()
+      value=substr(input,2,RLENGTH-2); input=substr(input,RLENGTH+1)
+      return value
+    }
+    { input=input $0 "\n" }
+    END {
+      take("{"); space()
+      while (substr(input,1,1) != "}") {
+        key=string(); if (key !~ /^(version|archive|sha256|signature|channel|target)$/ || seen[key]++) fail()
+        take(":"); space()
+        if (key == "signature") {
+          if (substr(input,1,4) != "null") fail()
+          input=substr(input,5)
+        } else value[key]=string()
+        space()
+        if (substr(input,1,1) == "}") break
+        take(","); space(); if (substr(input,1,1) == "}") fail()
+      }
+      take("}"); space(); if (input != "") fail()
+      if (value["version"] !~ /^[A-Za-z0-9][A-Za-z0-9.+-]*$/) fail()
+      if (value["archive"] != "hieronymus-" value["version"] "-" target ".tar.gz") fail()
+      if (length(value["sha256"]) != 64 || value["sha256"] ~ /[^A-Fa-f0-9]/) fail()
+      if (seen["target"] && value["target"] != target) fail()
+      if (seen["channel"] && value["channel"] !~ /^(stable|dev)$/) fail()
+      if (remote && value["channel"] != channel) fail()
+      print value["version"]; print value["archive"]; print value["sha256"]
+    }
+  ' "$1" > "$work/metadata-fields" || fatal "unsupported or invalid release metadata"
+  { read -r declared_version; read -r archive_name; read -r expected_sha; } < "$work/metadata-fields"
 }
 
 archive_name=""
@@ -169,12 +204,7 @@ if [ -n "$RELEASE_DIR" ]; then
   [ -d "$RELEASE_DIR" ] || fatal "release directory does not exist: $RELEASE_DIR"
   if [ -f "$RELEASE_DIR/release.json" ]; then
     info "metadata:    $RELEASE_DIR/release.json"
-    declared_version="$(json_field "$RELEASE_DIR/release.json" version || true)"
-    archive_name="$(json_field "$RELEASE_DIR/release.json" archive || true)"
-    expected_sha="$(json_field "$RELEASE_DIR/release.json" sha256 || true)"
-    [ -n "$archive_name" ] || fatal "release.json does not declare an archive name"
-    [[ "$declared_version" =~ ^[a-zA-Z0-9][a-zA-Z0-9.+-]*$ ]] || fatal "invalid release version"
-    [ "$archive_name" = "hieronymus-$declared_version-$TARGET.tar.gz" ] || fatal "archive does not match version and target $TARGET"
+    read_metadata "$RELEASE_DIR/release.json" 0
     [ -f "$RELEASE_DIR/$archive_name" ] || fatal "release.json points at $archive_name, which is not in $RELEASE_DIR"
     archive_path="$RELEASE_DIR/$archive_name"
   else
@@ -190,13 +220,7 @@ else
   RELEASE_URL="${RELEASE_URL%/}/$CHANNEL"
   curl --proto =https --proto-redir =https --max-time 600 --max-filesize 65536 -fsS "$RELEASE_URL/release.json" -o "$work/release.json" ||
     fatal "could not download $RELEASE_URL/release.json"
-  declared_version="$(json_field "$work/release.json" version || true)"
-  archive_name="$(json_field "$work/release.json" archive || true)"
-  expected_sha="$(json_field "$work/release.json" sha256 || true)"
-  [ -n "$archive_name" ] || fatal "release.json does not declare an archive name"
-  [ "$(json_field "$work/release.json" channel || true)" = "$CHANNEL" ] || fatal "release metadata does not declare requested channel $CHANNEL"
-  [[ "$declared_version" =~ ^[a-zA-Z0-9][a-zA-Z0-9.+-]*$ ]] || fatal "invalid release version"
-  [ "$archive_name" = "hieronymus-$declared_version-$TARGET.tar.gz" ] || fatal "archive does not match version and target $TARGET"
+  read_metadata "$work/release.json" 1
   curl --proto =https --proto-redir =https --max-time 600 --max-filesize 1073741824 -fsS "$RELEASE_URL/$archive_name" -o "$work/$archive_name" ||
     fatal "could not download $RELEASE_URL/$archive_name"
   archive_path="$work/$archive_name"
@@ -213,30 +237,6 @@ if [ -z "$expected_sha" ]; then
   [ -f "$checksum_file" ] || fatal "no release.json sha256 and no $archive_name.sha256 sibling"
   expected_sha="$(awk '{print $1}' "$checksum_file")"
 fi
-signature=""
-if [ -n "$RELEASE_DIR" ] && [ -f "$RELEASE_DIR/release.json" ]; then
-  signature="$(json_field "$RELEASE_DIR/release.json" signature || true)"
-fi
-if [ -f "$work/release.json" ]; then
-  url_signature="$(json_field "$work/release.json" signature || true)"
-  if [ -n "$url_signature" ]; then
-    signature="$url_signature"
-  fi
-fi
-if [ -n "$signature" ]; then
-  fatal "release metadata carries a signature, but signature verification is not configured in the waived first release line; refusing to trust it"
-fi
-for metadata in "$RELEASE_DIR/release.json" "$work/release.json"; do
-  if [ -f "$metadata" ]; then
-    for field in version archive sha256 signature channel target; do
-      count="$(grep -o "\"$field\"[[:space:]]*:" "$metadata" | wc -l || true)"
-      [ "$count" -le 1 ] || fatal "duplicate metadata field: $field"
-    done
-  fi
-  if [ -f "$metadata" ] && grep -q '"signature"[[:space:]]*:' "$metadata"; then
-    grep -Eq '"signature"[[:space:]]*:[[:space:]]*null[[:space:]]*[,}]' "$metadata" || fatal "signature verification is not configured"
-  fi
-done
 actual_sha="$(sha256sum "$archive_path" | awk '{print $1}')"
 expected_sha="$(printf '%s' "$expected_sha" | tr 'A-Z' 'a-z')"
 [ "$actual_sha" = "$expected_sha" ] ||
@@ -249,9 +249,24 @@ step "4. install into a versioned application directory"
 # Inspect the bootstrap entry before executing any downloaded bytes. It must
 # occur exactly once as a regular, bounded file with the literal name hiero.
 # The full typed verifier subsequently rejects every other unsafe entry.
-tar --list --verbose --numeric-owner --quoting-style=escape -zf "$archive_path" > "$work/listing"
+# Cap expansion before tar can scan an attacker-controlled stream. Keep one
+# bounded uncompressed copy so listing and extraction never decompress again.
+# Limits match release_source.rs (3 GiB expanded, 512 MiB executable).
+expanded_limit=3221225472
+if ! gzip -dc -- "$archive_path" | head -c "$((expanded_limit + 1))" > "$work/payload.tar"; then
+  fatal "archive decompression failed or expanded size limit exceeded"
+fi
+[ "$(wc -c < "$work/payload.tar")" -le "$expanded_limit" ] || fatal "archive expanded size limit exceeded"
+# A release has a fixed small entry set. Bound even a many-entry or long-name
+# listing before storing it; pipefail also rejects producer errors/SIGPIPE.
+if ! LC_ALL=C tar --list --verbose --numeric-owner --quoting-style=escape -f "$work/payload.tar" | head -c 1048577 > "$work/listing"; then
+  fatal "archive listing failed or size limit exceeded"
+fi
+[ "$(wc -c < "$work/listing")" -le 1048576 ] || fatal "archive listing size limit exceeded"
 awk '$6 == "hiero" { if (NF != 6 || substr($1,1,1) != "-" || $3 > 536870912) bad=1; count++ } END { exit (bad || count != 1) }' "$work/listing" || fatal "invalid bootstrap executable entry"
-tar -xOzf "$archive_path" hiero > "$work/hiero"
+if ! tar -xOf "$work/payload.tar" hiero | head -c 536870913 > "$work/hiero"; then
+  fatal "bootstrap extraction failed or size limit exceeded"
+fi
 [ "$(wc -c < "$work/hiero")" -le 536870912 ] || fatal "bootstrap executable exceeds size limit"
 chmod 700 "$work/hiero"
 if [ -z "$RELEASE_DIR" ]; then RELEASE_DIR="$work"; fi

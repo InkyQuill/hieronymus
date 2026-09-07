@@ -231,6 +231,115 @@ fn install_refuses_missing_semantic_assets_before_activation() {
     assert!(!sandbox.unit_dir().exists());
 }
 
+/// A deliberately executable marker makes pre-execution refusal observable.
+fn marker_release(sandbox: &Sandbox, expanded: bool, many_entries: bool) -> (PathBuf, String) {
+    let release = sandbox.root.path().join("release");
+    std::fs::create_dir_all(&release).unwrap();
+    let name = "hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz";
+    let archive = release.join(name);
+    let encoder = flate2::write::GzEncoder::new(
+        std::fs::File::create(&archive).unwrap(),
+        flate2::Compression::fast(),
+    );
+    let mut builder = tar::Builder::new(encoder);
+    let marker = b"#!/bin/sh\necho BOOTSTRAP_EXECUTED\nexit 1\n";
+    let mut header = tar::Header::new_gnu();
+    header.set_mode(0o755);
+    header.set_size(marker.len() as u64);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, "hiero", &marker[..])
+        .unwrap();
+    if expanded {
+        // Exercise the production 3 GiB bound with a small compressed fixture.
+        let size = 3 * 1024 * 1024 * 1024_u64;
+        header.set_size(size);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "oversized", std::io::repeat(0).take(size))
+            .unwrap();
+    }
+    if many_entries {
+        header.set_size(0);
+        header.set_cksum();
+        for index in 0..20_000 {
+            builder
+                .append_data(
+                    &mut header,
+                    format!("entry-{index:05}-{}", "x".repeat(80)),
+                    std::io::empty(),
+                )
+                .unwrap();
+        }
+    }
+    builder.into_inner().unwrap().finish().unwrap();
+    let digest = sha256_hex(&archive);
+    std::fs::write(release.join(format!("{name}.sha256")), &digest).unwrap();
+    (
+        release,
+        format!(r#""version":"0.7.0","archive":"{name}","sha256":"{digest}""#),
+    )
+}
+
+#[test]
+fn bootstrap_rejects_ambiguous_metadata_before_executing_archive_bytes() {
+    let sandbox = Sandbox::new();
+    let (release, fields) = marker_release(&sandbox, false, false);
+    for extra in [
+        r#", "signatu\u0072e":"not-verified""#,
+        r#", "signature":null,"signature":null"#,
+        r#", "nested":{"signature":"not-verified"}"#,
+        r#", "target":"aarch64-unknown-linux-gnu""#,
+        r#", "signature":{"value":null}"#,
+        r#", "signature":null,"version":"0.7.0""#,
+        r#", "signature":null} {"signature":null"#,
+    ] {
+        std::fs::write(release.join("release.json"), format!("{{{fields}{extra}}}")).unwrap();
+        let (stdout, stderr, status) = sandbox.run(&[]);
+        assert!(!status.success(), "{extra}: {stdout}{stderr}");
+        assert!(stderr.contains("metadata"), "{extra}: {stdout}{stderr}");
+        assert!(
+            !stdout.contains("BOOTSTRAP_EXECUTED"),
+            "{extra}: marker executed"
+        );
+        assert!(!sandbox.app().exists());
+    }
+    // The marker is live with an accepted envelope; failures above cannot be
+    // attributed to an invalid archive or non-executable fixture.
+    std::fs::write(
+        release.join("release.json"),
+        format!("{{{fields},\"signature\":null}}"),
+    )
+    .unwrap();
+    let (stdout, _, _) = sandbox.run(&[]);
+    assert!(stdout.contains("BOOTSTRAP_EXECUTED"), "{stdout}");
+}
+
+#[test]
+fn bootstrap_bounds_expansion_before_executing_archive_bytes() {
+    let sandbox = Sandbox::new();
+    marker_release(&sandbox, true, false);
+    let (stdout, stderr, status) = sandbox.run(&[]);
+    assert!(!status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("expanded size limit"), "{stderr}");
+    assert!(!stdout.contains("BOOTSTRAP_EXECUTED"));
+    assert!(!sandbox.app().exists());
+}
+
+#[test]
+fn bootstrap_bounds_many_entry_listing_before_executing_archive_bytes() {
+    let sandbox = Sandbox::new();
+    marker_release(&sandbox, false, true);
+    let (stdout, stderr, status) = sandbox.run(&[]);
+    assert!(!status.success(), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("listing") && stderr.contains("size limit"),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("BOOTSTRAP_EXECUTED"));
+    assert!(!sandbox.app().exists());
+}
+
 /// The real packaged acceptance path: no native assets are copied into the
 /// data root and no semantic-enable/runtime override is sent. Every daemon
 /// and CLI subprocess runs with an empty PATH and no loader override.
