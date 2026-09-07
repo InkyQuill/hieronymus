@@ -349,7 +349,14 @@ impl RecallService {
                 .unwrap_or_else(|| "the semantic lane could not run".to_string());
             return empty_corpus_or_refuse(&store, series_slug, &reason);
         }
-        Ok(fuse_chunk_lanes(fts_hits, run.records))
+        // This strict API returns bare hits, so it cannot communicate repair
+        // warnings alongside a partial result as mixed recall can.
+        if let Some(warning) = run.warnings.first() {
+            return Err(RecallError::SemanticUnavailable(warning.reason.clone()));
+        }
+        let mut hits = fuse_chunk_lanes(fts_hits, run.records);
+        hits.truncate(limit);
+        Ok(hits)
     }
 
     pub fn recall(

@@ -809,3 +809,79 @@ fn search_series_answers_empty_for_a_series_with_no_chunks() {
         Err(hieronymus::recall::RecallError::LimitTooSmall)
     ));
 }
+
+#[test]
+fn strict_search_refuses_corrupt_hits_even_when_repair_fails() {
+    for fail_repair in [false, true] {
+        let fixture = fixture();
+        import_text(&fixture, "a.txt", "Alpha paragraph one.");
+        activate_generation(&fixture);
+        let connection = rusqlite::Connection::open(fixture.config.database_path()).unwrap();
+        connection
+            .execute(
+                "update rag_chunks set text = 'Changed text', display_text = 'Changed text'",
+                [],
+            )
+            .unwrap();
+        if fail_repair {
+            connection.execute_batch("create trigger reject_repair before insert on semantic_generations begin select raise(abort, 'repair blocked'); end;").unwrap();
+        }
+        let error = armed_service(&fixture)
+            .search_series("demo", "Alpha", 10)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                hieronymus::recall::RecallError::SemanticUnavailable(_)
+            ),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(if fail_repair { "failed" } else { "scheduled" }),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn strict_search_limits_disjoint_lexical_and_semantic_lanes() {
+    let fixture = fixture();
+    import_text(&fixture, "a.txt", "Cooking Talent appears here.");
+    import_text(&fixture, "b.txt", "A distant mountain beyond the sea.");
+    activate_generation(&fixture);
+    let service = armed_service(&fixture);
+    // Find a query whose semantic winner differs from the sole lexical hit.
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    for suffix in 0..100 {
+        let query = format!("Cooking {}", "AND ".repeat(suffix));
+        let run = lane.run(
+            &fixture.config,
+            &TranslationContext::new("demo", "", "", "translation"),
+            &query,
+            1,
+        );
+        if run
+            .records
+            .first()
+            .is_some_and(|record| record.source_ref.ends_with("b.txt"))
+        {
+            assert_eq!(
+                RagStore::open(&fixture.config)
+                    .unwrap()
+                    .search("demo", &query, 1, &[], &[], &[])
+                    .unwrap()
+                    .len(),
+                1,
+                "fixture must also have a lexical hit"
+            );
+            assert_eq!(service.search_series("demo", &query, 1).unwrap().len(), 1);
+            return;
+        }
+    }
+    panic!("fixture must produce disjoint lanes");
+}
