@@ -257,6 +257,10 @@ impl SemanticLane {
         query: &str,
         limit: usize,
     ) -> Result<LaneRun, String> {
+        let authoritative = RagStore::open(config).map_err(|error| error.to_string())?;
+        let revision_before = authoritative
+            .corpus_revision()
+            .map_err(|error| error.to_string())?;
         let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
         let manifest = match store.active_generation() {
             Ok(Some(manifest)) => manifest,
@@ -325,9 +329,13 @@ impl SemanticLane {
         // Stale checksums, deleted chunks, and foreign series or generations
         // are corrupt; they are excluded and schedule a rebuild.
         let chunk_ids: Vec<i64> = hits.iter().map(|hit| hit.chunk_id).collect();
-        let hydrated = RagStore::open(config)
-            .map_err(|error| error.to_string())?
+        let hydrated = authoritative
             .chunks_by_ids(&chunk_ids)
+            .map_err(|error| error.to_string())?;
+        // Corpus revisions are monotonic. Bracket execution and hydration so
+        // an import before notification, or during inference, cannot look complete.
+        let revision_after = authoritative
+            .corpus_revision()
             .map_err(|error| error.to_string())?;
         let by_id: HashMap<i64, RagChunkRecord> = hydrated
             .into_iter()
@@ -352,6 +360,16 @@ impl SemanticLane {
         }
 
         let mut warnings = Vec::new();
+        if manifest.corpus_revision != revision_before || manifest.corpus_revision != revision_after
+        {
+            // The old index remains useful to mixed recall. Strict search
+            // refuses this warning because its bare array cannot report gaps.
+            warnings.push(RecallWarning {
+                kind: WARNING_SEMANTIC_UNAVAILABLE.to_string(),
+                reason: format!("semantic generation {} covers corpus revision {}, but the query observed revisions {revision_before} through {revision_after}; a current rebuild is required", manifest.generation_id, manifest.corpus_revision),
+            });
+        }
+
         if corrupt > 0 {
             match schedule_repair(config, &lane_identity) {
                 Ok(RepairOutcome::Scheduled(generation_id)) => warnings.push(RecallWarning {

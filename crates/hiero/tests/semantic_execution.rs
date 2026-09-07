@@ -1914,3 +1914,104 @@ fn status_never_pairs_old_readiness_with_a_new_configuration_revision() {
     );
     daemon.shutdown().unwrap();
 }
+
+/// Freeze the same publication primitive on both worker paths. The second
+/// barrier holds the worker after publishing, so another tick cannot conceal
+/// even a momentary false Ready from the authenticated status assertion.
+fn stale_ready_evidence_after_import(post_job: bool) {
+    use hiero::daemon::semantic_worker::install_test_readiness_observer;
+    use std::sync::mpsc;
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    wait_for_state(&daemon, "ready");
+    if !post_job {
+        import(
+            &daemon,
+            root.path(),
+            "first.txt",
+            "The first indexed scroll.",
+        );
+        wait_for_state(&daemon, "ready");
+    }
+
+    let (arrived, arrivals) = mpsc::channel();
+    let (release, releases) = mpsc::channel();
+    let releases = std::sync::Mutex::new(releases);
+    let phase = AtomicUsize::new(0);
+    install_test_readiness_observer(
+        root.path(),
+        Arc::new(move |evidence, after| {
+            if evidence.corpus_empty
+                || readiness_from_evidence(evidence) != RequiredSemanticState::Ready
+            {
+                return;
+            }
+            let expected = usize::from(after);
+            if phase
+                .compare_exchange(expected, expected + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                arrived.send(after).unwrap();
+                releases
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(20))
+                    .unwrap();
+            }
+        }),
+    );
+    if post_job {
+        import(
+            &daemon,
+            root.path(),
+            "first.txt",
+            "The first indexed scroll.",
+        );
+    }
+    assert!(!arrivals.recv_timeout(Duration::from_secs(20)).unwrap());
+    import(
+        &daemon,
+        root.path(),
+        "late.txt",
+        "The late scroll names a drowned cathedral.",
+    );
+    assert_eq!(status_body(&daemon)["semantic"]["state"], "rebuilding");
+    release.send(()).unwrap();
+    assert!(arrivals.recv_timeout(Duration::from_secs(20)).unwrap());
+    assert_eq!(status_body(&daemon)["semantic"]["state"], "rebuilding");
+    let error = call_tool_error(
+        &daemon,
+        90,
+        "hieronymus_rag_search",
+        json!({"series_slug": "demo", "query": "drowned cathedral", "limit": 5}),
+    );
+    assert!(error.contains("in progress"), "{error}");
+    release.send(()).unwrap();
+    wait_for_state(&daemon, "ready");
+    let config = HieronymusConfig::new(root.path());
+    assert_eq!(
+        SemanticStore::open(&config)
+            .unwrap()
+            .active_generation()
+            .unwrap()
+            .unwrap()
+            .corpus_revision,
+        hieronymus::rag::RagStore::open(&config)
+            .unwrap()
+            .corpus_revision()
+            .unwrap()
+    );
+    assert!(!rag_search(&daemon, 91, "demo", "drowned cathedral").is_empty());
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn idle_readiness_publication_cannot_overtake_a_completed_import() {
+    stale_ready_evidence_after_import(false);
+}
+
+#[test]
+fn post_job_readiness_publication_cannot_overtake_a_completed_import() {
+    stale_ready_evidence_after_import(true);
+}

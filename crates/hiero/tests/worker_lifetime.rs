@@ -260,6 +260,7 @@ fn a_reap_and_a_shutdown_may_run_at_the_same_time() {
 struct CountingArm {
     prechecks: AtomicUsize,
     ticks: AtomicUsize,
+    gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 
 /// How long `arm` stays busy: long enough that a detached worker is visibly
@@ -272,6 +273,7 @@ impl CountingArm {
         Arc::new(CountingArm {
             prechecks: AtomicUsize::new(0),
             ticks: AtomicUsize::new(0),
+            gate: std::sync::Mutex::new(None),
         })
     }
 
@@ -297,6 +299,9 @@ impl SemanticArm for CountingArm {
     fn arm(&self, _config: &HieronymusConfig) -> Result<ArmedPair, String> {
         for _ in 0..ARM_TICKS {
             self.ticks.fetch_add(1, Ordering::SeqCst);
+            if let Some(gate) = self.gate.lock().unwrap().take() {
+                gate.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
             std::thread::sleep(ARM_TICK);
         }
         Err("the counted test arm never arms".to_string())
@@ -387,7 +392,43 @@ fn a_failed_discovery_publish_joins_its_workers_before_releasing_ownership() {
     let arm = CountingArm::new();
     install_test_arm(root.path(), Arc::clone(&arm) as Arc<dyn SemanticArm>);
 
-    let error = Daemon::start(&options(root.path(), 0)).unwrap_err();
+    // Hold the worker inside arming, then let the publication failure fire.
+    // Startup must remain blocked in its join and keep root ownership until
+    // we release the worker, regardless of scheduler ordering.
+    let (release, gate) = std::sync::mpsc::channel();
+    *arm.gate.lock().unwrap() = Some(gate);
+    let entered = Arc::clone(&arm);
+    let (at_publication, publication) = std::sync::mpsc::channel();
+    hiero::daemon::install_test_before_discovery_publish(
+        root.path(),
+        Arc::new(move || {
+            assert!(wait_until(|| entered.ticks() > 0, Duration::from_secs(10)));
+            at_publication.send(()).unwrap();
+        }),
+    );
+    let (completed, completion) = std::sync::mpsc::channel();
+    let startup_options = options(root.path(), 0);
+    let startup = std::thread::spawn(move || {
+        let result = Daemon::start(&startup_options);
+        completed.send(()).unwrap();
+        result
+    });
+    publication.recv_timeout(Duration::from_secs(10)).unwrap();
+    let premature_return = completion.recv_timeout(Duration::from_millis(100));
+    let premature_ownership = RootOwnership::acquire(&HieronymusConfig::new(root.path()), "probe");
+    release.send(()).unwrap();
+    let error = startup.join().unwrap().unwrap_err();
+    assert!(
+        matches!(
+            premature_return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "startup returned before its running worker joined"
+    );
+    assert!(
+        premature_ownership.is_err(),
+        "ownership was released before its running worker joined"
+    );
     let text = error.to_string();
     assert!(text.contains("cannot write the discovery record"), "{text}");
 
@@ -397,8 +438,8 @@ fn a_failed_discovery_publish_joins_its_workers_before_releasing_ownership() {
         "the semantic worker must really have been started for this to be the guarded path"
     );
     assert!(
-        arm.ticks() > 0,
-        "the worker must really have been running when startup failed"
+        arm.ticks() == ARM_TICKS,
+        "the guarded worker must finish arming before startup returns"
     );
     // The guard joined it: ownership is free and nothing is still ticking.
     assert_no_writer_survived(root.path(), &arm);

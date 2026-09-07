@@ -929,3 +929,123 @@ fn strict_search_caps_fused_lanes_when_requested_limit_exceeds_rag_cap() {
         "fusion must preserve the public cap, even above the requested lane limits"
     );
 }
+
+/// A newly added source leaves every old indexed hit/checksum intact. The
+/// execution boundary must still report incomplete semantic coverage even
+/// when the daemon has not yet received its import notification.
+#[test]
+fn a_new_source_requires_current_generation_coverage_for_strict_search() {
+    let fixture = fixture();
+    import_text(
+        &fixture,
+        "old.txt",
+        "The first scroll describes the cathedral.",
+    );
+    activate_generation(&fixture);
+    let service = armed_service(&fixture);
+    assert!(
+        !service
+            .search_series("demo", "cathedral", 10)
+            .unwrap()
+            .is_empty()
+    );
+    import_text(
+        &fixture,
+        "new.txt",
+        "A new scroll names the drowned cathedral.",
+    );
+
+    let error = service.search_series("demo", "cathedral", 10).unwrap_err();
+    assert!(error.to_string().contains("corpus revision"), "{error}");
+    let response = service
+        .recall(fixture.session_id, &context(), "cathedral", 10)
+        .unwrap();
+    assert!(!rag_hit_ids(&response).is_empty());
+    assert!(
+        warnings_of(&response)
+            .iter()
+            .any(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE
+                && warning.reason.contains("corpus revision"))
+    );
+    let lane = SemanticLane::new(
+        Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),
+        Box::new(model_tokenizer()),
+    );
+    let run = lane.run(&fixture.config, &context(), "cathedral", 10);
+    assert!(!run.degraded, "the older index is still queryable");
+    assert!(
+        !run.records.is_empty(),
+        "mixed recall retains valid old semantic hits"
+    );
+    assert!(
+        run.warnings
+            .iter()
+            .any(|warning| warning.kind == WARNING_SEMANTIC_UNAVAILABLE)
+    );
+}
+
+#[test]
+fn an_import_during_query_embedding_cannot_return_complete_strict_results() {
+    struct ImportingProvider {
+        inner: FakeEmbeddingProvider,
+        config: HieronymusConfig,
+        source: PathBuf,
+    }
+    impl EmbeddingProvider for ImportingProvider {
+        fn identity(&self) -> &hieronymus::semantic_embeddings::EmbeddingIdentity {
+            self.inner.identity()
+        }
+        fn embed_document(
+            &mut self,
+            tokens: &[u32],
+        ) -> Result<Vec<f32>, hieronymus::semantic_error::SemanticError> {
+            self.inner.embed_document(tokens)
+        }
+        fn embed_query(
+            &mut self,
+            tokens: &[u32],
+        ) -> Result<Vec<f32>, hieronymus::semantic_error::SemanticError> {
+            RagStore::open(&self.config)
+                .unwrap()
+                .import_file("demo", &self.source, &RagImport::new())
+                .unwrap();
+            self.inner.embed_query(tokens)
+        }
+    }
+    let fixture = fixture();
+    import_text(
+        &fixture,
+        "old.txt",
+        "The first scroll describes the cathedral.",
+    );
+    activate_generation(&fixture);
+    let source = write_source(
+        &fixture,
+        "late.txt",
+        "The late scroll names the drowned cathedral.",
+    );
+    let service = RecallService::open(&fixture.config)
+        .unwrap()
+        .with_semantic_lane(SemanticLane::new(
+            Box::new(ImportingProvider {
+                inner: FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS),
+                config: fixture.config.clone(),
+                source,
+            }),
+            Box::new(model_tokenizer()),
+        ));
+    let error = service.search_series("demo", "cathedral", 10).unwrap_err();
+    assert!(error.to_string().contains("corpus revision"), "{error}");
+    assert!(
+        RagStore::open(&fixture.config)
+            .unwrap()
+            .corpus_revision()
+            .unwrap()
+            > SemanticStore::open(&fixture.config)
+                .unwrap()
+                .active_generation()
+                .unwrap()
+                .unwrap()
+                .corpus_revision
+    );
+}

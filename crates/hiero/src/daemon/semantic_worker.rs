@@ -326,6 +326,32 @@ pub fn install_test_arm(data_root: &Path, arm: Arc<dyn SemanticArm>) {
         .insert(data_root.to_path_buf(), arm);
 }
 
+type ReadinessObserver = Arc<dyn Fn(&ReadinessEvidence, bool) + Send + Sync>;
+static TEST_READINESS_OBSERVERS: Mutex<Option<HashMap<PathBuf, ReadinessObserver>>> =
+    Mutex::new(None);
+
+/// Observe both sides of the shared settling publication (integration tests only).
+/// `after` is false before publication and true afterwards. Callbacks run outside locks.
+#[doc(hidden)]
+pub fn install_test_readiness_observer(data_root: &Path, observer: ReadinessObserver) {
+    TEST_READINESS_OBSERVERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(data_root.to_path_buf(), observer);
+}
+
+fn observe_readiness(inner: &ControllerInner, evidence: &ReadinessEvidence, after: bool) {
+    let observer = TEST_READINESS_OBSERVERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|observers| observers.get(inner.config.data_root()).cloned());
+    if let Some(observer) = observer {
+        observer(evidence, after);
+    }
+}
+
 /// The arm one daemon instance runs with: the test seam for its data root
 /// when registered, otherwise the persisted ONNX runtime configuration.
 pub(crate) fn resolve_arm(config: &HieronymusConfig) -> Arc<dyn SemanticArm> {
@@ -357,6 +383,8 @@ struct ControllerInner {
     config: HieronymusConfig,
     identity: Mutex<EmbeddingIdentity>,
     state: Mutex<ConfigurationAcknowledgement>,
+    // Serializes invalidation with evidence publication, independently of configuration.
+    readiness_epoch: Mutex<u64>,
     wake: std::sync::mpsc::Sender<()>,
     reload: Mutex<Option<ReloadRequest>>,
     configuration_lock: Mutex<()>,
@@ -433,6 +461,7 @@ impl SemanticController {
         let inner = Arc::new(ControllerInner {
             reload: Mutex::new(None),
             configuration_lock: Mutex::new(()),
+            readiness_epoch: Mutex::new(0),
             identity: Mutex::new(identity),
             state: Mutex::new(ConfigurationAcknowledgement {
                 state: initial,
@@ -456,6 +485,23 @@ impl SemanticController {
     /// recovered by startup/periodic reconciliation because the queueing
     /// itself is durable SQLite state.
     pub fn request_rebuild(&self, _series: &str) -> Result<String, String> {
+        // Invalidate evidence even if queueing fails: the authoritative import
+        // has committed, and its durable outbox must still be reconciled.
+        // Keep this guard through queueing: a manual rebuild of an unchanged
+        // corpus must not gather fresh Ready evidence before its job exists.
+        let mut epoch = self
+            .inner
+            .readiness_epoch
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *epoch += 1;
+        {
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.state == RequiredSemanticState::Ready {
+                state.state = RequiredSemanticState::Rebuilding;
+            }
+        }
+
         let outcome = queue_semantic_rebuild(
             &self.inner.config,
             &self
@@ -468,20 +514,6 @@ impl SemanticController {
         match outcome {
             hieronymus::semantic_recall::QueueOutcome::Enqueued(job_id)
             | hieronymus::semantic_recall::QueueOutcome::AlreadyQueued(job_id) => {
-                // The queueing itself just made `rebuild_pending` true, so
-                // close the window before the worker's next tick observes
-                // it. This can only ever downgrade `Ready` — it never
-                // upgrades anything, so the worker stays the sole source of
-                // `Ready`.
-                let mut state = self
-                    .inner
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if state.state == RequiredSemanticState::Ready {
-                    state.state = RequiredSemanticState::Rebuilding;
-                }
-                drop(state);
                 let _ = self.inner.wake.send(());
                 Ok(job_id)
             }
@@ -566,13 +598,24 @@ fn publish(inner: &ControllerInner, verdict: RequiredSemanticState, detail: Opti
 fn publish_settling(
     inner: &ControllerInner,
     evidence: &ReadinessEvidence,
+    evidence_epoch: u64,
     detail: &mut Option<String>,
 ) {
-    let verdict = readiness_from_evidence(evidence);
-    if verdict == RequiredSemanticState::Ready {
-        *detail = None;
+    observe_readiness(inner, evidence, false);
+    {
+        let epoch = inner
+            .readiness_epoch
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *epoch == evidence_epoch {
+            let verdict = readiness_from_evidence(evidence);
+            if verdict == RequiredSemanticState::Ready {
+                *detail = None;
+            }
+            publish(inner, verdict, detail.as_deref());
+        }
     }
-    publish(inner, verdict, detail.as_deref());
+    observe_readiness(inner, evidence, true);
 }
 
 /// Publish an actionable failure and remember its cause for the ticks that
@@ -753,6 +796,7 @@ fn run_worker(
                 continue;
             }
         };
+        let evidence_epoch = gathered.epoch;
         let mut evidence = gathered.evidence;
         if let Some(reason) = gathered.rebuild_owed {
             failure_detail = Some(reason);
@@ -811,7 +855,12 @@ fn run_worker(
 
         // 6. Publish before the (possibly long) rebuild, then drive whatever
         //    the durable queue offers.
-        publish_settling(&context.inner, &evidence, &mut failure_detail);
+        publish_settling(
+            &context.inner,
+            &evidence,
+            evidence_epoch,
+            &mut failure_detail,
+        );
         let pass = match pair.as_mut() {
             Some(armed) => drive_claimable_jobs(&context, armed, &jobs, &rebuild, &stop),
             // Unreachable: step 3 ended the tick when nothing is armed.
@@ -861,7 +910,12 @@ fn run_worker(
                         failure_detail = Some(reason);
                         recovery_owed = true;
                     }
-                    publish_settling(&context.inner, &gathered.evidence, &mut failure_detail);
+                    publish_settling(
+                        &context.inner,
+                        &gathered.evidence,
+                        gathered.epoch,
+                        &mut failure_detail,
+                    );
                 }
                 Err(reason) => fail(&context.inner, &mut failure_detail, reason),
             }
@@ -1003,6 +1057,7 @@ fn wait_for_wakeup(context: &WorkerContext, _stop: &AtomicBool) {
 /// The gathered evidence plus the one thing the evidence itself cannot
 /// express: that a rebuild is OWED through no operator action, and why.
 struct GatheredEvidence {
+    epoch: u64,
     evidence: ReadinessEvidence,
     /// Why a rebuild is owed, when one is: an active generation that had to be
     /// invalidated, one that no longer covers the corpus, or a durable work
@@ -1037,6 +1092,10 @@ fn gather_evidence(
     inner: &ControllerInner,
     query_installed: bool,
 ) -> Result<GatheredEvidence, String> {
+    let epoch = *inner
+        .readiness_epoch
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let corpus = corpus_and_queue(&inner.config)?;
     let (generation_valid, mut rebuild_owed) = assess_active_generation(inner, corpus.revision)?;
 
@@ -1066,6 +1125,7 @@ fn gather_evidence(
     }
 
     Ok(GatheredEvidence {
+        epoch,
         evidence: ReadinessEvidence {
             query_installed,
             corpus_empty: corpus.chunk_count == 0,
@@ -1091,6 +1151,11 @@ fn gather_evidence(
 fn corpus_and_queue(config: &HieronymusConfig) -> Result<CorpusState, String> {
     let connection = hieronymus::db::open_migrated(&config.database_path())
         .map_err(|error| format!("the authoritative database is unreadable: {error}"))?;
+    // End this read snapshot before generation assessment, which may mutate
+    // the manifest. No transaction spans inference or vector-index I/O.
+    let connection = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("the corpus snapshot could not be opened: {error}"))?;
     let chunk_count: i64 = connection
         .query_row("select count(*) from rag_chunks", [], |row| row.get(0))
         .map_err(|error| format!("the authoritative chunk count is unreadable: {error}"))?;

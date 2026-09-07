@@ -42,6 +42,32 @@ use rest::providers::{DaemonProviderClient, ProviderClientSeam};
 use sessions::SessionStore;
 use workers::{IdleConnections, WorkerGroup};
 
+type DiscoveryPublishObserver = Arc<dyn Fn() + Send + Sync>;
+static TEST_DISCOVERY_PUBLISH_OBSERVERS: Mutex<
+    Option<std::collections::HashMap<PathBuf, DiscoveryPublishObserver>>,
+> = Mutex::new(None);
+
+/// Pause immediately before discovery publication (integration tests only).
+#[doc(hidden)]
+pub fn install_test_before_discovery_publish(data_root: &Path, observer: DiscoveryPublishObserver) {
+    TEST_DISCOVERY_PUBLISH_OBSERVERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(std::collections::HashMap::new)
+        .insert(data_root.to_path_buf(), observer);
+}
+
+fn before_discovery_publish(data_root: &Path) {
+    let observer = TEST_DISCOVERY_PUBLISH_OBSERVERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+        .and_then(|observers| observers.remove(data_root));
+    if let Some(observer) = observer {
+        observer();
+    }
+}
+
 /// The authenticated actor reported to the application for MCP calls: the
 /// per-installation bearer token holder (no per-actor identities exist yet).
 pub(crate) const BEARER_ACTOR: &str = "local-bearer";
@@ -417,6 +443,7 @@ impl Daemon {
             instance_id,
             started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         };
+        before_discovery_publish(config.data_root());
         discovery::write_discovery(&config, &record)
             .map_err(|source| DaemonError::DiscoveryWrite { source })?;
         guard.mark_published(&config, &record.instance_id);

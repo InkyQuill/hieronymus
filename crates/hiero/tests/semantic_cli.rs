@@ -493,7 +493,23 @@ fn cancelled_cli_leaves_acquisition_under_daemon_ownership() {
     let server = std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         let mut request = [0; 4096];
-        socket.read(&mut request).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut received = 0;
+        while !request[..received].windows(4).any(|end| end == b"\r\n\r\n") {
+            assert!(
+                received < request.len(),
+                "request headers exceed the test server bound"
+            );
+            let count = socket.read(&mut request[received..]).unwrap();
+            assert!(
+                count > 0,
+                "connection closed before complete request headers"
+            );
+            received += count;
+        }
+        assert!(request[..received].starts_with(b"GET /model.onnx HTTP/1.1\r\n"));
         started.send(()).unwrap();
         receive_release
             .recv_timeout(Duration::from_secs(10))
