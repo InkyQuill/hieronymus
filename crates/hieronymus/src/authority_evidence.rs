@@ -171,13 +171,14 @@ pub(crate) fn learned_policy(
     e: &[ResolvedEvidence],
     rendering: &str,
     old: Option<i64>,
+    exclusions: &[ApplicabilityV1],
 ) -> Result<Vec<TentativeReason>, Error> {
     if r.applicability.volume_key.is_none()
         && (r.applicability.valid_from.is_none() || r.applicability.valid_until.is_none())
     {
         return Ok(vec![TentativeReason::InsufficientEvidence]);
     }
-    let mut anchors: Vec<&ResolvedEvidence> = vec![];
+    let mut groups: Vec<Vec<&ResolvedEvidence>> = vec![];
     let mut contradiction = false;
     for source in e.iter().filter(|e| e.kind == EvidenceKind::SourcePassage) {
         let matches = e
@@ -216,6 +217,14 @@ pub(crate) fn learned_policy(
         if !applicability::contains(db, &source.binding.applicability, &r.applicability)? {
             continue;
         }
+        let group = groups
+            .iter()
+            .position(|group| group[0].binding.applicability == source.binding.applicability);
+        let index = group.unwrap_or_else(|| {
+            groups.push(vec![]);
+            groups.len() - 1
+        });
+        let anchors = &mut groups[index];
         if anchors.iter().any(|a| {
             (a.identity == source.identity || a.hash == source.hash)
                 && (a.hash != source.hash
@@ -248,7 +257,12 @@ pub(crate) fn learned_policy(
         if Some(b.concept_id) != r.concept_id
             || b.source_language != r.source_language
             || Some(&b.target_language) != r.target_language.as_ref()
-            || !applicability::overlaps(db, &b.applicability, &r.applicability)?
+            || !applicability::effective_overlap(
+                db,
+                Some(&b.applicability),
+                &r.applicability,
+                exclusions,
+            )?
         {
             continue;
         }
@@ -280,10 +294,7 @@ pub(crate) fn learned_policy(
             }
         }
     }
-    if anchors.len() < 2
-        || !anchors.iter().any(|a| a.binding.identity_anchor)
-        || old.is_some() && !contradiction
-    {
+    if old.is_some() && !contradiction {
         return Ok(vec![TentativeReason::InsufficientEvidence]);
     }
     // Every demonstrated structural chapter requires its own two anchors.
@@ -317,8 +328,7 @@ pub(crate) fn learned_policy(
                 crate::story_applicability::KnowledgeViewpoint::Narrator => Viewpoint::Narrator,
                 crate::story_applicability::KnowledgeViewpoint::All => Viewpoint::Unspecified,
             };
-            if StoryApplicability::evaluate(db, &r.applicability, &q)
-                .map_err(|_| Error::ApplicabilityConflict)?
+            if applicability::effective_eligibility(db, &r.applicability, exclusions, &q)?
                 == Eligibility::Current
             {
                 segments.insert((volume.clone(), chapter.clone()));
@@ -328,18 +338,23 @@ pub(crate) fn learned_policy(
     if segments.is_empty() {
         return Ok(vec![TentativeReason::UnknownOrder]);
     }
-    for segment in segments {
-        let count = anchors
-            .iter()
-            .filter(|a| {
-                positions.iter().any(|(id, v, c)| {
-                    *id == a.binding.position_id && (v, c) == (&segment.0, &segment.1)
-                })
+    let supported = groups.iter().any(|anchors| {
+        anchors.len() >= 2
+            && anchors.iter().any(|a| a.binding.identity_anchor)
+            && segments.iter().all(|segment| {
+                anchors
+                    .iter()
+                    .filter(|a| {
+                        positions.iter().any(|(id, v, c)| {
+                            *id == a.binding.position_id && (v, c) == (&segment.0, &segment.1)
+                        })
+                    })
+                    .count()
+                    >= 2
             })
-            .count();
-        if count < 2 {
-            return Ok(vec![TentativeReason::InsufficientEvidence]);
-        }
+    });
+    if !supported {
+        return Ok(vec![TentativeReason::InsufficientEvidence]);
     }
     Ok(vec![])
 }

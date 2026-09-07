@@ -54,11 +54,24 @@ fn anchor_at(
     a: ApplicabilityV1,
     pos: i64,
 ) -> Vec<EvidenceRef> {
-    let source = format!("Alex walks.\n\nAlex talks.\n\nChapter {pos}");
+    anchor_for(db, n, rendering, a, pos, 1)
+}
+fn anchor_for(
+    db: &Connection,
+    n: i64,
+    rendering: &str,
+    a: ApplicabilityV1,
+    pos: i64,
+    concept: i64,
+) -> Vec<EvidenceRef> {
+    let group = (n - 1) / 2;
+    let source = format!(
+        "Alex walks.\n\nAlex talks.\n\nChapter {pos}, person {concept}, passage group {group}"
+    );
     let source = source.as_str();
     let (start, end) = if n % 2 == 1 { (0, 11) } else { (13, 24) };
     let mut binding = EvidenceBindingV1 {
-        concept_id: 1,
+        concept_id: concept,
         source_language: "en".into(),
         target_language: "ru".into(),
         applicability: a,
@@ -71,7 +84,7 @@ fn anchor_at(
         contradicts_rule: None,
         conflict_kind: None,
     };
-    db.execute("insert into evidence_records(id,series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(?1,1,'source_passage',?7,?2,?3,?4,?5,?6,'now')",params![n,hash(source),start as i64,end as i64,source,serde_json::to_string(&binding).unwrap(),format!("doc{pos}")]).unwrap();
+    db.execute("insert into evidence_records(id,series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(?1,1,'source_passage',?7,?2,?3,?4,?5,?6,'now')",params![n,hash(source),start as i64,end as i64,source,serde_json::to_string(&binding).unwrap(),format!("doc{pos}-{concept}-{group}")]).unwrap();
     binding.aligned_source_id = Some(n);
     binding.rendering = Some(rendering.into());
     db.execute("insert into evidence_records(id,series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(?1,1,'aligned_rendering',?2,?3,0,?4,?5,?6,'now')",params![n+10,format!("translation-{n}"),hash(rendering),rendering.len() as i64,rendering,serde_json::to_string(&binding).unwrap()]).unwrap();
@@ -874,4 +887,292 @@ fn learned_character_gated_scope_uses_positive_character_eligibility() {
         DecisionStore::new(&mut db).apply(&r).unwrap(),
         DecisionResultV1::Applied { .. }
     ));
+}
+fn wide_then_chapter_user() -> (
+    tempfile::TempDir,
+    Connection,
+    DecisionRequestV1,
+    DecisionRequestV1,
+    i64,
+    u64,
+) {
+    let (d, mut db, mut a) = fixture();
+    a.applicability.chapter_key = None;
+    for n in 1..=4 {
+        a.evidence_refs.extend(anchor_at(
+            &db,
+            n,
+            "A",
+            a.applicability.clone(),
+            if n <= 2 { 1 } else { 2 },
+        ));
+    }
+    origin(&db, &a);
+    DecisionStore::new(&mut db).apply(&a).unwrap();
+    let mut b = next(
+        &a,
+        ActorKind::ExplicitUser,
+        OperationV1::Replace {
+            rule_id: 1,
+            rule_revision: 2,
+            rendering: value("B"),
+        },
+        2,
+    );
+    b.applicability = app();
+    b.evidence_refs.retain(|e| [1, 2, 11, 12].contains(&e.id));
+    selected(&db, &mut b);
+    origin(&db, &b);
+    let result = DecisionStore::new(&mut db).apply(&b).unwrap();
+    let (id, revision) = *result.receipt().affected_rules.last().unwrap();
+    (d, db, a, b, id, revision)
+}
+#[test]
+fn repeated_chapter_correction_subtracts_retained_exclusions() {
+    let (d, mut db, _a, b, id, revision) = wide_then_chapter_user();
+    let c = next(
+        &b,
+        ActorKind::ExplicitUser,
+        OperationV1::Replace {
+            rule_id: id,
+            rule_revision: revision,
+            rendering: value("C"),
+        },
+        3,
+    );
+    origin(&db, &c);
+    let result = DecisionStore::new(&mut db).apply(&c).unwrap();
+    assert!(matches!(result, DecisionResultV1::Applied { .. }));
+    assert_eq!(contract(&d, "1")[0].canonical_translation, "C");
+    assert_eq!(contract(&d, "2")[0].canonical_translation, "A");
+    assert_eq!(
+        DecisionStore::new(&mut db).apply(&c).unwrap().receipt(),
+        result.receipt()
+    );
+}
+#[test]
+fn broader_correction_inherits_prior_exclusions() {
+    let (d, mut db, a, b, _id, _revision) = wide_then_chapter_user();
+    let mut c = next(
+        &b,
+        ActorKind::ExplicitUser,
+        OperationV1::Replace {
+            rule_id: 1,
+            rule_revision: 3,
+            rendering: value("C"),
+        },
+        3,
+    );
+    c.applicability = a.applicability.clone();
+    c.evidence_refs = a.evidence_refs.clone();
+    selected(&db, &mut c);
+    origin(&db, &c);
+    let result = DecisionStore::new(&mut db).apply(&c).unwrap();
+    assert!(matches!(result, DecisionResultV1::Applied { .. }));
+    assert_eq!(contract(&d, "1")[0].canonical_translation, "B");
+    assert_eq!(contract(&d, "2")[0].canonical_translation, "C");
+    assert_eq!(result.receipt().effective_applicability, a.applicability);
+    assert_eq!(result.receipt().effective_exclusions, vec![app()]);
+    let affected = result.receipt().affected_rules.last().unwrap().0;
+    assert_eq!(
+        db.query_row(
+            "select count(*) from rule_exclusions where rule_id=?",
+            [affected],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    let mut d_request = next(
+        &c,
+        ActorKind::ExplicitUser,
+        OperationV1::Replace {
+            rule_id: _id,
+            rule_revision: _revision,
+            rendering: value("D"),
+        },
+        4,
+    );
+    d_request.applicability = app();
+    origin(&db, &d_request);
+    DecisionStore::new(&mut db).apply(&d_request).unwrap();
+    assert_eq!(contract(&d, "1")[0].canonical_translation, "D");
+
+    assert_eq!(
+        DecisionStore::new(&mut db).apply(&c).unwrap().receipt(),
+        result.receipt()
+    );
+}
+fn add_candidate(db: &Connection, id: i64, concept: i64, rendering: &str) {
+    db.execute("insert into term_rules(id,concept_id,source_language,target_language,source_text,canonical_translation,status,created_at,updated_at) values(?1,?2,'en','ru','Alex',?3,'candidate','now','now')",params![id,concept,rendering]).unwrap();
+    db.execute("insert into term_rule_forms(rule_id,form_kind,surface,language) values(?1,'source','Alex','en'),(?1,'approved',?2,'ru')",params![id,rendering]).unwrap();
+}
+#[test]
+fn disjoint_positive_viewpoints_do_not_conflict_or_count_as_contradictions() {
+    let (_d, mut db, mut a) = fixture();
+    a.actor_kind = ActorKind::ExplicitUser;
+    a.applicability.knowledge_gates[0].viewpoint = KnowledgeViewpoint::Narrator;
+    for n in 1..=2 {
+        a.evidence_refs
+            .extend(anchor_at(&db, n, "A", a.applicability.clone(), 1));
+    }
+    selected(&db, &mut a);
+    origin(&db, &a);
+    DecisionStore::new(&mut db).apply(&a).unwrap();
+    add_candidate(&db, 2, 1, "B");
+    let mut b = next(
+        &a,
+        ActorKind::Agent,
+        OperationV1::Activate {
+            candidate_id: 2,
+            candidate_revision: 1,
+        },
+        2,
+    );
+    b.applicability.knowledge_gates[0].viewpoint = KnowledgeViewpoint::Character(1);
+    b.evidence_refs.clear();
+    for n in 3..=4 {
+        b.evidence_refs
+            .extend(anchor_at(&db, n, "B", b.applicability.clone(), 1));
+    }
+    origin(&db, &b);
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&b).unwrap(),
+        DecisionResultV1::Applied { .. }
+    ));
+}
+#[test]
+fn disjoint_knowledge_intervals_do_not_conflict_or_count_as_contradictions() {
+    let (_d, mut db, mut a) = fixture();
+    a.actor_kind = ActorKind::ExplicitUser;
+    a.applicability.knowledge_gates[0].known_until = Some(2);
+    a.evidence_refs = anchor_at(&db, 1, "A", a.applicability.clone(), 1);
+    db.execute("insert into story_positions(id,timeline_id,volume_key,chapter_key,scene_key,ordinal,evidence_id) values(2,1,'I','1','later',2,1)",[]).unwrap();
+    a.evidence_refs
+        .extend(anchor_at(&db, 2, "A", a.applicability.clone(), 1));
+    selected(&db, &mut a);
+    origin(&db, &a);
+    DecisionStore::new(&mut db).apply(&a).unwrap();
+    add_candidate(&db, 2, 1, "B");
+    let mut b = next(
+        &a,
+        ActorKind::Agent,
+        OperationV1::Activate {
+            candidate_id: 2,
+            candidate_revision: 1,
+        },
+        2,
+    );
+    b.applicability.knowledge_gates[0].known_until = None;
+    b.applicability.knowledge_gates[0].known_from = Some(2);
+    b.evidence_refs.clear();
+    for n in 3..=4 {
+        b.evidence_refs
+            .extend(anchor_at(&db, n, "B", b.applicability.clone(), 2));
+    }
+    origin(&db, &b);
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&b).unwrap(),
+        DecisionResultV1::Applied { .. }
+    ));
+}
+#[test]
+fn mixed_anchor_applicabilities_do_not_combine_support() {
+    let (_d, mut db, mut r) = fixture();
+    let mut wide = app();
+    wide.chapter_key = None;
+    r.evidence_refs = anchor_at(&db, 1, "A", wide, 1);
+    r.evidence_refs.extend(anchor_at(&db, 2, "A", app(), 1));
+    origin(&db, &r);
+    assert!(
+        matches!(DecisionStore::new(&mut db).apply(&r).unwrap(),DecisionResultV1::Tentative{reasons,..} if reasons.contains(&TentativeReason::InsufficientEvidence))
+    );
+}
+#[test]
+fn established_outside_scope_alex_keeps_occurrence_ambiguous() {
+    for outside_viewpoint in [false, true] {
+        let (d, mut db, a) = ready();
+        DecisionStore::new(&mut db).apply(&a).unwrap();
+        db.execute("insert into concepts(id,canonical_name,scope_type,scope_key,created_at,updated_at) values(2,'Alex-person-2','series','series:book','now','now')",[]).unwrap();
+        add_candidate(&db, 2, 2, "B");
+        let mut b = next(
+            &a,
+            ActorKind::Agent,
+            OperationV1::Activate {
+                candidate_id: 2,
+                candidate_revision: 1,
+            },
+            2,
+        );
+        b.concept_id = Some(2);
+        b.applicability.chapter_key = Some(if outside_viewpoint { "1" } else { "2" }.into());
+        if outside_viewpoint {
+            b.applicability.knowledge_gates[0].viewpoint = KnowledgeViewpoint::Character(2);
+        }
+        b.evidence_refs.clear();
+        for n in 3..=4 {
+            b.evidence_refs.extend(anchor_for(
+                &db,
+                n,
+                "B",
+                b.applicability.clone(),
+                if outside_viewpoint { 1 } else { 2 },
+                2,
+            ));
+        }
+        origin(&db, &b);
+        assert!(matches!(
+            DecisionStore::new(&mut db).apply(&b).unwrap(),
+            DecisionResultV1::Applied { .. }
+        ));
+        assert!(contract(&d, "1").is_empty());
+        let config = hieronymus::data_root::HieronymusConfig::new(d.path());
+        let mut context =
+            hieronymus::memory_models::TranslationContext::new("book", "en", "ru", "translation");
+        context.volume = "I".into();
+        context.chapter = "1".into();
+        context.story_viewpoint = Viewpoint::Narrator;
+        let terms = hieronymus::terminology::Termbase::open(&config, &context).unwrap();
+        assert!(
+            terms
+                .validate("A", hieronymus::terminology::Source::Raw("Alex".into()))
+                .unwrap()
+                .iter()
+                .any(|finding| finding.kind == "ambiguous_source")
+        );
+    }
+}
+#[test]
+fn matching_anchor_group_can_activate_despite_other_binding_group() {
+    let (_d, mut db, mut r) = fixture();
+    let mut wide = app();
+    wide.chapter_key = None;
+    r.evidence_refs = anchor_at(&db, 1, "A", wide, 1);
+    r.evidence_refs.extend(anchor_at(&db, 2, "A", app(), 1));
+    r.evidence_refs.extend(anchor_at(&db, 3, "A", app(), 1));
+    origin(&db, &r);
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&r).unwrap(),
+        DecisionResultV1::Applied { .. }
+    ));
+}
+#[test]
+fn correction_cannot_reenter_a_wholly_excluded_old_region() {
+    let (_d, mut db, _a, b, _id, _revision) = wide_then_chapter_user();
+    let c = next(
+        &b,
+        ActorKind::ExplicitUser,
+        OperationV1::Replace {
+            rule_id: 1,
+            rule_revision: 3,
+            rendering: value("C"),
+        },
+        3,
+    );
+    origin(&db, &c);
+    assert_eq!(
+        DecisionStore::new(&mut db).apply(&c),
+        Err(DecisionErrorV1::ApplicabilityConflict)
+    );
+    assert_eq!(count(&db, "consolidation_jobs"), 2);
 }

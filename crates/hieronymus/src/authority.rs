@@ -218,6 +218,7 @@ pub(crate) struct ValidatedMutation {
     request: DecisionRequestV1,
     value: RenderingV1,
     old: Option<TermRule>,
+    exclusions: Vec<crate::story_applicability::ApplicabilityV1>,
 }
 #[derive(Clone, Copy)]
 pub(crate) enum AuditOwner<'a> {
@@ -371,6 +372,7 @@ pub(crate) fn validate_mutation(
         }
     }
     let mut effective = r.clone();
+    let mut exclusions = vec![];
     if let Some(old) = &old
         && !matches!(
             r.operation,
@@ -390,6 +392,23 @@ pub(crate) fn validate_mutation(
             effective.applicability = applicability::intersection(db, &old_app, &r.applicability)?
                 .ok_or(Error::ApplicabilityConflict)?;
         }
+    }
+    if let Some(old) = &old
+        && !matches!(r.operation, OperationV1::Activate { .. })
+    {
+        for mask in applicability::exclusions(db, old.id)? {
+            if let Some(mask) = applicability::intersection(db, &mask, &effective.applicability)? {
+                exclusions.push(mask);
+            }
+        }
+        if !applicability::effective_overlap(db, None, &effective.applicability, &exclusions)? {
+            return Err(Error::ApplicabilityConflict);
+        }
+    }
+    if effective.applicability.metadata_state == MetadataState::Unspecified
+        && !reasons.contains(&TentativeReason::UnknownOrder)
+    {
+        reasons.push(TentativeReason::UnknownOrder);
     }
     let r = &effective;
     // Hard authority masks are evaluated before any scoring or mutation.
@@ -411,10 +430,9 @@ pub(crate) fn validate_mutation(
             Some(id) => applicability::load(db, id)?,
             None => None,
         };
-        let overlap = match a {
-            Some(a) => applicability::overlaps(db, &a, &r.applicability)?,
-            None => true,
-        };
+        let mut masks = applicability::exclusions(db, id)?;
+        masks.extend(exclusions.clone());
+        let overlap = applicability::effective_overlap(db, a.as_ref(), &r.applicability, &masks)?;
         if overlap && authority == "explicit_user" && r.actor_kind != ActorKind::ExplicitUser {
             return Err(Error::AuthorityConflict);
         }
@@ -437,6 +455,7 @@ pub(crate) fn validate_mutation(
             &resolved,
             &value.canonical,
             old_id,
+            &exclusions,
         )?);
     }
     if r.actor_kind == ActorKind::ExplicitUser
@@ -451,6 +470,7 @@ pub(crate) fn validate_mutation(
             request: r.clone(),
             value,
             old,
+            exclusions,
         },
         reasons,
     ))
@@ -487,6 +507,7 @@ fn ingest(tx: &Transaction<'_>, r: &DecisionRequestV1) -> Result<DecisionResultV
     }
     let (mutation, reasons) = validate_mutation(tx, r)?;
     let effective_applicability = mutation.request.applicability.clone();
+    let effective_exclusions = mutation.exclusions.clone();
     let now = chrono::Utc::now().to_rfc3339();
     let revision = r.expected_revision + 1;
     // FK ownership exists before mutations; provisional bytes never escape the
@@ -512,6 +533,7 @@ fn ingest(tx: &Transaction<'_>, r: &DecisionRequestV1) -> Result<DecisionResultV
         affected_rules: rules,
         affected_claims: vec![],
         effective_applicability,
+        effective_exclusions,
         effect: if reasons.is_empty() {
             "terminology"
         } else {
@@ -644,6 +666,10 @@ pub(crate) fn apply_mutations_tx(
             create_rule(tx, m)?
         };
         tx.execute("insert into rule_authority(rule_id,authority,origin_id,decision_id,consolidation_result_id,applicability_id,legacy_protected) values(?1,?2,?3,?4,?5,?6,0) on conflict(rule_id) do update set authority=excluded.authority,origin_id=excluded.origin_id,decision_id=excluded.decision_id,consolidation_result_id=excluded.consolidation_result_id,applicability_id=excluded.applicability_id,legacy_protected=0",params![id,if r.actor_kind==ActorKind::ExplicitUser{"explicit_user"}else{"learned"},r.origin.0,decision,result,app])?;
+        for mask in &m.exclusions {
+            let mask = applicability::store(tx, mask)?;
+            tx.execute("insert into rule_exclusions(rule_id,applicability_id,decision_id,consolidation_result_id) values(?1,?2,?3,?4)",params![id,mask,decision,result])?;
+        }
         let rule = if full && !activating {
             let old = m.old.as_ref().ok_or(Error::UnknownTarget)?;
             let rule = lifecycle(

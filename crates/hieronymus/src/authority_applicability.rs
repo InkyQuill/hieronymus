@@ -107,7 +107,7 @@ pub(crate) fn load(db: &Connection, id: i64) -> Result<Option<ApplicabilityV1>, 
 }
 /// Conservative overlap: distinct structural keys/intervals are disjoint;
 /// unknown order is never interpreted as permission to overwrite authority.
-pub(crate) fn overlaps(
+fn structural_overlap(
     db: &Connection,
     a: &ApplicabilityV1,
     b: &ApplicabilityV1,
@@ -175,7 +175,7 @@ pub(crate) fn contains(
     }
     Ok(true)
 }
-/// Contract projection applies hard masks before source-name resolution.
+/// Rendering eligibility after source occurrence identity has been resolved.
 pub(crate) fn rule_is_current(
     db: &Connection,
     id: i64,
@@ -262,10 +262,17 @@ pub(crate) fn intersection(
     a: &ApplicabilityV1,
     b: &ApplicabilityV1,
 ) -> Result<Option<ApplicabilityV1>, Error> {
-    if !overlaps(db, a, b)? {
+    if !structural_overlap(db, a, b)? {
         return Ok(None);
     }
     let mut out = b.clone();
+    if a.metadata_state == MetadataState::Unspecified
+        || b.metadata_state == MetadataState::Unspecified
+        || a.timeline_id.is_none()
+        || b.timeline_id.is_none()
+    {
+        out.metadata_state = MetadataState::Unspecified;
+    }
     out.timeline_id = a.timeline_id.or(b.timeline_id);
     out.volume_key = a.volume_key.clone().or(b.volume_key.clone());
     out.chapter_key = a.chapter_key.clone().or(b.chapter_key.clone());
@@ -292,8 +299,12 @@ pub(crate) fn intersection(
                 let from = later(db, left.known_from, right.known_from)?;
                 let until = earlier(db, left.known_until, right.known_until)?;
                 if matches!(
-                    StoryApplicability::compare(db, from, until)
-                        .map_err(|_| Error::ApplicabilityConflict)?,
+                    StoryApplicability::compare(
+                        db,
+                        later(db, from, out.valid_from)?,
+                        earlier(db, until, out.valid_until)?
+                    )
+                    .map_err(|_| Error::ApplicabilityConflict)?,
                     StoryOrdering::After | StoryOrdering::Equal
                 ) {
                     continue;
@@ -314,4 +325,143 @@ pub(crate) fn intersection(
     }
     validate(db, &out)?;
     Ok(Some(out))
+}
+
+/// Two resolved authority sets compete only where both world validity and a
+/// common positive viewpoint gate permit truth.
+pub(crate) fn overlaps(
+    db: &Connection,
+    a: &ApplicabilityV1,
+    b: &ApplicabilityV1,
+) -> Result<bool, Error> {
+    effective_overlap(db, Some(a), b, &[])
+}
+pub(crate) fn exclusions(db: &Connection, rule: i64) -> Result<Vec<ApplicabilityV1>, Error> {
+    let mut s =
+        db.prepare("select applicability_id from rule_exclusions where rule_id=? order by id")?;
+    let ids = s
+        .query_map([rule], |r| r.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.into_iter()
+        .map(|id| load(db, id)?.ok_or(Error::ApplicabilityConflict))
+        .collect()
+}
+/// Query one effective set using exactly the story predicate. An unknown mask
+/// cannot prove exclusion, and unknown base metadata never becomes Current.
+pub(crate) fn effective_eligibility(
+    db: &Connection,
+    base: &ApplicabilityV1,
+    masks: &[ApplicabilityV1],
+    q: &StoryQueryV1,
+) -> Result<Eligibility, Error> {
+    let state =
+        StoryApplicability::evaluate(db, base, q).map_err(|_| Error::ApplicabilityConflict)?;
+    if state != Eligibility::Current {
+        return Ok(state);
+    }
+    let mut unknown = false;
+    for mask in masks {
+        if mask.series_id != q.series_id
+            || (mask.timeline_id.is_some()
+                && q.timeline_id.is_some()
+                && mask.timeline_id != q.timeline_id)
+        {
+            continue;
+        }
+        match StoryApplicability::evaluate(db, mask, q).map_err(|_| Error::ApplicabilityConflict)? {
+            Eligibility::Current => return Ok(Eligibility::Excluded),
+            Eligibility::Unknown => unknown = true,
+            _ => {}
+        }
+    }
+    Ok(if unknown {
+        Eligibility::Unknown
+    } else {
+        Eligibility::Current
+    })
+}
+/// The universe of Current story queries is the registered position manifest.
+/// Test each eligible position/viewpoint with the minimum required predicates;
+/// an exclusion needing extra predicates cannot cover that whole region.
+/// Unknown regions are conservatively retained, never invented as Current.
+pub(crate) fn effective_overlap(
+    db: &Connection,
+    base: Option<&ApplicabilityV1>,
+    requested: &ApplicabilityV1,
+    masks: &[ApplicabilityV1],
+) -> Result<bool, Error> {
+    let region = match base {
+        Some(base) => match intersection(db, base, requested)? {
+            Some(region) => region,
+            None => return Ok(false),
+        },
+        None => requested.clone(),
+    };
+    if region.metadata_state != MetadataState::Resolved || region.timeline_id.is_none() {
+        return Ok(true);
+    }
+    let mut statement=db.prepare("select id,volume_key,chapter_key from story_positions where timeline_id=? order by ordinal")?;
+    let positions = statement
+        .query_map([region.timeline_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (id, volume, chapter) in positions {
+        let mut predicates = region.scope_predicates.clone();
+        predicates.extend([format!("volume:{volume}"), format!("chapter:{chapter}")]);
+        // All authorizes narrator and unspecified, never a character.
+        let mut viewpoints = vec![Viewpoint::Narrator, Viewpoint::Unspecified];
+        for g in &region.knowledge_gates {
+            if let KnowledgeViewpoint::Character(id) = g.viewpoint {
+                viewpoints.push(Viewpoint::Character(id));
+            }
+        }
+        for viewpoint in viewpoints {
+            let q = StoryQueryV1 {
+                series_id: region.series_id,
+                timeline_id: region.timeline_id,
+                position_id: Some(id),
+                viewpoint,
+                scope_predicates: predicates.clone(),
+                mode: QueryMode::Current,
+            };
+            if matches!(
+                effective_eligibility(db, &region, masks, &q)?,
+                Eligibility::Current | Eligibility::Unknown
+            ) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+/// Establish which identities belong to the selected series/language universe,
+/// without discarding an identity because of chapter, world or viewpoint gates.
+pub(crate) fn rule_identity_in_context(
+    db: &Connection,
+    id: i64,
+    context: &crate::memory_models::TranslationContext,
+) -> Result<bool, Error> {
+    use rusqlite::OptionalExtension;
+    let row:Option<(i64,String,String)>=db.query_row("select ra.applicability_id,tr.source_language,tr.target_language from rule_authority ra join term_rules tr on tr.id=ra.rule_id where tr.id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let Some((id, source, target)) = row else {
+        return Ok(true);
+    };
+    let Some(app) = load(db, id)? else {
+        return Ok(true);
+    };
+    let series: Option<i64> = db
+        .query_row(
+            "select id from series where slug=?",
+            [&context.series_slug],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(series == Some(app.series_id)
+        && source == context.source_language
+        && target == context.target_language)
 }

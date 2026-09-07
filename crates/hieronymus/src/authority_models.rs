@@ -134,6 +134,9 @@ pub struct DecisionReceiptV1 {
     pub affected_rules: Vec<(i64, u64)>,
     pub affected_claims: Vec<(i64, u64)>,
     pub effective_applicability: ApplicabilityV1,
+    /// The effective region is the base applicability minus these retained masks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effective_exclusions: Vec<ApplicabilityV1>,
     pub effect: String,
     pub consolidation_job_id: String,
     pub origin: OriginReceiptId,

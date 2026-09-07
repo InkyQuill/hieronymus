@@ -743,30 +743,35 @@ impl Termbase {
             })
             .collect::<Result<Vec<_>, TermbaseError>>()?;
         drop(statement);
-        let mut eligible = Vec::new();
+        let mut matching = Vec::new();
         for rule in active {
-            if crate::authority_applicability::rule_is_current(&connection, rule.id, &self.context)
-                .map_err(|error| TermbaseError::Invalid(error.to_string()))?
+            if !crate::authority_applicability::rule_identity_in_context(
+                &connection,
+                rule.id,
+                &self.context,
+            )
+            .map_err(|error| TermbaseError::Invalid(error.to_string()))?
             {
-                let mut forms=connection.prepare("select surface,case_sensitive from term_rule_forms where rule_id=?1 and form_kind='source' order by length(surface) desc,id")?;
-                let forms = forms
-                    .query_map([rule.id], |r| {
-                        Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                if let Some((surface, _)) = forms
-                    .iter()
-                    .find(|(surface, case)| contains(raw_text, surface, *case))
-                {
-                    let mut matched = rule;
-                    matched.source_text = surface.clone();
-                    eligible.push(matched);
-                } else if forms.is_empty() {
-                    eligible.push(rule);
-                }
+                continue;
+            }
+            let mut forms=connection.prepare("select surface,case_sensitive from term_rule_forms where rule_id=?1 and form_kind='source' order by length(surface) desc,id")?;
+            let forms = forms
+                .query_map([rule.id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some((surface, _)) = forms
+                .iter()
+                .find(|(surface, case)| contains(raw_text, surface, *case))
+            {
+                let mut matched = rule;
+                matched.source_text = surface.clone();
+                matching.push(matched);
+            } else if forms.is_empty() {
+                matching.push(rule);
             }
         }
-        active = eligible;
+        active = matching;
         active.sort_by(|left, right| {
             right
                 .source_text
@@ -802,6 +807,9 @@ impl Termbase {
                 .map(|candidate| candidate.concept_id)
                 .collect();
             if concept_sets.len() == 1 {
+                // Identity is established before authority/applicability removes
+                // historical renderings; outside identities were retained above.
+                let candidates = current_rule_candidates(&connection, &self.context, candidates)?;
                 let mut renderings: Vec<&str> = candidates
                     .iter()
                     .map(|candidate| candidate.canonical_translation.as_str())
@@ -840,13 +848,28 @@ impl Termbase {
                 .iter()
                 .map(|candidate| candidate.concept_id)
                 .collect();
+            if winner_sets.len() != 1 {
+                warnings.push(finding_ambiguous(&surface, &candidates));
+                continue;
+            }
+            let identity = winners[0].concept_id;
+            // Context chooses an identity, not a historical rendering row.
+            winners = current_rule_candidates(
+                &connection,
+                &self.context,
+                candidates
+                    .iter()
+                    .copied()
+                    .filter(|candidate| candidate.concept_id == identity)
+                    .collect(),
+            )?;
             let mut renderings: Vec<&str> = winners
                 .iter()
                 .map(|candidate| candidate.canonical_translation.as_str())
                 .collect();
             renderings.sort();
             renderings.dedup();
-            if winner_sets.len() == 1 && renderings.len() == 1 {
+            if winner_sets.len() == 1 && renderings.len() <= 1 {
                 for candidate in winners {
                     resolved.push(ResolvedRule {
                         rule: candidate.clone(),
@@ -1342,4 +1365,21 @@ fn structured_projection(db: &Connection, id: i64) -> Result<String, TermbaseErr
     let mut s=db.prepare("select form_kind,surface,language,case_sensitive from term_rule_forms where rule_id=? order by id")?;
     let forms=s.query_map([id],|r|Ok(serde_json::json!({"kind":r.get::<_,String>(0)?,"surface":r.get::<_,String>(1)?,"language":r.get::<_,String>(2)?,"case_sensitive":r.get::<_,bool>(3)?})))?.collect::<Result<Vec<_>,_>>()?;
     Ok(serde_json::json!({"version":1,"rule_id":id,"concept_id":rule.concept_id,"canonical":rule.canonical_translation,"forms":forms}).to_string())
+}
+
+/// Call only once the source occurrence has one resolved concept identity.
+fn current_rule_candidates<'a>(
+    db: &Connection,
+    context: &crate::memory_models::TranslationContext,
+    candidates: Vec<&'a TermRule>,
+) -> Result<Vec<&'a TermRule>, TermbaseError> {
+    let mut current = Vec::new();
+    for rule in candidates {
+        if crate::authority_applicability::rule_is_current(db, rule.id, context)
+            .map_err(|error| TermbaseError::Invalid(error.to_string()))?
+        {
+            current.push(rule);
+        }
+    }
+    Ok(current)
 }
