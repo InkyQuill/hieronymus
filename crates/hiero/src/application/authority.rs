@@ -96,6 +96,10 @@ fn decide(app: &Application, args: &Value, correction: bool) -> Result<Value, Ap
     let tx = db
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(domain)?;
+    let unresolved: bool = tx.query_row("select exists(select 1 from decision_records where decision_id=? and json_extract(canonical_request,'$.kind')='unresolved_signal')",[&draft.decision_id],|r|r.get(0)).map_err(domain)?;
+    if unresolved {
+        return Err(AppError::Authority(DecisionErrorV1::IdempotencyConflict));
+    }
     let request = TrustedIngress::new(&tx).bind(&Principal::Agent, draft)?;
     tx.commit().map_err(domain)?;
     serde_json::to_value(DecisionStore::new(&mut db).apply(&request)?).map_err(domain)
@@ -235,11 +239,16 @@ pub(crate) fn user_correction(
         return Err(AppError::Authority(DecisionErrorV1::InvalidRequest));
     }
     // Preserve all unresolved authentic signals without manufacturing an operation.
+    if let Some(result) = super::authority_signal::replay(&db, &principal, &input)? {
+        return Ok(result);
+    }
     let resolved = resolve_user(&db, &input, &text);
     let (mut draft, parsed) = match resolved {
         Ok(value) => value,
         Err(ResolveError::Tentative(reason, detail)) => {
-            return tentative_event(&db, &principal, &input, &text, reason, detail);
+            return super::authority_signal::persist(
+                &mut db, &principal, &input, &text, reason, detail,
+            );
         }
         Err(ResolveError::Error(error)) => return Err(error),
     };
@@ -512,37 +521,6 @@ fn resolve_user(
         parsed,
     ))
 }
-fn tentative_event(
-    db: &Connection,
-    principal: &Principal,
-    input: &UserCorrectionV1,
-    text: &str,
-    reason: TentativeReason,
-    detail: &str,
-) -> Result<Value, AppError> {
-    let (kind, identity) = match principal {
-        Principal::Console(id) => ("console_user", id.as_str()),
-        Principal::HostEvent => ("host_user_event", "local-host-event"),
-        Principal::Agent => return Err(AppError::Authority(DecisionErrorV1::UnverifiedOrigin)),
-    };
-    let context = serde_json::to_string(input).map_err(domain)?;
-    let digest = hash(&format!("{text}\n{context}"));
-    let existing:Option<(String,String)>=db.query_row("select id,content_hash from origin_receipts where kind=? and principal=? and event_id=?",params![kind,identity,input.event_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(domain)?;
-    let id = if let Some((id, old)) = existing {
-        if old != digest {
-            return Err(AppError::Authority(DecisionErrorV1::OriginMismatch));
-        }
-        id
-    } else {
-        let id = crate::trusted_ingress::new_id().map_err(domain)?;
-        db.execute("insert into origin_receipts(id,kind,principal,session_id,event_id,text,context_json,content_hash,created_at) values(?,?,?,?,?,?,?,?,?)",params![id,kind,identity,input.session_id,input.event_id,text,context,digest,chrono::Utc::now().to_rfc3339()]).map_err(domain)?;
-        id
-    };
-    Ok(
-        json!({"status":"tentative","origin_receipt":id,"reasons":[reason],"detail":detail,"authority_changed":false}),
-    )
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SelectionRequestV1 {
@@ -559,7 +537,7 @@ pub(crate) fn user_selection(app: &Application, args: &Value) -> Result<Value, A
     }
     let mut db = connection(app)?;
     let tx = db.transaction().map_err(domain)?;
-    let (source_language, target_language): (String, String) = tx
+    let (default_source, default_target): (String, String) = tx
         .query_row(
             "select default_source_language,default_target_language from series where id=?",
             [input.series_id],
@@ -573,6 +551,19 @@ pub(crate) fn user_selection(app: &Application, args: &Value) -> Result<Value, A
             |r| r.get(0),
         )
         .map_err(domain)?;
+    let mut languages: Option<(String, Option<String>)> = None;
+    if let Some(target) = input.target {
+        use hieronymus::claim_reads::ClaimTarget;
+        let pair = match target {
+            ClaimTarget::ShortTerm(id) => Some(tx.query_row("select t.source_language,t.target_language from short_term_memories m join task_sessions t on t.id=m.session_id where m.id=?",[id],|r|Ok((r.get::<_,String>(0)?,Some(r.get::<_,String>(1)?)))).map_err(domain)?),
+            ClaimTarget::Crystal(id) => Some(tx.query_row("select source_language,target_language from crystals where id=?",[id],|r|Ok((r.get::<_,String>(0)?,Some(r.get::<_,String>(1)?)))).map_err(domain)?),
+            ClaimTarget::Facet(id) => Some(tx.query_row("select language from concept_facets where id=?",[id],|r|Ok((r.get::<_,String>(0)?,None))).map_err(domain)?),
+            ClaimTarget::RagChunk(_) => None, // No language pair is stored on a RAG claim target.
+        };
+        if let Some((source, target)) = pair {
+            bind_selection_languages(&mut languages, source, target)?;
+        }
+    }
     let claims = if let Some(target) = input.target {
         let query = hieronymus::story_applicability::StoryQueryV1 {
             series_id: input.series_id,
@@ -617,25 +608,76 @@ pub(crate) fn user_selection(app: &Application, args: &Value) -> Result<Value, A
     } else {
         Value::Null
     };
+    // A selected source owns its language pair; defaults are only a fallback
+    // for context without bound languages, never a replacement for unknown data.
+    let source_binding: Option<EvidenceBindingV1> = if source.is_null() {
+        None
+    } else {
+        Some(serde_json::from_value(source["binding"].clone()).map_err(domain)?)
+    };
+    if let Some(binding) = &source_binding {
+        if binding.target_language.is_none() {
+            return Err(AppError::Authority(DecisionErrorV1::LanguageMismatch));
+        }
+        bind_selection_languages(
+            &mut languages,
+            binding.source_language.clone(),
+            binding.target_language.clone(),
+        )?;
+    }
     let rule = if let Some(id) = input.rule_id {
         let row:Option<(i64,Option<i64>,String,String,String)>=tx.query_row("select revision,concept_id,canonical_translation,source_language,target_language from term_rules where id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(domain)?;
         let (revision, concept_id, canonical, sl, tl) =
             row.ok_or(DecisionErrorV1::UnknownTarget)?;
-        if sl != source_language || tl != target_language {
-            return Err(AppError::Authority(DecisionErrorV1::LanguageMismatch));
-        }
+        bind_selection_languages(&mut languages, sl, Some(tl))?;
         if let Some(concept) = concept_id {
             let valid:bool=tx.query_row("select exists(select 1 from concepts where id=?1 and (scope_type='global' or (scope_type='series' and scope_key=(select 'series:'||slug from series where id=?2))))",params![concept,input.series_id],|r|r.get(0)).map_err(domain)?;
             if !valid {
                 return Err(AppError::Authority(DecisionErrorV1::OriginMismatch));
             }
         }
+        if let Some(binding) = &source_binding
+            && hieronymus::authority::rule_eligibility_at_source(&tx, id, binding)?
+                != hieronymus::story_applicability::Eligibility::Current
+        {
+            return Err(AppError::Authority(DecisionErrorV1::ApplicabilityConflict));
+        }
         json!({"id":id,"revision":revision,"concept_id":concept_id,"canonical":canonical})
     } else {
         Value::Null
     };
+    let (source_language, target_language) =
+        languages.unwrap_or((default_source, Some(default_target)));
     tx.commit().map_err(domain)?;
     Ok(
         json!({"series_id":input.series_id,"expected_revision":revision,"source_language":source_language,"target_language":target_language,"claims":claims,"source":source,"rule":rule,"source_inspection":true}),
     )
+}
+
+fn bind_selection_languages(
+    pair: &mut Option<(String, Option<String>)>,
+    source: String,
+    target: Option<String>,
+) -> Result<(), AppError> {
+    for language in std::iter::once(&source).chain(target.iter()) {
+        if language.is_empty() || *language != language.trim().to_lowercase() {
+            return Err(AppError::Authority(DecisionErrorV1::LanguageMismatch));
+        }
+    }
+    if let Some((old_source, old_target)) = pair {
+        if *old_source != source
+            || old_target
+                .as_ref()
+                .zip(target.as_ref())
+                .is_some_and(|(a, b)| a != b)
+        {
+            return Err(AppError::Authority(DecisionErrorV1::LanguageMismatch));
+        }
+        if old_target.is_none() {
+            *old_target = target;
+        }
+    } else {
+        *pair = Some((source, target));
+    }
+    Ok(())
 }

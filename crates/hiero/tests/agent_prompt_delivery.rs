@@ -50,6 +50,9 @@ fn repeated_identical_genuine_prompts_have_distinct_delivery_identity() {
     bind_context(&config, &context).unwrap();
     let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"ordinary conversational text"});
     let a = submit_prompt(&config, "claude", &input).unwrap();
+    let mut refreshed = context.clone();
+    refreshed["expected_revision"] = a["result"]["resulting_revision"].clone();
+    bind_context(&config, &refreshed).unwrap();
     let b = submit_prompt(&config, "claude", &input).unwrap();
     assert_ne!(a["delivery_id"], b["delivery_id"]);
     assert!(a["required_decision_id"].is_null());

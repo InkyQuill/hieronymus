@@ -45,11 +45,35 @@ pub fn select_correction_context(
         [&lease.decision_id],
         |r| r.get(0),
     )?;
-    if request.len() > MAX_RECORD_BYTES {
+    if request.len() > MAX_CONTEXT_BYTES / 2 {
         return Err(local("correction request exceeds context bound"));
     }
     let request: Value =
         serde_json::from_str(&request).map_err(|_| local("corrupt correction request"))?;
+    if request["kind"] == "unresolved_signal" {
+        let signal: UnresolvedSignalV1 = serde_json::from_value(request.clone())
+            .map_err(|_| local("corrupt unresolved signal"))?;
+        if signal.version != 1
+            || signal.decision_id != lease.decision_id
+            || signal.reasons.is_empty()
+        {
+            return Err(local("invalid unresolved signal identity"));
+        }
+        let (text, context, digest): (String, String, String) = db.query_row(
+            "select text,context_json,content_hash from origin_receipts where id=?",
+            [&signal.origin.0],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        if text != signal.text
+            || serde_json::from_str::<Value>(&context).ok().as_ref() != Some(&signal.context)
+            || crate::authority_evidence::hash(&format!("{text}\n{context}")) != digest
+        {
+            return Err(local("unresolved origin mismatch"));
+        }
+    }
+    if request["kind"] != "unresolved_signal" && request.to_string().len() > MAX_RECORD_BYTES {
+        return Err(local("correction request exceeds context bound"));
+    }
     let mut bytes = request.to_string().len() + 128;
     let mut evidence = vec![];
     let mut claims = vec![];

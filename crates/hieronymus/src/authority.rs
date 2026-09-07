@@ -26,6 +26,84 @@ pub struct OriginContextV1 {
     pub evidence_ids: Vec<i64>,
     pub operation: OperationV1,
 }
+/// Current rendering at one immutable source occurrence, using the same effective
+/// applicability and exclusions as authority policy. Broad/multiple viewpoint
+/// bindings do not silently select one character's knowledge.
+pub fn rule_eligibility_at_source(
+    db: &Connection,
+    rule_id: i64,
+    binding: &EvidenceBindingV1,
+) -> Result<crate::story_applicability::Eligibility, Error> {
+    use crate::story_applicability::{
+        Eligibility, KnowledgeViewpoint, QueryMode, StoryQueryV1, Viewpoint,
+    };
+    let row: Option<(String,i64,Option<i64>,String,String)> = db.query_row(
+        "select r.status,a.applicability_id,r.concept_id,r.source_language,r.target_language from term_rules r join rule_authority a on a.rule_id=r.id where r.id=?",
+        [rule_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+    let Some((status, app, concept, sl, tl)) = row else {
+        return Ok(Eligibility::Unknown);
+    };
+    if status != "active"
+        || concept != Some(binding.concept_id)
+        || sl != binding.source_language
+        || Some(tl) != binding.target_language
+    {
+        return Ok(Eligibility::Excluded);
+    }
+    let Some(base) = applicability::load(db, app)? else {
+        return Ok(Eligibility::Unknown);
+    };
+    let Some(gate) = binding.applicability.knowledge_gates.first() else {
+        return Ok(Eligibility::Unknown);
+    };
+    if binding
+        .applicability
+        .knowledge_gates
+        .iter()
+        .any(|g| g.viewpoint != gate.viewpoint)
+    {
+        return Ok(Eligibility::Unknown);
+    }
+    let viewpoint = match gate.viewpoint {
+        KnowledgeViewpoint::All => Viewpoint::Unspecified,
+        KnowledgeViewpoint::Narrator => Viewpoint::Narrator,
+        KnowledgeViewpoint::Character(id) => Viewpoint::Character(id),
+    };
+    let (timeline,volume,chapter):(i64,String,String)=db.query_row("select p.timeline_id,p.volume_key,p.chapter_key from story_positions p join story_timelines t on t.id=p.timeline_id where p.id=?1 and t.series_id=?2",params![binding.position_id,binding.applicability.series_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    if binding.applicability.timeline_id != Some(timeline) {
+        return Err(Error::EvidenceMismatch);
+    }
+    let mut scopes = binding.applicability.scope_predicates.clone();
+    scopes.extend([format!("volume:{volume}"), format!("chapter:{chapter}")]);
+    let query = StoryQueryV1 {
+        series_id: binding.applicability.series_id,
+        timeline_id: Some(timeline),
+        position_id: Some(binding.position_id),
+        viewpoint,
+        scope_predicates: scopes,
+        mode: QueryMode::Current,
+    };
+    if crate::story_applicability::StoryApplicability::evaluate(db, &binding.applicability, &query)
+        .map_err(|_| Error::ApplicabilityConflict)?
+        != Eligibility::Current
+    {
+        return Ok(Eligibility::Unknown);
+    }
+    if base.series_id != query.series_id
+        || base
+            .timeline_id
+            .is_some_and(|id| Some(id) != query.timeline_id)
+    {
+        return Ok(Eligibility::Excluded);
+    }
+    applicability::effective_eligibility(
+        db,
+        &base,
+        &applicability::exclusions(db, rule_id)?,
+        &query,
+    )
+}
+
 pub struct DecisionStore<'a> {
     db: &'a mut Connection,
 }

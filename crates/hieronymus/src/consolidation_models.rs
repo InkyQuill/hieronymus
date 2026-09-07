@@ -138,3 +138,23 @@ pub enum DraftProblem {
     SelfLineage,
     LineageCycle,
 }
+
+/// A trusted unresolved event retains context and reasons without pretending that
+/// an operation, source occurrence or claim has already been resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnresolvedSignalV1 {
+    pub version: u8,
+    pub kind: UnresolvedSignalKind,
+    pub decision_id: String,
+    pub origin: OriginReceiptId,
+    pub text: String,
+    pub context: serde_json::Value,
+    pub reasons: Vec<crate::authority_models::TentativeReason>,
+    pub detail: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnresolvedSignalKind {
+    UnresolvedSignal,
+}

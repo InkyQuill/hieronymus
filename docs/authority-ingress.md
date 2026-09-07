@@ -83,7 +83,7 @@ is not retained just because it occupied an approved-form storage row.
 `POST /api/authority/selection` uses the same browser guard. It is a read transaction
 accepting `series_id` and optional `target` (typed `ClaimTarget`, e.g.
 `{source:"short_term",id:123}`), `source_evidence_id`, and `rule_id`. It returns
-`expected_revision`, registered default languages, **all** bound `claims` with text,
+`expected_revision`, the selected evidence/rule/claim target languages, **all** bound `claims` with text,
 claim IDs/revisions and applicability, optional exact `source`/binding, optional rule
 ID/revision/canonical, and `source_inspection:true`. This read mints no authority.
 The UI must display multiple claims and require a deliberate selection. For rendering,
@@ -98,8 +98,24 @@ the superseded predecessor and its new active rule; do not reuse the predecessor
 blindly. Validation can require the accepted `decision_id`.
 
 An unresolved authentic event has no invented domain operation. Its response is
-`{status:"tentative",origin_receipt,reasons,detail,authority_changed:false}`. It is
-stored immutably but cannot subsequently be rebound to a different context. Domain
+`{status:"tentative",decision_id,origin_receipt,reasons,detail,authority_changed:false,
+resulting_revision,consolidation_job_id}`. In one immediate transaction it stores
+an immutable origin, a typed `UnresolvedSignalV1` in the existing v5 decision record,
+the exact result/reasons, one pending consolidation job, and an incremented series
+revision. No rule or claim changes. Exact input/principal replay returns the stored
+result before revision checking and creates no duplicate work. A new delivery must
+observe the new revision; changed decision/event identity conflicts rather than
+rebinding the signal. Tentative IDs cannot satisfy `required_decision_id`.
+
+The stored canonical variant has `kind:"unresolved_signal"`, `version:1`,
+`decision_id`, `origin`, full `text`, full strict submitted `context`, `reasons`, and
+`detail`; it contains no invented `operation`. The existing correction worker leases
+this job, verifies the origin text/context/hash, and includes the full signal and
+reasons in its bounded gathering context. Canonical unresolved input is capped at
+256 KiB within the existing 512 KiB context budget (resolved decision requests keep
+their 16 KiB bound). Worker output retains ordinary Dream/learned policy; it cannot
+turn unresolved intent into explicit user authority. Empty completion finishes that
+gathering attempt while leaving the original tentative signal/reasons available. Domain
 errors use HTTP 409 with a typed `error` (including `RevisionConflict.current_revision`);
 malformed JSON/unknown structured fields use HTTP 400. Authentication failures are 401
 and browser Origin failures 403. MCP domain errors preserve `isError:true` and the
@@ -166,6 +182,19 @@ The console now has a dedicated “Correct a rendering” entry and “Correct t
 memory” on supported bound memory records. `POST /api/authority/options` lists
 actual books and immutable source occurrences, optionally restricted by a typed
 memory target or actual rule ID. It is guarded like selection and mints nothing.
+Current-rule choices evaluate the selected immutable occurrence's concrete position,
+scope and viewpoint with shared applicability and effective exclusions. A retained
+A outside a chapter override is not offered inside current B's chapter. Unknown or
+multiple viewpoint context is explicitly `context_unresolved:true`; the form withholds
+current-rule selection and submission until a resolved occurrence is chosen. Direct
+selection by an excluded rule ID is rejected as well.
+
+Selection merges bound normalized language identifiers from source evidence, rules,
+and claim targets (short-term session, crystal pair, or facet language), rejecting
+conflicts or explicitly empty values. It uses series defaults only when no selected
+identity stores language context. A facet-only target has no target language pair and
+returns null rather than inventing one. Registered nondefault pairs survive options,
+selection and correction unchanged.
 The user chooses the occurrence/current rule or one exact claim, then the existing
 selection route freezes the displayed revision/context. Submission reports applied,
 tentative or conflict; retries retain the original request, while an explicit refresh

@@ -13,7 +13,7 @@
   const sources = $derived(options.sources.filter(s => s.series_id === series));
   const chosenSource = $derived(sources.find(s => s.id === source));
   const chosenClaim = $derived(selection?.claims.find(c => c.claim_id === claim));
-  const ready = $derived(!busy && !applied && selection !== null && (mode === "rendering" ? !!selection.source && !!value.trim() && (!chosenSource?.rules.length || !!selection.rule) : !!chosenClaim && (mode === "invalidate" || !!value.trim())));
+  const ready = $derived(!busy && !applied && selection !== null && (mode === "rendering" ? !chosenSource?.context_unresolved && !!selection.source && !!value.trim() && (!chosenSource?.rules.length || !!selection.rule) : !!chosenClaim && (mode === "invalidate" || !!value.trim())));
   function scope(app: Record<string, unknown> | undefined) {
     return [app?.volume_key ? `Volume ${app.volume_key}` : "", app?.chapter_key ? `Chapter ${app.chapter_key}` : ""].filter(Boolean).join(" · ") || "Selected story scope";
   }
@@ -62,7 +62,8 @@
   {#if target}<label>Correction<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={mode} disabled={busy || applied} onchange={edited}><option value="invalidate">This claim is incorrect</option><option value="qualify">Qualify this claim</option></select></label>{/if}
   {#if mode === "rendering"}
     <label>Source occurrence<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={source} disabled={busy || applied} onchange={() => { rule = 0; void inspect(); }}><option value={0}>Choose an occurrence</option>{#each sources as item (item.id)}<option value={item.id}>{item.context ?? item.selected_text} · {item.chapter ?? "unspecified chapter"} · {item.source_identity.split("/").pop()}</option>{/each}</select></label>
-    {#if chosenSource?.rules.length}<label>{applied ? "Previous rendering (frozen selection)" : "Current rendering to replace"}<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={rule} disabled={busy || applied} onchange={() => void inspect()}><option value={0}>Choose the current rendering</option>{#each chosenSource.rules as current (current.id)}<option value={current.id}>{current.canonical}</option>{/each}</select></label>{/if}
+    {#if chosenSource?.context_unresolved}<p>Current rendering cannot be resolved for this occurrence. Select an occurrence with a resolved story position and viewpoint.</p>{/if}
+    {#if chosenSource?.rules.length && !chosenSource.context_unresolved}<label>{applied ? "Previous rendering (frozen selection)" : "Current rendering to replace"}<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={rule} disabled={busy || applied} onchange={() => void inspect()}><option value={0}>Choose the current rendering</option>{#each chosenSource.rules as current (current.id)}<option value={current.id}>{current.canonical}</option>{/each}</select></label>{/if}
     {#if selection?.source}<p class="text-body-sm">Selected source: <strong>{selection.source.selected_text}</strong> · {scope(selection.source.binding.applicability)}</p>{/if}
   {:else if selection}
     <fieldset class="grid gap-2"><legend class="mb-2 font-medium">Choose the claim to correct</legend>{#each selection.claims as item (item.claim_id)}<label class="flex gap-2"><input type="radio" name="correction-claim" value={item.claim_id} bind:group={claim} disabled={busy || applied} onchange={edited}/><span>{item.text}<small class="block text-secondary">{scope(item.applicability)}</small></span></label>{/each}</fieldset>

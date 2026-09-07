@@ -807,6 +807,7 @@ fn public_mcp_producers_then_console_and_bridge_correction() {
             "{case}: {}",
             outcome.body()
         );
+        event["expected_revision"] = outcome.body()["resulting_revision"].clone();
         if *case == "hash" {
             assert_eq!(outcome.body()["detail"], "changed_source_hash_or_span");
         }
@@ -825,7 +826,7 @@ fn public_mcp_producers_then_console_and_bridge_correction() {
     assert_eq!(stale_result.status, 409);
     assert_eq!(
         stale_result.body()["error"]["RevisionConflict"]["current_revision"],
-        2
+        event["expected_revision"]
     );
     let mut form = event.clone();
     form["text"] = Value::Null;
@@ -940,6 +941,7 @@ fn public_mcp_producers_then_console_and_bridge_correction() {
         &serde_json::to_vec(&fact).unwrap(),
     );
     assert_eq!(ambiguous.body()["status"], "tentative");
+    fact["expected_revision"] = ambiguous.body()["resulting_revision"].clone();
     fact["selected_claims"] = json!([fact["selected_claims"][0]]);
     fact["event_id"] = json!("selected-claim");
     fact["decision_id"] = json!("11000000-0000-4000-8000-000000000006");

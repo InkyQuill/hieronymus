@@ -88,13 +88,31 @@ pub(crate) fn options(app: &Application, input: &Value) -> Result<Value, AppErro
                 .ok_or(DecisionErrorV1::EvidenceMismatch)?;
             let mut rules=tx.prepare("select id,revision,canonical_translation from term_rules where concept_id=?1 and source_language=?2 and target_language=?3 and status='active' order by id limit 100").map_err(domain)?;
             let rules=rules.query_map(params![binding.concept_id,binding.source_language,binding.target_language],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"revision":r.get::<_,i64>(1)?,"canonical":r.get::<_,String>(2)?}))).map_err(domain)?.collect::<Result<Vec<_>,_>>().map_err(domain)?;
+            let mut context_unresolved = false;
+            let mut current_rules = vec![];
+            for rule in rules {
+                match hieronymus::authority::rule_eligibility_at_source(
+                    &tx,
+                    rule["id"].as_i64().expect("typed rule"),
+                    &binding,
+                )? {
+                    hieronymus::story_applicability::Eligibility::Current => {
+                        current_rules.push(rule)
+                    }
+                    hieronymus::story_applicability::Eligibility::Unknown => {
+                        context_unresolved = true
+                    }
+                    _ => {}
+                }
+            }
+            let rules = current_rules;
             if input
                 .rule_id
                 .is_some_and(|id| !rules.iter().any(|r| r["id"] == id))
             {
                 continue;
             }
-            sources.push(json!({"id":evidence_id,"series_id":id,"selected_text":selected,"context":content.get(binding.paragraph_start..binding.paragraph_end).unwrap_or(selected),"source_identity":identity,"start":start,"chapter":binding.applicability.chapter_key,"rules":rules}));
+            sources.push(json!({"id":evidence_id,"series_id":id,"selected_text":selected,"context":content.get(binding.paragraph_start..binding.paragraph_end).unwrap_or(selected),"source_identity":identity,"start":start,"chapter":binding.applicability.chapter_key,"rules":rules,"context_unresolved":context_unresolved}));
         }
     }
     drop(s);
