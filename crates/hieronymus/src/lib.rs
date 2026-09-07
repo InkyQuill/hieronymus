@@ -11,6 +11,8 @@ pub mod agent_context;
 pub mod atomic;
 pub mod concept_models;
 pub mod concepts;
+pub mod consolidation;
+mod consolidation_models;
 pub mod crystals;
 pub mod data_root;
 pub mod db;
