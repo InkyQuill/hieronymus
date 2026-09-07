@@ -90,6 +90,7 @@ pub enum ApplicabilityError {
     OmittedPosition,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestPosition {
     pub volume_key: String,
     pub chapter_key: String,

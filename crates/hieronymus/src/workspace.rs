@@ -938,6 +938,33 @@ fn now_iso8601() -> String {
     Utc::now().to_rfc3339()
 }
 
+fn validate_session_context(
+    db: &Connection,
+    context: &TranslationContext,
+) -> Result<(), WorkspaceError> {
+    use crate::story_applicability::{
+        ApplicabilityError, QueryMode, StoryApplicability, Viewpoint,
+    };
+    if context.story_query_mode != QueryMode::Current {
+        return Err(WorkspaceError::ResearchSession);
+    }
+    // Legacy sessions may predate registration. Supplied story context must resolve
+    // ownership, while absent position/order remains unknown.
+    if context.story_timeline_id.is_some()
+        || context.story_scene_key.is_some()
+        || context.story_viewpoint != Viewpoint::Unspecified
+    {
+        StoryApplicability::resolve_context(db, context)?;
+        if let Viewpoint::Character(id) = context.story_viewpoint {
+            let valid: bool = db.query_row("select exists(select 1 from concepts where id=?1 and (scope_type='global' or scope_type='series' and scope_key='series:'||?2))", rusqlite::params![id,context.series_slug], |r| r.get(0))?;
+            if !valid {
+                return Err(ApplicabilityError::WrongSeries.into());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,31 +998,4 @@ mod tests {
         assert!(store.complete_session(session.id).unwrap());
         assert!(!store.complete_session(session.id).unwrap());
     }
-}
-
-fn validate_session_context(
-    db: &Connection,
-    context: &TranslationContext,
-) -> Result<(), WorkspaceError> {
-    use crate::story_applicability::{
-        ApplicabilityError, QueryMode, StoryApplicability, Viewpoint,
-    };
-    if context.story_query_mode != QueryMode::Current {
-        return Err(WorkspaceError::ResearchSession);
-    }
-    // Legacy sessions may predate registration. Supplied story context must resolve
-    // ownership, while absent position/order remains unknown.
-    if context.story_timeline_id.is_some()
-        || context.story_scene_key.is_some()
-        || context.story_viewpoint != Viewpoint::Unspecified
-    {
-        StoryApplicability::resolve_context(db, context)?;
-        if let Viewpoint::Character(id) = context.story_viewpoint {
-            let valid: bool = db.query_row("select exists(select 1 from concepts where id=?1 and (scope_type='global' or scope_type='series' and scope_key='series:'||?2))", rusqlite::params![id,context.series_slug], |r| r.get(0))?;
-            if !valid {
-                return Err(ApplicabilityError::WrongSeries.into());
-            }
-        }
-    }
-    Ok(())
 }

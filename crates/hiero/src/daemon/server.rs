@@ -150,6 +150,9 @@ fn handle_mcp(request: &Request, runtime: &DaemonRuntime) -> Response {
     if !host_is_valid(request, runtime) {
         return Response::json(400, &json!({"error": "invalid_host"}));
     }
+    if !super::rest::origin_is_absent_or_valid(request, runtime) {
+        return super::rest::forbidden_origin();
+    }
     if !bearer_matches(request, runtime) {
         return Response::json(401, &json!({"error": "unauthorized"}));
     }
@@ -170,7 +173,10 @@ fn handle_mcp(request: &Request, runtime: &DaemonRuntime) -> Response {
             );
         }
     };
-    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    if let Err(error) = protocol::validate_envelope(&body) {
+        return Response::json(400, &error.response(&body));
+    }
+    let id = protocol::request_id(&body);
     if header(&request.headers, "mcp-session-id").is_some()
         || header(&request.headers, "last-event-id").is_some()
     {
@@ -183,8 +189,13 @@ fn handle_mcp(request: &Request, runtime: &DaemonRuntime) -> Response {
     ) {
         return Response::json(400, &protocol::error_response(id, -32020, &message, None));
     }
-    if protocol::validate_request(&body, true).is_err() {
-        return Response::json(400, &protocol::invalid_params(id));
+    if let Err(error) = protocol::validate_request(&body) {
+        let status = if matches!(error, protocol::RequestError::UnknownMethod) {
+            404
+        } else {
+            400
+        };
+        return Response::json(status, &error.response(&body));
     }
     let requested_version = body
         .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")

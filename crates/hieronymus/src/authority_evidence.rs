@@ -40,10 +40,76 @@ pub(crate) struct ResolvedEvidence {
     pub end: usize,
     pub binding: EvidenceBindingV1,
 }
+pub(crate) struct EvidenceContext<'a> {
+    pub series_id: i64,
+    pub concept_id: Option<i64>,
+    pub source_language: &'a str,
+    pub target_language: &'a Option<String>,
+    pub applicability: &'a ApplicabilityV1,
+}
+impl<'a> From<&'a DecisionRequestV1> for EvidenceContext<'a> {
+    fn from(r: &'a DecisionRequestV1) -> Self {
+        Self {
+            series_id: r.series_id,
+            concept_id: r.concept_id,
+            source_language: &r.source_language,
+            target_language: &r.target_language,
+            applicability: &r.applicability,
+        }
+    }
+}
+pub(crate) fn validate_context(db: &Connection, r: &EvidenceContext<'_>) -> Result<(), Error> {
+    if r.applicability.series_id != r.series_id {
+        return Err(Error::ApplicabilityConflict);
+    }
+    applicability::validate(db, r.applicability)?;
+    let languages: Option<(String, String)> = db
+        .query_row(
+            "select default_source_language,default_target_language from series where id=?",
+            [r.series_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (source, target) = languages.ok_or(Error::UnknownTarget)?;
+    for language in std::iter::once(r.source_language).chain(r.target_language.as_deref()) {
+        let registered:bool=db.query_row("select exists(select 1 from series_language_tags where series_id=?1 and language_tag=?2)",rusqlite::params![r.series_id,language],|r|r.get(0))?;
+        if language.is_empty()
+            || language != language.trim().to_lowercase()
+            || !(registered
+                || language == source.trim().to_lowercase()
+                || language == target.trim().to_lowercase())
+        {
+            return Err(Error::LanguageMismatch);
+        }
+    }
+    if let Some(concept) = r.concept_id {
+        let valid:bool=db.query_row("select exists(select 1 from concepts c join series s on s.id=?2 where c.id=?1 and (c.scope_type='global' or (c.scope_type='series' and c.scope_key='series:'||s.slug)))",rusqlite::params![concept,r.series_id],|r|r.get(0))?;
+        if !valid {
+            return Err(Error::UnknownTarget);
+        }
+    }
+    Ok(())
+}
+pub(crate) fn validate_capture(
+    db: &Connection,
+    e: &EvidenceRef,
+    b: &EvidenceBindingV1,
+    series_id: i64,
+) -> Result<(), Error> {
+    let context = EvidenceContext {
+        series_id,
+        concept_id: Some(b.concept_id),
+        source_language: &b.source_language,
+        target_language: &b.target_language,
+        applicability: &b.applicability,
+    };
+    validate_context(db, &context)?;
+    resolve(db, e, &context).map(|_| ())
+}
 fn resolve(
     db: &Connection,
     e: &EvidenceRef,
-    r: &DecisionRequestV1,
+    r: &EvidenceContext<'_>,
 ) -> Result<ResolvedEvidence, Error> {
     type StoredEvidence = (i64, String, String, String, i64, i64, String, String);
     let row:Option<StoredEvidence>=db.query_row("select series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json from evidence_records where id=?",[e.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
@@ -65,9 +131,9 @@ fn resolve(
         serde_json::from_str(&binding).map_err(|_| Error::EvidenceMismatch)?;
     if r.concept_id.is_some_and(|id| id != binding.concept_id)
         || binding.source_language != r.source_language
-        || binding.target_language != r.target_language
+        || &binding.target_language != r.target_language
         || binding.applicability.series_id != series
-        || !applicability::overlaps(db, &binding.applicability, &r.applicability)?
+        || !applicability::overlaps(db, &binding.applicability, r.applicability)?
     {
         return Err(Error::EvidenceMismatch);
     }
@@ -170,7 +236,10 @@ pub(crate) fn resolve_all(
     db: &Connection,
     r: &DecisionRequestV1,
 ) -> Result<Vec<ResolvedEvidence>, Error> {
-    r.evidence_refs.iter().map(|e| resolve(db, e, r)).collect()
+    r.evidence_refs
+        .iter()
+        .map(|e| resolve(db, e, &EvidenceContext::from(r)))
+        .collect()
 }
 pub(crate) fn learned_policy(
     db: &Connection,
@@ -276,7 +345,7 @@ pub(crate) fn learned_policy(
                 span_start: start as usize,
                 span_end: end as usize,
             },
-            r,
+            &EvidenceContext::from(r),
         )?;
         if resolved.binding.rendering.as_deref() != Some(rendering) {
             // Prior supporting evidence may be superseded only by the required

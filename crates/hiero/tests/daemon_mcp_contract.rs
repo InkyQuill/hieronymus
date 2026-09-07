@@ -312,7 +312,7 @@ fn not_yet_ported_tool_returns_clean_jsonrpc_error() {
     assert_eq!(response.body()["jsonrpc"], json!("2.0"));
     assert_eq!(response.body()["id"], json!(77));
     let error = &response.body()["error"];
-    assert_eq!(error["code"], json!(-32603));
+    assert_eq!(error["code"], json!(-32602));
     let message = error["message"].as_str().unwrap();
     assert!(message.contains("hieronymus_nonexistent"), "{message}");
     assert!(
@@ -366,5 +366,61 @@ fn current_protocol() -> Value {
     protocol["target"]["tools_list"]["response"]["result"]["tools"] =
         serde_json::to_value(hiero::daemon::registry::McpRegistry::embedded().list_tools())
             .unwrap();
+    for key in ["tools_list", "tools_call"] {
+        protocol["target"][key]["response"]["result"]["_meta"] = json!({"io.modelcontextprotocol/serverInfo":{"name":"hieronymus","version":env!("CARGO_PKG_VERSION")}});
+    }
     protocol
+}
+
+#[test]
+fn modern_discovery_origin_and_optional_call_flow() {
+    let (_root, daemon) = start_daemon_on_ephemeral_port();
+    let mut body = json!({"jsonrpc":"2.0","id":0,"method":"server/discover","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientInfo":{"name":"codex-mcp-client","title":"Codex","version":"0.147.0"},
+        "io.modelcontextprotocol/clientCapabilities":{"elicitation":{"form":{},"url":{}}}}}});
+    let mut headers = mcp_headers(&daemon, &[("Mcp-Method", "server/discover")]);
+    headers.push(("Origin".into(), "https://hostile.example".into()));
+    assert_eq!(post_mcp(&daemon, &headers, &body).status, 403);
+    headers.pop();
+    headers.push(("Origin".into(), format!("http://{}", daemon.local_addr())));
+    let response = post_mcp(&daemon, &headers, &body);
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.body()["result"]["supportedVersions"],
+        json!([PROTOCOL_REVISION])
+    );
+    body["method"] = json!("tools/list");
+    body["id"] = json!("server-discover-probe-1");
+    let response = post_mcp(
+        &daemon,
+        &mcp_headers(&daemon, &[("Mcp-Method", "tools/list")]),
+        &body,
+    );
+    assert!(response.body()["result"]["tools"].as_array().is_some());
+    body["method"] = json!("tools/call");
+    body["params"]["name"] = json!("hieronymus_status");
+    let response = post_mcp(
+        &daemon,
+        &mcp_headers(
+            &daemon,
+            &[
+                ("Mcp-Method", "tools/call"),
+                ("Mcp-Name", "=?base64?aGllcm9ueW11c19zdGF0dXM=?="),
+            ],
+        ),
+        &body,
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body()["result"]["isError"], false);
+    body["method"] = json!("unknown/method");
+    assert_eq!(
+        post_mcp(
+            &daemon,
+            &mcp_headers(&daemon, &[("Mcp-Method", "unknown/method")]),
+            &body
+        )
+        .status,
+        404
+    );
 }

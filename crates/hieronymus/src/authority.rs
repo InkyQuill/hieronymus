@@ -278,35 +278,10 @@ fn validate_request_context(
     r: &DecisionRequestV1,
     origin_context: OriginContextV1,
 ) -> Result<OriginContextV1, Error> {
-    if r.applicability.series_id != r.series_id {
-        return Err(Error::ApplicabilityConflict);
-    }
-    applicability::validate(db, &r.applicability)?;
-    let languages: Option<(String, String)> = db
-        .query_row(
-            "select default_source_language,default_target_language from series where id=?",
-            [r.series_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    let (source, target_language) = languages.ok_or(Error::UnknownTarget)?;
-    for language in std::iter::once(&r.source_language).chain(r.target_language.iter()) {
-        let registered:bool=db.query_row("select exists(select 1 from series_language_tags where series_id=?1 and language_tag=?2)",params![r.series_id,language],|row|row.get(0))?;
-        if language.is_empty()
-            || language != &language.trim().to_lowercase()
-            || !(registered
-                || language == &source.trim().to_lowercase()
-                || language == &target_language.trim().to_lowercase())
-        {
-            return Err(Error::LanguageMismatch);
-        }
-    }
-    if let Some(concept) = r.concept_id {
-        let valid:bool=db.query_row("select exists(select 1 from concepts c join series s on s.id=?2 where c.id=?1 and (c.scope_type='global' or (c.scope_type='series' and c.scope_key='series:'||s.slug)))",params![concept,r.series_id],|r|r.get(0))?;
-        if !valid {
-            return Err(Error::UnknownTarget);
-        }
-    }
+    crate::authority_evidence::validate_context(
+        db,
+        &crate::authority_evidence::EvidenceContext::from(r),
+    )?;
     let revision: Option<i64> = db
         .query_row(
             "select revision from authority_state where series_id=?",

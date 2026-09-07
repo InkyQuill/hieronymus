@@ -66,3 +66,5 @@ pub mod claim_capture;
 pub mod claim_reads;
 pub mod coherent_reads;
 pub mod corrections;
+
+pub mod authority_producers;
