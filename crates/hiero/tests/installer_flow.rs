@@ -12,6 +12,57 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Test-only corroboration of the installed controller's cached readiness.
+/// An authority commit can record newer work before the next controller poll.
+fn installed_corpus_is_covered(database: &Path) -> rusqlite::Result<bool> {
+    let db = rusqlite::Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.query_row(
+        "select not exists(select 1 from semantic_jobs where status in ('queued','running'))
+         and (not exists(select 1 from rag_chunks) or exists(
+           select 1 from semantic_generations where active=1 and status='active'
+           and corpus_revision=coalesce((select revision from corpus_revision where singleton=1),0)))",
+        [], |row| row.get(0),
+    )
+}
+
+#[test]
+fn installed_readiness_requires_current_coverage_and_drained_work() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("readiness.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "create table corpus_revision(singleton integer,revision integer);
+        create table rag_chunks(id integer);
+        create table semantic_jobs(status text);
+        create table semantic_generations(active integer,status text,corpus_revision integer);
+        insert into corpus_revision values(1,1);
+        insert into rag_chunks values(1);
+        insert into semantic_generations values(1,'active',1);",
+    )
+    .unwrap();
+    assert!(installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("update corpus_revision set revision=2;")
+        .unwrap();
+    assert!(
+        !installed_corpus_is_covered(&path).unwrap(),
+        "a cached Ready cannot cover a newer authority intent"
+    );
+    db.execute_batch("update semantic_generations set corpus_revision=2; insert into semantic_jobs values('queued');").unwrap();
+    assert!(!installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("update semantic_jobs set status='running';")
+        .unwrap();
+    assert!(!installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("update semantic_jobs set status='complete';")
+        .unwrap();
+    assert!(installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("delete from rag_chunks; delete from semantic_generations;")
+        .unwrap();
+    assert!(installed_corpus_is_covered(&path).unwrap());
+}
+
 fn real_version() -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["version", "--json"])
@@ -448,7 +499,10 @@ fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
                 .unwrap();
             if let Ok(status) = serde_json::from_slice::<Value>(&output.stdout) {
                 let semantic = &status["status"]["semantic"];
-                if semantic["state"] == "ready" {
+                if semantic["state"] == "ready"
+                    && installed_corpus_is_covered(&sandbox.data_root().join("hieronymus.sqlite"))
+                        .unwrap()
+                {
                     return status;
                 }
                 assert_ne!(semantic["state"], json!("failed"), "{status}");
@@ -482,6 +536,7 @@ fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
     let mut failures = Vec::new();
     for query in fixture["queries"].as_array().unwrap() {
         for endpoint in ["hieronymus_recall", "hieronymus_rag_search"] {
+            wait_ready();
             let context = &contexts[query["series_slug"].as_str().unwrap()];
             let mut args =
                 multilingual::query_context(context, json!({"query":query["query"],"limit":8}));
