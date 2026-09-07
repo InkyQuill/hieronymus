@@ -9,7 +9,19 @@ the REAL model run qualifying hybrid (memory + RAG semantic) retrieval with
 the pinned ONNX assets — no synthetic harness vectors — through normal
 authenticated MCP operations and the real `hiero` CLI.
 
-## Command
+## Historical S3 invocation
+
+This is the invocation recorded for the historical S3 source, not a command
+for the current head. The committed S3 source and its nine-document corpus
+are retained together at `ec7465597ecd43b30d60287e6a06b22f16e683c7`
+(`test: qualify real memory and semantic rag retrieval`). That commit contains
+`crates/hiero/tests/semantic_real.rs`, the old model/tokenizer pins, and
+`crates/hiero/tests/fixtures/hybrid-relevance.json` (SHA-256
+`a7898e8e8d6c8a634fc4a1b094a99696a3c88fcb9a533d60a0f86ef6d32e7142`).
+Replaying S3 requires that historical checkout and the matching qualified
+assets below; changing only the model directory at current head does not
+restore the old implementation. This snapshot covers S3's nine-document run,
+not P2's later 35-document comparison.
 
 ```text
 HIERO_TEST_ONNX_RUNTIME=<repo>/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so \
@@ -160,12 +172,31 @@ explicit asset paths below; no simultaneous builds replaced the process suite's
 `target/debug/hiero` binary. The current worktree was
 `/home/inky/Development/hieronymus/.worktrees/product-release-readiness`.
 
-```sh
+**Historical measured old-model invocation, not a current-head replay recipe:**
+
+The exact source snapshot/test-and-pin patch used for the 35-document
+old-model measurements was not retained. The logs and measured outcomes below
+remain evidence of that run, but do not provide an exact replay source. The
+frozen corpus is recoverable at
+`807c0c7f872500b242b78be8032ae1f6b548200e` as
+`crates/hiero/tests/fixtures/hybrid-relevance.json`, with the SHA-256 recorded
+above; that commit already includes the replacement model/tokenizer and is not
+the old-model executable. The earlier S3 commit has only nine documents and
+lacks the later measured test instrumentation. Neither that base checkout nor
+an old model directory alone reconstructs the measured comparison. No inferred
+patch is presented as the original source.
+
+```text
 CARGO_BUILD_JOBS=4 \
 HIERO_TEST_ONNX_RUNTIME="$PWD/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so" \
 HIERO_TEST_MODEL_DIR="$PWD/qualification/.artifacts/models/all-MiniLM-L6-v2" \
 cargo test -p hiero --test semantic_real --locked -- --ignored --nocapture
+```
 
+**Current-model invocation and supporting checks** (with the matching qualified
+assets acquired at the stated paths):
+
+```sh
 CARGO_BUILD_JOBS=4 \
 HIERO_TEST_ONNX_RUNTIME="$PWD/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so" \
 HIERO_TEST_MODEL_DIR="$PWD/qualification/.artifacts/models/paraphrase-multilingual-MiniLM-L12-v2" \

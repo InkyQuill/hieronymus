@@ -14,6 +14,13 @@ Python, Node and Bun are not installed application dependencies.
 
 ## Evidence and artifact lineage
 
+Durable local rehearsal evidence is retained in the main repository at
+`/home/inky/Development/hieronymus/target/release-readiness-2026-09-07/evidence/`.
+The original `/tmp` paths below identify execution receipts; retained copies
+of the rehearsal logs, sanitized browser drivers/reports and screenshots live
+in that directory so they survive task scratch/worktree cleanup. These local
+files are not a published release or an external-host acceptance claim.
+
 F1's baseline archive was built at `c4f0e44`; final installer fixes are in
 `d31a0d9`, and `bffa161` only moves a Rust function block for Clippy. Its SHA-256
 is `f81f70308a3130e08618dca010b3fc97375db454a15bd0e0126acc7c2d90fb54`.
