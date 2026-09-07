@@ -55,7 +55,7 @@ pub fn select_correction_context(
     let mut claims = vec![];
     let mut records = vec![];
     let mut concepts = std::collections::BTreeSet::new();
-    let mut statement = db.prepare("select id,kind,source_identity,source_hash,span_start,span_end,cast(substr(cast(content as blob),span_start+1,span_end-span_start) as text),binding_json from evidence_records where series_id=?1 and span_end-span_start+length(cast(binding_json as blob))<=?2 order by exists(select 1 from decision_evidence d where d.decision_id=?3 and d.source_id=evidence_records.id) desc,id desc limit ?4")?;
+    let mut statement = db.prepare("select id,kind,source_identity,source_hash,span_start,span_end,cast(substr(cast(content as blob),span_start+1,span_end-span_start) as text),binding_json from evidence_records where series_id=?1 and json_extract(binding_json,'$.event') is null and span_end-span_start+length(cast(binding_json as blob))<=?2 order by exists(select 1 from decision_evidence d where d.decision_id=?3 and d.source_id=evidence_records.id) desc,id desc limit ?4")?;
     let rows = statement.query_map(
         params![
             lease.series_id,
@@ -90,6 +90,17 @@ pub fn select_correction_context(
             let claim_id: i64 = identity[6..]
                 .parse()
                 .map_err(|_| local("corrupt claim identity"))?;
+            let live: bool = db.query_row(
+                "select exists(select 1 from claim_bindings where claim_id=?)",
+                [claim_id],
+                |r| r.get(0),
+            )?;
+            if !live {
+                if crate::consolidation_completion::audited_detached_claim(db, claim_id)? {
+                    continue;
+                }
+                return Err(local("claim capture has no live target or detach proof"));
+            }
             let (revision, status, qualification): (i64,String,Option<String>) = db.query_row("select revision,status,qualification from memory_claims where id=?1 and series_id=?2", params![claim_id,lease.series_id], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             claims.push(SelectedClaimV1 {
                 claim_id,

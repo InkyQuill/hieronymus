@@ -5,7 +5,7 @@ use crate::{
     consolidation::{self, *},
 };
 use chrono::{DateTime, Duration, Utc};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 fn invariant(message: &str) -> ConsolidationError {
     ConsolidationError::Invariant(message.into())
@@ -383,6 +383,9 @@ fn validate_lineage(
             })?
             .collect::<Result<Vec<_>, _>>()?;
         if targets.is_empty() {
+            if audited_detached_claim(tx, selection.claim_id)? {
+                return Err(ConsolidationError::RevisionConflict);
+            }
             return Err(invariant("selected claim has no live target"));
         }
         for current in &targets {
@@ -506,8 +509,76 @@ fn apply_lineage(
     Ok(claims)
 }
 
+/// A retained claim without bindings is historical only with an exact audited
+/// RAG detachment. Missing proof remains corruption; no claim/evidence is removed.
+pub(crate) fn audited_detached_claim(
+    db: &Connection,
+    claim: i64,
+) -> Result<bool, ConsolidationError> {
+    let live: bool = db.query_row(
+        "select exists(select 1 from claim_bindings where claim_id=?)",
+        [claim],
+        |r| r.get(0),
+    )?;
+    if live {
+        return Ok(false);
+    }
+    let (series, text, app): (i64, String, i64) = db.query_row(
+        "select series_id,text,applicability_id from memory_claims where id=?",
+        [claim],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    let capture: Option<(String,String,String)> = db.query_row("select content,source_hash,binding_json from evidence_records where series_id=?1 and kind='observation' and source_identity=?2 and span_start=0 and span_end=length(cast(content as blob))",params![series,format!("claim:{claim}")],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let Some((content, hash, capture)) = capture else {
+        return Ok(false);
+    };
+    let capture: serde_json::Value =
+        serde_json::from_str(&capture).map_err(|_| invariant("corrupt claim capture"))?;
+    let app = crate::authority_applicability::load(db, app)
+        .map_err(policy)?
+        .ok_or_else(|| invariant("missing claim applicability"))?;
+    if content != text
+        || crate::authority_evidence::hash(&text) != hash
+        || capture["claim_id"] != claim
+        || capture["applicability"]
+            != serde_json::to_value(app).map_err(|_| invariant("claim applicability encoding"))?
+    {
+        return Ok(false);
+    }
+    let Some(original_id) = capture["target_id"].as_i64() else {
+        return Ok(false);
+    };
+    let original = match capture["target_kind"].as_str() {
+        Some("short_term_id") => ClaimTarget::ShortTerm(original_id),
+        Some("crystal_id") => ClaimTarget::Crystal(original_id),
+        Some("facet_id") => ClaimTarget::Facet(original_id),
+        Some("rag_chunk_id") => ClaimTarget::RagChunk(original_id),
+        _ => return Ok(false),
+    };
+    let latest: Option<(String,String,String)> = db.query_row("select content,source_hash,binding_json from evidence_records where series_id=?1 and kind='observation' and json_extract(binding_json,'$.claim_id')=?2 and json_extract(binding_json,'$.event') is not null order by id desc limit 1",params![series,claim],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let Some((content, audit_hash, event)) = latest else {
+        return Ok(false);
+    };
+    let event: serde_json::Value =
+        serde_json::from_str(&event).map_err(|_| invariant("corrupt lifecycle evidence"))?;
+    if content != text
+        || audit_hash != hash
+        || event["event"] != "rag_replace_detach"
+        || !event["to"].is_null()
+        || event["applicability"] != capture["applicability"]
+        || event["from"]["kind"] != "rag_chunk_id"
+        || !event["source_snapshot"].is_object()
+    {
+        return Ok(false);
+    }
+    let Some(from) = event["from"]["id"].as_i64() else {
+        return Ok(false);
+    };
+    audited_rebind(db, claim, &text, original, &[ClaimTarget::RagChunk(from)])
+}
+
 fn audited_rebind(
-    tx: &Transaction<'_>,
+    tx: &Connection,
     claim: i64,
     text: &str,
     original: ClaimTarget,

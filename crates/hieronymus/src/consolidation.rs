@@ -6,6 +6,26 @@ pub use crate::consolidation_models::*;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
+// Shared by leasing and bounded series discovery; ?2 is the injected UTC time.
+const DUE_JOB: &str = "(r.state='prepared' or (
+                 (j.next_attempt_at is null or julianday(j.next_attempt_at)<=julianday(?2))
+                 and (j.state!='degraded' or (
+                   julianday(p.next_recovery_at)<=julianday(?2)
+                   and j.decision_id=(
+                     select k.decision_id from consolidation_jobs k
+                     join decision_records kd on kd.decision_id=k.decision_id
+                     left join consolidation_results kr on kr.job_decision_id=k.decision_id
+                          and kr.generation=k.result_generation
+                     where k.provider_slot_id=j.provider_slot_id and k.state='degraded'
+                       and coalesce(kr.state,'reserved')!='prepared'
+                       and (k.next_attempt_at is null or julianday(k.next_attempt_at)<=julianday(?2))
+                       and not exists(
+                         select 1 from consolidation_jobs busy
+                         join decision_records bd on bd.decision_id=busy.decision_id
+                         where busy.state='leased' and bd.series_id=kd.series_id)
+                     order by julianday(coalesce(k.last_attempt_at,k.created_at)), k.decision_id
+                     limit 1)))))";
+
 pub(crate) fn timestamp(now: DateTime<Utc>) -> String {
     now.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -54,6 +74,22 @@ impl<'a> ConsolidationStore<'a> {
         tx.commit()?;
         Ok(count)
     }
+    /// Find eligible series before applying the scan bound. Prepared work has
+    /// priority and ignores provider due times; leasing remains authoritative.
+    pub fn eligible_series(&self, now: DateTime<Utc>) -> Result<Vec<i64>, ConsolidationError> {
+        let mut statement = self.db.prepare(&format!("select d.series_id
+            from consolidation_jobs j join decision_records d on d.decision_id=j.decision_id
+            join provider_recovery_state p on p.provider_slot_id=j.provider_slot_id
+            left join consolidation_results r on r.job_decision_id=j.decision_id and r.generation=j.result_generation
+            where j.state in ('pending','retry','degraded') and {DUE_JOB}
+              and not exists(select 1 from consolidation_jobs busy join decision_records bd on bd.decision_id=busy.decision_id where busy.state='leased' and bd.series_id=d.series_id)
+            group by d.series_id
+            order by min(case when r.state='prepared' then 0 else 1 end),min(julianday(coalesce(j.last_attempt_at,j.created_at))),min(j.decision_id)
+            limit ?1"))?;
+        Ok(statement
+            .query_map(params![100, timestamp(now)], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
     /// Reserve one due job in a series. A degraded call atomically consumes its
     /// stable provider slot's six-hour recovery allowance before external work.
     pub fn lease_next(
@@ -89,8 +125,19 @@ impl<'a> ConsolidationStore<'a> {
         }
         // Enforce parked fairness across series, independent of daemon order.
         #[allow(clippy::type_complexity)]
-        let job:Option<(String,String,i64,i64,String,i64,Option<String>,Option<String>)>=tx.query_row(
-            "select j.decision_id, j.state, j.attempts, j.result_generation,
+        let job: Option<(
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+        )> = tx
+            .query_row(
+                &format!(
+                    "select j.decision_id, j.state, j.attempts, j.result_generation,
                     j.provider_slot_id,
                     case when r.state='prepared' then r.expected_revision else a.revision end,
                     r.result_id, r.canonical_output
@@ -102,28 +149,26 @@ impl<'a> ConsolidationStore<'a> {
                   and r.generation=j.result_generation
              where d.series_id=?1 and j.state in ('pending','retry','degraded')
                and (?3=0 or r.state='prepared')
-               and (r.state='prepared' or (
-                 (j.next_attempt_at is null or julianday(j.next_attempt_at)<=julianday(?2))
-                 and (j.state!='degraded' or (
-                   julianday(p.next_recovery_at)<=julianday(?2)
-                   and j.decision_id=(
-                     select k.decision_id from consolidation_jobs k
-                     join decision_records kd on kd.decision_id=k.decision_id
-                     left join consolidation_results kr on kr.job_decision_id=k.decision_id
-                          and kr.generation=k.result_generation
-                     where k.provider_slot_id=j.provider_slot_id and k.state='degraded'
-                       and coalesce(kr.state,'reserved')!='prepared'
-                       and (k.next_attempt_at is null or julianday(k.next_attempt_at)<=julianday(?2))
-                       and not exists(
-                         select 1 from consolidation_jobs busy
-                         join decision_records bd on bd.decision_id=busy.decision_id
-                         where busy.state='leased' and bd.series_id=kd.series_id)
-                     order by julianday(coalesce(k.last_attempt_at,k.created_at)), k.decision_id
-                     limit 1)))))
+               and {DUE_JOB}
              order by case when r.state='prepared' then 0 else 1 end,
                       julianday(coalesce(j.last_attempt_at,j.created_at)), j.decision_id
-             limit 1",
-            params![series_id,t,prepared_only],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
+             limit 1"
+                ),
+                params![series_id, t, prepared_only],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                },
+            )
+            .optional()?;
         let Some((
             decision_id,
             state,

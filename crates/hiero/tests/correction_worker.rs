@@ -644,3 +644,250 @@ fn expired_crash_housekeeping_while_busy_does_not_admit_a_new_attempt() {
         clock() + chrono::Duration::hours(6)
     );
 }
+
+fn rag_claim_fixture(config: &HieronymusConfig) -> std::path::PathBuf {
+    use hieronymus::{
+        claim_capture::ClaimInput,
+        rag::{RagImport, RagStore},
+        story_applicability::*,
+    };
+    let path = config.data_root().join("review-claim.txt");
+    std::fs::write(&path, "Original assertion.").unwrap();
+    let mut import = RagImport::new();
+    import.claims.insert(
+        0,
+        vec![ClaimInput {
+            text: "Original assertion.".into(),
+            concept_id: None,
+            applicability: ApplicabilityV1 {
+                series_id: 1,
+                timeline_id: None,
+                volume_key: None,
+                chapter_key: None,
+                scope_predicates: vec![],
+                valid_from: None,
+                valid_until: None,
+                metadata_state: MetadataState::Unspecified,
+                knowledge_gates: vec![],
+            },
+        }],
+    );
+    RagStore::open(config)
+        .unwrap()
+        .import_file("book", &path, &import)
+        .unwrap();
+    path
+}
+fn replace_rag_claim(config: &HieronymusConfig, path: &std::path::Path) {
+    std::fs::write(path, "Unmatched replacement.").unwrap();
+    hieronymus::rag::RagStore::open(config)
+        .unwrap()
+        .import_file("book", path, &hieronymus::rag::RagImport::new())
+        .unwrap();
+}
+#[test]
+fn review_fix_detached_historical_rag_claim_does_not_poison_unrelated_worker_result() {
+    let (_dir, config) = fixture();
+    let path = rag_claim_fixture(&config);
+    replace_rag_claim(&config, &path);
+    let (_, clock) = clock();
+    let source: CorrectionSource = Arc::new(|| CorrectionProvider {
+        slot: "default".into(),
+        fingerprint: "test".into(),
+        call: Ok(Box::new(|context| {
+            assert!(context["evidence"].as_array().unwrap().is_empty());
+            Ok(json!({"decisions":{"version":1,"mutations":[]}}))
+        })),
+    });
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "complete");
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select count(*) from memory_claims", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert!(db.query_row("select count(*) from evidence_records where json_extract(binding_json,'$.event')='rag_replace_detach'",[],|r|r.get::<_,i64>(0)).unwrap()>0);
+}
+#[test]
+fn review_fix_rag_detachment_during_provider_is_stale_then_reevaluated() {
+    let (_dir, config) = fixture();
+    let path = rag_claim_fixture(&config);
+    let (time, clock) = clock();
+    let cfg = config.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    let source: CorrectionSource = Arc::new(move || {
+        let cfg = cfg.clone();
+        let path = path.clone();
+        let c = c.clone();
+        CorrectionProvider {
+            slot: "default".into(),
+            fingerprint: "test".into(),
+            call: Ok(Box::new(move |context| {
+                if c.fetch_add(1, Ordering::SeqCst) == 0 {
+                    assert_eq!(context["evidence"].as_array().unwrap().len(), 1);
+                    replace_rag_claim(&cfg, &path);
+                }
+                Ok(json!({"decisions":{"version":1,"mutations":[]}}))
+            })),
+        }
+    });
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "retry");
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select state from consolidation_results", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "stale"
+    );
+    drop(db);
+    *time.lock().unwrap() += chrono::Duration::seconds(30);
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "complete");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+fn crowded_series(config: &HieronymusConfig) -> String {
+    let db = open_migrated(&config.database_path()).unwrap();
+    db.execute(
+        "update consolidation_jobs set state='retry',next_attempt_at=?",
+        [(now() + chrono::Duration::hours(6)).to_rfc3339()],
+    )
+    .unwrap();
+    drop(db);
+    let mut last = String::new();
+    for id in 2..=101 {
+        let db = open_migrated(&config.database_path()).unwrap();
+        db.execute("insert into series(id,slug,title,default_source_language,default_target_language,created_at,updated_at) values(?1,?2,'Book','en','ru','now','now')",params![id,format!("series{id}")]).unwrap();
+        db.execute("insert into authority_state(series_id) values(?)", [id])
+            .unwrap();
+        drop(db);
+        last = format!("10000000-0000-4000-8000-{id:012}");
+        add_job(config, &last, id);
+        let db = open_migrated(&config.database_path()).unwrap();
+        db.execute("update consolidation_jobs set state='retry',next_attempt_at=?2,created_at=?3 where decision_id=?1",params![last,if id<101{(now()+chrono::Duration::hours(6)).to_rfc3339()}else{now().to_rfc3339()},(now()+chrono::Duration::seconds(if id<101{id-200}else{1})).to_rfc3339()]).unwrap();
+    }
+    last
+}
+#[test]
+fn review_fix_due_series_beyond_one_hundred_future_series_runs_now() {
+    let (_dir, config) = fixture();
+    let last = crowded_series(&config);
+    let (_, clock) = clock();
+    let calls = Arc::new(AtomicUsize::new(0));
+    tick(
+        &config,
+        &clock,
+        &source(calls.clone(), Arc::new(AtomicBool::new(true))),
+    );
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row(
+            "select state from consolidation_jobs where decision_id=?",
+            [last],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "complete"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+#[test]
+fn review_fix_prepared_series_beyond_one_hundred_future_series_needs_no_provider() {
+    let (_dir, config) = fixture();
+    let last = crowded_series(&config);
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    let lease = ConsolidationStore::new(&mut db)
+        .lease_next(now(), 101)
+        .unwrap()
+        .unwrap();
+    let selected = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    prepare_correction_draft(
+        &mut db,
+        &lease,
+        selected,
+        parse_decisions(json!({"decisions":{"version":1,"mutations":[]}})).unwrap(),
+        now(),
+    )
+    .unwrap();
+    drop(db);
+    let (time, clock) = clock();
+    *time.lock().unwrap() += chrono::Duration::seconds(120);
+    let source: CorrectionSource = Arc::new(|| panic!("prepared work touched provider"));
+    tick(&config, &clock, &source);
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row(
+            "select state from consolidation_jobs where decision_id=?",
+            [last],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "complete"
+    );
+}
+#[test]
+fn review_fix_unconfigured_fingerprint_is_literal() {
+    assert_eq!(
+        CorrectionProvider::from_catalog(Default::default()).fingerprint,
+        "unconfigured"
+    );
+}
+
+#[test]
+fn review_fix_unaudited_binding_loss_remains_local_corruption() {
+    for during_call in [false, true] {
+        let (_dir, config) = fixture();
+        rag_claim_fixture(&config);
+        if !during_call {
+            open_migrated(&config.database_path())
+                .unwrap()
+                .execute("delete from claim_bindings", [])
+                .unwrap();
+        }
+        let (_, clock) = clock();
+        let cfg = config.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        let source: CorrectionSource = Arc::new(move || {
+            let cfg = cfg.clone();
+            let c = c.clone();
+            CorrectionProvider {
+                slot: "default".into(),
+                fingerprint: "test".into(),
+                call: Ok(Box::new(move |_| {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    open_migrated(&cfg.database_path())
+                        .unwrap()
+                        .execute("delete from claim_bindings", [])
+                        .unwrap();
+                    Ok(json!({"decisions":{"version":1,"mutations":[]}}))
+                })),
+            }
+        });
+        tick(&config, &clock, &source);
+        assert_eq!(state(&config), "failed");
+        assert_eq!(calls.load(Ordering::SeqCst), usize::from(during_call));
+    }
+}
+#[test]
+fn review_fix_prepared_claim_detachment_commits_stale_without_provider() {
+    let (_dir, config) = fixture();
+    let path = rag_claim_fixture(&config);
+    prepare(&config);
+    replace_rag_claim(&config, &path);
+    let (time, clock) = clock();
+    *time.lock().unwrap() += chrono::Duration::seconds(120);
+    let source: CorrectionSource = Arc::new(|| panic!("prepared stale used provider"));
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "retry");
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select state from consolidation_results", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "stale"
+    );
+}

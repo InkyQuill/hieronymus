@@ -47,12 +47,16 @@ impl CorrectionProvider {
         let profile = (!catalog.defaults.provider.trim().is_empty())
             .then(|| catalog.providers.get(&slot))
             .flatten();
-        let fingerprint = format!("{:x}",Sha256::digest(serde_json::json!({
+        let fingerprint = if profile.is_none() {
+            "unconfigured".into()
+        } else {
+            format!("{:x}",Sha256::digest(serde_json::json!({
             "slot":slot,"model":catalog.defaults.model.trim(),
             "type":profile.map(|p|p.provider_type()),
             "timeout":profile.map(|p|p.timeout_seconds()),
             "endpoint":profile.and_then(|p| url::Url::parse(p.url()).ok()).map(|mut url| { let _=url.set_username("");let _=url.set_password(None);url.set_query(None);url.set_fragment(None);url.to_string() }),
-        }).to_string()));
+        }).to_string()))
+        };
         let call = profile
             .ok_or_else(|| "provider_unavailable".to_string())
             .and_then(|profile| {
@@ -136,14 +140,9 @@ pub fn tick(
     ConsolidationStore::new(&mut db)
         .recovery_tick(clock())
         .map_err(|e| e.to_string())?;
-    let series = {
-        let mut statement = db.prepare("select d.series_id from consolidation_jobs j join decision_records d on d.decision_id=j.decision_id where j.state in ('pending','retry','degraded') group by d.series_id order by min(coalesce(j.last_attempt_at,j.created_at)),min(j.decision_id) limit 100").map_err(|e|e.to_string())?;
-        statement
-            .query_map([], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-    };
+    let series = ConsolidationStore::new(&mut db)
+        .eligible_series(clock())
+        .map_err(|e| e.to_string())?;
     let mut completed_prepared = false;
     for id in &series {
         if stop.load(Ordering::Acquire) {
