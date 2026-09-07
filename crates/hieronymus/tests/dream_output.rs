@@ -780,3 +780,18 @@ fn mixed_output_applies_valid_entries_and_audits_rejections_individually() {
     };
     assert!(!all.contains("sk-leak-secret"), "credential leaked: {all}");
 }
+
+#[test]
+fn correction_decisions_are_strict_versioned_drafts_without_actor_or_selection() {
+    use hieronymus::dream_output::parse_decisions;
+    assert!(parse_decisions(json!({"decisions":{"version":1,"mutations":[]}})).is_ok());
+    for value in [
+        json!({"decisions":{"version":2,"mutations":[]}}),
+        json!({"decisions":{"version":1,"mutations":[],"actor_kind":"explicit_user"}}),
+        json!({"decisions":{"version":1,"mutations":[],"evidence_refs":[]}}),
+        json!({"decisions":{"version":1,"mutations":[]},"supersede_actions":[]}),
+        json!({"decisions":{"version":1,"mutations":vec![json!({"ClaimLineage":{"input_claim_ids":[1],"output_claim_ids":[2]}});101]}}),
+    ] {
+        assert!(parse_decisions(value).is_err());
+    }
+}

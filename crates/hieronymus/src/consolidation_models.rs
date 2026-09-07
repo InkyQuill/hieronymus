@@ -32,6 +32,8 @@ pub enum ConsolidationError {
     RevisionConflict,
     #[error("consolidation policy: {0}")]
     Policy(crate::authority_models::DecisionErrorV1),
+    #[error("invalid consolidation draft: {0:?}")]
+    Draft(DraftProblem),
     #[error("consolidation invariant: {0}")]
     Invariant(String),
 }
@@ -124,4 +126,15 @@ pub enum CompletionOutcome {
         result_id: String,
         next_generation: u64,
     },
+}
+
+/// Typed draft faults are transient only before durable preparation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftProblem {
+    DuplicateRuleTarget,
+    OverlappingRuleOperations,
+    LineageBounds,
+    UnselectedLineage,
+    SelfLineage,
+    LineageCycle,
 }

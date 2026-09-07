@@ -4,9 +4,9 @@
 //! reinforce actions, plus the raw-JSON target guard for supersede actions.
 //!
 //! Binding rules (ADR 0011, ADR 0003):
-//! - Dream has no approval authority. Provider output may create concepts,
+//! - Generic Dream output may create concepts,
 //!   facets, candidate rules (proposals), and graded-memory score deltas, but
-//!   it can never activate, replace, or archive an active rule; the target
+//!   that path cannot activate, replace, or archive an active rule; the target
 //!   guard rejects any supersede action touching an id outside the selected
 //!   context or an active rule before any store call runs.
 //! - Numeric inputs are finite and bounded; out-of-range or malformed values
@@ -15,6 +15,10 @@
 //!   drop a whole section.
 //! - Rejection reasons name fields and ids, never provider credentials; the
 //!   audit store redacts payloads again before persistence.
+
+//! - Separate versioned correction decisions carry learned-policy drafts only.
+//!   Trusted consolidation selection, origin, revisions and policy checks must
+//!   succeed before these can change authority.
 
 use std::collections::BTreeSet;
 
@@ -843,4 +847,27 @@ pub(crate) fn validate_reinforce_actions(actions: &[ReinforceAction]) -> Result<
         }
     }
     Ok(())
+}
+
+/// Separate provider draft: trusted actor, identity and selection are never wire fields.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionsDraftV1 {
+    pub version: u8,
+    pub mutations: Vec<crate::consolidation::DerivedMutationV1>,
+}
+/// Parse the correction lane without accepting generic Dream actions or authority claims.
+pub fn parse_decisions(value: Value) -> Result<DecisionsDraftV1, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Envelope {
+        decisions: DecisionsDraftV1,
+    }
+    let envelope: Envelope =
+        serde_json::from_value(value).map_err(|_| "invalid_decisions_schema")?;
+    let draft = envelope.decisions;
+    if draft.version != 1 || draft.mutations.len() > 100 {
+        return Err("invalid_decisions_bounds".into());
+    }
+    Ok(draft)
 }

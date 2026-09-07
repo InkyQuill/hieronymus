@@ -112,24 +112,10 @@ fn finish(
     if current_revision != revision.expect("checked revision") {
         return stale(tx, &output, attempts, now);
     }
-    let lineage = match validate_lineage(tx, &output, series) {
+    let (lineage, mutations) = match validate_effects(tx, &output, series) {
         Err(ConsolidationError::RevisionConflict) => return stale(tx, &output, attempts, now),
         result => result?,
     };
-    let mut mutations = vec![];
-    for (index, mutation) in output.mutations.iter().enumerate() {
-        if matches!(mutation, DerivedMutationV1::LearnedRule { .. }) {
-            match authority::validate_result_mutation(tx, &output, series, index).map_err(policy) {
-                Err(ConsolidationError::RevisionConflict) => {
-                    return stale(tx, &output, attempts, now);
-                }
-                result => mutations.push(result?),
-            }
-        }
-    }
-    // Each target may be changed only once. Cross-mutation conflicts also must
-    // be rejected before writes, rather than admitting independently valid rules.
-    validate_rule_batch(tx, &output, &mutations)?;
     let rules =
         authority::apply_mutations_tx(tx, &mutations, AuditOwner::ConsolidationResult(result_id))
             .map_err(policy)?;
@@ -155,6 +141,41 @@ fn finish(
     tx.execute("update consolidation_results set state='complete',completion_receipt=?2,updated_at=?3 where result_id=?1",params![result_id,serde_json::to_string(&receipt).map_err(|_|invariant("receipt serialization"))?,consolidation::timestamp(now)])?;
     tx.execute("update consolidation_jobs set state='complete',lease_token=null,lease_until=null,next_attempt_at=null,last_error_code=null,updated_at=?2 where decision_id=?1",params![job,consolidation::timestamp(now)])?;
     Ok(CompletionOutcome::Complete { receipt })
+}
+/// Non-mutating policy validation before a provider draft becomes durable.
+/// The trusted origin must already be staged in the caller's transaction.
+pub(crate) fn validate_draft_tx(
+    tx: &Transaction<'_>,
+    output: &ConsolidationResultV1,
+    series: i64,
+) -> Result<(), ConsolidationError> {
+    validate_evidence(tx, output, series)?;
+    let revision: i64 = tx.query_row(
+        "select revision from authority_state where series_id=?",
+        [series],
+        |r| r.get(0),
+    )?;
+    if revision as u64 != output.expected_revision {
+        return Err(ConsolidationError::RevisionConflict);
+    }
+    validate_effects(tx, output, series).map(|_| ())
+}
+fn validate_effects(
+    tx: &Transaction<'_>,
+    output: &ConsolidationResultV1,
+    series: i64,
+) -> Result<(LineagePlan, Vec<authority::ValidatedMutation>), ConsolidationError> {
+    let lineage = validate_lineage(tx, output, series)?;
+    let mut mutations = vec![];
+    for (index, mutation) in output.mutations.iter().enumerate() {
+        if matches!(mutation, DerivedMutationV1::LearnedRule { .. }) {
+            mutations.push(
+                authority::validate_result_mutation(tx, output, series, index).map_err(policy)?,
+            );
+        }
+    }
+    validate_rule_batch(tx, output, &mutations)?;
+    Ok((lineage, mutations))
 }
 fn stale(
     tx: &Transaction<'_>,
@@ -238,7 +259,7 @@ fn validate_rule_batch(
             | LearnedRuleOperationV1::Archive { rule_id, .. } => *rule_id,
         };
         if !targets.insert(id) {
-            return Err(invariant("duplicate rule target in result"));
+            return Err(ConsolidationError::Draft(DraftProblem::DuplicateRuleTarget));
         }
         let key = (*concept_id, source_language, target_language);
         let effect = checked.correction_effect();
@@ -255,7 +276,9 @@ fn validate_rule_batch(
                 )
                 .map_err(policy)?
                 {
-                    return Err(invariant("overlapping rule operations in result"));
+                    return Err(ConsolidationError::Draft(
+                        DraftProblem::OverlappingRuleOperations,
+                    ));
                 }
             }
         }
@@ -379,6 +402,11 @@ fn validate_lineage(
         let (input, output) = row?;
         graph.entry(output).or_default().insert(input);
     }
+    for id in graph.keys() {
+        if ancestors(&graph, *id).contains(id) {
+            return Err(invariant("corrupt existing lineage cycle"));
+        }
+    }
     let mut edges = vec![];
     let mut outputs = BTreeSet::new();
     for mutation in &output.mutations {
@@ -392,17 +420,17 @@ fn validate_lineage(
                 || input_claim_ids.len() > 100
                 || output_claim_ids.len() > 100
             {
-                return Err(invariant("invalid lineage bounds"));
+                return Err(ConsolidationError::Draft(DraftProblem::LineageBounds));
             }
             for id in input_claim_ids.iter().chain(output_claim_ids) {
                 if !selected.contains_key(id) {
-                    return Err(invariant("unselected lineage claim"));
+                    return Err(ConsolidationError::Draft(DraftProblem::UnselectedLineage));
                 }
             }
             for input in input_claim_ids {
                 for out in output_claim_ids {
                     if input == out {
-                        return Err(invariant("self lineage"));
+                        return Err(ConsolidationError::Draft(DraftProblem::SelfLineage));
                     }
                     if graph.entry(*out).or_default().insert(*input) {
                         edges.push((*input, *out));
@@ -414,7 +442,7 @@ fn validate_lineage(
     }
     for id in graph.keys() {
         if ancestors(&graph, *id).contains(id) {
-            return Err(invariant("cyclic lineage"));
+            return Err(ConsolidationError::Draft(DraftProblem::LineageCycle));
         }
     }
     let mut bindings = vec![];

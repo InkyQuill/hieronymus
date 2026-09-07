@@ -1,6 +1,7 @@
 //! SQLite-owned correction scheduling. Callers must obtain provider admission
 //! before leasing work that has no prepared result. No provider calls here.
 pub use crate::consolidation_completion::finish_result_tx;
+pub use crate::consolidation_context::*;
 pub use crate::consolidation_models::*;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};

@@ -1252,3 +1252,256 @@ fn audited_rag_reimport_retains_selected_claim_completion_eligibility() {
     complete(&mut db, &lease).unwrap();
     assert_eq!(count(&db, "claim_derivations"), 1);
 }
+
+#[test]
+fn trusted_draft_selection_prepares_learned_policy_and_rejects_expansion() {
+    use hieronymus::{dream_config::default_dream_config, dream_output::DecisionsDraftV1};
+    let (_dir, mut db, lease, output) = derived_fixture();
+    let mut expanded = output.mutations.clone();
+    if let DerivedMutationV1::LearnedRule { operation, .. } = &mut expanded[0] {
+        **operation = LearnedRuleOperationV1::Activate {
+            candidate_id: 999,
+            candidate_revision: 1,
+        };
+    }
+    let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    assert!(matches!(
+        prepare_correction_draft(
+            &mut db,
+            &lease,
+            selection,
+            DecisionsDraftV1 {
+                version: 1,
+                mutations: expanded
+            },
+            now()
+        ),
+        Err(DraftPreparationError::Provider(_))
+    ));
+    assert_eq!(count(&db, "origin_receipts"), 1); // only original job on a fresh database
+    let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    prepare_correction_draft(
+        &mut db,
+        &lease,
+        selection,
+        DecisionsDraftV1 {
+            version: 1,
+            mutations: output.mutations,
+        },
+        now(),
+    )
+    .unwrap();
+    assert!(matches!(
+        complete(&mut db, &lease).unwrap(),
+        CompletionOutcome::Complete { .. }
+    ));
+    assert_eq!(count(&db, "consolidation_jobs"), 1);
+}
+#[test]
+fn preprepare_policy_refusal_rolls_back_origin_and_allows_budgeted_reevaluation() {
+    use hieronymus::{dream_config::default_dream_config, dream_output::DecisionsDraftV1};
+    let (_dir, mut db, lease, mut output) = derived_fixture();
+    // Candidate replacement is schema valid and selected, but policy forbids it.
+    if let DerivedMutationV1::LearnedRule { operation, .. } = &mut output.mutations[0] {
+        **operation = LearnedRuleOperationV1::Archive {
+            rule_id: 1,
+            rule_revision: 1,
+        };
+    }
+    let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    let before = count(&db, "origin_receipts");
+    assert!(matches!(
+        prepare_correction_draft(
+            &mut db,
+            &lease,
+            selection,
+            DecisionsDraftV1 {
+                version: 1,
+                mutations: output.mutations
+            },
+            now()
+        ),
+        Err(DraftPreparationError::Provider(_))
+    ));
+    assert_eq!(count(&db, "origin_receipts"), before);
+    assert_eq!(
+        db.query_row("select state from consolidation_results", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "reserved"
+    );
+    ConsolidationStore::new(&mut db)
+        .fail(
+            &lease.token,
+            FailureKind::Transient,
+            "provider_policy",
+            now(),
+        )
+        .unwrap();
+    let t = now() + Duration::seconds(30);
+    let lease = ConsolidationStore::new(&mut db)
+        .lease_next(t, 1)
+        .unwrap()
+        .unwrap();
+    let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    prepare_correction_draft(
+        &mut db,
+        &lease,
+        selection,
+        DecisionsDraftV1 {
+            version: 1,
+            mutations: vec![],
+        },
+        t,
+    )
+    .unwrap();
+    let tx = db.transaction().unwrap();
+    assert!(matches!(
+        finish_result_tx(&tx, &lease.result_id, &lease.token, t).unwrap(),
+        CompletionOutcome::Complete { .. }
+    ));
+    tx.commit().unwrap();
+}
+#[test]
+fn draft_faults_are_typed_and_existing_cycle_is_local_corruption() {
+    use hieronymus::{dream_config::default_dream_config, dream_output::DecisionsDraftV1};
+    for fault in 0..6 {
+        let (_dir, mut db, lease, mut output) = derived_fixture();
+        let a = selected_claim(&mut db, &mut output, 20, app());
+        let b = selected_claim(&mut db, &mut output, 21, app());
+        let mutations = match fault {
+            0 => vec![output.mutations[0].clone(), output.mutations[0].clone()],
+            1 => vec![DerivedMutationV1::ClaimLineage {
+                input_claim_ids: vec![a],
+                output_claim_ids: vec![a],
+            }],
+            2 => vec![
+                DerivedMutationV1::ClaimLineage {
+                    input_claim_ids: vec![a],
+                    output_claim_ids: vec![b],
+                },
+                DerivedMutationV1::ClaimLineage {
+                    input_claim_ids: vec![b],
+                    output_claim_ids: vec![a],
+                },
+            ],
+            3 => vec![DerivedMutationV1::ClaimLineage {
+                input_claim_ids: vec![],
+                output_claim_ids: vec![b],
+            }],
+            4 => vec![DerivedMutationV1::ClaimLineage {
+                input_claim_ids: vec![999],
+                output_claim_ids: vec![b],
+            }],
+            _ => {
+                db.execute_batch("insert into term_rules(id,concept_id,source_language,target_language,source_text,canonical_translation,status,created_at,updated_at) values(2,1,'en','ru','Alex','A','candidate','now','now');insert into term_rule_forms(rule_id,form_kind,surface,language) values(2,'source','Alex','en'),(2,'approved','A','ru');").unwrap();
+                let mut second = output.mutations[0].clone();
+                if let DerivedMutationV1::LearnedRule { operation, .. } = &mut second {
+                    **operation = LearnedRuleOperationV1::Activate {
+                        candidate_id: 2,
+                        candidate_revision: 1,
+                    };
+                }
+                vec![output.mutations[0].clone(), second]
+            }
+        };
+        let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+        assert!(
+            matches!(
+                prepare_correction_draft(
+                    &mut db,
+                    &lease,
+                    selection,
+                    DecisionsDraftV1 {
+                        version: 1,
+                        mutations
+                    },
+                    now()
+                ),
+                Err(DraftPreparationError::Provider(_))
+            ),
+            "fault {fault}"
+        );
+        if fault == 2 {
+            db.execute(
+                "insert into claim_derivations values(?1,?2,?3),(?2,?1,?3)",
+                params![a, b, lease.result_id],
+            )
+            .unwrap();
+            let selection =
+                select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+            assert!(matches!(
+                prepare_correction_draft(
+                    &mut db,
+                    &lease,
+                    selection,
+                    DecisionsDraftV1 {
+                        version: 1,
+                        mutations: vec![]
+                    },
+                    now()
+                ),
+                Err(DraftPreparationError::Local(ConsolidationError::Invariant(
+                    _
+                )))
+            ));
+        }
+    }
+}
+#[test]
+fn trusted_selection_revision_change_persists_then_commits_stale() {
+    use hieronymus::{dream_config::default_dream_config, dream_output::DecisionsDraftV1};
+    let (_dir, mut db, lease, output) = derived_fixture();
+    let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    db.execute("update term_rules set revision=revision+1 where id=1", [])
+        .unwrap();
+    prepare_correction_draft(
+        &mut db,
+        &lease,
+        selection,
+        DecisionsDraftV1 {
+            version: 1,
+            mutations: output.mutations,
+        },
+        now(),
+    )
+    .unwrap();
+    assert!(matches!(
+        complete(&mut db, &lease).unwrap(),
+        CompletionOutcome::Stale {
+            next_generation: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn large_document_projects_only_selected_bytes_with_original_hash_and_offsets() {
+    use hieronymus::dream_config::default_dream_config;
+    let (_dir, db, lease, _output) = derived_fixture();
+    // Immutable evidence is normally written once; create a new large-document
+    // observation with the original byte span at the start, never rewrite it.
+    let document = format!("Alex walks.\n\n{}", "UNSELECTED BOOK TEXT ".repeat(100_000));
+    let binding: String = db
+        .query_row(
+            "select binding_json from evidence_records where id=1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    db.execute("insert into evidence_records(series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(1,'source_passage','large-document',?1,0,11,?2,?3,'now')",params![hash(&document),document,binding]).unwrap();
+    let id = db.last_insert_rowid();
+    let selected = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+    let projection = selected.projection();
+    let row = projection["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["reference"]["id"] == id)
+        .unwrap();
+    assert_eq!(row["selected_excerpt"], "Alex walks.");
+    assert_eq!(row["reference"]["content_hash"], hash(&document));
+    assert_eq!(row["reference"]["span_end"], 11);
+    assert!(!projection.to_string().contains("UNSELECTED BOOK TEXT"));
+    assert!(projection.to_string().len() < 16 * 1024);
+}

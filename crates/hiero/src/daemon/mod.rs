@@ -5,6 +5,7 @@
 //! serves until SIGINT or an authenticated `POST /shutdown`.
 
 pub mod assets;
+pub mod correction_worker;
 pub mod discovery;
 pub mod dream_worker;
 mod events;
@@ -457,6 +458,8 @@ impl Daemon {
         // `hieronymus_dream` dispatch serves through this handle. On a bare
         // `Application::open` (no daemon) it stays absent and the dispatch
         // fails closed.
+        correction_worker::start(config.clone(), guard.workers_mut())
+            .map_err(DaemonError::Worker)?;
         application.install_dream_controller(dream.clone());
         let events = dream.events();
 
