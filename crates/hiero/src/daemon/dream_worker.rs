@@ -1,5 +1,6 @@
 //! The supervised dream controller (task D5, Astra 5 and 17): one supervised
-//! worker owns every production dream run for a data root. The configured
+//! worker owns every ordinary production dream run for a data root. Correction
+//! consolidation has its own supervised worker sharing the root Dream lock. The configured
 //! interval schedule (ADR 0005), the admin "Run Manual Dreaming" action, and
 //! the MCP `hieronymus_dream` tool all coalesce into that worker through
 //! [`DreamController::request`]; there is never a second concurrent

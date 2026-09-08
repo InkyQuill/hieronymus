@@ -504,7 +504,7 @@ fn memory_add_wraps_into_short_term_with_defaults() {
 
     let preference = memories.iter().find(|m| m.id == first_id).unwrap();
     assert_eq!(preference.kind, "note");
-    assert_eq!(preference.source_role, "user");
+    assert_eq!(preference.source_role, "agent");
     assert_eq!(
         preference.metadata.get("legacy_kind"),
         Some(&json!("preference"))
@@ -546,6 +546,7 @@ fn memory_add_wraps_into_short_term_with_defaults() {
 fn memory_search_returns_legacy_entries_with_and_without_a_session() {
     let (root, app) = test_application();
     create_series(&app, "book", "ja", "en");
+    current_story::register(app.config(), "book");
 
     // No active default session yet: the direct fallback path.
     let config = HieronymusConfig::new(root.path());
@@ -554,17 +555,21 @@ fn memory_search_returns_legacy_entries_with_and_without_a_session() {
         .add_crystal(
             &TranslationContext::new("book", "ja", "en", "translation"),
             "lesson",
-            &NewCrystal::new("lesson", "The binding ritual requires chalk."),
+            &{
+                let mut input = NewCrystal::new("lesson", "The binding ritual requires chalk.");
+                input.claims = vec![current_story::claim(app.config(), "book", &input.text)];
+                input
+            },
         )
         .unwrap();
     let fallback = app
         .call(
             "hieronymus_memory_search",
-            &json!({"series_slug": "book", "query": "chalk binding"}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "chalk binding"}),
             ACTOR,
         )
         .unwrap();
-    let rows = fallback.as_array().unwrap();
+    let rows = fallback["results"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{fallback}");
     assert_eq!(rows[0]["kind"], json!("lesson"));
     // importance = round(strength * 5) over the stored crystal strength
@@ -576,17 +581,17 @@ fn memory_search_returns_legacy_entries_with_and_without_a_session() {
     let empty = app
         .call(
             "hieronymus_memory_search",
-            &json!({"series_slug": "book", "query": "   "}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "   "}),
             ACTOR,
         )
         .unwrap();
-    assert!(empty.as_array().unwrap().is_empty());
+    assert!(empty["results"].as_array().unwrap().is_empty());
 
     // limit below 1 is a domain rejection.
     let error = app
         .call(
             "hieronymus_memory_search",
-            &json!({"series_slug": "book", "query": "chalk", "limit": 0}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "chalk", "limit": 0}),
             ACTOR,
         )
         .unwrap_err();
@@ -598,18 +603,18 @@ fn memory_search_returns_legacy_entries_with_and_without_a_session() {
         .call(
             "hieronymus_memory_add",
             &json!({"series_slug": "book", "kind": "glossary", "text": "chalk dust observations",
-                    "importance": 4}),
+                    "importance": 4,"volume":"I","chapter":"Opening","claims":[current_story::claim(app.config(),"book","chalk dust observations")]}),
             ACTOR,
         )
         .unwrap();
     let searched = app
         .call(
             "hieronymus_memory_search",
-            &json!({"series_slug": "book", "query": "chalk dust"}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "chalk dust"}),
             ACTOR,
         )
         .unwrap();
-    let rows = searched.as_array().unwrap();
+    let rows = searched["results"].as_array().unwrap();
     assert!(
         rows.iter().any(|row| row["id"] == memory["memory_id"]
             && row["kind"] == json!("glossary")
@@ -629,7 +634,7 @@ fn memory_search_returns_legacy_entries_with_and_without_a_session() {
     let error = app
         .call(
             "hieronymus_memory_search",
-            &json!({"series_slug": "book", "query": "chalk", "target_language": "fr"}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "chalk", "target_language": "fr"}),
             ACTOR,
         )
         .unwrap_err();
@@ -661,7 +666,8 @@ fn feedback_records_user_correction_memory() {
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].id, memory_id);
     assert_eq!(memories[0].kind, "correction");
-    assert_eq!(memories[0].source_role, "user");
+    assert_eq!(memories[0].source_role, "assistant");
+    assert_eq!(payload["status"], "tentative");
     assert_eq!(memories[0].text, "use кот, not кошка");
 }
 
@@ -832,7 +838,7 @@ fn rag_search_refuses_an_unavailable_required_semantic_service() {
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(empty_series, "semantic retrieval unavailable");
+    expect_domain(empty_series, "unknown series");
 
     // Argument validation stays ahead of the semantic gate, so a malformed
     // call keeps its own frozen diagnostic.
@@ -852,7 +858,16 @@ fn rag_search_refuses_an_unavailable_required_semantic_service() {
 fn repeated_recall_deduplicates_working_copies_and_rotates_activation_ids() {
     let (root, app) = test_application();
     create_series(&app, "book", "ja", "en");
-    let session_id = start_session(&app, "book");
+    current_story::register(app.config(), "book");
+    let session_id = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug":"book","volume":"I","chapter":"Opening"}),
+            ACTOR,
+        )
+        .unwrap()["session_id"]
+        .as_i64()
+        .unwrap();
 
     let config = HieronymusConfig::new(root.path());
     let crystals = CrystalStore::open(&config).unwrap();
@@ -860,21 +875,25 @@ fn repeated_recall_deduplicates_working_copies_and_rotates_activation_ids() {
         .add_crystal(
             &TranslationContext::new("book", "ja", "en", "translation"),
             "lesson",
-            &NewCrystal::new("lesson", "The binding ritual requires chalk."),
+            &{
+                let mut input = NewCrystal::new("lesson", "The binding ritual requires chalk.");
+                input.claims = vec![current_story::claim(app.config(), "book", &input.text)];
+                input
+            },
         )
         .unwrap();
 
     let first = app
         .call(
             "hieronymus_recall",
-            &json!({"session_id": session_id, "series_slug": "book", "query": "binding ritual chalk"}),
+            &json!({"session_id": session_id, "series_slug": "book", "volume":"I", "chapter":"Opening", "query": "binding ritual chalk"}),
             ACTOR,
         )
         .unwrap();
     let second = app
         .call(
             "hieronymus_recall",
-            &json!({"session_id": session_id, "series_slug": "book", "query": "binding ritual chalk"}),
+            &json!({"session_id": session_id, "series_slug": "book", "volume":"I", "chapter":"Opening", "query": "binding ritual chalk"}),
             ACTOR,
         )
         .unwrap();
@@ -931,3 +950,6 @@ fn repeated_recall_deduplicates_working_copies_and_rotates_activation_ids() {
         .unwrap();
     assert_eq!(activations, 2);
 }
+
+#[path = "../../hieronymus/tests/support/current_story.rs"]
+mod current_story;

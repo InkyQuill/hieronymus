@@ -5,6 +5,9 @@
 //! active generation. The end-to-end armed runs here use the deterministic
 //! fake provider; the real ONNX path stays behind the env-gated live test.
 
+#[path = "support/current_story.rs"]
+mod current_story;
+
 use std::path::{Path, PathBuf};
 
 use hieronymus::data_root::HieronymusConfig;
@@ -44,8 +47,9 @@ fn fixture() -> Fixture {
     registry
         .create_series("demo", "demo", "ja", "en", None)
         .unwrap();
+    current_story::register_public(&config, "demo", "I", "Opening");
     let workspace = WorkspaceStore::open(&config).unwrap();
-    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    let context = context();
     let session = workspace.start_session(&context).unwrap();
     Fixture {
         root,
@@ -55,15 +59,20 @@ fn fixture() -> Fixture {
 }
 
 fn context() -> TranslationContext {
-    TranslationContext::new("demo", "ja", "en", "translation")
+    current_story::context("demo", "ja", "en", "translation")
 }
 
 fn import_text(fixture: &Fixture, name: &str, content: &str) {
     let path = fixture.root.path().join(name);
     std::fs::write(&path, content).unwrap();
+    let mut import = RagImport::new();
+    import.claims = std::collections::BTreeMap::from([(
+        0,
+        vec![current_story::claim(&fixture.config, "demo", content)],
+    )]);
     RagStore::open(&fixture.config)
         .unwrap()
-        .import_file("demo", &path, &RagImport::new())
+        .import_file("demo", &path, &import)
         .unwrap();
 }
 

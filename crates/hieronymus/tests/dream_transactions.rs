@@ -632,3 +632,158 @@ fn persistence_audit_failure_rolls_back_crystallization_and_retry_applies_exactl
     );
     assert_eq!(completed, vec![vec![json!("completed persistence phase")]]);
 }
+
+struct RevisionChangingProvider {
+    config: HieronymusConfig,
+}
+impl DreamProvider for RevisionChangingProvider {
+    fn name(&self) -> &str {
+        "revision-changing-test"
+    }
+    fn run_pass(
+        &self,
+        pass: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<Value, DreamError> {
+        if pass == "knowledge_crystals" {
+            use hieronymus::{authority::DecisionStore, authority_models::*};
+            use sha2::{Digest, Sha256};
+            let claim = &memories[0].claim_annotation.claims[0];
+            let mut db = open_migrated(&self.config.database_path())?;
+            let request = DecisionRequestV1 {
+                version: 1,
+                decision_id: "10000000-0000-4000-8000-000000004004".into(),
+                expected_revision: hieronymus::coherent_reads::revision(&db, &context.series_slug)?,
+                actor_kind: ActorKind::ExplicitUser,
+                origin: OriginReceiptId("20000000-0000-4000-8000-000000004004".into()),
+                evidence_refs: vec![],
+                series_id: claim.applicability.series_id,
+                concept_id: claim.concept_id,
+                source_language: context.source_language.clone(),
+                target_language: None,
+                applicability: claim.applicability.clone(),
+                operation: OperationV1::Correct {
+                    intent: CorrectionIntentV1::Fact {
+                        claim_id: claim.claim_id,
+                        claim_revision: claim.revision,
+                        effect: FactEffect::Invalidate,
+                    },
+                },
+            };
+            // Private stored-origin fixture; this is not a host authority claim.
+            let binding=json!({"decision_id":request.decision_id,"expected_revision":request.expected_revision,"selected_source":null,"series_id":request.series_id,"concept_id":request.concept_id,"source_language":request.source_language,"target_language":request.target_language,"applicability":request.applicability,"evidence_ids":[],"operation":request.operation}).to_string();
+            let text = "that memory is wrong";
+            let hash = format!("{:x}", Sha256::digest(format!("{text}\n{binding}")));
+            db.execute("insert into origin_receipts(id,kind,principal,event_id,text,context_json,content_hash,created_at) values(?1,'console_user','fixture',?1,?2,?3,?4,'now')",rusqlite::params![request.origin.0,text,binding,hash])?;
+            let result = DecisionStore::new(&mut db).apply(&request)?;
+            assert!(
+                matches!(result, DecisionResultV1::Applied { .. }),
+                "{result:?}"
+            );
+        }
+        PersistenceProvider.run_pass(pass, context, memories)
+    }
+}
+#[test]
+fn inflight_authority_change_discards_dream_output_and_retains_pending_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    current_story::register(&config, "book");
+    let mut story = context("book").volume("I").chapter("Opening");
+    story.story_viewpoint = hieronymus::story_applicability::Viewpoint::Narrator;
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let session = ws.start_session(&story).unwrap();
+    open_migrated(&config.database_path()).unwrap().execute_batch("insert into concepts(id,canonical_name,scope_type,scope_key,created_at,updated_at) values(1,'Mira','series','series:book','now','now')").unwrap();
+    let mut claim = current_story::claim(
+        &config,
+        "book",
+        "Mira knows a selected assertion before correction.",
+    );
+    claim.concept_id = Some(1);
+    let mut input = ShortTermMemoryInput::new("note", &claim.text);
+    input.claims = vec![claim];
+    ws.add_short_term_memory(session.id, &input).unwrap();
+    ws.complete_session(session.id).unwrap();
+    let provider_config = config.clone();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(RevisionChangingProvider {
+                config: provider_config.clone(),
+            })
+        }),
+    )
+    .unwrap();
+    let result = service.run_cycle("manual", false);
+    assert!(
+        matches!(result, Err(DreamError::StaleAuthority)),
+        "stale output must be retryable with a typed conflict: {result:?}"
+    );
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from claim_effects where effect='invalid'"
+        ),
+        json!(1)
+    );
+    assert_eq!(ws.get_session(session.id).unwrap().status, "completed");
+    assert_eq!(ws.list_short_term_memories(session.id).unwrap().len(), 1);
+    let retry = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(PersistenceProvider)),
+    )
+    .unwrap();
+    assert_eq!(
+        retry.run_cycle("manual", false).unwrap().status,
+        "completed"
+    );
+    let recalled = hieronymus::recall::RecallService::open(&config)
+        .unwrap()
+        .recall_context(&story, "persisted", 10)
+        .unwrap();
+    assert!(recalled.hits.is_empty());
+    assert_eq!(recalled.non_current.len(), 1);
+    assert!(matches!(
+        recalled.non_current[0].claim_annotation().disposition,
+        hieronymus::claim_reads::ClaimDisposition::Invalid
+    ));
+}
+
+#[test]
+fn dream_crystal_preserves_all_selected_claim_ids() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let session = ws.start_session(&context("book")).unwrap();
+    add_memory(&ws, session.id, "note", "First compound source assertion.");
+    add_memory(&ws, session.id, "note", "Second source assertion.");
+    let before = query(
+        &config,
+        "select claim_id from claim_bindings where short_term_id is not null order by claim_id",
+        &[],
+    );
+    assert_eq!(before.len(), 2);
+    ws.complete_session(session.id).unwrap();
+    DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(PersistenceProvider)),
+    )
+    .unwrap()
+    .run_cycle("manual", false)
+    .unwrap();
+    assert_eq!(
+        query(
+            &config,
+            "select claim_id from claim_bindings where crystal_id is not null order by claim_id",
+            &[]
+        ),
+        before
+    );
+}
+
+#[path = "support/current_story.rs"]
+mod current_story;

@@ -97,7 +97,66 @@ impl McpRegistry {
     pub fn embedded() -> Self {
         // The snapshot is validated by workspace tests; a panic here means the
         // frozen contract and the binary have diverged, which must never ship.
-        Self::from_snapshot_str(EMBEDDED_SNAPSHOT).expect("embedded MCP registry snapshot is valid")
+        let mut registry = Self::from_snapshot_str(EMBEDDED_SNAPSHOT)
+            .expect("embedded MCP registry snapshot is valid");
+        let extension: Value = serde_json::from_str(include_str!(
+            "../../../../compatibility/rust/authority-context-v1.json"
+        ))
+        .expect("Rust authority context schema is valid");
+        for tool in &mut registry.tools {
+            if matches!(
+                tool.name.as_str(),
+                "hieronymus_termbase_approve" | "hieronymus_rule_crystal_archive"
+            ) {
+                tool.description="Legacy compatibility operation: ordinary MCP cannot grant explicit-user authority. Returns unverified origin; use evidence-grounded hieronymus_decide or trusted correction ingress.".into();
+            }
+            if tool.name == "hieronymus_feedback" {
+                tool.description="Record unverified correction prose as a tentative signal, or submit a session-bound typed decision_draft through hieronymus_correct. Recall-outcome relevance feedback remains separate.".into();
+            }
+            if tool.name == "hieronymus_termbase_propose" {
+                tool.input_schema["properties"]["concept_id"] =
+                    serde_json::json!({"anyOf":[{"type":"integer","minimum":1},{"type":"null"}]});
+            }
+            if let Some(properties) = extension["tool_properties"][&tool.name].as_object() {
+                tool.input_schema["$defs"] = extension["definitions"].clone();
+                tool.input_schema["properties"]
+                    .as_object_mut()
+                    .expect("tool properties")
+                    .extend(properties.clone());
+            }
+            if tool.name == "hieronymus_short_term_add_batch" {
+                tool.input_schema["$defs"] = extension["definitions"].clone();
+                tool.input_schema["properties"]["items"]["items"]["properties"]["claims"] =
+                    extension["batch_item_claims"].clone();
+            }
+        }
+        let authority: Value = serde_json::from_str(include_str!(
+            "../../../../compatibility/rust/authority-ingress-v1.json"
+        ))
+        .expect("authority ingress schema");
+        if let Some(feedback) = registry
+            .tools
+            .iter_mut()
+            .find(|t| t.name == "hieronymus_feedback")
+        {
+            let draft = &authority["tools"][0]["inputSchema"];
+            feedback.input_schema["$defs"] = draft["$defs"].clone();
+            let mut definition = draft.clone();
+            definition.as_object_mut().unwrap().remove("$defs");
+            feedback.input_schema["$defs"]["DecisionDraftV1"] = definition;
+            feedback.input_schema["properties"]["decision_draft"] =
+                serde_json::json!({"$ref":"#/$defs/DecisionDraftV1"});
+            feedback.input_schema["required"] = serde_json::json!(["session_id"]);
+            feedback.input_schema["oneOf"] = serde_json::json!([{"required":["correction_text"]},{"required":["decision_draft"]}]);
+        }
+        for tool in authority["tools"].as_array().expect("authority tools") {
+            registry.tools.push(ToolDefinition {
+                name: tool["name"].as_str().unwrap().into(),
+                description: tool["description"].as_str().unwrap().into(),
+                input_schema: tool["inputSchema"].clone(),
+            });
+        }
+        registry
     }
 
     pub fn list_tools(&self) -> &[ToolDefinition] {
@@ -123,12 +182,30 @@ impl McpRegistry {
     ) -> Result<Value, CallError> {
         match name {
             "hieronymus_status" => Ok(status_result()),
-            _ => match application.call(name, arguments, actor) {
-                Ok(structured) => Ok(success_envelope(structured)),
-                Err(AppError::Invalid(message)) => Err(CallError::InvalidParams(message)),
-                Err(AppError::Domain(message)) => Ok(error_result_envelope(&message)),
-                Err(AppError::NotImplemented(name)) => Err(CallError::NotPorted(name)),
-            },
+            _ => {
+                match application.call(name, arguments, actor) {
+                    Ok(structured) => Ok(success_envelope(structured)),
+                    Err(AppError::Invalid(message)) => Err(CallError::InvalidParams(message)),
+                    Err(AppError::Coherent(error)) => {
+                        let mut result = error_result_envelope(&error.to_string());
+                        result["error_code"] = serde_json::json!(match error {
+                        hieronymus::coherent_reads::CoherentReadError::StaleContext => "stale_context",
+                        hieronymus::coherent_reads::CoherentReadError::DecisionNotApplied => "decision_not_applied",
+                        hieronymus::coherent_reads::CoherentReadError::UnknownSeries(_) => "unknown_series",
+                        hieronymus::coherent_reads::CoherentReadError::MissingAuthorityState(_) => "missing_authority_state",
+                        _ => "read_failed",
+                    });
+                        Ok(result)
+                    }
+                    Err(AppError::Authority(error)) => {
+                        let mut result = error_result_envelope(&error.to_string());
+                        result["structuredContent"] = serde_json::json!({"error":error});
+                        Ok(result)
+                    }
+                    Err(AppError::Domain(message)) => Ok(error_result_envelope(&message)),
+                    Err(AppError::NotImplemented(name)) => Err(CallError::NotPorted(name)),
+                }
+            }
         }
     }
 
@@ -195,7 +272,7 @@ mod tests {
         let snapshot: serde_json::Value = serde_json::from_str(EMBEDDED_SNAPSHOT).unwrap();
         assert_eq!(
             registry.list_tools().len() as u64,
-            snapshot["derived_tool_count"].as_u64().unwrap()
+            snapshot["derived_tool_count"].as_u64().unwrap() + 4
         );
         assert_eq!(registry.list_tools()[0].name, "hieronymus_concept_archive");
         assert!(registry.contains_tool("hieronymus_status"));

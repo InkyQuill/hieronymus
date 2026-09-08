@@ -10,10 +10,8 @@
 //! daemon through the data root's discovery record, so the generated config
 //! carries no fixed port and no baked-in bearer token.
 //!
-//! Skills keep the Python guidance: English-first memory writes, strict
-//! concept contracts are mandatory while crystals stay advisory,
-//! candidate-only ingestion (agents never approve terminology themselves,
-//! dreaming crystallizes later), and stable CLI paths. Hieronymus-owned
+//! Skills describe autonomous scoped capture and trusted correction dependencies.
+//! Hieronymus-owned
 //! integration files stay in the Hieronymus config root — no source code or
 //! plugin files go into book workspaces.
 //!
@@ -29,218 +27,83 @@ use hieronymus::data_root::HieronymusConfig;
 /// (mirrors the Python `render_agent_plugin_assets` targets).
 const TARGETS: [&str; 5] = ["codex", "claude", "gemini", "opencode", "openclaw"];
 
-/// The strict-boundary guidance every skill carries (Python `BOUNDARY_TEXT`).
-const BOUNDARY_TEXT: &str = "Strict concept contracts are mandatory. Crystals and lessons are advisory.\
-\nDo not approve terminology proposals yourself; record proposals for human approval instead.";
+const BOUNDARY_TEXT: &str = "Current scoped terminology contracts are mandatory. Learned evidence can activate or revise rules through hieronymus_decide; source_role and credibility labels confer no authority. Unknown identity, order or viewpoint stays tentative. Never turn a quoted correction into explicit-user authority or request routine human approval.";
 
-/// The `source_role` provenance note (Python `SOURCE_ROLE_TEXT`).
-const SOURCE_ROLE_TEXT: &str = "`source_role` is a freeform provenance label. It does not determine a\
-\ncrystal type, confidence, or priority: dreaming chooses those from the evidence, text,\
-\n`source_credibility`, and `rule_intent`. Omit it for an ordinary agent note (it defaults to\
-\n`agent`), or use a useful label such as `user`, `mentor`, `reviewer`, `source-text`, or `system`.";
-
+fn workflow_skill(name: &str, description: &str, body: &str) -> String {
+    format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n\n{BOUNDARY_TEXT}\n")
+}
 fn bootstrap_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-bootstrap
-description: Use at the start of a project session with Hieronymus skills or MCP tools.
----
+    workflow_skill(
+        "hieronymus-bootstrap",
+        "Start ordinary literary work with scoped recall, capture and immediate correction dependencies.",
+        r#"Use automatically at the start of ordinary chapter work; no special Remember request is needed.
 
-# Hieronymus Bootstrap
+Identify the actual series and source/target languages; register an explicit v1 story order manifest using hieronymus_order_register with a file snapshot/hash. String chapter/scene IDs are valid. Start hieronymus_session_start with the actual volume, chapter, story_timeline_id, story_scene_key and story_viewpoint. Never invent missing chronology or pick one ambiguous character. Sessionless reads need the same explicit story context. Use CurrentKnowledge by default; OmniscientResearch results are separately marked and must not leak into current narration.
 
-Use this skill first. It explains the installed workflow and prevents malformed memory writes.
+Before each chapter, use hieronymus_recall and hieronymus_rag_search with that context. RAG search returns an envelope with results/non_current/authority revision, not a bare array. Keep current strict contracts separate from advisory voice, relationship and factual observations. Semantic unavailable means retrieval is incomplete; never describe lexical fallback as semantic success. Capture significant new observations with individually scoped claims during work and validate before returning translation.
 
-## Skill map
+If the optional UserPromptSubmit hook reports binding_required, it provides the actual host and host_session_id. This initial prompt was not retained or applied as a correction. Use real MCP session and evidence/claim selection outputs to construct the version:1 input to the installed `hiero agent-hook bind-context` command on stdin: host, host_session_id, series_id, session_id, observed expected_revision, bound source_language/target_language, applicability, selected_sources, selected_claims and selected_rule. No prompt, actor or invented event field belongs in binding. Use immutable captured references, exact selected claim/rule revisions and the authority revision from a coherent read. Do not guess transcript/session IDs or write host-context files manually. Rebind explicitly when work selects a new source or after observing a new authority revision; never refresh an in-flight delivery to force success. Binding confers no authority.
 
-| Need | Skill |
-| --- | --- |
-| Retrieve relevant memory | `hieronymus-recall` |
-| Read sources into RAG and conclusions into memory | `hieronymus-read` |
-| Study or import material | `hieronymus-learn` |
-| Preserve a direct correction | `hieronymus-remember` |
-| Translate with terminology boundaries | `hieronymus-translate` |
-| Review with expert observations | `hieronymus-review` |
-| Coordinate session, recall, feedback, and dreaming | `hieronymus-orchestrate` |
+An independently delivered subsequent user prompt can apply immediately through the installed handler. Consume its required_decision_id in dependent recall/contract/validation calls; never redeem its receipt through public hieronymus_correct. Unresolved authentic text records a tentative signal, increments authority revision and schedules gathering, but has no rule/claim effect and cannot satisfy a dependency. Observe the returned revision before explicitly binding a genuinely new prompt. A failed delivery gives an ID: `hiero agent-hook retry-delivery --delivery-id <id>` retries its saved context. Re-invoking user-prompt-submit creates a new event, including identical text.
 
-## MCP memory contract
-
-Start a session before writing short-term memory. Use `hieronymus_short_term_add` for one block
-or `hieronymus_short_term_add_batch` for up to 500 independently valid blocks. Every item needs
-`kind` and `text`; `source_role` is optional.
-
-{SOURCE_ROLE_TEXT}
-
-For example, use `source_role="agent"` for an ordinary note and `source_role="user"` for a
-direct correction. Any non-empty provenance label is accepted, including `source_role="system"`.
-
-## Stable entry points
-
-The MCP server runs through the installed `hieronymus-mcp` command (stdio). Headless inspection
-uses the same binary: `hiero tool-call <tool> --args '{{...}}'`, `hiero export --output <path>`,
-and `hiero recall-feedback` apply through the local daemon. Never copy Hieronymus source code or
-plugin files into a book workspace; integration files live in the Hieronymus config root.
-
-## Report observed problems
-
-Whenever you notice a Hieronymus bug, missing capability, bad recall, rejected valid input,
-ambiguous skill instruction, or confusing MCP response, append it to `./hiero_report.md` in the
-current project. Record the date, workflow or tool, concise reproduction/context, observed result,
-expected result, and relevant IDs or non-secret evidence. Keep working unless the problem blocks
-the user. Never put API keys, tokens, or private source text in the report.
-
-{BOUNDARY_TEXT}
-"#
+The stable commands hieronymus-mcp, hieronymus-agent-hook and hiero discover the local installation. Optional hook loading is controlled by supported host trust/settings. The shared Claude/zCode bundle defaults to host claude; a zCode launcher must explicitly set HIERONYMUS_AGENT_HOST=zcode. Codex uses its codex hook. Set HIERONYMUS_DATA_ROOT for a nondefault installation. Generated plugins remain in the application data root, never a book folder. Report a blocking issue in the conversation; do not create unsolicited book-file reports."#,
     )
 }
-
 fn recall_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-recall
-description: Recall Hieronymus memory before translation, review, terminology, or docs work.
----
+    workflow_skill(
+        "hieronymus-recall",
+        "Recall relevant current memory before ordinary chapter work.",
+        r#"Recall automatically before translation or review and after changing chapters or sessions. Use hieronymus_recall for working memory and contracts, and hieronymus_rag_search for source retrieval. Preserve actual languages, timeline, volume/chapter/scene and viewpoint; pass required_decision_id from an applied hook correction before using downstream results. Respect claim disposition, excluded scopes and knowledge gates in every lane. Unknown or future material belongs outside current truth. A useful voice/relationship/rendering should carry across sessions without an author label or special request.
 
-# Hieronymus Recall
-
-Use this skill before memory-sensitive work. Start or identify a task session, call
-`hieronymus_recall`, and keep strict concept contracts separate from advisory crystals.
-
-{BOUNDARY_TEXT}
-Cite influential crystals when they shape a translation or review decision.
-"#
+Record relevance feedback using the installed `hiero recall-feedback --recall-id <id> --idempotency-key <key> --miss <activation ids>` (or --useful) with the actual recall_id and returned activation IDs. An unhelpful result is relevance feedback, not a claim invalidation. Reuse the same feedback identity for retries; do not manufacture activations or decrement repeatedly."#,
     )
 }
-
 fn learn_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-learn
-description: Commit material into short-term memory for later dreaming and crystallization.
----
+    workflow_skill(
+        "hieronymus-learn",
+        "Capture supported observations and activate terminology from independent source evidence.",
+        r#"During normal reading and translation, store significant observations with hieronymus_short_term_add or batch, using kind/text and individually scoped claims. Preserve uncertainty and source evidence. No author label, approval queue or special Learn request is needed.
 
-# Hieronymus Learn
-
-Use when the user says to absorb, remember, study, ingest, import, or learn from a source.
-The agent does the judgment: split material into small observed facts, attach source credibility,
-language tags, story scopes, and semantic tags, then call `hieronymus_short_term_add`. source_role
-is optional provenance metadata; it does not classify the resulting crystal.
-
-MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Learn
-judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add`. Do not promote strict
-terminology directly — ingestion stays candidate-only; dreaming can produce crystals, lessons,
-erudition, and proposals later, and a human approves terminology.
-
-{BOUNDARY_TEXT}
-"#
+For terminology, create/reuse the exact concept, capture immutable source_passage and aligned_rendering evidence via hieronymus_evidence_capture from actual file snapshots and hashes. Offsets index the whole UTF-8 file; alignments link aligned_source_id. Two independent aligned paragraph anchors, a resolved identity and scope, and matching revisions can support learned activation through hieronymus_termbase_propose plus hieronymus_decide Activate. A learned replacement additionally needs scoped contradiction evidence. Reused bytes/duplicate anchors and stale revisions do not satisfy policy. Read returned status and resulting contract; never claim a tentative decision activated a rule. Two people named Alex need separate concepts and explicit anchors; ambiguity remains an observation, never a global replacement."#,
     )
 }
-
 fn read_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-read
-description: >
-  Read source material into RAG and preserve concise agent conclusions in short-term memory.
----
-
-# Hieronymus Read
-
-Use for reading files, lookup, summaries, or temporary understanding. First import each source file
-into project RAG with `hieronymus_rag_import`: RAG retains the source material itself for later
-retrieval.
-
-Do not copy file text or long extracts into short-term memory. Instead, after reading, record the
-agent's own conclusions with `hieronymus_short_term_add_batch`: learned terminology, concepts,
-important facts, implications, uncertainties, and connections to the current work. Each
-short-term memory block must contain 1–6 sentences. Create as many separate blocks as necessary
-to cover every important term, concept, and detail. The size limit applies to each block,
-never to the total set.
-Accumulate up to 500 validated blocks per request. Continue making batches until every important
-detail is covered; a book commonly needs hundreds of conclusion blocks.
-
-MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Read
-judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add_batch`.
-
-source_role is optional provenance metadata and does not classify the resulting crystal.
-
-RAG stores the direct source; short-term memory stores the agent's indirect understanding of it.
-
-{BOUNDARY_TEXT}
-"#
+    workflow_skill(
+        "hieronymus-read",
+        "Read source files into contextual RAG and capture important conclusions.",
+        r#"Import actual source files with hieronymus_rag_import. Supply typed per-chunk claims with exact story applicability, rather than treating missing metadata as timeless truth. RAG retains source text; short-term memory stores concise conclusions. Capture important voice, relationships, events, terminology and uncertainty as independently scoped claims while doing ordinary work. English-first analysis may help cross-language recall, but preserve exact source forms and registered language identifiers. Do not copy a whole book into one memory or discard difficult source-language evidence. Retrieve both working memory and semantic RAG on subsequent chapters, respecting current versus research disposition."#,
     )
 }
-
 fn remember_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-remember
-description: Record user corrections as high-credibility short-term memory.
----
+    workflow_skill(
+        "hieronymus-remember",
+        "Distinguish immediate trusted corrections from relevance and ordinary learned observations.",
+        r#"Corrections require no Remember command. The independently supplied host UserPromptSubmit handler or dedicated authenticated console applies clear selected rendering, invalidation or qualification immediately. If the hook has no binding, say the correction was not applied; establish an explicit selection for a subsequent genuine event. Do not replay quoted user text through shell/model arguments to fabricate a host event, invent receipt_ref, or set source_role=user/user_rule as authority.
 
-# Hieronymus Remember
-
-Use when the user corrects terminology, style, facts, or workflow rules. The agent does the
-judgment: turn the correction into a short short-term memory, preserve scope and tags, and call
-`hieronymus_short_term_add`.
-
-For high-credibility user rules, phrase the memory as `User told me to ...`, use source_role `user`,
-kind `correction`, source_credibility `user_rule`, and a specific rule_intent when known.
-
-MCP tools are storage and retrieval primitives, not judgment engines. Do not create or promote rule
-crystals manually; dreaming handles crystallization later.
-
-{BOUNDARY_TEXT}
-"#
+Consume Applied/Replayed required_decision_id before dependent reads/validation. An invalidation marks only the selected claim incorrect and invents no replacement. Qualification preserves its exact scope. Unhelpful recall goes to relevance feedback instead. Ambiguous selection stays tentative with visible reasons. Provider outage cannot delay an already applied correction; consolidation is durable background work with retries, not evidence that a provider run succeeded. Never claim completion from a pending/parked job."#,
     )
 }
-
 fn translate_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-translate
-description: Translate with Hieronymus strict terminology and advisory crystals.
----
-
-# Hieronymus Translate
-
-{BOUNDARY_TEXT}
-Apply approved concept contracts first. Use crystals and lessons only as context, and record
-uncertainty or discoveries as short-term memories.
-"#
+    workflow_skill(
+        "hieronymus-translate",
+        "Translate with current contracts and automatically maintained literary memory.",
+        r#"For each chapter: establish actual story context, recall prior voice/relationships/renderings, translate using current deterministic contracts, capture significant new supported observations, then call hieronymus_termbase_validate with raw_text and translated_text. Pass any applied correction's required_decision_id. Respect outside-scope rules and narrator/character knowledge gates; a later revelation must not leak into an earlier character scene. Validation failure is actionable; do not silently override the corrected rendering with Dream or an older active projection. Continue this loop across sessions without requiring manual curation."#,
     )
 }
-
 fn review_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-review
-description: Review translation output using strict terminology and mentor-grade observations.
----
-
-# Hieronymus Review
-
-{BOUNDARY_TEXT}
-Check strict validation findings first. Identify whether crystals helped or misled. Record recurring
-issues, contradictions, and correction patterns as short-term memories. Use an optional
-source_role such as `reviewer` when the provenance will help later audit.
-"#
+    workflow_skill(
+        "hieronymus-review",
+        "Review translation against current terminology, factual validity and knowledge scope.",
+        r#"Recall and validate at the actual story position and viewpoint. Inspect strict terminology failures first, then voice and relationships. Capture recurring supported observations with scoped claims. Distinguish a factually wrong memory from merely irrelevant retrieval: trusted invalidation/qualification uses the selected claim, while relevance uses the actual recall activation. A reviewer's opinion remains ordinary agent evidence; a label cannot grant explicit-user authority. Do not broaden a chapter correction to all volumes or convert research-only truth into current narration."#,
     )
 }
-
 fn orchestrate_skill() -> String {
-    format!(
-        r#"---
-name: hieronymus-orchestrate
-description: Coordinate Hieronymus task sessions, recall, validation, feedback, and dreaming.
----
+    workflow_skill(
+        "hieronymus-orchestrate",
+        "Run the automatic session, recall, capture, validation and feedback loop.",
+        r#"Run bootstrap→recall→work/capture→validation→correlated relevance feedback for ordinary chapter work. Preserve observed authority revision and selected immutable context. After a trusted correction, require its applied decision in dependent calls; after an unresolved signal, observe the new revision before explicitly binding a new event. Complete sessions normally and recover memory in the next session.
 
-# Hieronymus Orchestrate
-
-{BOUNDARY_TEXT}
-Create a task session, recall before work, collect short-term memories, record feedback events, and
-trigger or defer dreaming based on configuration or user instruction. source_role is optional
-provenance metadata; it never decides how dreaming categorizes the memory.
-"#
+Background dreaming and correction consolidation follow daemon policy and budgets. A provider outage leaves immediate corrections effective, with durable retries/parking/recovery. Report actual pending/failed/complete state; never fabricate a completion, recursively enqueue the same correction, or repeat relevance deltas. Native host and semantic retrieval support require actual qualification; generated files alone are not acceptance evidence."#,
     )
 }
 
@@ -260,21 +123,18 @@ fn mcp_config_json() -> String {
 
 /// The Codex session hooks: the stable `argv[0]` link names that route to
 /// `hiero agent-hook`.
+fn prompt_hooks_json(host: &str) -> String {
+    let command = if host == "codex" {
+        "hieronymus-agent-hook user-prompt-submit --host codex"
+    } else {
+        "hieronymus-agent-hook user-prompt-submit --host \"${HIERONYMUS_AGENT_HOST:-claude}\""
+    };
+    pretty_json(
+        &serde_json::json!({"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":command}]}]}}),
+    )
+}
 fn codex_hooks_json() -> String {
-    pretty_json(&serde_json::json!({
-        "hooks": [
-            {
-                "event": "SessionStart",
-                "command": "hieronymus-agent-hook",
-                "args": ["session-start"],
-            },
-            {
-                "event": "Stop",
-                "command": "hieronymus-agent-hook",
-                "args": ["session-end"],
-            },
-        ]
-    }))
+    prompt_hooks_json("codex")
 }
 
 fn pretty_json(value: &serde_json::Value) -> String {
@@ -342,7 +202,11 @@ fn target_assets(target: &str) -> Result<BTreeMap<String, String>, String> {
     });
     match target {
         "codex" => {
-            assets.insert(".mcp.json".to_string(), mcp_config_json());
+            let mut mcp: serde_json::Value =
+                serde_json::from_str(&mcp_config_json()).expect("static MCP configuration");
+            mcp["mcpServers"]["hieronymus"]["env"]["CODEX_MCP_PROTOCOL_VERSION"] =
+                serde_json::json!("2026-07-28");
+            assets.insert(".mcp.json".to_string(), pretty_json(&mcp));
             let mut manifest = plugin_manifest();
             manifest["author"] = author;
             manifest["interface"] = serde_json::json!({
@@ -365,15 +229,20 @@ fn target_assets(target: &str) -> Result<BTreeMap<String, String>, String> {
                     "Local-first translation memory and terminology workflows for agents.",
             });
             manifest["mcpServers"] = serde_json::json!("./.mcp.json");
+            manifest["hooks"] = serde_json::json!("./hooks/hooks.codex.json");
             assets.insert(
                 ".codex-plugin/plugin.json".to_string(),
                 pretty_json(&manifest),
             );
         }
         "claude" => {
+            let mut manifest = plugin_manifest();
+            manifest["author"] = author;
+            manifest["hooks"] = serde_json::json!("./hooks/hooks.json");
+            assets.insert("hooks/hooks.json".into(), prompt_hooks_json("claude"));
             assets.insert(
                 ".claude-plugin/plugin.json".to_string(),
-                pretty_json(&plugin_manifest()),
+                pretty_json(&manifest),
             );
         }
         "gemini" => {
@@ -426,6 +295,10 @@ pub fn render(config: &HieronymusConfig) -> Result<Vec<(PathBuf, String)>, Strin
             rendered.push((root.join(target).join(relative), contents));
         }
     }
+    rendered.push((root.join(".agents/plugins/marketplace.json"), pretty_json(&serde_json::json!({
+        "name":"hieronymus-local", "interface":{"displayName":"Installed Hieronymus"},
+        "plugins":[{"name":"hieronymus","source":{"source":"local","path":"./codex"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"}]
+    }))));
     rendered.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(rendered)
 }
@@ -509,22 +382,6 @@ mod tests {
         assert!(
             mcp_configs > 0,
             "the entry-point guard must scan the MCP-config files"
-        );
-        // English-first guidance and the strict boundaries survive the port.
-        let learn = &first
-            .iter()
-            .find(|(path, _)| path.ends_with("codex/skills/hieronymus-learn/SKILL.md"))
-            .unwrap()
-            .1;
-        assert!(learn.contains("candidate-only"), "{learn}");
-        let bootstrap = &first
-            .iter()
-            .find(|(path, _)| path.ends_with("codex/skills/hieronymus-bootstrap/SKILL.md"))
-            .unwrap()
-            .1;
-        assert!(
-            bootstrap.contains("Do not approve terminology proposals yourself"),
-            "{bootstrap}"
         );
         let hooks = &first
             .iter()

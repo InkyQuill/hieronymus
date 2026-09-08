@@ -11,6 +11,10 @@ pub mod agent_context;
 pub mod atomic;
 pub mod concept_models;
 pub mod concepts;
+pub mod consolidation;
+mod consolidation_completion;
+mod consolidation_context;
+mod consolidation_models;
 pub mod crystals;
 pub mod data_root;
 pub mod db;
@@ -47,7 +51,20 @@ pub mod semantic_store;
 pub mod semantic_tokenizer;
 pub mod short_memory;
 pub mod state_classifier;
+pub mod story_applicability;
 pub mod terminology;
 pub mod tls;
 pub mod upgrade;
 pub mod workspace;
+
+pub mod authority;
+mod authority_applicability;
+mod authority_evidence;
+pub mod authority_models;
+
+pub mod claim_capture;
+pub mod claim_reads;
+pub mod coherent_reads;
+pub mod corrections;
+
+pub mod authority_producers;

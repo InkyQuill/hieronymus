@@ -162,6 +162,13 @@ pub struct SemanticStore {
 }
 
 impl SemanticStore {
+    /// Construct a read handle without opening SQLite or ensuring derived schema.
+    pub fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     /// Opens the store, ensuring the derived manifest schema exists. This
     /// never downloads a model and never opens the vector store.
     pub fn open(config: &HieronymusConfig) -> Result<Self, SemanticError> {
@@ -942,6 +949,13 @@ impl SemanticStore {
     /// The currently active generation, if any.
     pub fn active_generation(&self) -> Result<Option<GenerationManifest>, SemanticError> {
         let connection = self.connection()?;
+        self.active_generation_with_connection(&connection)
+    }
+
+    pub(crate) fn active_generation_with_connection(
+        &self,
+        connection: &Connection,
+    ) -> Result<Option<GenerationManifest>, SemanticError> {
         let mut statement = connection.prepare(
             "select generation_id, status, provider, model, model_revision, dimensions,
                     expected_count, written_count, last_chunk_id, active, created_at, updated_at,
@@ -1055,7 +1069,15 @@ impl SemanticStore {
     /// count and stored identity. Missing or corrupt data reports `false`; the recovery is a rebuild
     /// (the authoritative rows never left SQLite), never data loss.
     pub fn active_generation_intact(&self) -> Result<bool, SemanticError> {
-        match self.active_generation()? {
+        let connection = self.connection()?;
+        self.active_generation_intact_with_connection(&connection)
+    }
+
+    pub(crate) fn active_generation_intact_with_connection(
+        &self,
+        connection: &Connection,
+    ) -> Result<bool, SemanticError> {
+        match self.active_generation_with_connection(connection)? {
             None => Ok(true),
             Some(active) => Ok(active.written_count == active.expected_count
                 && generation_table_intact(

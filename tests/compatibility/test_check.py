@@ -34,6 +34,8 @@ CANONICAL_CHECK = (
     "-B",
     "-m",
     "tools.compatibility.check",
+    "--historical-test-inventory",
+    "compatibility/snapshots/state.json",
 )
 
 
@@ -356,6 +358,8 @@ def test_canonical_check_reports_one_sorted_composite_failure_without_writing(
     tmp_path: Path,
 ) -> None:
     repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    historical = repo_copy.parent / "historical-test-input.json"
+    historical.write_bytes((repo_copy / "compatibility/snapshots/state.json").read_bytes())
     expected_failures = []
     for relative_path, diagnostic in (
         ("compatibility/snapshots/cli.json", "snapshot drift"),
@@ -376,7 +380,7 @@ def test_canonical_check_reports_one_sorted_composite_failure_without_writing(
         orphan.write_text("stale\n", encoding="utf-8")
         expected_failures.append(f"unexpected generated artifact: {relative_path}")
 
-    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
+    result = _invoke_canonical_check(repo_copy, tmp_path / "caller", historical=historical)
 
     assert result.returncode == 1
     failure_lines = result.stdout.split("Parity summary\n", 1)[0].splitlines()[1:]
@@ -430,7 +434,9 @@ def _tree_hashes(root: Path) -> dict[str, str]:
     return hashes
 
 
-def _invoke_canonical_check(repo_copy: Path, caller_root: Path) -> subprocess.CompletedProcess[str]:
+def _invoke_canonical_check(
+    repo_copy: Path, caller_root: Path, *, historical: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     # Exercise the repository's synced environment as CI does, independent of
     # the outer pytest process's active virtualenv.
@@ -455,7 +461,7 @@ def _invoke_canonical_check(repo_copy: Path, caller_root: Path) -> subprocess.Co
     before_caller = _tree_hashes(caller_root)
 
     result = subprocess.run(
-        CANONICAL_CHECK,
+        (*CANONICAL_CHECK[:-1], str(historical)) if historical else CANONICAL_CHECK,
         cwd=repo_copy,
         env=environment,
         capture_output=True,

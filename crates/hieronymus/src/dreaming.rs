@@ -99,6 +99,12 @@ pub fn source_credibility_confidence(source_credibility: &str) -> f64 {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DreamError {
+    #[error("dream inputs changed authority revision; selected memories remain pending for retry")]
+    StaleAuthority,
+    #[error(transparent)]
+    Claim(#[from] crate::authority_models::DecisionErrorV1),
+    #[error(transparent)]
+    Coherent(#[from] crate::coherent_reads::CoherentReadError),
     #[error("dream cycle already running{}", Self::already_running_detail(.0))]
     AlreadyRunning(Option<DreamCycleState>),
     #[error(transparent)]
@@ -556,6 +562,7 @@ fn normalized_output_count(output: &NormalizedOutput) -> usize {
 }
 
 struct SelectionGroup {
+    authority_revision: u64,
     session_id: i64,
     context: TranslationContext,
     memories: Vec<ShortTermMemoryRecord>,
@@ -1222,7 +1229,8 @@ impl DreamService {
         if limit < 1 {
             return Ok(Vec::new());
         }
-        let connection = open_migrated(&self.config.database_path())?;
+        let mut connection = open_migrated(&self.config.database_path())?;
+        let connection = connection.transaction()?;
         let mut statement = connection.prepare(
             "select task_sessions.id, short_term_memories.id
              from short_term_memories
@@ -1246,19 +1254,19 @@ impl DreamService {
             by_session.entry(session_id).or_default().push(memory_id);
         }
         drop(statement);
-        drop(connection);
-
-        let workspace = crate::workspace::WorkspaceStore::open(&self.config)?;
+        let workspace = crate::workspace::WorkspaceStore::for_read(&self.config);
         let mut groups = Vec::with_capacity(session_order.len());
         for session_id in session_order {
-            let session = workspace.get_session(session_id)?;
-            let wanted: HashSet<i64> = by_session[&session_id].iter().copied().collect();
-            let memories: Vec<ShortTermMemoryRecord> = workspace
-                .list_short_term_memories(session_id)?
-                .into_iter()
-                .filter(|memory| wanted.contains(&memory.id))
-                .collect();
+            let session = workspace.get_session_with_connection(&connection, session_id)?;
+            let memories = by_session[&session_id]
+                .iter()
+                .map(|id| crate::workspace::hydrate_memory(&connection, *id))
+                .collect::<Result<Vec<_>, _>>()?;
             groups.push(SelectionGroup {
+                authority_revision: crate::coherent_reads::revision(
+                    &connection,
+                    &session.context.series_slug,
+                )?,
                 session_id,
                 context: session.context,
                 memories,
@@ -1358,6 +1366,13 @@ impl DreamService {
         allowed_crystal_ids: &BTreeSet<i64>,
         active_rule_ids: &BTreeSet<i64>,
     ) -> Result<ApplySummary, DreamError> {
+        for group in groups {
+            if crate::coherent_reads::revision(transaction, &group.context.series_slug)?
+                != group.authority_revision
+            {
+                return Err(DreamError::StaleAuthority);
+            }
+        }
         let outputs = deduplicate_staged_outputs(staged);
         let mut created_crystal_ids: Vec<i64> = Vec::new();
         let mut created_concept_ids: Vec<i64> = Vec::new();
@@ -1436,6 +1451,15 @@ impl DreamService {
                     facet.is_canonical,
                     &timestamp,
                 )?;
+                // Facets have no provider source-id field. Conservatively inherit
+                // every selected assertion, never infer narrower lineage from prose.
+                for memory in groups.iter().flat_map(|g| &g.memories) {
+                    crate::claim_capture::copy_bindings_tx(
+                        transaction,
+                        crate::claim_reads::ClaimTarget::ShortTerm(memory.id),
+                        crate::claim_reads::ClaimTarget::Facet(facet_id),
+                    )?;
+                }
                 created_facet_ids.push(facet_id);
             }
             for candidate in &output.crystals {
@@ -1560,6 +1584,11 @@ impl DreamService {
                     &action.reason,
                     cycle_id,
                     &timestamp,
+                )?;
+                crate::claim_capture::copy_crystal_lineage_tx(
+                    transaction,
+                    action.old_crystal_id,
+                    action.new_crystal_id,
                 )?;
                 superseded_crystal_ids.push(action.old_crystal_id);
             }
@@ -1919,6 +1948,12 @@ impl DreamService {
                             &original,
                             &working_text,
                             cycle_id,
+                        )
+                        .map_err(tx_error)?;
+                        crate::claim_capture::copy_bindings_tx(
+                            transaction,
+                            crate::claim_reads::ClaimTarget::ShortTerm(memory_id),
+                            crate::claim_reads::ClaimTarget::Crystal(successor_id),
                         )
                         .map_err(tx_error)?;
                         transaction.execute(
@@ -2773,7 +2808,17 @@ impl DreamService {
         provider: &ProviderIdentity,
         error: rusqlite::Error,
     ) -> DreamError {
-        let error = DreamError::from(error);
+        let error = match error {
+            rusqlite::Error::ToSqlConversionFailure(source) => {
+                match source.downcast::<DreamError>() {
+                    Ok(error) => *error,
+                    Err(source) => {
+                        DreamError::Database(rusqlite::Error::ToSqlConversionFailure(source))
+                    }
+                }
+            }
+            other => DreamError::from(other),
+        };
         let _ =
             self.record_phase_failure(run_id, phase_run_id, phase, trigger_type, provider, &error);
         error
@@ -3872,6 +3917,16 @@ fn insert_dream_crystal(
             rusqlite::params![crystal_id, concept_id, candidate.confidence, timestamp],
         )?;
     }
+    if let Some(original) = candidate.supersedes_crystal_id {
+        crate::claim_capture::copy_crystal_lineage_tx(transaction, original, crystal_id)?;
+    }
+    for memory_id in &candidate.source_memory_ids {
+        crate::claim_capture::copy_bindings_tx(
+            transaction,
+            crate::claim_reads::ClaimTarget::ShortTerm(*memory_id),
+            crate::claim_reads::ClaimTarget::Crystal(crystal_id),
+        )?;
+    }
     Ok(crystal_id)
 }
 
@@ -4103,6 +4158,11 @@ fn insert_reconsolidated_crystal(
          select ?1, concept_id, link_type, confidence, created_at
          from crystal_concepts where crystal_id = ?2",
         rusqlite::params![successor_id, original_crystal_id],
+    )?;
+    crate::claim_capture::copy_bindings_tx(
+        transaction,
+        crate::claim_reads::ClaimTarget::Crystal(original_crystal_id),
+        crate::claim_reads::ClaimTarget::Crystal(successor_id),
     )?;
     Ok(successor_id)
 }

@@ -614,6 +614,45 @@ fn provider_pass_sends_openai_payload_and_parses_fenced_output() {
 }
 
 #[test]
+fn correction_json_mode_requests_json_without_a_context_hint() {
+    let selected = json!({"text": "translate this as Б"});
+    let expected_context = selected.clone();
+    let server = LoopbackLlm::start(Box::new(move |request| {
+        let payload = request.json();
+        assert_eq!(payload["response_format"], json!({"type": "json_object"}));
+        let prompt = payload["messages"][0]["content"].as_str().unwrap();
+        let instruction: Value = serde_json::from_str(prompt).unwrap();
+        assert_eq!(instruction["selected_context"], expected_context);
+        // OpenAI-compatible JSON mode requires an explicit JSON instruction
+        // in message content, even when the prompt itself is serialized JSON.
+        if !prompt.to_ascii_lowercase().contains("json") {
+            return (
+                400,
+                json!({"error": "JSON instruction required"}).to_string(),
+            );
+        }
+        (
+            200,
+            openai_envelope(r#"{"decisions":{"version":1,"mutations":[]}}"#),
+        )
+    }));
+    let provider = LlmDreamProvider::new(
+        "local-llm",
+        openai_profile(&server.url("/v1")),
+        "test-model",
+    )
+    .unwrap();
+
+    let result = provider.run_correction(&selected).unwrap();
+
+    assert_eq!(
+        result,
+        json!({"decisions": {"version": 1, "mutations": []}})
+    );
+    assert_eq!(server.request_count(), 1);
+}
+
+#[test]
 fn provider_pass_retries_retryable_failures_then_succeeds() {
     let transport = FakeTransport::new(vec![
         Err(HttpError::Network("connection reset".to_string())),

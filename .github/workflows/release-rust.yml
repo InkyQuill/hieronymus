@@ -1,19 +1,7 @@
-# Rust-era release pipeline (distribution spec §Build Ownership, ADR 0006).
-#
-# Transition: the Python-era `release.yml` (uv + semantic-release + Hatch)
-# remains the release authority on `main` until the distribution cutover
-# completes; this workflow publishes the Rust archives for the first Rust
-# release line. Retire `release.yml` in the cutover task.
-#
-# Protection: the job declares the GitHub Environment `release`. The
-# owner-approval gate (required reviewer: Pavel Obruchnikov <me@inkyquill.net>,
-# ADR 0006) is a repository-settings rule (Settings → Environments → release →
-# Required reviewers); a workflow can declare the environment but not create
-# the reviewer rule. Tag pushes alone are therefore NOT sufficient to publish.
-#
-# Signing/SBOM/provenance are WAIVED for the initial Rust line (spec amendment
-# 2026-09-03); the release ships SHA-256 checksums only.
-
+# Rust is the sole release publisher. Historical Python tags/assets are retained.
+# The release environment is declared here; remote required-reviewer settings
+# must be independently configured/verified (distribution spec Build Ownership).
+# Checksum-only signing/SBOM/provenance waiver remains in force.
 name: release-rust
 
 on:
@@ -30,67 +18,56 @@ jobs:
     environment: release
     permissions:
       contents: write
+    env:
+      RELEASE_REF: ${{ github.ref }}
+      HIERONYMUS_RELEASE_CHANNEL: stable
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-
-      # oven-sh/setup-bun v2 pinned to commit SHA for reproducibility.
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - name: Verify exact Rust source and tag
+        run: python scripts/check-rust-release.py --ref "$RELEASE_REF"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: "1.4.0"
-
-      # The repository pins Rust 1.96.0 and the x86_64-unknown-linux-gnu
-      # target in rust-toolchain.toml; rustup on the runner installs it
-      # before the build.
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --target x86_64-unknown-linux-gnu
-
-      # Full orchestration: console bundle (bun install --frozen-lockfile +
-      # vite build), embedded-asset tests, release binary with the
-      # `console-embed` feature, archive, SHA-256 checksums, round-trip
-      # verification. Uses the repository lockfiles (bun.lock, Cargo.lock).
+      - name: Acquire and verify pinned native assets
+        run: python scripts/stage-release-assets.py --github-env "$GITHUB_ENV"
       - name: Build the release artifacts
         run: ./scripts/release-build.sh
-
-      - name: Publish the GitHub release
+      - name: Verify packaged version and archive metadata
+        run: python scripts/check-rust-release.py --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
+      - name: Publish the verified GitHub release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          archive="$(ls target/release-dist/*.tar.gz)"
+          python scripts/check-rust-release.py --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
+          archive="target/release-dist/$(python -c 'import json; print(json.load(open("target/release-dist/release.json"))["archive"])')"
           checksums="${archive}.sha256"
           test -f "$checksums"
-          {
-            cat <<'NOTES'
-          ## Support matrix
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## Rust alpha release
 
-          | Property | Value |
-          | --- | --- |
-          | Target | `x86_64-unknown-linux-gnu` |
-          | Semantic retrieval | enabled — qualified (`qualification/records/semantic-native.json`, decision `semantic-enabled`) |
-          | Fallback mode | FTS5-only |
-          | Rust | 1.96.0 |
-          | Bun (console build) | 1.4.0 |
+          Linux x86_64, Rust 1.96.0; console built with pinned Bun 1.4.0.
+          Bundled native semantic inference is mandatory. An unavailable model/runtime
+          makes semantic retrieval unready; lexical results do not qualify semantics.
 
-          ## Contents
+          Contents include the native hiero binary and command links, ONNX runtime,
+          multilingual model/tokenizer, licenses/notices, verified assets.json,
+          archive SHA-256 checksum, and release.json binding exact archive metadata.
+          Installed host/model workflow acceptance is recorded separately; a generated
+          plugin or historical qualification record does not qualify this artifact.
 
-          - The `hiero` binary plus the `hieronymus`, `hieronymus-agent-hook`,
-            and `hieronymus-mcp` argv[0] command links.
-          - SHA-256 checksums for the archive.
-
-          Signing, SBOM, and provenance are waived for the initial Rust line
-          (spec amendment 2026-09-03); publishing required the owner's
-          `release` environment approval.
+          Signing, SBOM and provenance retain the initial Rust-line waiver. The release
+          environment declaration does not prove remote reviewer settings. These three
+          downloadable assets support local --release-dir installation. They do not
+          establish a deployed channel update feed or authorize a public feed URL.
           NOTES
-            echo
-            echo "## Checksums"
-            echo
-            echo '```'
-            cat "$checksums"
-            echo '```'
-          } > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --title "hiero $GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            "$archive" "$checksums"
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "hiero $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" \
+            "$archive" "$checksums" "target/release-dist/release.json"

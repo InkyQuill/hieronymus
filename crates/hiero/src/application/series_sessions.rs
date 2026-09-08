@@ -106,6 +106,8 @@ fn set_language_tags(application: &Application, arguments: &Value) -> Result<Val
 
 #[derive(Deserialize)]
 struct SessionStart {
+    #[serde(flatten)]
+    story: super::StoryReadArgs,
     series_slug: String,
     #[serde(default)]
     source_language: Option<String>,
@@ -130,7 +132,7 @@ fn session_start(application: &Application, arguments: &Value) -> Result<Value, 
     let args = decode::<SessionStart>(arguments)?;
     let registry = Registry::open(application.config()).map_err(domain)?;
     let series = registry.get_series(&args.series_slug).map_err(domain)?;
-    let context = translation_context(
+    let mut context = translation_context(
         &series,
         args.source_language,
         args.target_language,
@@ -138,6 +140,7 @@ fn session_start(application: &Application, arguments: &Value) -> Result<Value, 
         &args.volume,
         &args.chapter,
     )?;
+    args.story.apply(&mut context);
     let store = WorkspaceStore::open(application.config()).map_err(domain)?;
     let session = store.start_session(&context).map_err(domain)?;
     Ok(json!({ "session_id": session.id }))

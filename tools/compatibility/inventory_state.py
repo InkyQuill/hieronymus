@@ -91,29 +91,33 @@ def collect_frontend_test_nodeids(repo_root: Path) -> list[str]:
                 "HOME": str(Path(temp_dir) / "home"),
             }
         )
-        try:
-            result = subprocess.run(
-                [
-                    str(bun_path),
-                    str(vitest_entrypoint),
-                    "list",
-                    "--json",
-                    "--no-color",
-                ],
-                cwd=frontend_root,
-                env=environment,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise RuntimeError("frontend Vitest collection timed out") from error
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", dir=temp_dir) as output:
+            try:
+                result = subprocess.run(
+                    [
+                        str(bun_path),
+                        str(vitest_entrypoint),
+                        "list",
+                        "--json",
+                        "--no-color",
+                    ],
+                    cwd=frontend_root,
+                    env=environment,
+                    check=False,
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError("frontend Vitest collection timed out") from error
+            output.seek(0)
+            stdout = output.read()
     if result.returncode != 0:
-        diagnostic = result.stderr.strip() or result.stdout.strip() or "unknown Vitest failure"
+        diagnostic = result.stderr.strip() or stdout.strip() or "unknown Vitest failure"
         raise RuntimeError(f"frontend Vitest collection failed: {diagnostic}")
     try:
-        rows = json.loads(result.stdout)
+        rows = json.loads(stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError("frontend Vitest collection did not return JSON") from error
     if not isinstance(rows, list):
@@ -259,8 +263,29 @@ def sqlite_contract(connection: sqlite3.Connection) -> dict[str, object]:
     }
 
 
-def snapshot_state(repo_root: Path, data_root: Path) -> dict[str, object]:
+def load_historical_test_inventory(path: Path) -> dict[str, list[str]]:
+    """Read explicit historical collection input without changing frozen outputs."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    tests = payload.get("tests") if isinstance(payload, dict) else None
+    if not isinstance(tests, dict) or set(tests) != {"node_ids", "frontend_node_ids"}:
+        raise ValueError("historical input requires both test node ID arrays")
+    for values in tests.values():
+        if not isinstance(values, list) or any(not isinstance(v, str) or not v for v in values):
+            raise ValueError("historical node IDs must be nonempty strings")
+        if len(values) != len(set(values)):
+            raise ValueError("historical node IDs must be unique")
+    return tests
+
+
+def snapshot_state(
+    repo_root: Path, data_root: Path, *, historical_test_inventory: Path | None = None
+) -> dict[str, object]:
     """Build the state snapshot in a caller-provided empty synthetic root."""
+    historical = (
+        load_historical_test_inventory(historical_test_inventory)
+        if historical_test_inventory
+        else None
+    )
     resolved_repo_root = repo_root.resolve()
     resolved_data_root = _prepare_synthetic_root(data_root)
     with _isolated_environment(resolved_data_root):
@@ -275,7 +300,9 @@ def snapshot_state(repo_root: Path, data_root: Path) -> dict[str, object]:
         "database": database_inventory,
         "distribution": _distribution_inventory(resolved_repo_root, resolved_data_root),
         "agent_integrations": agent_integrations,
-        "tests": {
+        "tests": historical
+        if historical is not None
+        else {
             "node_ids": collect_test_nodeids(resolved_repo_root),
             "frontend_node_ids": collect_frontend_test_nodeids(resolved_repo_root),
         },
@@ -2528,6 +2555,20 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
 
 def _internal_test_reason(node_id: str) -> str:
     node_file, test_case = node_id.split("::", 1)
+    if node_file in {"tests/test_rust_release_tools.py", "tests/test_release_asset_staging.py"} or (
+        node_file == "tests/test_release_workflow.py"
+        and test_case
+        in {
+            "test_only_rust_publisher_remains",
+            "test_guards_precede_assets_build_and_publish",
+            "test_assets_and_metadata_are_explicit",
+            "test_pins_and_declared_release_control_preserved",
+        }
+    ):
+        return (
+            "Rust release source, pinned asset staging and publication guards; "
+            "not a historical Python contract."
+        )
     if node_file.startswith("tests/qualification/"):
         return (
             "Validates the Rust qualification program and its evidence gates; "
@@ -2606,9 +2647,13 @@ def _internal_test_reason(node_id: str) -> str:
     raise ValueError(f"no explicit ownership classification rule for {node_id}")
 
 
-def generate_state_artifacts(repo_root: Path, data_root: Path) -> dict[str, bytes]:
+def generate_state_artifacts(
+    repo_root: Path, data_root: Path, *, historical_test_inventory: Path | None = None
+) -> dict[str, bytes]:
     """Generate every Task 5 artifact from one fresh synthetic root."""
-    snapshot = snapshot_state(repo_root, data_root)
+    snapshot = snapshot_state(
+        repo_root, data_root, historical_test_inventory=historical_test_inventory
+    )
     artifacts = {
         "compatibility/snapshots/state.json": _json_bytes(snapshot),
         "compatibility/fixtures/database/minimal-python.sqlite": (

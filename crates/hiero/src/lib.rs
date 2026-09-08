@@ -5,6 +5,7 @@
 
 pub mod agent_hook;
 pub mod agent_plugins;
+pub mod agent_prompt_delivery;
 pub mod app;
 pub mod application;
 pub mod client;
@@ -20,3 +21,5 @@ pub mod uninstall;
 pub mod update;
 
 pub mod release_source;
+
+pub mod trusted_ingress;

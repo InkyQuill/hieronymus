@@ -23,6 +23,16 @@ the local daemon. Remote deployment and TLS remain non-goals.
 > authentication is the session cookie checked at upgrade. `hiero mcp` reads
 > the local token file directly; no credential-negotiation protocol.
 
+> **Narrow authority amendment (2026-09-07, ADR0016):** ordinary MCP credentials
+> establish agent authority only. Console launch grants now require the separate
+> local `console.token`; `/authority/host-event` requires `host-event.token`.
+> Both credentials reuse CSPRNG, atomic storage, 0600 permissions and redaction;
+> neither is returned by MCP/status or embedded in generated bundles. Console
+> fragment bootstrap, single-use grants, process-lifetime cookies and exact
+> mutation Host/Origin checks remain. Same-account local shell access is trusted;
+> this separation protects MCP authorship and context binding without a broker
+> or claims against direct local credential access/database edits.
+
 ## Context
 
 Loopback binding reduces exposure but does not authenticate local processes or

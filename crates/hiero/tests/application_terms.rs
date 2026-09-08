@@ -44,17 +44,6 @@ fn create_series(app: &Application, slug: &str, source: &str, target: &str) {
     .unwrap();
 }
 
-fn start_session(app: &Application, slug: &str) -> i64 {
-    let session = app
-        .call(
-            "hieronymus_session_start",
-            &json!({"series_slug": slug}),
-            ACTOR,
-        )
-        .unwrap();
-    session["session_id"].as_i64().unwrap()
-}
-
 fn termbase(root: &tempfile::TempDir) -> Termbase {
     let context = TranslationContext::new("book", "ja", "ru", "translation");
     Termbase::open(&config_of(root), &context).unwrap()
@@ -123,7 +112,7 @@ fn proposed_term_does_not_enforce_until_explicit_approval() {
     let args = json!({"series_slug":"book","raw_text":"猫"});
     assert_eq!(
         app.call("hieronymus_termbase_contract", &args, "local-user")
-            .unwrap(),
+            .unwrap()["results"],
         json!([])
     );
     app.call(
@@ -131,10 +120,17 @@ fn proposed_term_does_not_enforce_until_explicit_approval() {
         &json!({"series_slug":"book","term_id":draft["id"]}),
         "local-user",
     )
-    .unwrap();
+    .unwrap_err();
+    termbase(&root)
+        .approve(
+            draft["id"].as_i64().unwrap(),
+            ACTOR,
+            "trusted local domain fixture",
+        )
+        .unwrap();
     assert_eq!(
         app.call("hieronymus_termbase_contract", &args, "local-user")
-            .unwrap()[0]["canonical_translation"],
+            .unwrap()["results"][0]["canonical_translation"],
         "Кот"
     );
 }
@@ -156,6 +152,48 @@ fn rule_lifecycle_v2_fixture_pins_the_tool_lifecycle() {
         let Some(tool) = expectation["tool"].as_str() else {
             continue;
         };
+        // ADR0016 active Rust delta: ordinary tools cannot approve/archive. Exercise
+        // the retained domain lifecycle explicitly for this historical fixture only.
+        if tool == "hieronymus_termbase_approve" {
+            expect_domain(
+                app.call(tool, &expectation["arguments"], ACTOR)
+                    .unwrap_err(),
+                "unverified origin",
+            );
+            let result = termbase(&root).approve(
+                expectation["arguments"]["term_id"].as_i64().unwrap(),
+                ACTOR,
+                "historical domain fixture",
+            );
+            if expectation["expected"]["error_contains"].is_string() {
+                assert!(result.is_err());
+            } else {
+                result.unwrap();
+            }
+            continue;
+        }
+        if tool == "hieronymus_rule_crystal_archive" {
+            expect_domain(
+                app.call(tool, &expectation["arguments"], ACTOR)
+                    .unwrap_err(),
+                "unverified origin",
+            );
+            let store = termbase(&root);
+            let rule = store.get_rule(1).unwrap();
+            if rule.status == "active" {
+                store
+                    .apply_action(&RuleActionRequest {
+                        rule_id: 1,
+                        action: RuleAction::Archive,
+                        actor: ACTOR.into(),
+                        reason: "historical domain fixture".into(),
+                        expected_revision: rule.revision,
+                        idempotency_key: "historical-archive".into(),
+                    })
+                    .unwrap();
+            }
+            continue;
+        }
         let result = app.call(tool, &expectation["arguments"], ACTOR);
         let expected = &expectation["expected"];
 
@@ -167,7 +205,16 @@ fn rule_lifecycle_v2_fixture_pins_the_tool_lifecycle() {
             expect_domain(error, needle);
             continue;
         }
-        let payload = result.unwrap_or_else(|error| panic!("expected {tool} to succeed: {error}"));
+        let envelope = result.unwrap_or_else(|error| panic!("expected {tool} to succeed: {error}"));
+        let payload = if matches!(
+            tool,
+            "hieronymus_termbase_contract" | "hieronymus_termbase_validate"
+        ) {
+            assert!(envelope["resulting_revision"].is_u64());
+            &envelope["results"]
+        } else {
+            &envelope
+        };
 
         if let Some(subset) = expected["subset"].as_object() {
             for (key, value) in subset {
@@ -219,6 +266,9 @@ fn rule_lifecycle_v2_fixture_pins_the_tool_lifecycle() {
                 length,
                 "{payload}"
             );
+        }
+        if tool == "hieronymus_rule_crystals_list" {
+            assert_eq!(payload[0]["claim_annotation"]["source_inspection"], true);
         }
         if let Some(row) = expected["first_row"].as_object() {
             for (key, value) in row {
@@ -658,7 +708,7 @@ fn termbase_validate_reports_ambiguity_and_deterministic_findings() {
             ACTOR,
         )
         .unwrap();
-    let rows = findings.as_array().unwrap();
+    let rows = findings["results"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{findings}");
     assert_eq!(rows[0]["kind"], json!("conflicting_active_rules"));
     assert_eq!(rows[0]["severity"], json!("warning"));
@@ -685,7 +735,7 @@ fn termbase_validate_reports_ambiguity_and_deterministic_findings() {
             ACTOR,
         )
         .unwrap();
-    let rows = findings.as_array().unwrap();
+    let rows = findings["results"].as_array().unwrap();
     let kinds: Vec<&str> = rows
         .iter()
         .map(|row| row["kind"].as_str().unwrap())
@@ -728,7 +778,7 @@ fn crystal_archive_fails_on_unknown_and_ambiguous_links() {
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(error, "no linked term_rules authority");
+    expect_domain(error, "unverified origin");
     let crystal = CrystalStore::open(&config_of(&root))
         .unwrap()
         .get(unlinked)
@@ -756,7 +806,7 @@ fn crystal_archive_fails_on_unknown_and_ambiguous_links() {
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(error, "linked to more than one term_rules row");
+    expect_domain(error, "unverified origin");
     let still_active = termbase.get_rule(first.id).unwrap();
     assert_eq!(
         still_active.status, "candidate",
@@ -783,13 +833,27 @@ fn approved_contract_survives_recall_with_conflicting_rag_hit() {
         .unwrap();
     // Approval runs through the MCP tool: the M3 lifecycle feeds the M2
     // recall surface.
-    app.call(
-        "hieronymus_termbase_approve",
-        &json!({"series_slug": "book", "term_id": rule.id}),
-        ACTOR,
-    )
-    .unwrap();
-    let session_id = start_session(&app, "book");
+    assert!(
+        app.call(
+            "hieronymus_termbase_approve",
+            &json!({"series_slug":"book","term_id":rule.id}),
+            ACTOR
+        )
+        .is_err()
+    );
+    termbase
+        .approve(rule.id, ACTOR, "trusted local domain fixture")
+        .unwrap();
+    current_story::register(app.config(), "book");
+    let session_id = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug":"book","volume":"I","chapter":"Opening"}),
+            ACTOR,
+        )
+        .unwrap()["session_id"]
+        .as_i64()
+        .unwrap();
     app.call(
         "hieronymus_short_term_add",
         &json!({"session_id": session_id, "kind": "note", "text": "whisker观察 note"}),
@@ -805,7 +869,7 @@ fn approved_contract_survives_recall_with_conflicting_rag_hit() {
     std::fs::write(&chapter, "猫 кошка wrong rendering.\n").unwrap();
     app.call(
         "hieronymus_rag_import",
-        &json!({"series_slug": "book", "path": chapter.to_str().unwrap()}),
+        &json!({"series_slug": "book", "path": chapter.to_str().unwrap(),"claims":{"0":[current_story::claim(app.config(),"book","猫 кошка wrong rendering.")]}}),
         ACTOR,
     )
     .unwrap();
@@ -846,3 +910,6 @@ fn create_series_stub(root: &tempfile::TempDir) {
         .create_series("book", "Book", "ja", "ru", None)
         .unwrap();
 }
+
+#[path = "../../hieronymus/tests/support/current_story.rs"]
+mod current_story;

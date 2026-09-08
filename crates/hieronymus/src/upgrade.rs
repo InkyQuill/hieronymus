@@ -49,7 +49,8 @@ use sha2::Digest as _;
 
 use crate::data_root::HieronymusConfig;
 use crate::db::{
-    DatabaseState, SUPPORTED_RUST_SCHEMA_VERSION, apply_terminology_schema_steps, classify_database,
+    DatabaseState, SUPPORTED_RUST_SCHEMA_VERSION, classify_database,
+    prepare_terminology_import_schema,
 };
 use crate::migrate::{
     MigrateError, REFUSAL_DAEMON_ACTIVE, REFUSAL_VERIFICATION_FAILED, STATE_RUST_SCHEMA_UPGRADABLE,
@@ -873,8 +874,10 @@ fn upgrade_database_transaction(
     };
     let conversion = match plan {
         UpgradePlan::PythonCutover => {
-            apply_terminology_schema_steps(&transaction)?;
-            Some(convert_strict_terms(&transaction)?)
+            prepare_terminology_import_schema(&transaction)?;
+            let converted = convert_strict_terms(&transaction)?;
+            crate::schema_upgrade::apply_steps(&transaction, 4, SUPPORTED_RUST_SCHEMA_VERSION)?;
+            Some(converted)
         }
         UpgradePlan::OrderedSteps { from } => {
             crate::schema_upgrade::apply_steps(&transaction, from, SUPPORTED_RUST_SCHEMA_VERSION)?;

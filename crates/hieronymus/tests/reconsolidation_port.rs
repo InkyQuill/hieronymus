@@ -5,6 +5,9 @@
 //! dreaming consumes each feedback event at most once, and active
 //! deterministic rule authority is never touched by passive evidence.
 
+#[path = "support/current_story.rs"]
+mod current_story;
+
 use hieronymus::concepts::{ConceptStore, NewConcept};
 use hieronymus::crystals::{CrystalStore, NewCrystal};
 use hieronymus::data_root::HieronymusConfig;
@@ -45,6 +48,7 @@ fn active_session(root: &tempfile::TempDir, slug: &str) -> (HieronymusConfig, i6
         .unwrap()
         .create_series(slug, slug, "ja", "en", None)
         .unwrap();
+    current_story::register_public(&config, slug, "1", "2");
     let session = WorkspaceStore::open(&config)
         .unwrap()
         .start_session(&context(slug))
@@ -63,13 +67,15 @@ fn add_crystal_with(
     text: &str,
     build: impl FnOnce(NewCrystal) -> NewCrystal,
 ) -> i64 {
+    let mut input = build(NewCrystal::new("lesson", text));
+    input.claims = vec![current_story::claim(
+        config,
+        &crystal_context.series_slug,
+        text,
+    )];
     CrystalStore::open(config)
         .unwrap()
-        .add_crystal(
-            crystal_context,
-            crystal_type,
-            &build(NewCrystal::new("lesson", text)),
-        )
+        .add_crystal(crystal_context, crystal_type, &input)
         .unwrap()
 }
 

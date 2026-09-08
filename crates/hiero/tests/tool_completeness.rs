@@ -182,11 +182,42 @@ struct PersistSpec {
 }
 
 fn cases() -> Vec<ToolCase> {
-    let file: CaseFile = serde_json::from_str(TOOL_CASES).expect("tool-cases-v1.json is valid");
+    let mut file: CaseFile = serde_json::from_str(TOOL_CASES).expect("tool-cases-v1.json is valid");
+    // Current Rust coherent-read envelopes supersede the historical M5 row arrays.
+    // These old cases have no manifest, so their sources must remain non-current.
+    for case in &mut file.cases {
+        match case.name.as_str() {
+            "hieronymus_memory_search" | "hieronymus_rag_search" => {
+                case.expected_subset = json!({"results":[],"non_current":[{"claim_annotation":{"disposition":{"status":"unknown"}}}]})
+            }
+            "hieronymus_recall" => {
+                case.expected_subset["results"] = json!([]);
+                case.expected_subset["non_current"] =
+                    json!([{"claim_annotation":{"disposition":{"status":"unknown"}}}]);
+            }
+            "hieronymus_termbase_contract" | "hieronymus_termbase_validate" => {
+                case.expected_subset = json!({"results":case.expected_subset})
+            }
+            "hieronymus_feedback" => {
+                case.expected_subset["status"] = json!("tentative");
+                case.expected_subset["authority_changed"] = json!(false);
+            }
+            _ => {}
+        }
+    }
     let advertised: Vec<String> = McpRegistry::embedded()
         .list_tools()
         .iter()
         .map(|tool| tool.name.clone())
+        .filter(|name| {
+            ![
+                "hieronymus_decide",
+                "hieronymus_correct",
+                "hieronymus_order_register",
+                "hieronymus_evidence_capture",
+            ]
+            .contains(&name.as_str())
+        })
         .collect();
     let case_names: Vec<String> = file.cases.iter().map(|case| case.name.clone()).collect();
     assert_eq!(
@@ -582,6 +613,28 @@ fn run_case(
             } => {
                 let resolved = substitute(arguments, root, &bindings);
                 let result = transport.call_tool(tool, &resolved);
+                if tool == "hieronymus_termbase_approve" {
+                    assert_eq!(result["isError"], true);
+                    let context = hieronymus::memory_models::TranslationContext::new(
+                        "book",
+                        "ja",
+                        "ru",
+                        "translation",
+                    );
+                    let store = hieronymus::terminology::Termbase::open(
+                        &HieronymusConfig::new(root),
+                        &context,
+                    )
+                    .unwrap();
+                    store
+                        .approve(
+                            resolved["term_id"].as_i64().unwrap(),
+                            "trusted-test-shell",
+                            "historical read fixture",
+                        )
+                        .unwrap();
+                    continue;
+                }
                 assert!(
                     result["isError"] == json!(false),
                     "{label}: setup call {tool} failed: {}",
@@ -638,6 +691,24 @@ fn run_case(
     // The case call itself, over the transport under test.
     let arguments = substitute(&case.arguments, root, &bindings);
     let result = transport.call_tool(&case.name, &arguments);
+    if [
+        "hieronymus_termbase_approve",
+        "hieronymus_rule_crystal_archive",
+    ]
+    .contains(&case.name.as_str())
+    {
+        assert_eq!(
+            result["isError"], true,
+            "{label}: ordinary legacy mutation escaped policy"
+        );
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("unverified origin")
+        );
+        return;
+    }
     assert!(
         result["isError"] == json!(false),
         "{label}: tool failed: {}",
@@ -937,7 +1008,7 @@ fn stdio_stdout_is_the_only_jsonrpc_channel() {
         .read_line(&mut line)
         .unwrap();
     let listed: Value = serde_json::from_str(line.trim_end()).expect("one JSON-RPC object");
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 39);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 43);
 
     // A tool call over the same session.
     let result = transport.call_tool("hieronymus_status", &json!({}));
@@ -1268,4 +1339,55 @@ fn installed_registry_executes_both_transports() {
             );
         }
     }
+}
+
+fn authority_workflow(transport: &mut dyn Transport, root: &Path) {
+    let (draft, _) = common::authority::prepared_with(
+        |name, value| {
+            let result = transport.call_tool(name, &value);
+            assert_eq!(result["isError"], false, "{name}: {result}");
+            result["structuredContent"].clone()
+        },
+        root,
+    );
+    let applied = transport.call_tool("hieronymus_decide", &draft);
+    assert!(
+        applied["structuredContent"].get("Applied").is_some(),
+        "{applied}"
+    );
+    let mut correction = draft;
+    correction["decision_id"] = json!("12000000-0000-4000-8000-000000000004");
+    correction["expected_revision"] = json!(2);
+    correction["evidence_refs"] = json!([]);
+    correction["operation"] = json!({"Correct":{"intent":{"Rendering":{"replaces":null,"value":{"source_forms":["Alex"],"canonical":"Forged","approved_variants":[],"forbidden_variants":[],"case_sensitive":false}}}}});
+    let result = transport.call_tool("hieronymus_correct", &correction);
+    assert_eq!(result["resultType"], "complete");
+    assert!(
+        result["structuredContent"].get("Applied").is_none(),
+        "{result}"
+    );
+    let db = open_connection(root);
+    assert_eq!(
+        db.query_row(
+            "select count(*) from rule_authority where authority='learned'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+#[test]
+fn authority_tools_execute_over_http_and_stdio() {
+    let root = tempfile::tempdir().unwrap();
+    let (daemon, _) = start_matrix_daemon(root.path());
+    let mut http = HttpTransport { daemon, next_id: 0 };
+    authority_workflow(&mut http, root.path());
+    http.daemon.shutdown().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (daemon, _) = start_matrix_daemon(root.path());
+    let mut stdio = StdioTransport::spawn(root.path());
+    authority_workflow(&mut stdio, root.path());
+    stdio.finish("authority tools");
+    daemon.shutdown().unwrap();
 }

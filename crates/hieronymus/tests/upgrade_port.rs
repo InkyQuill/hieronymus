@@ -1031,3 +1031,26 @@ fn a_root_without_legacy_config_still_cutovers() {
     assert!(report.semantic_job.is_some());
     assert_eq!(journal_state(root.path()).as_deref(), Some("complete"));
 }
+
+#[test]
+fn python_cutover_backfills_converted_rules_before_v5_commit() {
+    let root = fresh_fixture();
+    run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap();
+    let connection = open(&root.path().join("hieronymus.sqlite"));
+    assert_eq!(query_scalar(&connection, "pragma user_version"), 5);
+    assert_eq!(
+        query_scalar(&connection, "select count(*) from rule_authority"),
+        expected_converted()
+    );
+    assert_eq!(
+        query_scalar(
+            &connection,
+            "select count(*) from rule_authority where authority='explicit_user' and legacy_protected=1"
+        ),
+        expected_converted()
+    );
+    assert_eq!(
+        query_scalar(&connection, "select count(*) from pragma_foreign_key_check"),
+        0
+    );
+}

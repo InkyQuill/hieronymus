@@ -125,12 +125,12 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "Show config paths" not in result.output
 
 
-def test_agent_workflows_documents_project_local_skills() -> None:
+def test_agent_workflows_documents_current_generated_plugins() -> None:
     text = (ROOT / "docs" / "agent-workflows.md").read_text(encoding="utf-8")
-
-    assert "hiero skills install --target agents --target claude" in text
-    assert ".agents/skills" in text
-    assert "does not register MCP" in text
+    assert "hiero plugins generate" in text
+    assert "<data-root>/agent-plugins/" in text
+    assert "edit host profiles or book files" in text
+    assert "required_decision_id" in text
 
 
 def test_click_help_describes_config_command() -> None:
@@ -174,27 +174,13 @@ def test_readme_documents_production_install_update_and_uninstall() -> None:
     assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_readme
 
 
-def test_usage_documents_uninstall_data_modes_and_workspace_warning() -> None:
+def test_usage_documents_current_uninstall_data_modes_and_workspace_warning() -> None:
     usage = Path("docs/usage.md").read_text(encoding="utf-8")
-    normalized_usage = " ".join(usage.split())
-
-    assert "--keep-data" in usage
-    assert "--purge-data" in usage
-    assert "HIERONYMUS_INSTALL_CHANNEL=stable" in usage
-    assert "HIERONYMUS_INSTALL_CHANNEL=dev" in usage
-    assert "release.conf" in usage
-    assert (
-        "The non-interactive uninstall one-liner removes the app and keeps "
-        "settings/data by default." in normalized_usage
-    )
+    assert "hiero uninstall --yes" in usage
+    assert "--delete-data" in usage
+    assert "preserves databases and configuration by default" in usage
     assert "HIERONYMUS_DATA_ROOT" in usage
-    assert (
-        "The uninstall script only removes Hieronymus-owned install and "
-        "config/data paths. It does not remove translation workspace directories."
-        in normalized_usage
-    )
-    assert "--purge-data removes the configured data root." in normalized_usage
-    assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_usage
+    assert "translation workspace" in usage
 
 
 def test_docs_describe_local_web_config_and_llm_providers() -> None:

@@ -278,6 +278,15 @@ def test_semantic_live_children_reuse_safe_environment(
     }
     calls: list[tuple[tuple[str, ...], object]] = []
 
+    # Process execution is already replaced by criterion fixtures. Keep this
+    # environment unit independent of any acquired native model/runtime cache.
+    model = tmp_path / "model.onnx"
+    runtime = tmp_path / "libonnxruntime.so"
+    model.write_bytes(b"synthetic-model-for-environment-unit")
+    runtime.write_bytes(b"synthetic-runtime-for-environment-unit")
+    monkeypatch.setattr(run_semantic, "_MODEL", model)
+    monkeypatch.setattr(run_semantic, "_RUNTIME", runtime)
+    monkeypatch.setattr(run_semantic, "_MODEL_SHA256", run_semantic._sha256_file(model))
     monkeypatch.setattr(run_semantic, "_CARGO_TARGET", tmp_path / "cargo-target")
     monkeypatch.setattr(run_semantic, "_INSTALL", tmp_path / "install")
     monkeypatch.setattr(run_semantic, "discover_tool_roots", lambda _env: roots)

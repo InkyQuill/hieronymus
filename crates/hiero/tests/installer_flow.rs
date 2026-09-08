@@ -5,9 +5,63 @@
 //! the systemd user manager is never contacted, and only use local
 //! directories (no network).
 
+#[path = "common/multilingual.rs"]
+mod multilingual;
+
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Test-only corroboration of the installed controller's cached readiness.
+/// An authority commit can record newer work before the next controller poll.
+fn installed_corpus_is_covered(database: &Path) -> rusqlite::Result<bool> {
+    let db = rusqlite::Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.query_row(
+        "select not exists(select 1 from semantic_jobs where status in ('queued','running'))
+         and (not exists(select 1 from rag_chunks) or exists(
+           select 1 from semantic_generations where active=1 and status='active'
+           and corpus_revision=coalesce((select revision from corpus_revision where singleton=1),0)))",
+        [], |row| row.get(0),
+    )
+}
+
+#[test]
+fn installed_readiness_requires_current_coverage_and_drained_work() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("readiness.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "create table corpus_revision(singleton integer,revision integer);
+        create table rag_chunks(id integer);
+        create table semantic_jobs(status text);
+        create table semantic_generations(active integer,status text,corpus_revision integer);
+        insert into corpus_revision values(1,1);
+        insert into rag_chunks values(1);
+        insert into semantic_generations values(1,'active',1);",
+    )
+    .unwrap();
+    assert!(installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("update corpus_revision set revision=2;")
+        .unwrap();
+    assert!(
+        !installed_corpus_is_covered(&path).unwrap(),
+        "a cached Ready cannot cover a newer authority intent"
+    );
+    db.execute_batch("update semantic_generations set corpus_revision=2; insert into semantic_jobs values('queued');").unwrap();
+    assert!(!installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("update semantic_jobs set status='running';")
+        .unwrap();
+    assert!(!installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("update semantic_jobs set status='complete';")
+        .unwrap();
+    assert!(installed_corpus_is_covered(&path).unwrap());
+    db.execute_batch("delete from rag_chunks; delete from semantic_generations;")
+        .unwrap();
+    assert!(installed_corpus_is_covered(&path).unwrap());
+}
 
 fn real_version() -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
@@ -445,7 +499,10 @@ fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
                 .unwrap();
             if let Ok(status) = serde_json::from_slice::<Value>(&output.stdout) {
                 let semantic = &status["status"]["semantic"];
-                if semantic["state"] == "ready" {
+                if semantic["state"] == "ready"
+                    && installed_corpus_is_covered(&sandbox.data_root().join("hieronymus.sqlite"))
+                        .unwrap()
+                {
                     return status;
                 }
                 assert_ne!(semantic["state"], json!("failed"), "{status}");
@@ -474,50 +531,17 @@ fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
     };
     let fixture: Value =
         serde_json::from_str(include_str!("fixtures/hybrid-relevance.json")).unwrap();
-    let mut sessions = std::collections::HashMap::new();
-    for series in fixture["series"].as_array().unwrap() {
-        tool("hieronymus_series_create", series.clone());
-        let session = tool(
-            "hieronymus_session_start",
-            json!({"series_slug":series["slug"]}),
-        );
-        sessions.insert(
-            series["slug"].as_str().unwrap().to_string(),
-            session["session_id"].clone(),
-        );
-    }
-    let source_root = sandbox.root.path().join("sources");
-    std::fs::create_dir(&source_root).unwrap();
-    for doc in fixture["documents"].as_array().unwrap() {
-        let path = source_root.join(format!("{}.txt", doc["doc_id"].as_str().unwrap()));
-        std::fs::write(&path, doc["text"].as_str().unwrap()).unwrap();
-        let reply = tool(
-            "hieronymus_rag_import",
-            json!({"series_slug":doc["series_slug"],"path":path}),
-        );
-        assert!(reply["semantic_rebuild_job"].is_string());
-    }
-    for memory in fixture["memories"].as_array().unwrap() {
-        tool(
-            "hieronymus_short_term_add",
-            json!({"session_id":sessions[memory["series_slug"].as_str().unwrap()],"kind":memory["kind"],"text":memory["text"]}),
-        );
-    }
-    for term in fixture["terms"].as_array().unwrap() {
-        let draft = tool("hieronymus_termbase_propose", term.clone());
-        tool(
-            "hieronymus_termbase_approve",
-            json!({"series_slug":term["series_slug"],"term_id":draft["id"]}),
-        );
-    }
+    let contexts = multilingual::seed(&tool, &fixture, &sandbox.root.path().join("sources"), true);
     wait_ready();
     let mut failures = Vec::new();
     for query in fixture["queries"].as_array().unwrap() {
         for endpoint in ["hieronymus_recall", "hieronymus_rag_search"] {
+            wait_ready();
+            let context = &contexts[query["series_slug"].as_str().unwrap()];
             let mut args =
-                json!({"series_slug":query["series_slug"],"query":query["query"],"limit":8});
+                multilingual::query_context(context, json!({"query":query["query"],"limit":8}));
             if endpoint == "hieronymus_recall" {
-                args["session_id"] = sessions[query["series_slug"].as_str().unwrap()].clone();
+                args["session_id"] = context["session_id"].clone();
             }
             let payload = tool(endpoint, args);
             if endpoint == "hieronymus_recall" {
@@ -554,7 +578,7 @@ fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
                     .filter(|row| row.get("chunk_kind").is_some())
                     .collect()
             } else {
-                payload.as_array().unwrap().iter().collect()
+                payload["results"].as_array().unwrap().iter().collect()
             };
             let docs = fixture["documents"].as_array().unwrap();
             let resolve = |row: &&Value| {

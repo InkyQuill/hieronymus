@@ -34,6 +34,8 @@ pub const CONCEPT_RECALL_STORY_SCOPE_BOOST: f64 = 0.25;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConceptError {
+    #[error(transparent)]
+    Claim(#[from] crate::authority_models::DecisionErrorV1),
     #[error("unknown concept: {0}")]
     UnknownConcept(i64),
     #[error("unknown concept facet: {0}")]
@@ -261,6 +263,12 @@ where
 }
 
 impl ConceptStore {
+    pub(crate) fn for_read(config: &HieronymusConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
     pub fn open(config: &HieronymusConfig) -> Result<Self, ConceptError> {
         open_migrated(&config.database_path())?;
         Ok(Self {
@@ -371,6 +379,19 @@ impl ConceptStore {
         confidence: f64,
         is_canonical: bool,
     ) -> Result<ConceptFacetRecord, ConceptError> {
+        self.add_facet_with_claims(concept_id, value, fields, confidence, is_canonical, &[])
+    }
+    /// Capture atomic assertions with the facet in the same transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_facet_with_claims(
+        &self,
+        concept_id: i64,
+        value: &str,
+        fields: &FacetFields,
+        confidence: f64,
+        is_canonical: bool,
+        claims: &[crate::claim_capture::ClaimInput],
+    ) -> Result<ConceptFacetRecord, ConceptError> {
         let clean_value = value.trim();
         if clean_value.is_empty() {
             return Err(ConceptError::Invalid(
@@ -390,6 +411,13 @@ impl ConceptStore {
             is_canonical,
             &now,
         )?;
+        for claim in claims {
+            crate::claim_capture::capture_claim_tx(
+                &transaction,
+                crate::claim_reads::ClaimTarget::Facet(facet_id),
+                claim,
+            )?;
+        }
         transaction.commit()?;
         drop(connection);
         get_facet(&self.config, facet_id)
@@ -437,6 +465,17 @@ impl ConceptStore {
         &self,
         facet_id: i64,
         patch: &FacetPatch,
+    ) -> Result<ConceptFacetRecord, ConceptError> {
+        self.update_facet_with_claims(facet_id, patch, &[])
+    }
+    /// Replaced standalone content becomes Unknown without new typed claims.
+    /// Derived facets retain source lineage across content and source edits;
+    /// immutable old claims and correction effects remain available for audit.
+    pub fn update_facet_with_claims(
+        &self,
+        facet_id: i64,
+        patch: &FacetPatch,
+        claims: &[crate::claim_capture::ClaimInput],
     ) -> Result<ConceptFacetRecord, ConceptError> {
         let now = now_iso8601();
         let mut connection = self.connection()?;
@@ -492,6 +531,16 @@ impl ConceptStore {
             None | Some(None) => row.is_canonical,
             Some(Some(is_canonical)) => is_canonical,
         };
+        // Metadata cannot erase an existing correction or widen its captured
+        // applicability. Replaced standalone content retires its bindings;
+        // a derived facet retains its declared source lineage across edits.
+        if next_value != row.value && row.source_crystal_id.is_none() {
+            crate::claim_capture::detach_bindings(
+                &transaction,
+                crate::claim_reads::ClaimTarget::Facet(facet_id),
+                "facet_update",
+            )?;
+        }
         transaction.execute(
             "update concept_facets
              set language = ?1, facet_type = ?2, value = ?3, source_crystal_id = ?4,
@@ -519,6 +568,16 @@ impl ConceptStore {
         }
         if next_is_canonical {
             set_canonical_facet_with_connection(&transaction, concept_id, facet_id)?;
+        }
+        if let Some(source) = next_source_crystal_id {
+            crate::claim_capture::inherit_facet_source(&transaction, facet_id, source)?;
+        }
+        for claim in claims {
+            crate::claim_capture::capture_claim_tx(
+                &transaction,
+                crate::claim_reads::ClaimTarget::Facet(facet_id),
+                claim,
+            )?;
         }
         transaction.commit()?;
         drop(connection);
@@ -1004,6 +1063,9 @@ pub(crate) fn add_facet_with_connection(
     if is_canonical {
         set_canonical_facet_with_connection(connection, concept_id, facet_id)?;
     }
+    if let Some(source) = fields.source_crystal_id {
+        crate::claim_capture::inherit_facet_source(connection, facet_id, source)?;
+    }
     Ok(facet_id)
 }
 
@@ -1311,6 +1373,10 @@ impl ConceptStore {
             ));
         }
 
+        let foreign_claim:bool=transaction.query_row("select exists(select 1 from concept_facets f join claim_bindings b on b.facet_id=f.id join memory_claims m on m.id=b.claim_id join series s on s.id=m.series_id join concepts target on target.id=?2 where f.concept_id=?1 and not (target.scope_type='global' or target.scope_type='series' and target.scope_key='series:'||s.slug))",rusqlite::params![source_concept_id,target_concept_id],|r|r.get(0))?;
+        if foreign_claim {
+            return Err(crate::authority_models::DecisionErrorV1::EvidenceMismatch.into());
+        }
         if !facet_value_exists(transaction, source_concept_id, &source.canonical_name)? {
             ensure_facet(
                 transaction,
@@ -1460,6 +1526,24 @@ impl ConceptStore {
         query: &str,
         story_scopes: &[String],
     ) -> Result<std::collections::HashMap<i64, f64>, ConceptError> {
+        let connection = self.connection()?;
+        self.recall_boosts_for_crystals_with_connection(
+            &connection,
+            None,
+            crystal_ids,
+            query,
+            story_scopes,
+        )
+    }
+
+    pub(crate) fn recall_boosts_for_crystals_with_connection(
+        &self,
+        connection: &Connection,
+        current: Option<&crate::story_applicability::StoryQueryV1>,
+        crystal_ids: &[i64],
+        query: &str,
+        story_scopes: &[String],
+    ) -> Result<std::collections::HashMap<i64, f64>, ConceptError> {
         let mut clean_crystal_ids = crystal_ids.to_vec();
         clean_crystal_ids.sort_unstable();
         clean_crystal_ids.dedup();
@@ -1473,9 +1557,9 @@ impl ConceptStore {
             .iter()
             .map(|crystal_id| (*crystal_id, 0.0))
             .collect();
-        let connection = self.connection()?;
 
-        let matching_concept_ids = concept_ids_matching_recall_query(&connection, clean_query)?;
+        let matching_concept_ids =
+            concept_ids_matching_recall_query(connection, clean_query, current)?;
         if !matching_concept_ids.is_empty() {
             let crystal_placeholders = placeholders(clean_crystal_ids.len());
             let concept_placeholders = placeholders(matching_concept_ids.len());
@@ -1497,7 +1581,7 @@ impl ConceptStore {
         }
 
         if !clean_story_scopes.is_empty() {
-            let matching_facet_ids = facet_ids_matching_query(&connection, clean_query)?;
+            let matching_facet_ids = facet_ids_matching_query(connection, clean_query, current)?;
             if matching_facet_ids.is_empty() {
                 return Ok(positive_boosts(boosts));
             }
@@ -1564,15 +1648,25 @@ fn positive_boosts(
 fn facet_ids_matching_query(
     connection: &Connection,
     query: &str,
+    current: Option<&crate::story_applicability::StoryQueryV1>,
 ) -> Result<Vec<i64>, ConceptError> {
     let mut facet_ids: std::collections::HashSet<i64> = {
         let mut statement = connection.prepare(
             "select id
              from concept_facets
-             where value = ? collate nocase
-               and superseded_at is null",
+             where value = ?1 collate nocase
+               and superseded_at is null
+               and (?2 is null or exists(select 1 from concepts c join series s on s.id=?2 where c.id=concept_facets.concept_id and (c.scope_type='global' or c.scope_key='series:'||s.slug)))
+             order by id limit ?3",
         )?;
-        let rows = statement.query_map([query], |row| row.get(0))?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                query,
+                current.map(|q| q.series_id),
+                crate::claim_reads::CANDIDATE_BUDGET as i64
+            ],
+            |row| row.get(0),
+        )?;
         rows.collect::<Result<std::collections::HashSet<i64>, _>>()?
     };
     let expression = search_expression(query);
@@ -1582,12 +1676,38 @@ fn facet_ids_matching_query(
              from concept_facet_fts
              join concept_facets f on f.id = concept_facet_fts.rowid
              where concept_facet_fts match ?1
-               and f.superseded_at is null",
+               and f.superseded_at is null
+               and (?2 is null or exists(select 1 from concepts c join series s on s.id=?2 where c.id=f.concept_id and (c.scope_type='global' or c.scope_key='series:'||s.slug)))
+             order by bm25(concept_facet_fts), f.id limit ?3",
         )?;
-        let rows = statement.query_map([expression], |row| row.get(0))?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                expression,
+                current.map(|q| q.series_id),
+                crate::claim_reads::CANDIDATE_BUDGET as i64
+            ],
+            |row| row.get(0),
+        )?;
         for facet_id in rows {
             facet_ids.insert(facet_id?);
         }
+    }
+    if let Some(q) = current {
+        let mut eligible = std::collections::HashSet::new();
+        for id in facet_ids {
+            if matches!(
+                crate::claim_reads::rehydrate_claims(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(id),
+                    q
+                )?,
+                crate::claim_reads::ClaimDisposition::Current
+                    | crate::claim_reads::ClaimDisposition::Qualified(_)
+            ) {
+                eligible.insert(id);
+            }
+        }
+        facet_ids = eligible;
     }
     let mut sorted: Vec<i64> = facet_ids.into_iter().collect();
     sorted.sort_unstable();
@@ -1600,6 +1720,7 @@ fn facet_ids_matching_query(
 fn concept_ids_matching_recall_query(
     connection: &Connection,
     query: &str,
+    current: Option<&crate::story_applicability::StoryQueryV1>,
 ) -> Result<Vec<i64>, ConceptError> {
     let mut concept_ids: std::collections::HashSet<i64> = {
         let mut statement = connection.prepare(
@@ -1614,7 +1735,7 @@ fn concept_ids_matching_recall_query(
         )?;
         rows.collect::<Result<std::collections::HashSet<i64>, _>>()?
     };
-    let facet_ids = facet_ids_matching_query(connection, query)?;
+    let facet_ids = facet_ids_matching_query(connection, query, current)?;
     if !facet_ids.is_empty() {
         let facet_placeholders = placeholders(facet_ids.len());
         let mut statement = connection.prepare(&format!(
@@ -2029,6 +2150,18 @@ fn move_facets_to_target(
         )?;
         match existing {
             None => {
+                for claim in crate::claim_capture::binding_ids(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                )? {
+                    crate::claim_capture::audit_binding(
+                        connection,
+                        claim,
+                        crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                        Some(crate::claim_reads::ClaimTarget::Facet(source_facet_id)),
+                        "facet_concept_merge",
+                    )?;
+                }
                 connection.execute(
                     "update concept_facets
                      set concept_id = ?1, is_canonical = 0, updated_at = ?2
@@ -2038,6 +2171,16 @@ fn move_facets_to_target(
             }
             Some(target_facet_id) => {
                 copy_facet_metadata(connection, source_facet_id, target_facet_id)?;
+                crate::claim_capture::copy_bindings_tx(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                    crate::claim_reads::ClaimTarget::Facet(target_facet_id),
+                )?;
+                crate::claim_capture::detach_bindings(
+                    connection,
+                    crate::claim_reads::ClaimTarget::Facet(source_facet_id),
+                    "facet_merge",
+                )?;
                 connection.execute(
                     "delete from concept_facets where id = ?1",
                     [source_facet_id],

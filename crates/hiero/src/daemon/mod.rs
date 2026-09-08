@@ -5,6 +5,7 @@
 //! serves until SIGINT or an authenticated `POST /shutdown`.
 
 pub mod assets;
+pub mod correction_worker;
 pub mod discovery;
 pub mod dream_worker;
 mod events;
@@ -250,6 +251,8 @@ pub(crate) struct DaemonRuntime {
     pub config: HieronymusConfig,
     pub registry: McpRegistry,
     pub bearer: Secret<String>,
+    pub console_credential: Secret<String>,
+    pub host_event_credential: Secret<String>,
     pub bound_address: SocketAddr,
     /// The one cancellation edge every loop in the daemon observes; shared
     /// with [`DaemonRuntime::workers`].
@@ -388,6 +391,10 @@ impl Daemon {
         // astra 11). Ownership is held, so this read-or-mint is exclusive: a
         // plain restart reuses the stored token and never rotates it.
         let bearer = discovery::ensure_installation_token(&config)?;
+        let console_credential =
+            discovery::ensure_local_credential(&config, discovery::LocalCredential::Console)?;
+        let host_event_credential =
+            discovery::ensure_local_credential(&config, discovery::LocalCredential::HostEvent)?;
 
         // From here on startup owns worker threads, so every remaining `?`
         // unwinds through `StartupGuard`: signal, join, unpublish, and only
@@ -457,6 +464,8 @@ impl Daemon {
         // `hieronymus_dream` dispatch serves through this handle. On a bare
         // `Application::open` (no daemon) it stays absent and the dispatch
         // fails closed.
+        correction_worker::start(config.clone(), guard.workers_mut())
+            .map_err(DaemonError::Worker)?;
         application.install_dream_controller(dream.clone());
         let events = dream.events();
 
@@ -467,6 +476,8 @@ impl Daemon {
             config,
             registry,
             bearer,
+            console_credential,
+            host_event_credential,
             bound_address,
             workers,
             idle_connections: IdleConnections::default(),

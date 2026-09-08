@@ -4,8 +4,8 @@
 //! `--json` both embed the local service discovery payload, rendered exactly
 //! like the Python `render_json` (`json.dumps(..., ensure_ascii=False,
 //! sort_keys=True)`) so the frozen compatibility fixtures byte-match. The
-//! hook is read-only: it never starts a daemon and never deletes or writes
-//! state.
+//! session hooks are read-only: they never start a daemon or write state.
+//! Trusted prompt binding/delivery commands are separate in `agent_prompt_delivery`.
 
 use std::path::Path;
 
