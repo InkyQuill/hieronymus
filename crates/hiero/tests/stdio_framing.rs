@@ -181,22 +181,13 @@ fn stdio_adapter_without_autostart_flag_reports_unreachable_daemon() {
     .unwrap();
     std::fs::write(root.path().join("daemon.token"), b"test-token-0001\n").unwrap();
 
-    let exchanges = frozen_exchanges();
-    let (request_line, _) = exchanges.first().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["mcp", "--data-root", root.path().to_str().unwrap()])
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .unwrap();
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(request_line.as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -324,23 +315,13 @@ fn stdio_adapter_rejects_invalid_startup_credentials() {
     // startup read under load).
     std::fs::write(root.path().join("daemon.token"), b"stale-token\n").unwrap();
 
-    let mut adapter = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["mcp", "--data-root", root.path().to_str().unwrap()])
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .unwrap();
-
-    let exchanges = frozen_exchanges();
-    let (request_line, _) = exchanges[0].clone();
-    adapter
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(request_line.as_bytes())
-        .unwrap();
-    let output = adapter.wait_with_output().unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
