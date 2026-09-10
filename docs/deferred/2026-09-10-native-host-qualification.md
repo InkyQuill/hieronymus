@@ -27,6 +27,20 @@ saves, agent-launched RAG, Ollama embeddings, Dream through Ollama or an OpenAI-
 provider, and marketplace-installed skills/app callability. Those checks do not complete the
 matrix above.
 
+## Other deferred quality work
+
+- `DecisionErrorV1` conversion in `authority_models.rs` currently preserves the public
+  `StorageUnavailable` shape but discards the underlying `rusqlite::Error`. A later change
+  should retain a safe internal cause or diagnostic at that boundary without logging private
+  payloads or changing the public error contract.
+- Terminology validation currently uses substring presence with each form's existing case
+  behavior, so a case-insensitive approved form `Кот` can also match `котик`. Unicode token
+  boundaries and morphology are not defined in v1. Later terminology-quality work must define
+  and test that lexical policy while preserving deterministic approved-termbase precedence.
+- A factual correction whose selected claim has no resolved concept remains tentative with
+  `AmbiguousIdentity` in v1. Generic conceptless invalidation is not accepted behavior and is
+  not established by the current correction workflow.
+
 Candidate evidence remains scoped: C0 source `81bd23bdebede7692573e4764db3ffcdbec1e7bb`,
 archive `4d8a1fb4909effcb00e8ab8048246a1a1f83b1c8be448cc0ed3cca9f9003b6c3`, native
 `db37c69d686d876a9cb705ca81f6e46cf30a04df43c9fa884d2082112433e67e`; C2 source

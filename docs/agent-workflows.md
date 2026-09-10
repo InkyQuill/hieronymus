@@ -39,10 +39,12 @@ tracked in [host acceptance](agent-host-acceptance.md).
 Pi can install `<data-root>/agent-plugins/pi` as an ordinary package:
 
 ```sh
-PI_CODING_AGENT_DIR="$PRIVATE_PI_DIR" pi install <data-root>/agent-plugins/pi
+pi install npm:pi-mcp-adapter
+pi install <data-root>/agent-plugins/pi
 ```
 
-The package exposes all eight skills. Its generated `mcp.json` registers only
+The first command installs Pi's separately packaged MCP prerequisite; restart Pi
+after installation. The Hieronymus package exposes all eight skills. Its generated `mcp.json` registers only
 `hieronymus-mcp` and pins
 `protocolVersion` to `2026-07-28`; `pi-mcp-adapter` owns discovery, lazy lifecycle,
 authoritative tool catalog, calls and error envelopes. Pi can use Hieronymus MCP tools and
@@ -52,10 +54,8 @@ recognize trusted corrections, mint Applied receipts, or block prompts.
 Claude can install the generated local marketplace literally:
 
 ```sh
-CLAUDE_CONFIG_DIR="$PRIVATE_CLAUDE_HOME" claude plugin marketplace add \
-  --scope local <data-root>/agent-plugins
-CLAUDE_CONFIG_DIR="$PRIVATE_CLAUDE_HOME" claude plugin install \
-  --scope local hieronymus@hieronymus-local
+claude plugin marketplace add --scope local <data-root>/agent-plugins
+claude plugin install --scope local hieronymus@hieronymus-local
 ```
 
 The catalog at `.claude-plugin/marketplace.json` resolves `./claude` from the catalog root.

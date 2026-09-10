@@ -74,6 +74,10 @@ exactly one of `text` or `structured`. The server reloads selected source bytes,
 concept, rule forms and claim identity. It never selects one of several claims or
 occurrences implicitly. Missing scope/language/selection and changed source hash
 produce distinct tentative details. Actual stale revisions return RevisionConflict.
+Only immutable references with `kind:"source_passage"` belong in
+`selected_sources`. Aligned-rendering and observation references remain in the
+complete decision `evidence_refs` and must not be copied into this binding; a
+factual-only selection may leave `selected_sources` empty.
 
 Structured forms are `{kind:"rendering",canonical,approved_variants?,forbidden_variants?}`,
 `{kind:"invalidate"}`, or `{kind:"qualify",qualification}`. Rendering preserves
@@ -151,9 +155,11 @@ from stdin. The object contains `version:1`, `host` (`claude`, `codex`, or `zcod
 `host_session_id`, existing numeric Hieronymus `session_id`, `series_id`, observed
 `expected_revision`, nullable language/applicability fields, `selected_sources`,
 `selected_claims`, and nullable `selected_rule`. Selection shapes match
-`UserCorrectionV1`; event IDs, prompt text, structured correction, and actor fields
-are forbidden. The installed workflow supplies these values from actual session
-and selection results. Binding validates the existing session/series/languages,
+`UserCorrectionV1`: `selected_sources` contains only actual `kind:"source_passage"`
+references, never aligned-rendering or observation evidence, and may be empty for a
+factual-only selection. Event IDs, prompt text, structured correction, and actor
+fields are forbidden. The installed workflow supplies these values from actual
+session and selection results. Binding validates the existing session/series/languages,
 revision, immutable source references and selected claim/rule revisions; it never
 refreshes a stale revision, invents an identity, or grants user authority.
 

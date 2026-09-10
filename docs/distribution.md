@@ -194,14 +194,15 @@ cp target/release-dist/hieronymus-$VERSION-x86_64-unknown-linux-gnu.tar.gz* "$RE
       backup under `<copy>/backups/`, a `complete` cutover journal,
       `hiero classify` reporting `rust-schema`, and doctor degraded-free on
       the copy.
-- [ ] **CLI, MCP HTTP, MCP stdio, web, dreaming fake-provider, FTS, and
-      semantic smoke** — `hiero agent-hook session-start --cwd <project>`;
+- [ ] **CLI, MCP HTTP, MCP stdio, web, dreaming fake-provider, working-memory,
+      and semantic smoke** — `hiero agent-hook session-start --cwd <project>`;
       MCP HTTP `tools/list` + one `tools/call` against the daemon; `hiero
       mcp` framed initialize/tools-list over stdio; `http://<host:port>/`
       serving the embedded console; a dreaming run with the fake provider on
-      a copied root; a recall over strict terms (FTS lane); `hiero semantic
-      status` (FTS-only is the required baseline; the semantic lane per the
-      qualification record).
+      a copied root; a `hieronymus_recall` that returns saved working memory;
+      a successful `hieronymus_rag_search` that returns the expected semantic-only
+      source; and `hiero semantic status --json` showing daemon state `ready`, an
+      intact active generation, and the selected provider/model identity.
 - [ ] **Forced daemon crash and restart** — `kill -9 $(jq .pid
       "$DATA/daemon.json")`; expect doctor `daemon-unreachable` (degraded),
       then `hiero service start` (or `systemctl --user restart
