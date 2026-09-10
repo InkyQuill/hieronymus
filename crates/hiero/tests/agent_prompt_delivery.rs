@@ -7,11 +7,13 @@ use hieronymus::data_root::HieronymusConfig;
 use serde_json::{Value, json};
 
 fn prepared() -> (tempfile::TempDir, hiero::daemon::Daemon, Value) {
-    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let app = Application::open(&HieronymusConfig::new(root.path())).unwrap();
     let (draft, event) = common::authority::prepared(&app, root.path());
     app.call("hieronymus_decide", &draft, "agent").unwrap();
     let context = json!({"version":1,"host":"claude","host_session_id":"actual-host-session","series_id":event["series_id"],"session_id":event["session_id"],"expected_revision":event["expected_revision"],"source_language":event["source_language"],"target_language":event["target_language"],"applicability":event["applicability"],"selected_sources":event["selected_sources"],"selected_claims":[],"selected_rule":event["selected_rule"]});
+    drop(app);
+    let daemon = common::start_daemon(root.path());
     (root, daemon, context)
 }
 #[test]
