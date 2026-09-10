@@ -64,6 +64,7 @@ jobs:
         run: |
           bun scripts/check-rust-release.ts --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
           archive="target/release-dist/$(bun -e 'console.log((await Bun.file("target/release-dist/release.json").json()).archive)')"
+          cp scripts/install.sh target/release-dist/install.sh
           checksums="${archive}.sha256"
           test -f "$checksums"
           cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
@@ -81,9 +82,11 @@ jobs:
 
           Signing, SBOM and provenance retain the initial Rust-line waiver. The release
           environment declaration does not prove remote reviewer settings. These three
-          downloadable assets support local --release-dir installation. They do not
+          payload assets and standalone install.sh support --release-dir installation.
+          They do not
           establish a deployed channel update feed or authorize a public feed URL.
           NOTES
           gh release create "$GITHUB_REF_NAME" --verify-tag \
             --title "hiero $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" \
-            "$archive" "$checksums" "target/release-dist/release.json"
+            "$archive" "$checksums" "target/release-dist/release.json" \
+            "target/release-dist/install.sh"
