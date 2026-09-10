@@ -319,8 +319,8 @@ connect). That probe is recorded as unverified, not a passing IPv6 TLS claim.
 [The F2 rehearsal](rust-cutover-rehearsal.md) attributes each check to its actual
 archive and separates native ONNX/CLI/MCP/browser results from controlled
 provider or service-manager fixtures. Both mandatory memory lanes remain
-required. The accepted autonomous authority design and actual Claude/Codex
-initialize compatibility remain open product gates; zCode is unverified. Do not
+required. The accepted autonomous authority design and actual Claude/Codex/Pi
+native workflow compatibility remain open product gates; zCode is paused/unqualified. Do not
 infer readiness for live migration or publication from the packaging checks.
 
 The installed runtime has been exercised with an empty PATH and no external

@@ -9,6 +9,11 @@ These probes do not establish full generated-candidate S1–S7 or semantic workf
 acceptance. That candidate qualification remains pending and must be recorded with
 exact artifact/bundle/model identities. See [current wiring](agent-workflows.md).
 
+The owner-authorized required matrix is now Claude/Codex/Pi. Generated Pi package and
+synthetic extension tests are preparation only; installed Pi TUI/PTy evidence is still
+required before native acceptance. All zCode observations below retain their original
+labels and remain paused/unqualified rather than being credited to Pi.
+
 ## Historical P2 report (unchanged evidence)
 
 # Agent host acceptance — P2, 2026-09-07

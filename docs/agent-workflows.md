@@ -9,9 +9,10 @@ public DTOs, current-selection rules and receipt dependencies.
 
 `hiero plugins generate` (`--dry-run`, `--json`) deterministically writes eight skills,
 MCP configuration and host manifests under `<data-root>/agent-plugins/`. It does not
-edit host profiles or book files. The five retained output targets are codex, claude,
-gemini, opencode and openclaw; retained output is not proof of native support. zCode uses
-the exact Claude directory and byte hash, with no separate format.
+edit host profiles or book files. The generated targets are codex, claude, gemini,
+opencode, openclaw and pi; retained output is not proof of native support. The required
+native matrix is Claude/Codex/Pi. zCode's prior shared-Claude results remain historical,
+paused and unqualified.
 
 The skills are hieronymus-bootstrap, recall, learn, read, remember, translate, review and
 orchestrate. They preserve source language and explicit narrative scope, distinguish
@@ -34,6 +35,15 @@ shared bundle; a disposable native zCode3.11.2 probe observed server/discover, t
 series_list with this override. This is protocol evidence, not candidate workflow acceptance.
 Historical P2 failures and newer qualification status are
 tracked in [host acceptance](agent-host-acceptance.md).
+
+Pi installs `<data-root>/agent-plugins/pi` through `pi install <path>`. Its package-relative
+`mcp.json` registers only `hieronymus-mcp` and pins `protocolVersion` to `2026-07-28`;
+the separately installed `pi-mcp-adapter` owns discovery, lazy lifecycle, authoritative
+tool catalog, calls and error envelopes. The Hieronymus extension owns trusted
+session/prompt delivery and one-turn context injection. It accepts raw pre-expansion
+text only when Pi reports `source: interactive`; RPC and extension input cannot mint a
+trusted delivery. With images attached, only the exact text is trusted and the injected
+context explicitly excludes image content.
 
 Claude loads `<data-root>/agent-plugins/claude` with its supported `--plugin-dir` option.
 The manifest explicitly references `hooks/hooks.json`. zCode's supported isolated

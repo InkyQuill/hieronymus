@@ -30,7 +30,8 @@ Implementation status (2026-09-08): Tasks 1–6 have independent reviewed commit
 schema `9ecec46`, applicability through `5bf3494`, learned authority through
 `fc4dccf`, immediate corrections/lineage through `11dd551`, consolidation through
 `ef3b4d5`, trusted ingress through `ee71539`. Task 7 source checkpoint is `837e96f`;
-its installed native S1–S7 gate remains open. The 0.8.0 release preparation runs
+its installed native S1–S7 gate remains open. The owner-authorized Task 7 host matrix
+is Claude/Codex/Pi; zCode remains historical paused/unqualified evidence. The 0.8.0 release preparation runs
 current Rust/frontend/tool checks; archived qualification attestations and ongoing
 per-test ownership are waived by the 2026-09-03 owner amendments. Historical
 fixture bytes remain unchanged.
@@ -154,12 +155,12 @@ mark result and original job complete; clear lease; COMMIT
 
 **Files:** Modify `crates/hiero/src/agent_plugins.rs` and its tests; create `crates/hiero/tests/autonomous_plugin_workflow.rs` and `docs/superpowers/reports/2026-09-06-autonomous-host-acceptance.md` when evidence is actually collected. Generated outputs are the exact Claude/Codex manifests, `.mcp.json`, eight skill paths and optional hook path listed in the spec. Do not edit Python assets or frozen fixture outputs to erase historical behavior.
 
-**Interfaces:** `render/generate` signatures remain unchanged. Skills consume the v1 tools, typed receipts, story query and semantic availability. zCode installation uses the same Claude directory and content hash; no new target format. Codex installation uses its supported plugin mechanism. No claim that generated hooks alone establish trusted ingress. Qualify actual independent host event text/session binding and ordinary MCP credential separation under the trusted-local-shell threat model; do not invent a stronger shell-isolation acceptance requirement.
+**Interfaces:** `render/generate` signatures remain unchanged. Skills consume the v1 tools, typed receipts, story query and semantic availability. Pi uses its native package/extension mechanism plus the separately installed `pi-mcp-adapter`, with MCP revision `2026-07-28` pinned in its package-relative definition. Codex installation uses its supported plugin mechanism. zCode results remain historical and unqualified. No claim that generated hooks alone establish trusted ingress. Qualify actual independent host event text/session binding and ordinary MCP credential separation under the trusted-local-shell threat model; do not invent a stronger shell-isolation acceptance requirement.
 
 - [x] Add failing behavioral integration tests with a fake host transcript driver: normal chapter work invokes recall/capture/validation; an actual trusted host prompt handler submits the rendering correction and returns its immediately applied receipt, then the model supplies its `required_decision_id` to dependent reads/validation (never public cross-principal receipt redemption); relevance feedback does not use factual invalidation; ambiguous identity stays tentative; provider outage does not cause a false consolidation claim. Assertions inspect tool calls and returned state, not Markdown wording.
 - [x] Run `cargo test -p hiero --test autonomous_plugin_workflow`.
 - [x] Update all eight skill bodies to explain the automatic loop, source evidence and separate correction intents. Remove human approval instructions, self-assigned authority guidance and unsolicited book-file reports. Keep generated integration in the data root and hooks optional.
-- [ ] Run generator tests and new workflow tests. Install release bits into a disposable root and execute S1–S7 separately in actual Claude, zCode and Codex, using actual working-memory and semantic RAG retrieval. Capture host versions, supported ingress mechanism, selected languages, source corpus identity, model/provider configuration without secrets, actual MCP negotiation, receipt IDs and observed outcomes. If a host cannot supply a verified user-event channel, mark its explicit-user workflow unsupported and leave S7 unsatisfied; synthetic tests and console fallback cannot close it.
+- [ ] Run generator tests and new workflow tests. Install release bits into a disposable root and execute S1–S7 separately in actual Claude, Codex and Pi, using actual working-memory and semantic RAG retrieval. Capture host versions, supported ingress mechanism, selected languages, source corpus identity, model/provider configuration without secrets, actual MCP negotiation, receipt IDs and observed outcomes. If a host cannot supply a verified user-event channel, mark its explicit-user workflow unsupported and leave S7 unsatisfied; synthetic tests and console fallback cannot close it. Preserve zCode evidence as paused/unqualified under its original host.
 - [x] Commit `feat: teach autonomous memory workflow in agent plugins` with only delivered code and factual evidence. Missing hosts or provider/model access are external requirements to report; do not fabricate a passing report or skip semantics to obtain a green release.
 
 ## Minimum acceptance matrix
@@ -176,7 +177,7 @@ Each case is a required executable domain/application test in Tasks 3–6 and a 
 | Chapter 12 revelation | Store narrative manifest with string IDs as well as a numbered fixture; narrator p12/character p15 gates; query character p3 excludes current truth; explicit research result is separately marked. | S5 |
 | Provider unavailable | Commit clear correction; disable provider; restart; correction remains effective through six failures and parking; recover with unchanged config/no other requests at the six-hour recovery deadline; complete once with no recursive job or repeated delta. | S6 |
 | Ordinary work across sessions | Three chapters/two sessions, prior voice/relationship/rendering retrieved and significant new observation captured without author labels or Remember invocation. | S1 |
-| Three installed hosts | Claude and zCode use identical Claude-format bundle; Codex uses its supported bundle; all exercise receipt/recall/validation with working memory and semantic RAG. | S7 |
+| Three installed hosts | Claude and Codex use their supported bundles; Pi uses its native package with installed `pi-mcp-adapter`; all exercise receipt/recall/validation with working memory and semantic RAG. zCode remains paused/unqualified historical evidence. | S7 |
 
 ## Final verification and remaining release requirements
 

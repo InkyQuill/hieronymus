@@ -9,7 +9,7 @@ rewrite; new feature work happens in Rust after the cutover.
 [ADR 0016](adr/0016-autonomous-story-memory-product-vision.md) supersedes
 ADR 0005 and the human-only terminology lifecycle in ADR 0011. The target is
 autonomous story memory, with user corrections instead of required review,
-and agent plugins with shared workflow skills; zCode consumes the Claude plugin
+and agent plugins with shared workflow skills; Pi has a native package using the installed MCP adapter, while zCode's shared-Claude evidence is paused/unqualified
 bundle. Its implementation-gap list and acceptance scenarios govern
 follow-up planning. The frozen baseline below does not require preserving
 human approval gates; this documentation change does not implement their

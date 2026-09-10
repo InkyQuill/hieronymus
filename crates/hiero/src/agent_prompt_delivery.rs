@@ -65,12 +65,37 @@ fn decode<T: serde::de::DeserializeOwned>(v: &Value) -> Result<T, DeliveryError>
     serde_json::from_value(v.clone()).map_err(|e| invalid(e.to_string()))
 }
 fn host(value: &str) -> Result<(), DeliveryError> {
-    if matches!(value, "claude" | "codex" | "zcode") {
+    if matches!(value, "claude" | "codex" | "pi" | "zcode") {
         Ok(())
     } else {
         Err(invalid("unsupported host"))
     }
 }
+
+/// Validate the host-owned Pi session identity before any prompt can be
+/// delivered. This records no authority and derives nothing from filenames.
+pub fn session_start(input: &Value, h: &str) -> Result<Value, DeliveryError> {
+    host(h)?;
+    if h != "pi" || input["hook_event_name"] != "SessionStart" {
+        return Err(invalid("expected Pi SessionStart event"));
+    }
+    let session = input["session_id"]
+        .as_str()
+        .filter(|value| crate::trusted_ingress::valid_uuid(value))
+        .ok_or_else(|| invalid("missing actual Pi session UUID"))?;
+    let cwd = input["cwd"]
+        .as_str()
+        .filter(|value| !value.is_empty() && value.len() <= 4096)
+        .ok_or_else(|| invalid("missing or oversized Pi working directory"))?;
+    Ok(json!({
+        "status": "session_started",
+        "host": h,
+        "host_session_id": session,
+        "cwd": cwd,
+        "authority_changed": false
+    }))
+}
+
 fn context_path(config: &HieronymusConfig, h: &str, session: &str) -> PathBuf {
     config.config_root().join("host-contexts").join(format!(
         "{:x}.json",
@@ -329,4 +354,30 @@ pub fn retry_delivery(config: &HieronymusConfig, id: &str) -> Result<Value, Deli
 /// Common Claude/Codex UserPromptSubmit output; native installation is Task7.
 pub fn hook_output(response: &Value) -> Value {
     json!({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":format!("Hieronymus trusted correction result: {}. If required_decision_id is present, pass it to dependent validation/read operations. Do not redeem this receipt through hieronymus_correct.",response)}})
+}
+
+#[cfg(test)]
+mod pi_tests {
+    use super::*;
+
+    #[test]
+    fn pi_session_start_requires_actual_uuid_and_normalized_cwd() {
+        let value = session_start(
+            &serde_json::json!({
+                "hook_event_name": "SessionStart",
+                "session_id": "11111111-1111-4111-8111-111111111111",
+                "cwd": "/tmp/work"
+            }),
+            "pi",
+        )
+        .unwrap();
+        assert_eq!(value["host"], "pi");
+        assert_eq!(
+            value["host_session_id"],
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert!(session_start(&serde_json::json!({
+            "hook_event_name": "SessionStart", "session_id": "session.jsonl", "cwd": "/tmp/work"
+        }), "pi").is_err());
+    }
 }
