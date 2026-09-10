@@ -13,6 +13,9 @@ The owner-authorized required matrix is now Claude/Codex/Pi. Generated Pi packag
 synthetic extension tests are preparation only; installed Pi TUI/PTy evidence is still
 required before native acceptance. All zCode observations below retain their original
 labels and remain paused/unqualified rather than being credited to Pi.
+Pi trusted ingress additionally requires the isolated ordered launch documented in
+[agent workflows](agent-workflows.md); generic package discovery is explicitly unsupported
+because an earlier extension can transform text while Pi preserves `source: interactive`.
 
 ## Historical P2 report (unchanged evidence)
 

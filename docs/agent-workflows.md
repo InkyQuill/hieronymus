@@ -36,14 +36,32 @@ series_list with this override. This is protocol evidence, not candidate workflo
 Historical P2 failures and newer qualification status are
 tracked in [host acceptance](agent-host-acceptance.md).
 
-Pi installs `<data-root>/agent-plugins/pi` through `pi install <path>`. Its package-relative
-`mcp.json` registers only `hieronymus-mcp` and pins `protocolVersion` to `2026-07-28`;
-the separately installed `pi-mcp-adapter` owns discovery, lazy lifecycle, authoritative
-tool catalog, calls and error envelopes. The Hieronymus extension owns trusted
-session/prompt delivery and one-turn context injection. It accepts raw pre-expansion
-text only when Pi reports `source: interactive`; RPC and extension input cannot mint a
-trusted delivery. With images attached, only the exact text is trusted and the injected
-context explicitly excludes image content.
+Pi can install `<data-root>/agent-plugins/pi` through `pi install <path>` for its package
+resources. Generic extension discovery does not guarantee that Hieronymus sees input
+before another extension transforms it, so that mode blocks interactive trusted delivery
+and cannot establish Pi correction support. Use this explicit isolated launch for the
+trusted workflow, supplying the actual installed adapter entry path:
+
+```sh
+HIERONYMUS_PI_TRUSTED_LAUNCH=isolated-v1 pi \
+  --no-extensions \
+  -e <data-root>/agent-plugins/pi/extensions/hieronymus.ts \
+  -e <installed-pi-mcp-adapter>/index.ts \
+  --mcp-config <data-root>/agent-plugins/pi/mcp.json \
+  --skill <data-root>/agent-plugins/pi/skills
+```
+
+Pi documents repeated `-e` arguments in load order; `--no-extensions` excludes ambient
+handlers, making Hieronymus the first input handler and the installed adapter the only MCP
+implementation. The generated `mcp.json` registers only `hieronymus-mcp` and pins
+`protocolVersion` to `2026-07-28`; `pi-mcp-adapter` owns discovery, lazy lifecycle,
+authoritative tool catalog, calls and error envelopes. The Hieronymus extension accepts
+raw pre-expansion text only when Pi reports `source: interactive` under this isolated
+launch. It transforms that same input to carry its correlated receipt context through
+ordinary, steering and follow-up queues. RPC and extension input cannot mint a trusted
+delivery. With images attached, only the exact text is trusted and the transformed context
+explicitly excludes image content. Hook errors return Pi's handled result with a visible
+diagnostic so the original prompt does not proceed.
 
 Claude loads `<data-root>/agent-plugins/claude` with its supported `--plugin-dir` option.
 The manifest explicitly references `hooks/hooks.json`. zCode's supported isolated
