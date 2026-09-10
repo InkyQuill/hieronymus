@@ -1,9 +1,16 @@
 # Python archive and the Rust-only source tree
 
-The Python 0.7.0 line is archived on Git branch `stale/python-v0.7.0`, at commit
-`1cc2163`. It contains the former `src/hieronymus` application, `pyproject.toml`,
-`uv.lock`, Hatch hook, Python tests and `tools` qualification/compatibility commands.
-Use that branch when investigating historical source references.
+The former main/Python 0.7.0 application is archived on Git branch
+`stale/python-v0.7.0`, at commit `1cc2163`. That archive contains the Python
+application, packaging and its tests.
+
+Later Python compatibility and qualification tooling was introduced during the
+Rust port and is absent from that branch. Recover those `tools` commands and
+their tests from the immutable [pre-cleanup snapshot
+`ad61ea3ef562e99b57c34e4eacd19f29b056d23c`](https://github.com/InkyQuill/hieronymus/tree/ad61ea3ef562e99b57c34e4eacd19f29b056d23c).
+This snapshot remains an ancestor of the Rust-only cleanup and contains the
+complete source tree immediately before removal. Use it for source references
+in the retained Rust-port compatibility and qualification records.
 
 The active application, build, test and release paths require no Python. Rust owns
 the domain, CLI, daemon, MCP and native distribution; Bun 1.4.0 builds the console
