@@ -127,3 +127,11 @@ The real retrieval fixture explicitly represents language and context; nonempty
 viewpoint/story-position context fails rather than being silently ignored. Once
 P1 runtime is implemented, add those public-MCP behavioral assertions before
 claiming completion. No storage-only correction test substitutes for them.
+
+## September 10 practical scope
+
+[Practical release acceptance](practical-release-acceptance-2026-09-10.md) records the
+owner-selected ordinary MCP checks, including installed Pi save/RAG/Dream and actual
+Claude/Codex marketplace skill calls. Full native correction/event-order qualification
+remains [deferred](deferred/2026-09-10-native-host-qualification.md). Local marketplace
+installation is not public marketplace publication.

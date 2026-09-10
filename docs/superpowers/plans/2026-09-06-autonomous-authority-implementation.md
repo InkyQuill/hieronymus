@@ -191,3 +191,8 @@ Owner steering on 2026-09-10 defers the incomplete native-host matrix to the wee
 2026-09-14; see [deferred qualification](../../deferred/2026-09-10-native-host-qualification.md).
 Those missing rows do not block the current implementation/merge milestone and remain
 explicitly unqualified.
+
+Current practical acceptance evidence (including the seven owner-selected checks, actual
+Pi save/RAG/Dream, Ollama embeddings and local marketplace installations) is recorded in
+[the September 10 report](../../practical-release-acceptance-2026-09-10.md). This does not
+mark the deferred S1–S7/native-host matrix complete.
