@@ -50,6 +50,15 @@ const START_WAIT: Duration = Duration::from_secs(20);
 
 const POLL: Duration = Duration::from_millis(100);
 
+/// Discovery and MCP control operations must fail promptly when the local
+/// daemon stops responding.
+const MCP_CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Tool execution can include a supervised Dream run with several bounded
+/// provider calls. Keep the transport bounded without undercutting that work;
+/// stdio cancellation still closes the in-flight socket immediately.
+const MCP_TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
 /// The verdict of one discovery-health probe.
 #[derive(Debug)]
 pub enum DiscoveryHealth {
@@ -381,13 +390,18 @@ impl DaemonClient {
         }
         let payload = serde_json::to_vec(body)
             .map_err(|_| ClientError::Protocol("request cannot serialize"))?;
+        let timeout = if body.get("method").and_then(Value::as_str) == Some("tools/call") {
+            MCP_TOOL_CALL_TIMEOUT
+        } else {
+            MCP_CONTROL_TIMEOUT
+        };
         crate::client::request_cancellable(
             "POST",
             self.address,
             "/mcp",
             &headers,
             &payload,
-            std::time::Duration::from_secs(10),
+            timeout,
             Some(cancellation),
         )
     }

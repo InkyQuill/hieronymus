@@ -348,3 +348,65 @@ fn stdio_wraps_route_errors_after_successful_authenticated_startup() {
     );
     responder.join().unwrap();
 }
+
+#[test]
+fn tool_call_waits_past_the_control_request_deadline() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let token = discovery::generate_bearer_token().unwrap();
+    discovery::write_token(&config, &token).unwrap();
+    discovery::write_discovery(
+        &config,
+        &DiscoveryRecord {
+            discovery_version: discovery::DISCOVERY_VERSION,
+            protocol_version: hiero::daemon::registry::PROTOCOL_REVISION.into(),
+            host: "127.0.0.1".into(),
+            port: listener.local_addr().unwrap().port(),
+            pid: 1,
+            instance_id: "matching-instance".into(),
+            started_at: "2026-09-10T00:00:00Z".into(),
+        },
+    )
+    .unwrap();
+    let responder = std::thread::spawn(move || {
+        let (mut probe, _) = listener.accept().unwrap();
+        assert!(read_mock_request(&mut probe).starts_with("GET /status "));
+        let body = serde_json::json!({
+            "instance_id": "matching-instance",
+            "protocol_revision": hiero::daemon::registry::PROTOCOL_REVISION,
+        })
+        .to_string();
+        write!(
+            probe,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+
+        let (mut tool, _) = listener.accept().unwrap();
+        let request = read_mock_request(&mut tool);
+        assert!(request.starts_with("POST /mcp "));
+        let payload: serde_json::Value =
+            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(payload["method"], "tools/call");
+        assert_eq!(payload["params"]["name"], "hieronymus_dream");
+        std::thread::sleep(std::time::Duration::from_millis(10_500));
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"resultType": "complete"},
+        })
+        .to_string();
+        let _ = write!(
+            tool,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    });
+
+    let client = hiero::lifecycle::connect(&config, false).unwrap();
+    let reply = client.call_tool("hieronymus_dream", &serde_json::json!({}));
+    responder.join().unwrap();
+    assert_eq!(reply.unwrap()["result"]["resultType"], "complete");
+}
