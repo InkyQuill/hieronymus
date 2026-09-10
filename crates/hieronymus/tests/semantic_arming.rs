@@ -111,6 +111,7 @@ fn activate_generation_with(fixture: &Fixture, provider: &mut dyn EmbeddingProvi
             "gen-a",
             provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: "demo".to_string(),
                 token_ids: tokenizer.encode("probe").unwrap(),
             },

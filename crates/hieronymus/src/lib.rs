@@ -68,3 +68,5 @@ pub mod coherent_reads;
 pub mod corrections;
 
 pub mod authority_producers;
+
+pub mod ollama_embeddings;

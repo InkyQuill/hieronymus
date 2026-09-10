@@ -339,9 +339,9 @@ pub struct JobRecord {
     pub updated_at: String,
 }
 
-/// Bounded-batch and lease parameters for one runner. Keep `batch_size` within
-/// the provider's `max_batch_inputs`; [`SemanticStore::write_batch`] enforces
-/// the provider limit regardless.
+/// Bounded-batch and lease parameters for one runner. The effective batch
+/// size is capped by the selected provider's `max_batch_inputs`;
+/// [`SemanticStore::write_batch`] also enforces that limit.
 #[derive(Clone)]
 pub struct RebuildConfig {
     /// Authoritative chunks claimed, embedded, and written per lease-held
@@ -783,7 +783,12 @@ impl SemanticJobStore {
                 }
             }
 
-            let pending = store.pending_chunk_ids(&generation_id, config.batch_size)?;
+            let pending = store.pending_chunk_ids(
+                &generation_id,
+                config
+                    .batch_size
+                    .min(inputs.provider.identity().max_batch_inputs()),
+            )?;
             if pending.is_empty() {
                 return self.activate_candidate(job_id, &generation_id, &store, &mut inputs);
             }

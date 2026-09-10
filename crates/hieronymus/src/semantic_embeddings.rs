@@ -3,8 +3,9 @@
 //! deterministic fake provider for tests, and the real ONNX provider ported
 //! from the qualified harness (`qualification/harnesses/semantic-native`).
 //!
-//! The provider consumes token sequences, exactly like the qualified harness:
-//! tokenization is a separate concern owned by the recall integration.
+//! Providers receive exact original text beside the local token sequence.
+//! ONNX retains the qualified token path; Ollama embeds only the original text.
+//! Tokenization remains owned by the recall integration.
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -175,6 +176,27 @@ impl EmbeddingIdentity {
 /// the two request kinds.
 pub trait EmbeddingProvider: Send {
     fn identity(&self) -> &EmbeddingIdentity;
+
+    /// Recheck mutable external configuration before using this fixed identity.
+    fn verify_identity(&self) -> Result<(), SemanticError> {
+        Ok(())
+    }
+
+    /// Exact original text accompanies the pinned segmentation token stream.
+    fn embed_document_text(
+        &mut self,
+        _text: &str,
+        token_ids: &[u32],
+    ) -> Result<Vec<f32>, SemanticError> {
+        self.embed_document(token_ids)
+    }
+    fn embed_query_text(
+        &mut self,
+        _text: &str,
+        token_ids: &[u32],
+    ) -> Result<Vec<f32>, SemanticError> {
+        self.embed_query(token_ids)
+    }
 
     fn embed_document(&mut self, token_ids: &[u32]) -> Result<Vec<f32>, SemanticError>;
 

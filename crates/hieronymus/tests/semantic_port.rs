@@ -612,6 +612,7 @@ fn build_activate_rebuild_stays_isolated_until_activation() {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -663,6 +664,7 @@ fn build_activate_rebuild_stays_isolated_until_activation() {
         "gen-b",
         &mut provider,
         &SemanticSample {
+            text: "probe".into(),
             series_slug: fixture.series_slug.clone(),
             token_ids: tokens_for("chunk-1"),
         },
@@ -679,6 +681,7 @@ fn build_activate_rebuild_stays_isolated_until_activation() {
             "gen-b",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -719,6 +722,7 @@ fn activation_rejects_count_mismatch_and_second_activation() {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -737,6 +741,7 @@ fn activation_rejects_count_mismatch_and_second_activation() {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -746,6 +751,7 @@ fn activation_rejects_count_mismatch_and_second_activation() {
         "gen-a",
         &mut provider,
         &SemanticSample {
+            text: "probe".into(),
             series_slug: fixture.series_slug.clone(),
             token_ids: tokens_for("chunk-1"),
         },
@@ -780,6 +786,7 @@ fn activation_rejects_checksum_mismatch_after_reimport() {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -818,6 +825,7 @@ fn activation_rejects_dimension_and_identity_mismatches() {
             "gen-a",
             &mut narrow,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -835,6 +843,7 @@ fn activation_rejects_dimension_and_identity_mismatches() {
             "gen-b",
             &mut default,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },
@@ -934,6 +943,7 @@ fn garbage_collection_drops_only_terminal_generations() {
     let store = SemanticStore::open(&fixture.config).unwrap();
     let mut provider = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS);
     let sample = SemanticSample {
+        text: "probe".into(),
         series_slug: fixture.series_slug.clone(),
         token_ids: tokens_for("chunk-1"),
     };
@@ -994,6 +1004,7 @@ fn losing_the_lance_directory_is_a_rebuild_never_data_loss() {
     let store = SemanticStore::open(&fixture.config).unwrap();
     let mut provider = FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS);
     let sample = SemanticSample {
+        text: "probe".into(),
         series_slug: fixture.series_slug.clone(),
         token_ids: tokens_for("chunk-1"),
     };
@@ -1153,6 +1164,7 @@ fn active_probe_rejects_empty_and_corrupt_lance_directories() {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: fixture.series_slug.clone(),
                 token_ids: tokens_for("chunk-1"),
             },

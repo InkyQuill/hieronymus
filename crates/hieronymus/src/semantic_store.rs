@@ -152,6 +152,7 @@ pub struct SemanticChunk {
 /// resolve to the provider's shared identity or activation fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticSample {
+    pub text: String,
     pub series_slug: String,
     pub token_ids: Vec<u32>,
 }
@@ -617,7 +618,7 @@ impl SemanticStore {
                 )));
             }
             let checksum = sha256_text(&text);
-            let vector = provider.embed_document(&chunk.token_ids)?;
+            let vector = provider.embed_document_text(&text, &chunk.token_ids)?;
             rows.push(IndexRow {
                 chunk_id: chunk.chunk_id,
                 series_slug,
@@ -726,7 +727,7 @@ impl SemanticStore {
                 )));
             }
         }
-        let query_vector = provider.embed_query(&sample.token_ids)?;
+        let query_vector = provider.embed_query_text(&sample.text, &sample.token_ids)?;
         let hits = index.search(&sample.series_slug, &query_vector, ACTIVATION_SAMPLE_LIMIT)?;
         if hits.is_empty() {
             return Err(SemanticError::ValidationFailed(format!(

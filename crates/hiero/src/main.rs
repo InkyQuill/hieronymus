@@ -29,7 +29,7 @@ const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] 
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
-const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable> [--json] [--data-root <path>] (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
+const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable|configure> [--json] [--data-root <path>] (configure: --provider ollama --base-url <origin> --model <installed-model>) (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
 
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
@@ -78,6 +78,9 @@ struct ParsedArguments {
     sha256: Option<String>,
     bytes: Option<String>,
     runtime: Option<String>,
+    embedding_provider: Option<String>,
+    embedding_url: Option<String>,
+    embedding_model: Option<String>,
     unit_dir: Option<String>,
     binary: Option<String>,
     no_activate: bool,
@@ -117,6 +120,9 @@ fn parse_arguments(
         sha256: None,
         bytes: None,
         runtime: None,
+        embedding_provider: None,
+        embedding_url: None,
+        embedding_model: None,
         unit_dir: None,
         binary: None,
         no_activate: false,
@@ -213,6 +219,18 @@ fn parse_arguments(
                         .ok_or_else(|| "--cwd requires a directory argument".to_string())?
                         .clone(),
                 );
+            }
+            "--provider" | "--base-url" | "--model" => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .ok_or_else(|| format!("{argument} requires a value"))?
+                    .clone();
+                match argument.as_str() {
+                    "--provider" => parsed.embedding_provider = Some(value),
+                    "--base-url" => parsed.embedding_url = Some(value),
+                    _ => parsed.embedding_model = Some(value),
+                }
             }
             "--url" => {
                 index += 1;
@@ -351,6 +369,14 @@ fn parse_arguments(
         && (parsed.hook_host.is_some() || parsed.delivery_id.is_some())
     {
         return Err("--host and --delivery-id belong to agent-hook".into());
+    }
+    if (parsed.embedding_provider.is_some()
+        || parsed.embedding_url.is_some()
+        || parsed.embedding_model.is_some())
+        && (parsed.command.as_deref() != Some("semantic")
+            || parsed.subcommand.as_deref() != Some("configure"))
+    {
+        return Err("--provider, --base-url and --model require semantic configure".into());
     }
     Ok(parsed)
 }
@@ -642,11 +668,22 @@ fn run_semantic(
             let status = hieronymus::semantic_arming::semantic_status(&config)
                 .map_err(|error| error.to_string())?;
             let generation = &status.active_generation;
+            let ollama = status
+                .configuration
+                .as_ref()
+                .is_some_and(|c| c.provider == "ollama");
+            let live = hiero::lifecycle::connect(&config, false)
+                .ok()
+                .and_then(|client| client.get("/status").ok())
+                .map(|value| value["semantic"].clone());
             if parsed.json {
                 let payload = serde_json::json!({
-                    "model": model_status_name(&status.model_status),
+                    "configuration": status.configuration,
+                    "daemon": live,
+                    "model": if ollama { "external" } else { model_status_name(&status.model_status) },
                     "model_detail": model_status_detail(&status.model_status),
                     "generation": generation.as_ref().map(|manifest| serde_json::json!({
+                        "provider": manifest.identity.provider(),
                         "generation_id": manifest.generation_id,
                         "status": manifest.status,
                         "model": manifest.identity.model(),
@@ -659,9 +696,29 @@ fn run_semantic(
                 });
                 println!("{payload}");
             } else {
+                if let Some(settings) = &status.configuration {
+                    println!(
+                        "semantic provider: {} (configuration revision {})",
+                        settings.provider, settings.configuration_revision
+                    );
+                    if ollama {
+                        println!(
+                            "Ollama model: {} at {}",
+                            settings.model.as_deref().unwrap(),
+                            settings.base_url.as_deref().unwrap()
+                        );
+                    }
+                }
+                if !ollama {
+                    println!(
+                        "semantic model: {}",
+                        model_status_line(&status.model_status)
+                    );
+                }
                 println!(
-                    "semantic model: {}",
-                    model_status_line(&status.model_status)
+                    "daemon semantic status: {}",
+                    live.as_ref()
+                        .map_or_else(|| "unavailable".into(), ToString::to_string)
                 );
                 match generation {
                     Some(manifest) => println!(
@@ -681,19 +738,51 @@ fn run_semantic(
                         "no"
                     }
                 );
-                println!(
-                    "recall mode: {}",
-                    if status.model_status == hieronymus::semantic_model::ModelStatus::Available {
-                        "semantic + fts"
-                    } else {
-                        "fts-only"
-                    }
-                );
                 println!("tokenizer: {}", status.tokenizer);
             }
             Ok(ExitCode::SUCCESS)
         }
         Some("enable") => run_semantic_enable(parsed, &config),
+        Some("configure") => {
+            if parsed.embedding_provider.as_deref() != Some("ollama")
+                || parsed.runtime.is_some()
+                || parsed.url.is_some()
+                || parsed.sha256.is_some()
+                || parsed.bytes.is_some()
+            {
+                return Err(format!(
+                    "configure requires --provider ollama and accepts --base-url and --model; {SEMANTIC_USAGE}"
+                ));
+            }
+            let settings = hieronymus::semantic_arming::SemanticConfiguration::ollama(
+                parsed
+                    .embedding_url
+                    .as_deref()
+                    .ok_or("--base-url is required")?,
+                parsed
+                    .embedding_model
+                    .as_deref()
+                    .ok_or("--model is required")?,
+            );
+            settings.validate()?;
+            let client = hiero::lifecycle::connect(&config, false).map_err(|e| e.to_string())?;
+            // Explicit acquisition of the pinned segmentation asset only. No ONNX model/runtime or Ollama pull.
+            client
+                .post_with_timeout(
+                    "/semantic/acquire",
+                    &serde_json::json!({"tokenizer_only":true}),
+                    std::time::Duration::from_secs(610),
+                )
+                .map_err(|e| e.to_string())?;
+            let result = client
+                .post(
+                    "/semantic/configure",
+                    &serde_json::to_value(settings).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+            println!("{result}");
+            Ok(ExitCode::SUCCESS)
+        }
         Some(other) => Err(format!(
             "unknown semantic subcommand: {other}; {SEMANTIC_USAGE}"
         )),

@@ -336,3 +336,18 @@ evidence. PR CI validates retained fixtures with their explicit historical test
 inventory and runs the tool tests, but does not require archived measurement
 fingerprints or per-current-test manifest dispositions to remain fresh. Current
 Rust tests and installed artifact/native host acceptance govern this release.
+
+### Alternative semantic backend: Ollama
+
+ONNX remains the bundled default. `hiero semantic configure --provider ollama
+--base-url http://127.0.0.1:11434 --model <installed-model>` selects externally
+managed Ollama embeddings while retaining the bundle's pinned tokenizer for
+existing chunk segmentation. It does not require loading the ONNX model/runtime
+and never pulls an Ollama model. The existing authenticated daemon, revision
+acknowledgement, durable rebuild and strict semantic readiness checks apply.
+Provider/model digest/dimension changes require a coherent rebuilt generation.
+
+Development roots without bundled assets must stage the pinned tokenizer or
+complete explicit tokenizer acquisition; the current downloader rejects upstream
+redirects. See the Ollama setup section in `usage.md`. Native agent-host matrix
+qualification remains deferred separately from this embedding functionality.

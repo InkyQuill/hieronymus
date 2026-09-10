@@ -377,7 +377,7 @@ impl SemanticLane {
             .map_err(|error| error.to_string())?;
         let vector = guard
             .provider
-            .embed_query(&token_ids)
+            .embed_query_text(query, &token_ids)
             .map_err(|error| error.to_string())?;
         drop(guard);
 

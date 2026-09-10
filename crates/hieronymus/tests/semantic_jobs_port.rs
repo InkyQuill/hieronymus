@@ -82,6 +82,7 @@ fn tokens_for(text: &str) -> Vec<u32> {
 
 fn sample_for(fixture: &Fixture) -> SemanticSample {
     SemanticSample {
+        text: "probe".into(),
         series_slug: fixture.series_slug.clone(),
         token_ids: tokens_for(&paragraph_text(1)),
     }

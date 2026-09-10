@@ -490,6 +490,10 @@ fn check_discovery(config: &HieronymusConfig, report: &mut DoctorReport) {
 /// the supported FTS-only baseline), active generation, and index integrity.
 fn check_semantic(config: &HieronymusConfig, report: &mut DoctorReport) {
     use hieronymus::semantic_arming::{load_runtime_library, verify_runtime_library};
+    let ollama = hieronymus::semantic_arming::load_configuration(config)
+        .ok()
+        .flatten()
+        .filter(|c| c.provider == "ollama");
     match load_runtime_library(config) {
         Ok(Some(runtime)) => match verify_runtime_library(&runtime) {
             Ok(()) => report.push(Level::Ok, "semantic-runtime", format!("qualified ONNX runtime selected: {} (checksum verified; native readiness comes from the daemon)", runtime.display())),
@@ -511,6 +515,9 @@ fn check_semantic(config: &HieronymusConfig, report: &mut DoctorReport) {
                 hieronymus::semantic_model::TOKENIZER_SHA256,
             ),
         ] {
+            if ollama.is_some() && expected == hieronymus::semantic_model::MODEL_SHA256 {
+                continue;
+            }
             match crate::update::sha256_file(&path) {
                 Ok(actual) if actual == expected => report.push(
                     Level::Ok,
@@ -540,7 +547,19 @@ fn check_semantic(config: &HieronymusConfig, report: &mut DoctorReport) {
             return;
         }
     };
-    match &status.model_status {
+    if let Some(settings) = ollama {
+        report.push(
+            Level::Ok,
+            "semantic-provider",
+            format!(
+                "Ollama {} at {} (configuration revision {}; readiness comes from the daemon)",
+                settings.model.as_deref().unwrap(),
+                settings.base_url.as_deref().unwrap(),
+                settings.configuration_revision
+            ),
+        );
+    } else {
+        match &status.model_status {
         ModelStatus::Available => report.push(
             Level::Ok,
             "semantic-model",
@@ -553,13 +572,14 @@ fn check_semantic(config: &HieronymusConfig, report: &mut DoctorReport) {
         ModelStatus::Missing => report.push(
             Level::Ok,
             "semantic-model",
-            "embedding model not acquired; recall runs FTS-only (`hiero semantic enable` acquires it, never doctor)".to_string(),
+            "embedding model not acquired; mandatory semantic retrieval is unavailable (`hiero semantic enable` acquires it, never doctor)".to_string(),
         ),
         ModelStatus::Invalid(reason) => report.push(
             Level::Warning,
             "semantic-model",
             format!("embedding model failed its pre-check: {reason}"),
         ),
+    }
     }
     match &status.active_generation {
         None => report.push(

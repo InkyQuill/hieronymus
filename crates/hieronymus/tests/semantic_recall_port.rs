@@ -114,6 +114,7 @@ fn activate_generation(fixture: &Fixture) {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: "demo".to_string(),
                 token_ids: tokenizer.encode("probe").unwrap(),
             },

@@ -524,3 +524,45 @@ bun run --cwd frontend build
 ```
 
 The wheel packages the resulting `frontend/dist` assets for the local service.
+
+### Configure Ollama semantic embeddings
+
+With the daemon running and an embedding model already installed in Ollama:
+
+```bash
+hiero semantic configure --provider ollama \
+  --base-url http://127.0.0.1:11434 --model nomic-embed-text:latest
+hiero semantic status --json
+hiero service status --json
+```
+
+`nomic-embed-text:latest` is an explicit example model selection, separate from
+chat/Dream profiles. Configuration persists provider, base URL and model in the
+application-owned `semantic.conf`, increments its revision and rearms the existing
+supervised worker. The configure acknowledgement reports `acquiring`; only the
+subsequent daemon state `ready` establishes readiness. Existing corpus chunks
+are rebuilt under the selected model's digest and actual dimensions. Status
+includes the effective identity and configuration revision. Changes to the
+installed model digest fail closed; configure again to rebuild under its new
+identity. Requests never pull models or silently truncate text.
+
+The pinned tokenizer is still required for existing local chunk segmentation;
+Ollama receives the exact original text, including text beyond local token
+truncation. No ONNX model or runtime is required for this backend. A normal
+installed bundle supplies the tokenizer. The configure command reuses a staged
+verified tokenizer and otherwise explicitly attempts acquisition from the pinned
+`DEFAULT_TOKENIZER_URL` in `semantic_model.rs`. That existing downloader currently
+rejects upstream redirects (including HTTP 302); for a development checkout,
+stage the verified pinned tokenizer in the semantic asset directory before
+configuring. The default ONNX `semantic enable --runtime <library>` path remains
+available.
+
+The authenticated REST equivalent is `POST /semantic/configure` with
+`{"provider":"ollama","base_url":"http://127.0.0.1:11434","model":"nomic-embed-text:latest"}`.
+Explicit tokenizer-only acquisition uses `POST /semantic/acquire` with
+`{"tokenizer_only":true}`. Neither status nor configuration reads download or
+pull models. Embedding requests allow at most 65,536 UTF-8 bytes, require exactly
+one finite nonzero vector with at most 16,384 components, bound response reads to
+1 MiB, and use a 30-second inference deadline (5 seconds for model discovery).
+Errors leave the semantic lane unavailable; FTS results cannot count as semantic
+success.
