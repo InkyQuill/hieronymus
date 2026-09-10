@@ -52,6 +52,18 @@ jobs:
         run: ./scripts/release-build.sh
       - name: Verify packaged version and archive metadata
         run: bun scripts/check-rust-release.ts --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
+      - name: Verify the standalone installer before publication
+        run: |
+          cp scripts/install.sh target/release-dist/install.sh
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -r "$smoke_dir"' EXIT
+          mkdir -p "$smoke_dir/home"
+          env HOME="$smoke_dir/home" XDG_CONFIG_HOME="$smoke_dir/home/.config" \
+            XDG_DATA_HOME="$smoke_dir/home/.local/share" \
+            bash target/release-dist/install.sh --release-dir target/release-dist \
+            --app-dir "$smoke_dir/app" --data-root "$smoke_dir/data" \
+            --unit-dir "$smoke_dir/units" --no-activate
+          "$smoke_dir/app/bin/hiero" version --json
       - name: Report build resource usage
         if: always()
         run: |
@@ -81,9 +93,11 @@ jobs:
 
           Signing, SBOM and provenance retain the initial Rust-line waiver. The release
           environment declaration does not prove remote reviewer settings. These three
-          downloadable assets support local --release-dir installation. They do not
+          payload assets and standalone install.sh support --release-dir installation.
+          They do not
           establish a deployed channel update feed or authorize a public feed URL.
           NOTES
           gh release create "$GITHUB_REF_NAME" --verify-tag \
             --title "hiero $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" \
-            "$archive" "$checksums" "target/release-dist/release.json"
+            "$archive" "$checksums" "target/release-dist/release.json" \
+            "target/release-dist/install.sh"

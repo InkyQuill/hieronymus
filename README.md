@@ -8,7 +8,27 @@ The application is a Rust 1.96 workspace with SQLite/FTS5, LanceDB and mandatory
 ONNX semantic inference. A Svelte 5 console is built with Bun 1.4.0 and embedded
 in the release binary. Python is not required to build, test, release or run it.
 
-## Install a native candidate
+## Install a binary release
+
+The supported target is Linux x86_64. Download the native archive, checksum,
+`release.json` and standalone `install.sh` from the
+[GitHub releases](https://github.com/InkyQuill/hieronymus/releases).
+With the GitHub CLI, installation requires no source checkout:
+
+```bash
+gh release download v0.8.0 --repo InkyQuill/hieronymus --dir hieronymus-release \
+  --pattern 'hieronymus-*-x86_64-unknown-linux-gnu.tar.gz' \
+  --pattern '*.sha256' --pattern release.json --pattern install.sh
+echo 'dd27c2715e75dccefe246484bab544521df60bdf1eca0fe9260f7caee1c60eea  hieronymus-release/install.sh' | sha256sum --check && \
+bash hieronymus-release/install.sh --release-dir hieronymus-release
+```
+
+The checksum above pins the v0.8.0 installer before execution. The installer
+then verifies the archive checksum and bundled native assets before
+installing. The application needs no Python, Bun or Rust compiler at runtime.
+The same four files can be downloaded from the release page without the GitHub CLI.
+
+## Install from a checkout
 
 The supported target is Linux x86_64. Given a verified release directory containing
 `release.json`, its archive and checksum file, run from this checkout:
@@ -25,7 +45,7 @@ For a disposable installation without service activation:
   --unit-dir /tmp/hiero-rehearsal/units --no-activate
 ```
 
-The installer delegates to `scripts/install.sh`; it is intended for checkout
+The root checkout installer delegates to `scripts/install.sh`; it is intended for checkout
 usage. The installed executable includes its model/runtime assets and needs no
 Bun or compiler. No public release feed is assumed. Native host acceptance and
 installed workflow qualification remain separate gates; see the
