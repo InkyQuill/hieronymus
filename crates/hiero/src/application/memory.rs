@@ -400,7 +400,10 @@ fn short_term_add(application: &Application, arguments: &Value) -> Result<Value,
     let record = store
         .add_short_term_memory(args.session_id, &args.into_input())
         .map_err(domain)?;
-    Ok(json!({"memory_id": record.id}))
+    let claims = store
+        .captured_short_term_claims(record.id)
+        .map_err(domain)?;
+    Ok(json!({"memory_id": record.id, "storage": "short_term", "claims": claims}))
 }
 
 // --------------------------------------------- hieronymus_short_term_add_batch
@@ -473,7 +476,18 @@ fn short_term_add_batch(application: &Application, arguments: &Value) -> Result<
         .add_short_term_memories_batch(args.session_id, &inputs)
         .map_err(domain)?;
     let memory_ids: Vec<i64> = records.iter().map(|record| record.id).collect();
-    Ok(json!({"memory_ids": memory_ids, "count": memory_ids.len()}))
+    let captures = records
+        .iter()
+        .map(|record| {
+            store
+                .captured_short_term_claims(record.id)
+                .map(|claims| json!({"memory_id": record.id, "claims": claims}))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(domain)?;
+    Ok(
+        json!({"memory_ids": memory_ids, "count": memory_ids.len(), "storage": "short_term", "captures": captures}),
+    )
 }
 
 // -------------------------------------------------------- hieronymus_feedback

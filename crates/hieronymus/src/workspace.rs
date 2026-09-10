@@ -75,6 +75,16 @@ pub struct ShortTermMemoryInput {
     pub soft_origin: String,
 }
 
+/// Identity and conservative capture diagnostics for a claim bound to one
+/// short-term memory. Diagnostics describe missing metadata only; they do not
+/// widen applicability or decide whether a resolved claim matches a query.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapturedShortTermClaim {
+    pub claim_id: i64,
+    pub revision: i64,
+    pub warnings: Vec<&'static str>,
+}
+
 impl Default for ShortTermMemoryInput {
     fn default() -> Self {
         Self {
@@ -577,6 +587,38 @@ impl WorkspaceStore {
             records.push(hydrate_memory(&connection, id)?);
         }
         Ok(records)
+    }
+
+    pub fn captured_short_term_claims(
+        &self,
+        memory_id: i64,
+    ) -> Result<Vec<CapturedShortTermClaim>, WorkspaceError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "select c.id,c.revision,a.metadata_state,
+                    exists(select 1 from knowledge_gates g where g.applicability_id=a.id)
+             from memory_claims c
+             join claim_bindings b on b.claim_id=c.id
+             join applicabilities a on a.id=c.applicability_id
+             where b.short_term_id=?1 order by c.id",
+        )?;
+        let rows = statement.query_map([memory_id], |row| {
+            let metadata_state: String = row.get(2)?;
+            let has_knowledge_gate: bool = row.get(3)?;
+            let mut warnings = Vec::new();
+            if metadata_state != "resolved" {
+                warnings.push("unresolved_story_context");
+            }
+            if !has_knowledge_gate {
+                warnings.push("missing_knowledge_gate");
+            }
+            Ok(CapturedShortTermClaim {
+                claim_id: row.get(0)?,
+                revision: row.get(1)?,
+                warnings,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn search_short_term_memories(

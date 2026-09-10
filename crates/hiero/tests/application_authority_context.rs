@@ -35,7 +35,15 @@ fn application_preserves_context_and_unknown_annotations() {
             .story_viewpoint,
         Viewpoint::Narrator
     );
-    app.call("hieronymus_short_term_add",&json!({"session_id":session,"kind":"note","text":"A secret observation without resolved chronology."}),"agent").unwrap();
+    let capture=app.call("hieronymus_short_term_add",&json!({"session_id":session,"kind":"note","text":"A secret observation without resolved chronology."}),"agent").unwrap();
+    assert_eq!(capture["storage"], "short_term");
+    assert_eq!(capture["claims"].as_array().unwrap().len(), 1);
+    assert!(capture["claims"][0]["claim_id"].is_u64());
+    assert_eq!(capture["claims"][0]["revision"], 1);
+    assert_eq!(
+        capture["claims"][0]["warnings"],
+        json!(["unresolved_story_context"])
+    );
     let result = app
         .call(
             "hieronymus_recall",
@@ -49,6 +57,66 @@ fn application_preserves_context_and_unknown_annotations() {
     let hidden = &result["non_current"][0];
     assert_eq!(hidden["text"], "");
     assert!(hidden["claim_annotation"].is_object());
+}
+
+#[test]
+fn typed_short_term_capture_returns_actual_claim_identity_and_is_current() {
+    let (_root, app, _) = fixture();
+    current_story::register(app.config(), "book");
+    let session=app.call("hieronymus_session_start",&json!({"series_slug":"book","volume":"I","chapter":"Opening","story_viewpoint":"Narrator"}),"agent").unwrap()["session_id"].as_i64().unwrap();
+    let claim = current_story::claim(app.config(), "book", "Alex speaks in clipped phrases.");
+    let capture = app
+        .call(
+            "hieronymus_short_term_add",
+            &json!({"session_id":session,"kind":"voice","text":claim.text,"claims":[claim]}),
+            "agent",
+        )
+        .unwrap();
+    let captured = &capture["claims"][0];
+    assert!(captured["claim_id"].is_u64());
+    assert_eq!(captured["revision"], 1);
+    assert_eq!(captured["warnings"], json!([]));
+    let recalled = app
+        .call(
+            "hieronymus_recall",
+            &json!({"session_id":session,"series_slug":"book","query":"clipped phrases"}),
+            "agent",
+        )
+        .unwrap();
+    assert_eq!(
+        recalled["results"][0]["claim_annotation"]["claims"][0]["claim_id"],
+        captured["claim_id"]
+    );
+    assert_eq!(
+        recalled["results"][0]["claim_annotation"]["disposition"]["status"],
+        "current"
+    );
+}
+
+#[test]
+fn short_term_batch_reports_claims_for_each_memory() {
+    let (_root, app, _) = fixture();
+    let session = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug":"book"}),
+            "agent",
+        )
+        .unwrap()["session_id"]
+        .as_i64()
+        .unwrap();
+    let capture=app.call("hieronymus_short_term_add_batch",&json!({"session_id":session,"items":[{"kind":"note","text":"First."},{"kind":"note","text":"Second."}]}),"agent").unwrap();
+    assert_eq!(capture["storage"], "short_term");
+    assert_eq!(capture["captures"].as_array().unwrap().len(), 2);
+    for item in capture["captures"].as_array().unwrap() {
+        assert!(item["memory_id"].is_u64());
+        assert!(item["claims"][0]["claim_id"].is_u64());
+        assert_eq!(item["claims"][0]["revision"], 1);
+        assert_eq!(
+            item["claims"][0]["warnings"],
+            json!(["unresolved_story_context", "missing_knowledge_gate"])
+        );
+    }
 }
 #[test]
 fn every_application_read_honors_required_receipt_including_sessionless() {
@@ -143,6 +211,26 @@ fn active_registry_exposes_read_dependencies_and_ordinary_capture() {
         .find(|t| t.name == "hieronymus_short_term_add")
         .unwrap();
     assert!(tool.input_schema["properties"]["claims"].is_object());
+    let rag = registry
+        .list_tools()
+        .iter()
+        .find(|t| t.name == "hieronymus_rag_import")
+        .unwrap();
+    let claims = &rag.input_schema["properties"]["claims"];
+    assert_eq!(claims["propertyNames"]["pattern"], "^(0|[1-9][0-9]*)$");
+    assert_eq!(
+        claims["additionalProperties"]["items"]["$ref"],
+        "#/$defs/ClaimInput"
+    );
+    assert_eq!(
+        rag.input_schema["$defs"]["ClaimInput"]["properties"]["concept_id"]["anyOf"][0]["type"],
+        "integer"
+    );
+    assert!(
+        rag.input_schema["$defs"]["ApplicabilityV1"]["properties"]
+            .get("concept_id")
+            .is_none()
+    );
 }
 
 #[path = "../../hieronymus/tests/support/current_story.rs"]
