@@ -108,7 +108,16 @@ fn short_term_batch_reports_claims_for_each_memory() {
     let capture=app.call("hieronymus_short_term_add_batch",&json!({"session_id":session,"items":[{"kind":"note","text":"First."},{"kind":"note","text":"Second."}]}),"agent").unwrap();
     assert_eq!(capture["storage"], "short_term");
     assert_eq!(capture["captures"].as_array().unwrap().len(), 2);
-    for item in capture["captures"].as_array().unwrap() {
+    assert_eq!(capture["count"], 2);
+    let db = hieronymus::db::open_migrated(&app.config().database_path()).unwrap();
+    for (index, item) in capture["captures"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(item["memory_id"], capture["memory_ids"][index]);
+        let (text, claim_id, revision): (String, i64, i64) = db.query_row(
+            "select m.text,c.id,c.revision from short_term_memories m join claim_bindings b on b.short_term_id=m.id join memory_claims c on c.id=b.claim_id where m.id=?",
+            [item["memory_id"].as_i64().unwrap()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(text, ["First.", "Second."][index]);
+        assert_eq!(item["claims"][0]["claim_id"], claim_id);
+        assert_eq!(item["claims"][0]["revision"], revision);
         assert!(item["memory_id"].is_u64());
         assert!(item["claims"][0]["claim_id"].is_u64());
         assert_eq!(item["claims"][0]["revision"], 1);
@@ -118,6 +127,57 @@ fn short_term_batch_reports_claims_for_each_memory() {
         );
     }
 }
+#[test]
+fn capture_diagnostics_query_failure_rolls_back_the_whole_batch() {
+    let (_root, app, _) = fixture();
+    let session = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug":"book"}),
+            "agent",
+        )
+        .unwrap()["session_id"]
+        .as_i64()
+        .unwrap();
+    let db = hieronymus::db::open_migrated(&app.config().database_path()).unwrap();
+    // Fault only response decoding: the disposable fixture permits a malformed
+    // revision and a session-activity trigger supplies it after claim capture.
+    // This runs after every item is written and before response diagnostics.
+    db.execute_batch("pragma writable_schema=on;
+        update sqlite_schema set sql=replace(sql, \"check (typeof(revision) = 'integer' and revision >= 0)\", 'check (1)') where name='memory_claims';
+        pragma writable_schema=off;
+        pragma schema_version=999;
+        create trigger malformed_capture_revision after update of last_activity_at on task_sessions begin
+            update memory_claims set revision=x'80';
+        end;").unwrap();
+    let claim = json!({"text":"Unknown context.","concept_id":null,"applicability":{"series_id":1,"timeline_id":null,"volume_key":null,"chapter_key":null,"scope_predicates":[],"valid_from":null,"valid_until":null,"metadata_state":"Unspecified","knowledge_gates":[]}});
+    let result = app.call("hieronymus_short_term_add_batch", &json!({"session_id":session,"items":[{"kind":"note","text":"First.","claims":[claim]},{"kind":"note","text":"Second.","claims":[claim]}]}), "agent");
+    assert!(result.is_err());
+    for table in [
+        "short_term_memories",
+        "memory_claims",
+        "claim_bindings",
+        "evidence_records",
+    ] {
+        let count: i64 = db
+            .query_row(&format!("select count(*) from {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "diagnostics failure must roll back {table}");
+    }
+    db.execute_batch("drop trigger malformed_capture_revision")
+        .unwrap();
+    let retry = app.call("hieronymus_short_term_add_batch", &json!({"session_id":session,"items":[{"kind":"note","text":"First.","claims":[claim]},{"kind":"note","text":"Second.","claims":[claim]}]}), "agent").unwrap();
+    assert_eq!(retry["count"], 2);
+    assert_eq!(
+        db.query_row("select count(*) from short_term_memories", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+}
+
 #[test]
 fn every_application_read_honors_required_receipt_including_sessionless() {
     let (_root, app, session) = fixture();
@@ -534,4 +594,50 @@ fn actual_recall_hides_outside_scoped_qualification_in_entire_response() {
                 .contains(hidden)
         );
     }
+}
+
+#[test]
+fn generated_claim_template_matches_canonical_dto_with_observed_series() {
+    let (_root, app, session) = fixture();
+    let db = hieronymus::db::open_migrated(&app.config().database_path()).unwrap();
+    let series_id: i64 = db
+        .query_row("select id from series where slug='book'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let files = hiero::agent_plugins::render(app.config()).unwrap();
+    let skill = &files
+        .iter()
+        .find(|(path, _)| path.ends_with("skills/hieronymus-learn/SKILL.md"))
+        .unwrap()
+        .1;
+    assert!(skill.contains("use `concept_id:null` when identity is unknown"));
+    let template = skill
+        .split('`')
+        .find(|part| part.starts_with("{\"text\":"))
+        .unwrap();
+    let value: Value =
+        serde_json::from_str(&template.replace("SERIES_ID", &series_id.to_string())).unwrap();
+    let claim: hieronymus::claim_capture::ClaimInput =
+        serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(
+        value,
+        serde_json::to_value(&claim).unwrap(),
+        "template contains every canonical field"
+    );
+    assert!(value.get("concept_id").unwrap().is_null());
+    assert_eq!(claim.applicability.valid_from, None);
+    assert_eq!(claim.applicability.timeline_id, None);
+    assert!(claim.applicability.knowledge_gates.is_empty());
+    let capture = app
+        .call(
+            "hieronymus_short_term_add",
+            &json!({"session_id":session,"kind":"note","text":claim.text,"claims":[claim]}),
+            "agent",
+        )
+        .unwrap();
+    assert_eq!(
+        capture["claims"][0]["warnings"],
+        json!(["unresolved_story_context", "missing_knowledge_gate"])
+    );
 }

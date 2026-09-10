@@ -85,6 +85,13 @@ pub struct CapturedShortTermClaim {
     pub warnings: Vec<&'static str>,
 }
 
+/// A memory and its claim diagnostics, collected in the original write transaction.
+#[derive(Debug, Clone)]
+pub struct ShortTermCapture {
+    pub memory: ShortTermMemoryRecord,
+    pub claims: Vec<CapturedShortTermClaim>,
+}
+
 impl Default for ShortTermMemoryInput {
     fn default() -> Self {
         Self {
@@ -462,6 +469,20 @@ impl WorkspaceStore {
         session_id: i64,
         items: impl IntoIterator<Item = &'a ShortTermMemoryInput>,
     ) -> Result<Vec<ShortTermMemoryRecord>, WorkspaceError> {
+        Ok(self
+            .capture_short_term_memories_batch(session_id, items)?
+            .into_iter()
+            .map(|capture| capture.memory)
+            .collect())
+    }
+
+    /// Insert memories and collect all diagnostics before committing the batch.
+    /// A diagnostic failure rolls back every write; success needs no second read.
+    pub fn capture_short_term_memories_batch<'a>(
+        &self,
+        session_id: i64,
+        items: impl IntoIterator<Item = &'a ShortTermMemoryInput>,
+    ) -> Result<Vec<ShortTermCapture>, WorkspaceError> {
         let items: Vec<&ShortTermMemoryInput> = items.into_iter().collect();
         if items.is_empty() {
             return Err(WorkspaceError::EmptyBatch);
@@ -565,8 +586,15 @@ impl WorkspaceStore {
             "update task_sessions set last_activity_at = ?1 where id = ?2",
             rusqlite::params![now_iso8601(), session_id],
         )?;
+        let captures = records
+            .into_iter()
+            .map(|memory| {
+                let claims = Self::captured_short_term_claims(&transaction, memory.id)?;
+                Ok(ShortTermCapture { memory, claims })
+            })
+            .collect::<Result<Vec<_>, WorkspaceError>>()?;
         transaction.commit()?;
-        Ok(records)
+        Ok(captures)
     }
 
     pub fn list_short_term_memories(
@@ -589,11 +617,10 @@ impl WorkspaceStore {
         Ok(records)
     }
 
-    pub fn captured_short_term_claims(
-        &self,
+    fn captured_short_term_claims(
+        connection: &Connection,
         memory_id: i64,
     ) -> Result<Vec<CapturedShortTermClaim>, WorkspaceError> {
-        let connection = self.connection()?;
         let mut statement = connection.prepare(
             "select c.id,c.revision,a.metadata_state,
                     exists(select 1 from knowledge_gates g where g.applicability_id=a.id)

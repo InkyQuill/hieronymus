@@ -315,7 +315,7 @@
           "$ref": "#/$defs/ClaimInput"
         },
         "default": [],
-        "description": "Ordinary captured assertions as ClaimInput objects: text and concept_id are siblings of applicability. Omit a concept rather than inventing one. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth; capture never grants explicit-user authority."
+        "description": "Ordinary captured assertions as ClaimInput objects: text and concept_id are siblings of applicability. Use concept_id:null when identity is unknown; never invent an ID. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth; capture never grants explicit-user authority."
       },
       "story_timeline_id": {
         "anyOf": [
@@ -371,7 +371,7 @@
           "$ref": "#/$defs/ClaimInput"
         },
         "default": [],
-        "description": "Ordinary captured assertions as ClaimInput objects: text and concept_id are siblings of applicability. Omit a concept rather than inventing one. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth; capture never grants explicit-user authority."
+        "description": "Ordinary captured assertions as ClaimInput objects: text and concept_id are siblings of applicability. Use concept_id:null when identity is unknown; never invent an ID. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth; capture never grants explicit-user authority."
       }
     },
     "hieronymus_concept_facet_add": {
@@ -400,7 +400,7 @@
         "propertyNames": {
           "pattern": "^(0|[1-9][0-9]*)$"
         },
-        "description": "New claims keyed by zero-based numeric chunk index, for example {\"0\":[{\"text\":\"Alex speaks briefly.\",\"concept_id\":2,\"applicability\":{...}}]}. text and concept_id belong on ClaimInput, outside applicability.",
+        "description": "New claims keyed by zero-based numeric chunk index, for example {\"0\":[{\"text\":\"Alex speaks briefly.\",\"concept_id\":null,\"applicability\":{...}}]}. text and concept_id belong on ClaimInput, outside applicability. The applicability ellipsis is a placeholder for a complete ApplicabilityV1 object using observed context, never invented IDs or chronology.",
         "additionalProperties": {
           "type": "array",
           "items": {
@@ -429,7 +429,7 @@
       "$ref": "#/$defs/ClaimInput"
     },
     "default": [],
-    "description": "Ordinary ClaimInput assertions for this item. text and concept_id are siblings of applicability; missing resolved context or knowledge gates keep claims conservatively excluded from current truth."
+    "description": "Ordinary ClaimInput assertions for this item. text and concept_id are siblings of applicability; use concept_id:null when identity is unknown and never invent an ID. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth."
   },
   "definitions": {
     "StoryViewpoint": {

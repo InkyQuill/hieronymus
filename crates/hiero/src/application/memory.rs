@@ -397,13 +397,12 @@ impl ShortTermAdd {
 fn short_term_add(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<ShortTermAdd>(arguments)?;
     let store = workspace(application)?;
-    let record = store
-        .add_short_term_memory(args.session_id, &args.into_input())
-        .map_err(domain)?;
-    let claims = store
-        .captured_short_term_claims(record.id)
-        .map_err(domain)?;
-    Ok(json!({"memory_id": record.id, "storage": "short_term", "claims": claims}))
+    let capture = store
+        .capture_short_term_memories_batch(args.session_id, [&args.into_input()])
+        .map_err(domain)?
+        .pop()
+        .expect("one item yields one capture");
+    Ok(json!({"memory_id": capture.memory.id, "storage": "short_term", "claims": capture.claims}))
 }
 
 // --------------------------------------------- hieronymus_short_term_add_batch
@@ -473,18 +472,13 @@ fn short_term_add_batch(application: &Application, arguments: &Value) -> Result<
         .map(|item| item.into_input())
         .collect();
     let records = store
-        .add_short_term_memories_batch(args.session_id, &inputs)
+        .capture_short_term_memories_batch(args.session_id, &inputs)
         .map_err(domain)?;
-    let memory_ids: Vec<i64> = records.iter().map(|record| record.id).collect();
-    let captures = records
-        .iter()
-        .map(|record| {
-            store
-                .captured_short_term_claims(record.id)
-                .map(|claims| json!({"memory_id": record.id, "claims": claims}))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(domain)?;
+    let memory_ids: Vec<i64> = records.iter().map(|capture| capture.memory.id).collect();
+    let captures: Vec<_> = records
+        .into_iter()
+        .map(|capture| json!({"memory_id": capture.memory.id, "claims": capture.claims}))
+        .collect();
     Ok(
         json!({"memory_ids": memory_ids, "count": memory_ids.len(), "storage": "short_term", "captures": captures}),
     )
