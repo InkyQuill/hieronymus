@@ -19,6 +19,12 @@ jobs:
     permissions:
       contents: write
     env:
+      # release-build also runs integration tests before the release-profile build.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
       RELEASE_REF: ${{ github.ref }}
       HIERONYMUS_RELEASE_CHANNEL: stable
     steps:
@@ -46,6 +52,12 @@ jobs:
         run: ./scripts/release-build.sh
       - name: Verify packaged version and archive metadata
         run: bun scripts/check-rust-release.ts --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
+      - name: Report build resource usage
+        if: always()
+        run: |
+          df -h
+          free -h
+          du -sh target 2>/dev/null || true
       - name: Publish the verified GitHub release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

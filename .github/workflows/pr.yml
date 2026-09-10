@@ -11,6 +11,14 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    env:
+      # LanceDB/DataFusion debug symbols are repeated in every integration binary.
+      # Keep full test coverage and debug assertions within hosted-runner resources.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
     permissions:
       contents: read
     steps:
@@ -38,6 +46,12 @@ jobs:
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --all-features --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
+      - name: Report build resource usage
+        if: always()
+        run: |
+          df -h
+          free -h
+          du -sh target 2>/dev/null || true
 
   frontend:
     runs-on: ubuntu-latest
