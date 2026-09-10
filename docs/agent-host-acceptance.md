@@ -14,8 +14,11 @@ synthetic extension tests are preparation only; installed Pi TUI/PTy evidence is
 required before native acceptance. All zCode observations below retain their original
 labels and remain paused/unqualified rather than being credited to Pi.
 Pi trusted ingress additionally requires the isolated ordered launch documented in
-[agent workflows](agent-workflows.md); generic package discovery is explicitly unsupported
-because an earlier extension can transform text while Pi preserves `source: interactive`.
+[agent workflows](agent-workflows.md). Generic package loading remains usable for prompts,
+skills, and MCP reads but does not mint trusted provenance. The incomplete matrix is retained
+in [deferred qualification](deferred/2026-09-10-native-host-qualification.md) for the week of
+2026-09-14. It is not a current implementation/merge blocker and establishes neither native
+acceptance nor release readiness.
 
 ## Historical P2 report (unchanged evidence)
 

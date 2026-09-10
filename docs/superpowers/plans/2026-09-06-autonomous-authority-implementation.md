@@ -186,3 +186,8 @@ At implementation completion run `cargo test --workspace`, `cargo clippy --works
 Self-review coverage: Tasks 1–3 implement authority/evidence/migration and S2; Task 4 implements immediate S3/S4 and correct retrieval; Task 2 plus Task 4 implement S5; Task 5 implements S6; Task 6 establishes the trustworthy origin needed by S3/S4; Task 7 exercises S1/S7 and all minimum examples. Implementation must preserve old migration and Dream link/recovery behavior throughout.
 
 External requirements remaining after this design: verified user-event ingestion in each actual host; installed-host/runtime access; real configured semantic model/provider and corpus/language acceptance evidence. These constrain release claims, not the independently executable domain design. Learned evidence thresholds and conservative unknown-position recall must be evaluated against a realistic story corpus; changing them is a versioned policy decision with measured evidence. F1/F2 packaging, retrieval acceptance and cutover remain unimplemented and separately owned. No live migration, publication, release promotion or user-host rewrite is part of this plan's P1 authoring scope.
+
+Owner steering on 2026-09-10 defers the incomplete native-host matrix to the week of
+2026-09-14; see [deferred qualification](../../deferred/2026-09-10-native-host-qualification.md).
+Those missing rows do not block the current implementation/merge milestone and remain
+explicitly unqualified.
