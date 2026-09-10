@@ -30,7 +30,7 @@ const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-r
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable> [--json] [--data-root <path>] (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
-const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|pi|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
+const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
 
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
 const UPDATE_USAGE: &str = "usage: hiero update (--release-dir <dir> | --release-url <https-base>) [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
@@ -821,20 +821,6 @@ fn run_agent_hook(
     reject_feedback_flags(parsed, "agent-hook")?;
     reject_headless_flags(parsed, "agent-hook")?;
     let config = load_config(data_root);
-    if parsed.subcommand.as_deref() == Some("session-start") && parsed.hook_host.is_some() {
-        if parsed.cwd.is_some() || parsed.delivery_id.is_some() {
-            return Err("Pi session-start reads host identity and cwd from stdin".into());
-        }
-        let input = hiero::agent_prompt_delivery::read_json(std::io::stdin().lock())
-            .map_err(|error| error.to_string())?;
-        let result = hiero::agent_prompt_delivery::session_start(
-            &input,
-            parsed.hook_host.as_deref().expect("checked above"),
-        )
-        .map_err(|error| error.to_string())?;
-        println!("{result}");
-        return Ok(ExitCode::SUCCESS);
-    }
     if matches!(
         parsed.subcommand.as_deref(),
         Some("bind-context" | "user-prompt-submit" | "retry-delivery")
@@ -1515,11 +1501,12 @@ fn run_uninstall_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
 }
 
 #[cfg(test)]
-mod pi_usage_tests {
+mod agent_hook_usage_tests {
     use super::*;
 
     #[test]
-    fn agent_hook_usage_advertises_pi_as_a_first_class_host() {
-        assert!(AGENT_HOOK_USAGE.contains("claude|codex|pi|zcode"));
+    fn agent_hook_usage_excludes_passive_pi() {
+        assert!(AGENT_HOOK_USAGE.contains("claude|codex|zcode"));
+        assert!(!AGENT_HOOK_USAGE.contains("|pi|"));
     }
 }

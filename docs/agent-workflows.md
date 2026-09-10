@@ -36,38 +36,30 @@ series_list with this override. This is protocol evidence, not candidate workflo
 Historical P2 failures and newer qualification status are
 tracked in [host acceptance](agent-host-acceptance.md).
 
-Pi can install `<data-root>/agent-plugins/pi` through `pi install <path>` for its package
-resources. In normal package loading the Hieronymus extension is passive: prompts continue
-unchanged, packaged skills remain callable, and the separately installed `pi-mcp-adapter`
-provides ordinary MCP context reads. No trusted correction receipt is minted because generic
-extension discovery cannot prove that Hieronymus saw the original input. Use this isolated
-launch only when trusted interactive correction delivery is required:
+Pi can install `<data-root>/agent-plugins/pi` as an ordinary package:
 
 ```sh
-HIERONYMUS_PI_TRUSTED_LAUNCH=isolated-v1 pi \
-  --no-extensions \
-  -e <data-root>/agent-plugins/pi/extensions/hieronymus.ts \
-  -e <installed-pi-mcp-adapter>/index.ts \
-  --mcp-config <data-root>/agent-plugins/pi/mcp.json \
-  --skill <data-root>/agent-plugins/pi/skills
+PI_CODING_AGENT_DIR="$PRIVATE_PI_DIR" pi install <data-root>/agent-plugins/pi
 ```
 
-Pi documents repeated `-e` arguments in load order; `--no-extensions` excludes ambient
-handlers, making Hieronymus the first input handler and the installed adapter the only MCP
-implementation. The generated `mcp.json` registers only `hieronymus-mcp` and pins
+The package exposes all eight skills. Its generated `mcp.json` registers only
+`hieronymus-mcp` and pins
 `protocolVersion` to `2026-07-28`; `pi-mcp-adapter` owns discovery, lazy lifecycle,
-authoritative tool catalog, calls and error envelopes. The Hieronymus extension accepts
-raw pre-expansion text only when Pi reports `source: interactive` under this isolated
-launch. Ordinary text carries its correlated receipt through normal, steering and follow-up
-queues. Idle slash skills/templates retain their raw command for native expansion and get
-the correlated context at `before_agent_start`; slash commands during streaming must be
-retried idle. RPC and extension input cannot mint a trusted delivery. With images attached,
-only the exact text is trusted and the transformed context
-explicitly excludes image content. Hook errors return Pi's handled result with a visible
-diagnostic so the original prompt does not proceed.
+authoritative tool catalog, calls and error envelopes. Pi can use Hieronymus MCP tools and
+skills after package installation. This passive package has no input hook and does not
+recognize trusted corrections, mint Applied receipts, or block prompts.
 
-Claude loads `<data-root>/agent-plugins/claude` with its supported `--plugin-dir` option.
-The manifest explicitly references `hooks/hooks.json`. zCode's supported isolated
+Claude can install the generated local marketplace literally:
+
+```sh
+CLAUDE_CONFIG_DIR="$PRIVATE_CLAUDE_HOME" claude plugin marketplace add \
+  --scope local <data-root>/agent-plugins
+CLAUDE_CONFIG_DIR="$PRIVATE_CLAUDE_HOME" claude plugin install \
+  --scope local hieronymus@hieronymus-local
+```
+
+The catalog at `.claude-plugin/marketplace.json` resolves `./claude` from the catalog root.
+The Claude manifest explicitly references `hooks/hooks.json`. zCode's supported isolated
 `plugins.dirs` setting can load that same Claude directory. A zCode launcher must set
 `HIERONYMUS_AGENT_HOST=zcode`; the identical shared hook defaults to claude otherwise.
 The installed handler validates the resulting supported host name. This is explicit

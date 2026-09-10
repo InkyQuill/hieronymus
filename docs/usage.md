@@ -439,7 +439,8 @@ hiero plugins generate [--dry-run] [--json] [--data-root <path>]
 
 Writes the installation-owned bundle under the config root's
 `agent-plugins/` directory: the eight workflow skills, the MCP registration,
-Codex hooks, and one manifest per supported host (`codex`, `claude`,
+Codex hooks, local Claude/Codex marketplace catalogs, a passive Pi MCP/skills
+package, and one manifest per other supported host (`codex`, `claude`,
 `gemini`, `opencode`, `openclaw`). The MCP registration uses the stable
 `hieronymus-mcp` entry point, which discovers the local daemon through the
 data root's discovery record — generated configuration never contains a

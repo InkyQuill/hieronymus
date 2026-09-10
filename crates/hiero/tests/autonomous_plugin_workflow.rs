@@ -243,6 +243,31 @@ fn local_marketplace_points_to_generated_codex_bundle_and_manifest_hook() {
 }
 
 #[test]
+fn claude_marketplace_points_to_generated_bundle() {
+    let root = tempfile::tempdir().unwrap();
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    hiero::agent_plugins::generate(&config).unwrap();
+    let catalog: Value = serde_json::from_slice(
+        &std::fs::read(
+            config
+                .agent_plugins_root()
+                .join(".claude-plugin/marketplace.json"),
+        )
+        .expect("Claude local marketplace"),
+    )
+    .unwrap();
+    let plugin = &catalog["plugins"][0];
+    assert_eq!(plugin["source"], "./claude");
+    let bundle = config.agent_plugins_root().join("claude");
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(bundle.join(".claude-plugin/plugin.json")).unwrap())
+            .unwrap();
+    assert_eq!(plugin["name"], manifest["name"]);
+    assert_eq!(plugin["version"], manifest["version"]);
+    assert_eq!(plugin["description"], manifest["description"]);
+}
+
+#[test]
 fn ambiguous_prompt_records_one_tentative_job_without_claiming_applied_dependency() {
     use hiero::{agent_prompt_delivery, application::Application};
     use hieronymus::data_root::HieronymusConfig;

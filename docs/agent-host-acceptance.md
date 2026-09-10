@@ -13,9 +13,8 @@ The owner-authorized required matrix is now Claude/Codex/Pi. Generated Pi packag
 synthetic extension tests are preparation only; installed Pi TUI/PTy evidence is still
 required before native acceptance. All zCode observations below retain their original
 labels and remain paused/unqualified rather than being credited to Pi.
-Pi trusted ingress additionally requires the isolated ordered launch documented in
-[agent workflows](agent-workflows.md). Generic package loading remains usable for prompts,
-skills, and MCP reads but does not mint trusted provenance. The incomplete matrix is retained
+Pi is a passive package for prompts, skills, and MCP reads and does not mint trusted
+provenance. Active Pi trusted ingress is deferred. The incomplete matrix is retained
 in [deferred qualification](deferred/2026-09-10-native-host-qualification.md) for the week of
 2026-09-14. It is not a current implementation/merge blocker and establishes neither native
 acceptance nor release readiness.

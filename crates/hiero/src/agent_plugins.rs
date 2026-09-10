@@ -46,7 +46,7 @@ If the optional UserPromptSubmit hook reports binding_required, it provides the 
 
 An independently delivered subsequent user prompt can apply immediately through the installed handler. Consume its required_decision_id in dependent recall/contract/validation calls; never redeem its receipt through public hieronymus_correct. Unresolved authentic text records a tentative signal, increments authority revision and schedules gathering, but has no rule/claim effect and cannot satisfy a dependency. Observe the returned revision before explicitly binding a genuinely new prompt. A failed delivery gives an ID: `hiero agent-hook retry-delivery --delivery-id <id>` retries its saved context. Re-invoking user-prompt-submit creates a new event, including identical text.
 
-The stable commands hieronymus-mcp, hieronymus-agent-hook and hiero discover the local installation. Optional hook loading is controlled by supported host trust/settings. Normal Pi package loading leaves prompts unchanged and uses the separately installed pi-mcp-adapter for MCP context reads; it does not mint trusted correction provenance. Pi trusted correction delivery requires the documented isolated launch with `HIERONYMUS_PI_TRUSTED_LAUNCH=isolated-v1`, `--no-extensions`, the Hieronymus extension first, the adapter second, and the generated MCP config/skills explicitly selected. The shared Claude/zCode bundle defaults to host claude; a zCode launcher must explicitly set HIERONYMUS_AGENT_HOST=zcode. Codex uses its codex hook. Set HIERONYMUS_DATA_ROOT for a nondefault installation. Generated plugins remain in the application data root, never a book folder. Report a blocking issue in the conversation; do not create unsolicited book-file reports."#,
+The stable commands hieronymus-mcp, hieronymus-agent-hook and hiero discover the local installation. Optional hook loading is controlled by supported host trust/settings. Pi package loading supplies the eight skills and uses the separately installed pi-mcp-adapter for MCP context reads; it does not run trusted ingress or mint correction provenance. The shared Claude/zCode bundle defaults to host claude; a zCode launcher must explicitly set HIERONYMUS_AGENT_HOST=zcode. Codex uses its codex hook. Set HIERONYMUS_DATA_ROOT for a nondefault installation. Generated plugins remain in the application data root, never a book folder. Report a blocking issue in the conversation; do not create unsolicited book-file reports."#,
     )
 }
 fn recall_skill() -> String {
@@ -148,174 +148,6 @@ fn pi_mcp_json() -> String {
             }
         }
     }))
-}
-
-fn pi_extension() -> String {
-    r#"import { spawn } from "node:child_process";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-type HookPayload = Record<string, unknown>;
-type HookRunner = (subcommand: "session-start" | "user-prompt-submit", payload: HookPayload, cwd: string) => Promise<unknown>;
-
-function verifiedIsolatedLaunch(): boolean {
-  if (process.env.HIERONYMUS_PI_TRUSTED_LAUNCH !== "isolated-v1" || !process.argv.includes("--no-extensions")) return false;
-  const short = process.argv.indexOf("-e");
-  const long = process.argv.indexOf("--extension");
-  const index = short >= 0 && long >= 0 ? Math.min(short, long) : Math.max(short, long);
-  const firstExtension = index >= 0 ? process.argv[index + 1] : undefined;
-  return Boolean(firstExtension) && resolve(firstExtension) === fileURLToPath(import.meta.url);
-}
-
-function installedHook(subcommand: "session-start" | "user-prompt-submit", payload: HookPayload, cwd: string): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("hieronymus-agent-hook", [subcommand, "--host", "pi"], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`Hieronymus ${subcommand} failed (${code}): ${stderr.slice(0, 512)}`));
-        return;
-      }
-      try { resolve(JSON.parse(stdout)); }
-      catch { reject(new Error(`Hieronymus ${subcommand} returned invalid JSON`)); }
-    });
-    child.stdin.end(JSON.stringify(payload));
-  });
-}
-
-export function createHieronymusHandlers(
-  runHook: HookRunner = installedHook,
-  options: {
-    trustedLaunch?: boolean;
-    notify?: (message: string) => void;
-  } = {},
-) {
-  let activeSession: string | undefined;
-  let generation = 0;
-  let idleSlashInFlight: object | undefined;
-  let pendingIdleSlash: { generation: number; sessionId: string; context: string } | undefined;
-  const trustedLaunch = options.trustedLaunch ?? verifiedIsolatedLaunch();
-  const notify = (ctx: any, message: string) => {
-    if (options.notify) options.notify(message);
-    else ctx.ui.notify(message, "error");
-  };
-
-  return {
-    async sessionStart(_event: unknown, ctx: any) {
-      const invocation = ++generation;
-      activeSession = undefined;
-      idleSlashInFlight = undefined;
-      pendingIdleSlash = undefined;
-      if (!trustedLaunch) return;
-      const sessionId = ctx.sessionManager.getSessionId();
-      await runHook("session-start", {
-        hook_event_name: "SessionStart",
-        session_id: sessionId,
-        cwd: ctx.cwd,
-      }, ctx.cwd);
-      if (invocation === generation) activeSession = sessionId;
-    },
-    async input(event: any, ctx: any) {
-      if (event.source !== "interactive") return { action: "continue" as const };
-      if (!trustedLaunch) {
-        return { action: "continue" as const };
-      }
-      const sessionId = ctx.sessionManager.getSessionId();
-      if (!activeSession || sessionId !== activeSession) {
-        notify(ctx, "Hieronymus blocked this prompt because the Pi session identity was not validated.");
-        return { action: "handled" as const };
-      }
-      if (event.text.startsWith("/") && event.streamingBehavior) {
-        notify(ctx, "Hieronymus blocked this slash skill/template while Pi is streaming. Retry when Pi is idle so native expansion and trusted receipt context stay in one turn.");
-        return { action: "handled" as const };
-      }
-      if (idleSlashInFlight || pendingIdleSlash) {
-        notify(ctx, "Hieronymus blocked overlapping input. Retry after the current slash prompt starts.");
-        return { action: "handled" as const };
-      }
-      if (event.text.startsWith("/") && !ctx.isIdle()) {
-        notify(ctx, "Hieronymus blocked this slash skill/template because Pi is not idle. Retry when Pi is idle.");
-        return { action: "handled" as const };
-      }
-      const invocation = generation;
-      const slashToken = event.text.startsWith("/") ? {} : undefined;
-      if (slashToken) idleSlashInFlight = slashToken;
-      try {
-        const response: any = await runHook("user-prompt-submit", {
-          hook_event_name: "UserPromptSubmit",
-          session_id: sessionId,
-          prompt: event.text,
-          images_present: Boolean(event.images?.length),
-        }, ctx.cwd);
-        if (invocation !== generation || activeSession !== sessionId) {
-          notify(ctx, "Hieronymus blocked this prompt because its session changed during delivery.");
-          return { action: "handled" as const };
-        }
-        const context = response?.hookSpecificOutput?.additionalContext;
-        if (typeof context !== "string" || !context) {
-          throw new Error("Hieronymus prompt delivery returned no trusted turn context");
-        }
-        const imageNotice = event.images?.length
-          ? "\n\nAttached image content was not included in the trusted correction; only the exact interactive text was delivered. Do not claim image content as trusted or infer it through OCR."
-          : "";
-        const deliveryContext = context + imageNotice;
-        if (slashToken) {
-          if (!ctx.isIdle()) {
-            notify(ctx, "Hieronymus blocked this slash skill/template because Pi stopped being idle during trusted delivery.");
-            return { action: "handled" as const };
-          }
-          pendingIdleSlash = { generation: invocation, sessionId, context: deliveryContext };
-          return { action: "continue" as const };
-        }
-        return {
-          action: "transform" as const,
-          text: `${event.text}\n\n<HieronymusTrustedDelivery>\n${deliveryContext}\n</HieronymusTrustedDelivery>`,
-          images: event.images,
-        };
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        notify(ctx, `Hieronymus blocked this prompt because trusted delivery failed: ${detail}`);
-        return { action: "handled" as const };
-      } finally {
-        if (idleSlashInFlight === slashToken) idleSlashInFlight = undefined;
-      }
-    },
-    async beforeAgentStart(_event: unknown, ctx: any) {
-      const pending = pendingIdleSlash;
-      pendingIdleSlash = undefined;
-      if (!pending || pending.generation !== generation || pending.sessionId !== ctx.sessionManager.getSessionId()) return;
-      return {
-        message: {
-          customType: "hieronymus-delivery",
-          content: pending.context,
-          display: true,
-        },
-      };
-    },
-    async shutdown() {
-      generation += 1;
-      activeSession = undefined;
-      idleSlashInFlight = undefined;
-      pendingIdleSlash = undefined;
-    },
-  };
-}
-
-export default function hieronymus(pi: any) {
-  const handlers = createHieronymusHandlers();
-  pi.on("session_start", handlers.sessionStart);
-  pi.on("input", handlers.input);
-  pi.on("before_agent_start", handlers.beforeAgentStart);
-  pi.on("session_shutdown", handlers.shutdown);
-}
-"#.to_string()
 }
 
 fn pretty_json(value: &serde_json::Value) -> String {
@@ -470,14 +302,12 @@ fn target_assets(target: &str) -> Result<BTreeMap<String, String>, String> {
                     "private": true,
                     "type": "module",
                     "pi": {
-                        "extensions": ["./extensions/hieronymus.ts"],
                         "skills": ["./skills"],
                         "mcp": "./mcp.json"
                     }
                 })),
             );
             assets.insert("mcp.json".to_string(), pi_mcp_json());
-            assets.insert("extensions/hieronymus.ts".to_string(), pi_extension());
         }
         other => return Err(format!("unsupported agent plugin target: {other}")),
     }
@@ -500,6 +330,17 @@ pub fn render(config: &HieronymusConfig) -> Result<Vec<(PathBuf, String)>, Strin
         "name":"hieronymus-local", "interface":{"displayName":"Installed Hieronymus"},
         "plugins":[{"name":"hieronymus","source":{"source":"local","path":"./codex"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"}]
     }))));
+    rendered.push((root.join(".claude-plugin/marketplace.json"), pretty_json(&serde_json::json!({
+        "name": "hieronymus-local",
+        "description": "Local Hieronymus translation-memory plugin catalog.",
+        "owner": { "name": "Pavel Obruchnikov", "email": "me@inkyquill.net" },
+        "plugins": [{
+            "name": "hieronymus",
+            "description": "Translation memory, termbase, recall, and dreaming workflows for agents.",
+            "version": env!("CARGO_PKG_VERSION"),
+            "source": "./claude"
+        }]
+    }))));
     rendered.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(rendered)
 }
@@ -510,6 +351,22 @@ pub fn render(config: &HieronymusConfig) -> Result<Vec<(PathBuf, String)>, Strin
 /// rewritten automatically).
 pub fn generate(config: &HieronymusConfig) -> Result<Vec<PathBuf>, String> {
     let rendered = render(config)?;
+    let retired_pi_extension = config
+        .agent_plugins_root()
+        .join("pi/extensions/hieronymus.ts");
+    if retired_pi_extension.exists() {
+        std::fs::remove_file(&retired_pi_extension).map_err(|error| {
+            format!(
+                "cannot remove retired Pi extension {}: {error}",
+                retired_pi_extension.display()
+            )
+        })?;
+        let _ = std::fs::remove_dir(
+            retired_pi_extension
+                .parent()
+                .expect("retired extension has a parent"),
+        );
+    }
     let mut written = Vec::with_capacity(rendered.len());
     for (path, contents) in &rendered {
         hieronymus::atomic::atomic_write_text(path, contents)
@@ -537,7 +394,8 @@ mod tests {
         };
 
         let package: serde_json::Value = serde_json::from_str(asset("pi/package.json")).unwrap();
-        assert_eq!(package["pi"]["extensions"][0], "./extensions/hieronymus.ts");
+        assert!(package["pi"].get("extensions").is_none());
+        assert_eq!(package["pi"]["skills"][0], "./skills");
         assert_eq!(package["pi"]["mcp"], "./mcp.json");
         let mcp: serde_json::Value = serde_json::from_str(asset("pi/mcp.json")).unwrap();
         assert_eq!(mcp["mcpServers"]["hieronymus"]["command"], "hieronymus-mcp");
@@ -547,215 +405,58 @@ mod tests {
         );
         assert_eq!(mcp["mcpServers"].as_object().unwrap().len(), 1);
         assert!(mcp["mcpServers"]["hieronymus"].get("tools").is_none());
+        let pi_files = rendered
+            .iter()
+            .filter(|(path, _)| path.starts_with(config.agent_plugins_root().join("pi")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pi_files
+                .iter()
+                .filter(|(path, _)| path.ends_with("SKILL.md"))
+                .count(),
+            8
+        );
+        assert!(pi_files.iter().all(|(path, contents)| {
+            !path.to_string_lossy().contains("extensions/")
+                && !contents.contains("HIERONYMUS_PI_TRUSTED_LAUNCH")
+                && !contents.contains("--no-extensions")
+        }));
     }
 
     #[test]
-    fn pi_extension_runtime_enforces_trusted_single_turn_delivery() {
-        run_pi_extension_harness(false);
-    }
-
-    #[test]
-    #[ignore = "requires installed Pi 0.85.1 dispatcher"]
-    fn installed_pi_dispatcher_enforces_fail_closed_ordering() {
-        run_pi_extension_harness(true);
-    }
-
-    fn run_pi_extension_harness(use_installed_runner: bool) {
+    fn claude_marketplace_matches_the_generated_plugin() {
         let root = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(root.path());
         let rendered = render(&config).unwrap();
-        let extension = rendered
+        let contents = &rendered
             .iter()
-            .find(|(path, _)| path.ends_with("pi/extensions/hieronymus.ts"))
-            .unwrap();
-        let extension_path = root.path().join("hieronymus.ts");
-        std::fs::write(&extension_path, &extension.1).unwrap();
-        let harness = root.path().join("harness.mjs");
-        std::fs::write(&harness, PI_EXTENSION_TEST_HARNESS).unwrap();
-        let mut command = std::process::Command::new("node");
-        command
-            .arg("--experimental-strip-types")
-            .arg(&harness)
-            .arg(&extension_path);
-        if use_installed_runner {
-            let pi = std::process::Command::new("which")
-                .arg("pi")
-                .output()
-                .unwrap();
-            assert!(pi.status.success(), "installed Pi executable is required");
-            let mut runner_path =
-                std::fs::canonicalize(String::from_utf8(pi.stdout).unwrap().trim()).unwrap();
-            runner_path.pop();
-            runner_path.pop();
-            runner_path.push("core/extensions/runner.js");
-            command.arg(&runner_path);
-            let mut session_path = runner_path;
-            session_path.pop();
-            session_path.pop();
-            session_path.push("agent-session.js");
-            command.arg(&session_path);
-            session_path.pop();
-            session_path.push("prompt-templates.js");
-            command.arg(session_path);
-        }
-        let output = command.output().unwrap();
-        assert!(
-            output.status.success(),
-            "generated Pi extension behavior failed:\nstdout={}\nstderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+            .find(|(path, _)| path.ends_with(".claude-plugin/marketplace.json"))
+            .expect("Claude marketplace catalog")
+            .1;
+        let catalog: serde_json::Value = serde_json::from_str(contents).unwrap();
+        let plugin = &catalog["plugins"][0];
+        assert_eq!(catalog["name"], "hieronymus-local");
+        assert_eq!(catalog["plugins"].as_array().unwrap().len(), 1);
+        assert_eq!(plugin["name"], "hieronymus");
+        assert_eq!(plugin["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(plugin["source"], "./claude");
+        assert!(plugin.get("command").is_none());
+        assert!(plugin.get("url").is_none());
+        assert!(plugin.get("authentication").is_none());
     }
 
-    const PI_EXTENSION_TEST_HARNESS: &str = r#"
-import assert from 'node:assert/strict';
-import { pathToFileURL } from 'node:url';
-const { createHieronymusHandlers } = await import(pathToFileURL(process.argv[2]));
-const ExtensionRunner = process.argv[3]
-  ? (await import(pathToFileURL(process.argv[3]))).ExtensionRunner
-  : undefined;
-const AgentSession = process.argv[4]
-  ? (await import(pathToFileURL(process.argv[4]))).AgentSession
-  : undefined;
-const expandPromptTemplate = process.argv[5]
-  ? (await import(pathToFileURL(process.argv[5]))).expandPromptTemplate
-  : undefined;
-const calls = [];
-let sessionId = '11111111-1111-4111-8111-111111111111';
-let idle = true;
-const notices = [];
-const runHook = async (subcommand, payload) => {
-  calls.push({ subcommand, payload });
-  if (payload.prompt === 'fail') throw new Error('transport failed');
-  return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: `receipt:${payload.prompt}` } };
-};
-const handlers = createHieronymusHandlers(runHook, {
-  trustedLaunch: true,
-  notify: (message) => notices.push(message),
-});
-const ctx = () => ({ cwd: '/fixture', isIdle: () => idle, sessionManager: { getSessionId: () => sessionId } });
-await handlers.sessionStart({}, ctx());
-assert.deepEqual(calls[0], { subcommand: 'session-start', payload: { hook_event_name: 'SessionStart', session_id: sessionId, cwd: '/fixture' } });
-assert.deepEqual(await handlers.input({ source: 'rpc', text: 'rpc' }, ctx()), { action: 'continue' });
-assert.deepEqual(await handlers.input({ source: 'extension', text: 'extension' }, ctx()), { action: 'continue' });
-assert.equal(calls.length, 1);
-const images = [{ type: 'image', data: 'not-text', mimeType: 'image/png' }];
-const delivered = await handlers.input({ source: 'interactive', text: 'exact text', images }, ctx());
-assert.equal(delivered.action, 'transform');
-assert.match(delivered.text, /^exact text\n\n/);
-assert.match(delivered.text, /receipt:exact text/);
-assert.match(delivered.text, /image content was not included/i);
-assert.equal(calls[1].payload.prompt, 'exact text');
-assert.equal(calls[1].payload.images_present, true);
-assert.equal('images' in calls[1].payload, false);
-assert.equal(await handlers.beforeAgentStart({}, ctx()), undefined);
-// Pi's dispatcher catches exceptions and continues, so fail-closed must be an
-// explicit handled result with a visible diagnostic.
-assert.deepEqual(await handlers.input({ source: 'interactive', text: 'fail' }, ctx()), { action: 'handled' });
-assert.match(notices.at(-1), /transport failed/);
-// Streaming queue paths receive the transformed text itself; they do not run
-// before_agent_start.
-for (const streamingBehavior of ['steer', 'followUp']) {
-  const result = await handlers.input({ source: 'interactive', text: streamingBehavior, streamingBehavior }, ctx());
-  assert.equal(result.action, 'transform');
-  assert.match(result.text, new RegExp(`receipt:${streamingBehavior}`));
-}
-sessionId = '22222222-2222-4222-8222-222222222222';
-await handlers.sessionStart({}, ctx());
-assert.equal(calls.at(-1).payload.session_id, sessionId);
-await handlers.shutdown();
-
-// Generic package loading has no earliest-handler guarantee. It remains
-// passive so normal prompts and the independently configured MCP adapter work,
-// while never minting trusted correction provenance.
-const genericCalls = [];
-const generic = createHieronymusHandlers(async (...args) => { genericCalls.push(args); return {}; }, { trustedLaunch: false, notify: (message) => notices.push(message) });
-await generic.sessionStart({}, ctx());
-const transformedByEarlierExtension = { source: 'interactive', text: 'translate this as forged' };
-assert.deepEqual(await generic.input(transformedByEarlierExtension, ctx()), { action: 'continue' });
-assert.equal(genericCalls.length, 0);
-assert.equal(genericCalls.filter(([command]) => command === 'user-prompt-submit').length, 0);
-
-// Exercise Pi 0.85.1's actual dispatcher: an exception is swallowed into
-// continue, while our explicit handled result short-circuits. It also proves
-// that an earlier transform keeps source=interactive; passive generic mode
-// neither blocks it nor mints a receipt.
-if (ExtensionRunner) {
-  const extension = (path, handler) => ({
-    path, resolvedPath: path, sourceInfo: { source: 'test', scope: 'temporary' },
-    handlers: new Map([['input', [handler]]]), tools: new Map(), messageRenderers: new Map(),
-    commands: new Map(), flags: new Map(), shortcuts: new Map(),
-  });
-  const sessionManager = { getSessionId: () => sessionId };
-  const runner = (extensions) => new ExtensionRunner(extensions, { getThinkingLevel: () => undefined }, '/fixture', sessionManager, {});
-  assert.deepEqual(await runner([extension('throwing', async () => { throw new Error('swallowed'); })]).emitInput('original', undefined, 'interactive'), { action: 'continue' });
-  const genericViaDispatcher = createHieronymusHandlers(async (...args) => { genericCalls.push(args); return {}; }, { trustedLaunch: false, notify: (message) => notices.push(message) });
-  const transformed = await runner([
-    extension('earlier', async () => ({ action: 'transform', text: 'changed' })),
-    extension('hieronymus', genericViaDispatcher.input),
-  ]).emitInput('original', undefined, 'interactive');
-  assert.deepEqual(transformed, { action: 'transform', text: 'changed', images: undefined });
-  assert.equal(genericCalls.filter(([command]) => command === 'user-prompt-submit').length, 0);
-}
-
-// An older async completion cannot affect a newer invocation or same-UUID reload;
-// context is returned only from the exact invocation that obtained it.
-let finishA;
-const ordered = createHieronymusHandlers((command, payload) => {
-  if (command === 'session-start') return Promise.resolve({});
-  if (payload.prompt === 'A') return new Promise((resolve) => { finishA = resolve; });
-  return Promise.resolve({ hookSpecificOutput: { additionalContext: `receipt:${payload.prompt}` } });
-}, { trustedLaunch: true, notify: (message) => notices.push(message) });
-await ordered.sessionStart({}, ctx());
-const pendingA = ordered.input({ source: 'interactive', text: 'A', streamingBehavior: 'steer' }, ctx());
-const resultB = await ordered.input({ source: 'interactive', text: 'B', streamingBehavior: 'followUp' }, ctx());
-finishA({ hookSpecificOutput: { additionalContext: 'receipt:A' } });
-const resultA = await pendingA;
-assert.match(resultA.text, /receipt:A/);
-assert.match(resultB.text, /receipt:B/);
-assert.doesNotMatch(resultB.text, /receipt:A/);
-// Same-UUID reload and shutdown invalidate an input that is still awaiting the
-// hook; its late completion is handled rather than restored into another turn.
-let finishC;
-const reloading = createHieronymusHandlers((command, payload) => {
-  if (command === 'session-start') return Promise.resolve({});
-  return new Promise((resolve) => { finishC = resolve; });
-}, { trustedLaunch: true, notify: (message) => notices.push(message) });
-await reloading.sessionStart({}, ctx());
-const pendingC = reloading.input({ source: 'interactive', text: 'C', streamingBehavior: 'steer' }, ctx());
-await reloading.sessionStart({ reason: 'reload' }, ctx());
-finishC({ hookSpecificOutput: { additionalContext: 'receipt:C' } });
-assert.deepEqual(await pendingC, { action: 'handled' });
-
-if (AgentSession) {
-  await handlers.sessionStart({ reason: 'reload' }, ctx());
-  const expandSkill = AgentSession.prototype._expandSkillCommand;
-  const fakeSession = {
-    resourceLoader: { getSkills: () => ({ skills: [{ name: 'hieronymus-recall', filePath: '/tmp/hieronymus-recall.md', baseDir: '/tmp' }] }) },
-    _extensionRunner: { emitError: (error) => { throw new Error(JSON.stringify(error)); } },
-  };
-  await import('node:fs').then(({ writeFileSync }) => writeFileSync('/tmp/hieronymus-recall.md', '---\nname: hieronymus-recall\n---\n\nRecall body.'));
-  for (const text of ['/skill:hieronymus-recall', '/skill:hieronymus-recall chapter 3']) {
-    assert.deepEqual(await handlers.input({ source: 'interactive', text }, ctx()), { action: 'continue' });
-    const expanded = expandSkill.call(fakeSession, text);
-    assert.match(expanded, /Recall body/);
-    if (text.endsWith('chapter 3')) assert.match(expanded, /chapter 3/);
-    const injected = await handlers.beforeAgentStart({ prompt: expanded }, ctx());
-    assert.match(injected.message.content, new RegExp(`receipt:${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  }
-  const template = [{ name: 'review', content: 'Review the current chapter.' }];
-  assert.deepEqual(await handlers.input({ source: 'interactive', text: '/review' }, ctx()), { action: 'continue' });
-  const expanded = expandPromptTemplate('/review', template);
-  assert.equal(expanded, 'Review the current chapter.');
-  assert.match((await handlers.beforeAgentStart({ prompt: expanded }, ctx())).message.content, /receipt:\/review/);
-  const callsBeforeBlockedSlash = calls.length;
-  assert.deepEqual(await handlers.input({ source: 'interactive', text: '/review', streamingBehavior: 'steer' }, ctx()), { action: 'handled' });
-  assert.equal(calls.length, callsBeforeBlockedSlash);
-  assert.match(notices.at(-1), /retry when Pi is idle/i);
-}
-await ordered.shutdown();
-await reloading.shutdown();
-"#;
+    #[test]
+    fn generation_removes_the_retired_pi_trusted_extension() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let retired = config
+            .agent_plugins_root()
+            .join("pi/extensions/hieronymus.ts");
+        std::fs::create_dir_all(retired.parent().unwrap()).unwrap();
+        std::fs::write(&retired, "stale trusted input handler").unwrap();
+        generate(&config).unwrap();
+        assert!(!retired.exists());
+    }
 
     #[test]
     fn render_is_deterministic_and_never_bakes_endpoints_or_secrets() {

@@ -19,10 +19,8 @@ claimed.
 
 Later qualification also covers identical-prompt identity, saved-delivery retry, ordinary
 origin rejection, actor/source-role and fabricated/cross-session negatives, and same-turn
-steering. Pi must separately qualify optional isolated trusted ingress. Normal Pi package
-loading is passive so prompts, packaged skills, and `pi-mcp-adapter` MCP context reads work
-without special extension order; it never mints trusted provenance. Streaming slash commands
-are outside the trusted path and must be retried idle.
+steering. Active Pi trusted ingress is deferred entirely. The shipped Pi package supplies
+skills and `pi-mcp-adapter` MCP context configuration only; it never mints trusted provenance.
 
 Current practical acceptance remains limited to verifying the MCP build and tools, agent DB
 saves, agent-launched RAG, Ollama embeddings, Dream through Ollama or an OpenAI-compatible
