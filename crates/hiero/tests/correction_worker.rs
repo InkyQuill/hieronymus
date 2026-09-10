@@ -891,3 +891,207 @@ fn review_fix_prepared_claim_detachment_commits_stale_without_provider() {
         "stale"
     );
 }
+
+// Exact completion content from retained DeepSeek HTTP 200, Claude recovery
+// attempt 9. Keep the invalid wire representation as regression evidence.
+const RETAINED_INVALID_CORRECTION: &str = r#"{"decisions":{"version":1,"mutations":[{"type":"LearnedRule","concept_id":1,"source_language":"en","target_language":"ru","operation":"Replace {rule_id:1,rule_revision:1,rendering:Б}","applicability":{"chapter_key":"chapter-01","knowledge_gates":[{"known_from":null,"known_until":null,"viewpoint":"All"}],"metadata_state":"Resolved","scope_predicates":[],"series_id":1,"timeline_id":1,"valid_from":null,"valid_until":null,"volume_key":"Book I"}}]}}"#;
+
+struct CorrectionReplyTransport {
+    reply: String,
+    calls: Arc<AtomicUsize>,
+}
+impl hieronymus::provider_http::ProviderTransport for CorrectionReplyTransport {
+    fn get_json(
+        &self,
+        _: &str,
+        _: &[(String, String)],
+        _: Duration,
+    ) -> Result<hieronymus::provider_http::HttpResponse, hieronymus::provider_http::HttpError> {
+        panic!("correction uses POST")
+    }
+    fn post_json(
+        &self,
+        _: &str,
+        _: &[(String, String)],
+        payload: &Value,
+        _: Duration,
+    ) -> Result<hieronymus::provider_http::HttpResponse, hieronymus::provider_http::HttpError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let prompt: Value =
+            serde_json::from_str(payload["messages"][0]["content"].as_str().unwrap()).unwrap();
+        assert!(prompt["selected_context"].is_object());
+        Ok(hieronymus::provider_http::HttpResponse {
+            status: 200,
+            body: json!({"choices":[{"message":{"content":self.reply}}]}).to_string(),
+        })
+    }
+}
+fn transport_source(reply: &str, calls: Arc<AtomicUsize>) -> CorrectionSource {
+    let transport = Arc::new(CorrectionReplyTransport {
+        reply: reply.into(),
+        calls,
+    });
+    Arc::new(move || {
+        let provider = hieronymus::dream_providers::LlmDreamProvider::new(
+            "default",
+            hieronymus::provider_config::ProviderProfile::new(
+                "fixture",
+                "openai",
+                "http://127.0.0.1:9/v1",
+                "fixture-key",
+                1.0,
+            ),
+            "fixture-model",
+        )
+        .unwrap()
+        .with_transport(transport.clone());
+        CorrectionProvider {
+            slot: "default".into(),
+            fingerprint: "fixture".into(),
+            call: Ok(Box::new(move |context| {
+                provider.run_correction(context).map_err(|e| e.to_string())
+            })),
+        }
+    })
+}
+#[test]
+fn retained_http_200_correction_is_still_provider_schema() {
+    let (_dir, config) = fixture();
+    let (_, clock) = clock();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let source = transport_source(RETAINED_INVALID_CORRECTION, calls.clone());
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "retry");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let db = open_migrated(&config.database_path()).unwrap();
+    let (code, prepared): (String, i64) = db.query_row("select last_error_code,(select count(*) from consolidation_results where canonical_output is not null) from consolidation_jobs", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(code, "provider_schema");
+    assert_eq!(prepared, 0);
+}
+
+fn immediately_corrected_fixture() -> (tempfile::TempDir, HieronymusConfig) {
+    use hieronymus::{authority::DecisionStore, authority_models::*};
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(dir.path());
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    db.execute_batch("insert into series(id,slug,title,default_source_language,default_target_language,created_at,updated_at) values(1,'book','Book','en','ru','now','now'); insert into concepts(id,canonical_name,scope_type,scope_key,created_at,updated_at) values(1,'Alex','series','series:book','now','now'); insert into story_timelines(id,series_id,name) values(1,1,'story');").unwrap();
+    let applicability = json!({"series_id":1,"timeline_id":1,"volume_key":"I","chapter_key":"1","scope_predicates":[],"valid_from":null,"valid_until":null,"metadata_state":"Resolved","knowledge_gates":[{"viewpoint":"All","known_from":null,"known_until":null}]});
+    let binding = json!({"concept_id":1,"source_language":"en","target_language":"ru","applicability":applicability,"position_id":1,"paragraph_start":0,"paragraph_end":4,"identity_anchor":true,"aligned_source_id":null,"rendering":null,"contradicts_rule":null,"conflict_kind":null}).to_string();
+    let hash = format!("{:x}", Sha256::digest(b"Alex"));
+    db.execute("insert into evidence_records(id,series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) values(1,1,'source_passage','fixture-source',?1,0,4,'Alex',?2,'now')", params![hash,binding]).unwrap();
+    db.execute_batch("insert into story_positions(id,timeline_id,volume_key,chapter_key,ordinal,evidence_id) values(1,1,'I','1',1,1)").unwrap();
+    let selected = EvidenceRef {
+        kind: EvidenceKind::SourcePassage,
+        id: 1,
+        content_hash: hash,
+        span_start: 0,
+        span_end: 4,
+    };
+    let request = DecisionRequestV1 {
+        version: 1,
+        decision_id: JOB.into(),
+        expected_revision: 0,
+        actor_kind: ActorKind::ExplicitUser,
+        origin: OriginReceiptId("20000000-0000-4000-8000-000000000001".into()),
+        evidence_refs: vec![selected.clone()],
+        series_id: 1,
+        concept_id: Some(1),
+        source_language: "en".into(),
+        target_language: Some("ru".into()),
+        applicability: serde_json::from_value(applicability).unwrap(),
+        operation: OperationV1::Correct {
+            intent: CorrectionIntentV1::Rendering {
+                replaces: None,
+                value: RenderingV1 {
+                    source_forms: vec!["Alex".into()],
+                    canonical: "Б".into(),
+                    approved_variants: vec![],
+                    forbidden_variants: vec!["А".into()],
+                    case_sensitive: false,
+                },
+            },
+        },
+    };
+    // Trusted origin fixture; the immediate correction itself uses the real
+    // domain transaction, and the worker sees its resulting pending job.
+    let context = json!({"decision_id":request.decision_id,"expected_revision":0,"selected_source":selected,"series_id":1,"concept_id":1,"source_language":"en","target_language":"ru","applicability":request.applicability,"evidence_ids":[1],"operation":request.operation}).to_string();
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("translate this as Б\n{context}"))
+    );
+    db.execute("insert into origin_receipts(id,kind,principal,event_id,text,context_json,content_hash,created_at) values(?1,'console_user','fixture',?1,'translate this as Б',?2,?3,'now')", params![request.origin.0,context,hash]).unwrap();
+    assert!(matches!(
+        DecisionStore::new(&mut db).apply(&request).unwrap(),
+        DecisionResultV1::Applied { .. }
+    ));
+    (dir, config)
+}
+
+fn correction_effect_snapshot(config: &HieronymusConfig) -> Vec<String> {
+    let db = open_migrated(&config.database_path()).unwrap();
+    ["select json_array(id,canonical_translation,revision,status) from term_rules order by id",
+     "select json_array(rule_id,authority) from rule_authority order by rule_id",
+     "select json_array(rule_id,form_kind,surface) from term_rule_forms order by id",
+     "select json_array((select count(*) from consolidation_jobs),(select count(*) from decision_records),(select count(*) from memory_claims),(select count(*) from claim_effects),(select count(*) from claim_derivations),(select revision from authority_state where series_id=1))"]
+        .into_iter().flat_map(|sql| db.prepare(sql).unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap().map(Result::unwrap).collect::<Vec<_>>()).collect()
+}
+#[test]
+fn canonical_empty_http_correction_completes_once_without_replaying_immediate_rule() {
+    let (_dir, config) = immediately_corrected_fixture();
+    let clock: CorrectionClock = Arc::new(Utc::now);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let source = transport_source(
+        r#"{"decisions":{"version":1,"mutations":[]}}"#,
+        calls.clone(),
+    );
+    let before = correction_effect_snapshot(&config);
+    assert!(before.iter().any(|row| row.contains("Б")));
+    assert!(before.iter().any(|row| row.contains("А")));
+    assert!(before.iter().any(|row| row.contains("explicit_user")));
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "complete");
+    for _ in 0..3 {
+        tick(&config, &clock, &source);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(correction_effect_snapshot(&config), before);
+    let db = open_migrated(&config.database_path()).unwrap();
+    let (results, mutations, attempts): (i64, i64, i64) = db.query_row("select count(*),json_array_length(canonical_output,'$.mutations'),(select attempts from consolidation_jobs) from consolidation_results where state='complete'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    assert_eq!((results, mutations, attempts), (1, 0, 1));
+}
+#[test]
+fn canonical_immediate_rule_replay_is_still_provider_policy() {
+    let (_dir, config) = immediately_corrected_fixture();
+    let clock: CorrectionClock = Arc::new(Utc::now);
+    let db = open_migrated(&config.database_path()).unwrap();
+    let (id, revision): (i64, i64) = db
+        .query_row(
+            "select id,revision from term_rules where status='active'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let request: String = db
+        .query_row("select canonical_request from decision_records", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let request: Value = serde_json::from_str(&request).unwrap();
+    let applicability = request["applicability"].clone();
+    let rendering = request["operation"]["Correct"]["intent"]["Rendering"]["value"].clone();
+    let draft = json!({"decisions":{"version":1,"mutations":[{"LearnedRule":{"concept_id":1,"source_language":"en","target_language":"ru","applicability":applicability,"operation":{"Replace":{"rule_id":id,"rule_revision":revision,"rendering":rendering}}}}]}});
+    assert!(parse_decisions(draft.clone()).is_ok());
+    let before = correction_effect_snapshot(&config);
+    let source = transport_source(&draft.to_string(), Arc::new(AtomicUsize::new(0)));
+    tick(&config, &clock, &source);
+    assert_eq!(state(&config), "retry");
+    assert_eq!(
+        db.query_row("select last_error_code from consolidation_jobs", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap(),
+        "provider_policy"
+    );
+    assert_eq!(correction_effect_snapshot(&config), before);
+}

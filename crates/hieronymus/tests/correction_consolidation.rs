@@ -1505,3 +1505,64 @@ fn large_document_projects_only_selected_bytes_with_original_hash_and_offsets() 
     assert!(!projection.to_string().contains("UNSELECTED BOOK TEXT"));
     assert!(projection.to_string().len() < 16 * 1024);
 }
+
+#[test]
+fn canonical_provider_mutations_use_selected_ids_then_existing_policy() {
+    use hieronymus::{dream_config::default_dream_config, dream_output::parse_decisions};
+    for operation in [
+        "Activate",
+        "Replace",
+        "Scope",
+        "Archive",
+        "ClaimLineage",
+        "Invented",
+    ] {
+        let (_dir, mut db, lease, mut output) = derived_fixture();
+        let mutation = match operation {
+            "ClaimLineage" => {
+                let input = selected_claim(&mut db, &mut output, 1, app());
+                let out = selected_claim(&mut db, &mut output, 2, app());
+                serde_json::json!({"ClaimLineage":{"input_claim_ids":[input],"output_claim_ids":[out]}})
+            }
+            _ => {
+                let op = match operation {
+                    "Activate" => {
+                        serde_json::json!({"Activate":{"candidate_id":1,"candidate_revision":1}})
+                    }
+                    "Invented" => {
+                        serde_json::json!({"Activate":{"candidate_id":999,"candidate_revision":1}})
+                    }
+                    "Replace" => {
+                        serde_json::json!({"Replace":{"rule_id":1,"rule_revision":1,"rendering":{"source_forms":["Alex"],"canonical":"A","approved_variants":[],"forbidden_variants":[],"case_sensitive":false}}})
+                    }
+                    "Scope" => {
+                        serde_json::json!({"Scope":{"rule_id":1,"rule_revision":1,"new_applicability":app()}})
+                    }
+                    "Archive" => serde_json::json!({"Archive":{"rule_id":1,"rule_revision":1}}),
+                    _ => unreachable!(),
+                };
+                serde_json::json!({"LearnedRule":{"concept_id":1,"source_language":"en","target_language":"ru","applicability":app(),"operation":op}})
+            }
+        };
+        let draft =
+            parse_decisions(serde_json::json!({"decisions":{"version":1,"mutations":[mutation]}}))
+                .unwrap();
+        let selection = select_correction_context(&db, &lease, &default_dream_config()).unwrap();
+        let result = prepare_correction_draft(&mut db, &lease, selection, draft, now());
+        if matches!(operation, "Activate" | "ClaimLineage") {
+            result.unwrap();
+            assert!(matches!(
+                complete(&mut db, &lease).unwrap(),
+                CompletionOutcome::Complete { .. }
+            ));
+        } else {
+            // Selected candidate IDs still cannot be replaced, scoped, or
+            // archived; invented IDs fail selected-context validation.
+            assert!(
+                matches!(result, Err(DraftPreparationError::Provider(_))),
+                "{operation}"
+            );
+            assert_eq!(count(&db, "rule_authority"), 0);
+        }
+    }
+}
