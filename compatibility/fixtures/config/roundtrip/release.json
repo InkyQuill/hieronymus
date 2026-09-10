@@ -1,0 +1,14 @@
+{
+  "equal": true,
+  "fixture": "compatibility/fixtures/config/roundtrip/release.json",
+  "input": {
+    "updates": {
+      "channel": "stable"
+    }
+  },
+  "output": {
+    "updates": {
+      "channel": "stable"
+    }
+  }
+}

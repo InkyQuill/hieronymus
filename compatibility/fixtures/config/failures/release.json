@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "error_module": "hieronymus.release_config",
+      "error_type": "ReleaseConfigError",
+      "files": {
+        "release.conf": "[updates]\nchannel = \"nightly\"\n"
+      },
+      "id": "release.unknown-channel",
+      "loader": "hieronymus.release_config:load_release_config",
+      "message": "updates.channel must be one of: dev, stable",
+      "target": "release.conf"
+    }
+  ],
+  "fixture": "compatibility/fixtures/config/failures/release.json"
+}

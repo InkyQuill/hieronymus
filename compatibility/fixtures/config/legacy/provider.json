@@ -1,0 +1,28 @@
+{
+  "fixture": "compatibility/fixtures/config/legacy/provider.json",
+  "output": {
+    "defaults": {
+      "model": "",
+      "provider": ""
+    },
+    "legacy_provider": {
+      "key": {
+        "configured": true
+      },
+      "name": "Legacy Provider",
+      "timeout_seconds": 30.0,
+      "type": "openai",
+      "url": "https://legacy.invalid/v1"
+    }
+  },
+  "persisted": true,
+  "source": {
+    "legacy_provider": {
+      "api_key": {
+        "configured": true
+      },
+      "endpoint": "https://legacy.invalid/v1",
+      "type": "openai"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "args": [],
+  "boundary": "shipping-stdio-entrypoint",
+  "entry_point": "hieronymus.mcp_server:main",
+  "environment": {
+    "COLUMNS": "500",
+    "FORCE_COLOR": "0",
+    "HIERONYMUS_DATA_ROOT": "<PATH>",
+    "LINES": "100",
+    "NO_COLOR": "1",
+    "TERM": "dumb"
+  },
+  "exit_code": 0,
+  "invocation": [
+    "hieronymus-mcp"
+  ],
+  "process_group_drained": true,
+  "stderr": "WARNING  Failed to validate request: Received request before initialization was complete\n",
+  "stderr_normalization": "rich-timestamp-and-source-location-redacted",
+  "stdin": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}\n",
+  "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"Invalid request parameters\",\"data\":\"\"}}\n",
+  "stdout_normalization": "initialize-result.serverInfo.version-only"
+}

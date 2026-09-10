@@ -1,0 +1,9 @@
+Usage: hiero feedback [OPTIONS] CRYSTAL_ID
+
+Options:
+  --event TEXT          [required]
+  --role TEXT           [required]
+  --evidence TEXT
+  --session-id INTEGER
+  --json
+  --help                Show this message and exit.

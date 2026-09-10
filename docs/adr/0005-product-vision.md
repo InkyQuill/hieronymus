@@ -1,9 +1,10 @@
 # Hieronymus Product Vision
 
-Status: Current product vision, amended by
-[ADR 0007](0007-provider-catalog-and-workflow-assignments.md) for provider
-catalog ownership. `provider.conf` now owns provider profiles and API keys;
-`dream.conf` owns workflow assignments, prompts, trigger settings, and caps.
+Status: Superseded and deprecated on 2026-09-06 by
+[ADR 0016: Autonomous Story Memory For Agents](0016-autonomous-story-memory-product-vision.md).
+This document is retained as historical context, not the current product vision.
+Earlier amendments were recorded in ADRs 0007, 0008, 0011, and 0014; ADR 0016
+now states the governing product intent and its relationship to those decisions.
 
 ## Context
 

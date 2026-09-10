@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "correction_text": "Use Sense, not Feeling."
+    },
+    "name": "hieronymus_feedback"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

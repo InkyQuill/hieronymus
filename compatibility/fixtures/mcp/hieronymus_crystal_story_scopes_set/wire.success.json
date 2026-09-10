@@ -1,0 +1,44 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "confidence": 0.9,
+        "crystal_id": 1,
+        "story_scopes": [
+          "volume:1",
+          "chapter:2"
+        ]
+      },
+      "name": "hieronymus_crystal_story_scopes_set"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"id\": 1,\n  \"crystal_type\": \"rule\",\n  \"text\": \"センス is translated as Sense, not Feeling.\",\n  \"title\": \"Sense rendering\",\n  \"confidence\": 0.9,\n  \"strength\": 0.8,\n  \"status\": \"active\",\n  \"source_credibility\": \"observation\",\n  \"rule_intent\": \"\",\n  \"story_scopes\": [\n    \"chapter:2\",\n    \"volume:1\"\n  ],\n  \"semantic_tags\": [],\n  \"concept_ids\": []\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "concept_ids": [],
+      "confidence": 0.9,
+      "crystal_type": "rule",
+      "id": 1,
+      "rule_intent": "",
+      "semantic_tags": [],
+      "source_credibility": "observation",
+      "status": "active",
+      "story_scopes": [
+        "chapter:2",
+        "volume:1"
+      ],
+      "strength": 0.8,
+      "text": "センス is translated as Sense, not Feeling.",
+      "title": "Sense rendering"
+    }
+  }
+}

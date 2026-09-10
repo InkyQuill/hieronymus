@@ -1,0 +1,60 @@
+{
+  "cases": [
+    {
+      "args": [
+        "--cwd",
+        "<SYNTHETIC_ROOT>/workspace"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "agent-hook",
+        "session-start"
+      ],
+      "stderr": "",
+      "stdout": "no .hieronymus.json context found\n"
+    },
+    {
+      "args": [
+        "--cwd",
+        "<SYNTHETIC_ROOT>/workspace",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "agent-hook",
+        "session-start"
+      ],
+      "stderr": "",
+      "stdout": "{\"event\": \"session-start\", \"handled\": false, \"reason\": \"no .hieronymus.json context found\", \"service\": {\"available\": false, \"mode\": \"direct-local\", \"reason\": \"no running local service discovered\"}}\n"
+    },
+    {
+      "args": [
+        "--cwd",
+        "<SYNTHETIC_ROOT>/not-a-directory"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "agent-hook",
+        "session-start"
+      ],
+      "stderr": "Usage: hieronymus-agent-hook session-start [OPTIONS]\nTry 'hieronymus-agent-hook session-start --help' for help.\n\nError: Invalid value for '--cwd': Directory '<SYNTHETIC_ROOT>/not-a-directory' is a file.\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus-agent-hook.session-start"
+}

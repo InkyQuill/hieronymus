@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hieronymus.local/schemas/rust-qualification-gate.schema.json",
+  "title": "Rust Qualification Gate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "target",
+    "status",
+    "release_mode",
+    "blocked_plans",
+    "issues",
+    "record_digests",
+    "acceptance_owner"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "target": { "const": "x86_64-unknown-linux-gnu" },
+    "status": { "enum": ["qualified", "blocked"] },
+    "release_mode": { "enum": ["semantic-enabled", "fts-only", null] },
+    "blocked_plans": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "rust-workspace-and-contract-harness",
+          "rust-daemon-mcp-security",
+          "rust-frontend",
+          "rust-database-upgrade",
+          "rust-distribution-cutover"
+        ]
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "record_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mcp-transport",
+        "semantic-native",
+        "frontend-embedding",
+        "legacy-database-import"
+      ],
+      "properties": {
+        "mcp-transport": { "$ref": "#/$defs/inputDigest" },
+        "semantic-native": { "$ref": "#/$defs/inputDigest" },
+        "frontend-embedding": { "$ref": "#/$defs/inputDigest" },
+        "legacy-database-import": { "$ref": "#/$defs/inputDigest" }
+      }
+    },
+    "acceptance_owner": {
+      "const": "Pavel Obruchnikov <me@inkyquill.net>"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "qualified" } }
+      },
+      "then": {
+        "properties": {
+          "release_mode": { "enum": ["semantic-enabled", "fts-only"] },
+          "blocked_plans": { "maxItems": 0 },
+          "issues": { "maxItems": 0 }
+        }
+      },
+      "else": {
+        "properties": {
+          "release_mode": { "type": "null" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "inputDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

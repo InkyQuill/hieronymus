@@ -1,5 +1,8 @@
 # Replace Textual TUI with TypeScript Ink/React TUI
 
+Status: Superseded by [ADR 0014](0014-web-console-replaces-terminal-ui.md).
+Retained as implementation history.
+
 ## Context
 Hieronymus historically exposed two interactive terminal user interfaces (`hiero config` and `hiero admin`) built using Python's Textual framework. To allow TypeScript to own interactive terminal rendering, raw ANSI composition, local UI state management (using Nanostores), keyboard layout/focus handling, and dialog layout while keeping the domain/storage logic strictly in Python, we require a framework migration.
 

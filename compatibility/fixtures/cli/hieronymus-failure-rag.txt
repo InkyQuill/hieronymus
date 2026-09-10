@@ -1,0 +1,4 @@
+Usage: hieronymus rag [OPTIONS] COMMAND [ARGS]...
+Try 'hieronymus rag --help' for help.
+
+Error: No such option: --compat-invalid-option

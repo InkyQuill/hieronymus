@@ -1,0 +1,60 @@
+{
+  "cases": [
+    {
+      "args": [
+        "synthetic-series",
+        "--title",
+        "Synthetic Series"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "init-series"
+      ],
+      "stderr": "",
+      "stdout": "Series synthetic-series initialized at <SYNTHETIC_ROOT>/data/hieronymus.sqlite\n"
+    },
+    {
+      "args": [
+        "synthetic-series",
+        "--title",
+        "Synthetic Series",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "init-series"
+      ],
+      "stderr": "",
+      "stdout": "{\"database_path\": \"<SYNTHETIC_ROOT>/data/hieronymus.sqlite\", \"slug\": \"synthetic-series\"}\n"
+    },
+    {
+      "args": [
+        "invalid/slug",
+        "--title",
+        "Invalid"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "init-series"
+      ],
+      "stderr": "Error: invalid series slug: use lowercase letters, numbers, and hyphens, starting with a letter or number\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus.init-series"
+}

@@ -1,0 +1,4 @@
+Usage: hieronymus [OPTIONS] COMMAND [ARGS]...
+Try 'hieronymus --help' for help.
+
+Error: No such option: --compat-invalid-option

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_rag_search: 1 validation error for hieronymus_rag_searchArguments\nseries_slug\n  Field required [type=missing, input_value={'query': 'Cooking Talent'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
+  }
+}

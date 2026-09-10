@@ -1,0 +1,1641 @@
+{
+  "expectation_set": "tool-cases-v1",
+  "adr": "0009",
+  "rule": "Complete behavioral matrix for every advertised MCP tool (plan M5). Each case runs against a fresh real data root over BOTH real transports (HTTP POST /mcp and the hiero mcp stdio adapter); setup entries are complete operations (real tool calls, deterministic SQL seeds where no tool surface exists, fixture file writes), never canned responses. Persisted mutations are asserted through an independent read-only SQLite connection. Ids are pinned because a fresh database numbers series, sessions, memories, crystals, concepts, facets, and term_rules rows from 1. A string value of '*' in expected_subset matches any value (dynamic ids such as recall_id). '<ROOT>' in a string substitutes the case's data root; a string equal to '$name' substitutes a binding saved from a prior setup call's structuredContent.",
+  "cases": [
+    {
+      "name": "hieronymus_status",
+      "arguments": {},
+      "expected_subset": {
+        "service": {
+          "available": true,
+          "mode": "local-http"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_series_create",
+      "arguments": {
+        "slug": "book",
+        "title": "Book",
+        "source_language": "ja",
+        "target_language": "en"
+      },
+      "expected_subset": {
+        "id": 1,
+        "slug": "book",
+        "title": "Book",
+        "source_language": "ja",
+        "target_language": "en"
+      },
+      "persist": {
+        "table": "series",
+        "where": {
+          "slug": "book"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_series_init",
+      "arguments": {
+        "slug": "book",
+        "title": "Book",
+        "source_language": "ja",
+        "target_language": "en"
+      },
+      "expected_subset": {
+        "id": 1,
+        "slug": "book"
+      },
+      "persist": {
+        "table": "series",
+        "where": {
+          "slug": "book"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_series_list",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        }
+      ],
+      "arguments": {},
+      "expected_subset": [
+        {
+          "slug": "book",
+          "title": "Book"
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_series_set_language_tags",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "series_id": "$id",
+        "language_tags": [
+          "ja",
+          "en",
+          "ru"
+        ]
+      },
+      "expected_subset": {
+        "language_tags": [
+          "ja",
+          "en",
+          "ru"
+        ]
+      },
+      "persist": {
+        "table": "series_language_tags",
+        "where": {
+          "series_id": "$id"
+        },
+        "expect_at_least": 3
+      }
+    },
+    {
+      "name": "hieronymus_session_start",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "volume": "1",
+        "chapter": "2"
+      },
+      "expected_subset": {
+        "session_id": 1
+      },
+      "persist": {
+        "table": "task_sessions",
+        "where": {
+          "id": 1,
+          "series_slug": "book",
+          "volume": "1",
+          "status": "active"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_session_complete",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        }
+      ],
+      "arguments": {
+        "session_id": "$session_id"
+      },
+      "expected_subset": {
+        "session_id": "$session_id",
+        "completed": true
+      },
+      "persist": {
+        "table": "task_sessions",
+        "where": {
+          "id": "$session_id",
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_short_term_add",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        }
+      ],
+      "arguments": {
+        "session_id": "$session_id",
+        "kind": "note",
+        "text": "The lighthouse keeper whistles at dusk."
+      },
+      "expected_subset": {
+        "memory_id": 1
+      },
+      "persist": {
+        "table": "short_term_memories",
+        "where": {
+          "id": 1,
+          "kind": "note",
+          "text": "The lighthouse keeper whistles at dusk."
+        }
+      }
+    },
+    {
+      "name": "hieronymus_short_term_add_batch",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        }
+      ],
+      "arguments": {
+        "session_id": "$session_id",
+        "items": [
+          {
+            "kind": "note",
+            "text": "First observed fact."
+          },
+          {
+            "kind": "correction",
+            "text": "Second observed fact."
+          }
+        ]
+      },
+      "expected_subset": {
+        "count": 2,
+        "memory_ids": [
+          1,
+          2
+        ]
+      },
+      "persist": {
+        "table": "short_term_memories",
+        "where": {
+          "session_id": "$session_id"
+        },
+        "expect_at_least": 2
+      }
+    },
+    {
+      "name": "hieronymus_feedback",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        }
+      ],
+      "arguments": {
+        "session_id": "$session_id",
+        "correction_text": "Render 猫 as Кот in Russian."
+      },
+      "expected_subset": {
+        "memory_id": 1
+      },
+      "persist": {
+        "table": "short_term_memories",
+        "where": {
+          "kind": "correction",
+          "text": "Render 猫 as Кот in Russian."
+        }
+      }
+    },
+    {
+      "name": "hieronymus_memory_add",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "kind": "note",
+        "text": "Quantum compass calibration notes."
+      },
+      "expected_subset": {
+        "memory_id": 1,
+        "storage": "short_term"
+      },
+      "persist": {
+        "table": "short_term_memories",
+        "where": {
+          "text": "Quantum compass calibration notes."
+        }
+      }
+    },
+    {
+      "name": "hieronymus_memory_search",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_memory_add",
+          "arguments": {
+            "series_slug": "book",
+            "kind": "note",
+            "text": "Quantum compass calibration notes."
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "query": "quantum compass"
+      },
+      "expected_subset": [
+        {
+          "text": "Quantum compass calibration notes."
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_recall",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "The lighthouse keeper whistles at dusk."
+          }
+        }
+      ],
+      "arguments": {
+        "session_id": "$session_id",
+        "series_slug": "book",
+        "query": "lighthouse"
+      },
+      "expected_subset": {
+        "recall_id": "*",
+        "deterministic_contract": "*",
+        "warnings": "*",
+        "results": [
+          {
+            "tier": "short_term",
+            "text": "The lighthouse keeper whistles at dusk."
+          }
+        ]
+      }
+    },
+    {
+      "name": "hieronymus_rag_import",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/sources/chapter-0001.txt",
+          "contents": "The lighthouse keeper whistles at dusk.\nThe compass points inward toward the shelf.\n"
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "path": "<ROOT>/sources/chapter-0001.txt",
+        "source_ref": "book:1/chapter:1",
+        "source_type": "text"
+      },
+      "expected_subset": {
+        "series_slug": "book",
+        "source_ref": "book:1/chapter:1",
+        "source_type": "text",
+        "skipped": false
+      },
+      "persist": {
+        "table": "rag_sources",
+        "where": {
+          "series_slug": "book",
+          "source_ref": "book:1/chapter:1"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_rag_search",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/sources/chapter-0001.txt",
+          "contents": "The lighthouse keeper whistles at dusk.\nThe compass points inward toward the shelf.\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_rag_import",
+          "arguments": {
+            "series_slug": "book",
+            "path": "<ROOT>/sources/chapter-0001.txt",
+            "source_ref": "book:1/chapter:1"
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "query": "lighthouse"
+      },
+      "expected_subset": [
+        {
+          "source": "rag",
+          "source_ref": "book:1/chapter:1"
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_termbase_propose",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "category": "person_name",
+        "source_text": "ユン",
+        "canonical_translation": "Юн",
+        "tags": [
+          "name"
+        ]
+      },
+      "expected_subset": {
+        "id": 1,
+        "term_id": 1,
+        "source_text": "ユン",
+        "canonical_translation": "Юн",
+        "status": "candidate"
+      },
+      "persist": {
+        "table": "term_rules",
+        "where": {
+          "id": 1,
+          "status": "candidate",
+          "source_text": "ユン"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_termbase_approve",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_termbase_propose",
+          "arguments": {
+            "series_slug": "book",
+            "category": "person_name",
+            "source_text": "ユン",
+            "canonical_translation": "Юн"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "term_id": "$id"
+      },
+      "expected_subset": {
+        "term_id": "$id",
+        "approved": true
+      },
+      "persist": {
+        "table": "term_rules",
+        "where": {
+          "id": "$id",
+          "status": "active"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_termbase_contract",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_termbase_propose",
+          "arguments": {
+            "series_slug": "book",
+            "category": "person_name",
+            "source_text": "ユン",
+            "canonical_translation": "Юн"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_termbase_approve",
+          "arguments": {
+            "series_slug": "book",
+            "term_id": 1
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "ユン whistles at the lighthouse."
+      },
+      "expected_subset": [
+        {
+          "source_text": "ユン",
+          "canonical_translation": "Юн"
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_termbase_validate",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_termbase_propose",
+          "arguments": {
+            "series_slug": "book",
+            "category": "person_name",
+            "source_text": "ユン",
+            "canonical_translation": "Юн"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_termbase_approve",
+          "arguments": {
+            "series_slug": "book",
+            "term_id": 1
+          }
+        }
+      ],
+      "arguments": {
+        "series_slug": "book",
+        "raw_text": "ユン whistles at the lighthouse.",
+        "translated_text": "кошка whistles at the lighthouse."
+      },
+      "expected_subset": [
+        {
+          "kind": "missing_canonical",
+          "severity": "medium",
+          "expected": "Юн",
+          "observed": ""
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_rule_crystals_list",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "ユン is translated as Юн, not Юна.",
+            "source_role": "user",
+            "source_credibility": "user_rule",
+            "rule_intent": "terminology"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_complete",
+          "arguments": {
+            "session_id": "$session_id"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_dream",
+          "arguments": {}
+        }
+      ],
+      "arguments": {},
+      "expected_subset": [
+        {
+          "crystal_type": "rule",
+          "status": "active",
+          "text": "ユン is translated as Юн, not Юна."
+        }
+      ],
+      "persist": {
+        "table": "crystals",
+        "where": {
+          "crystal_type": "rule",
+          "status": "active"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_rule_crystal_validate",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "ユン is translated as Юн, not Юна.",
+            "source_role": "user",
+            "source_credibility": "user_rule",
+            "rule_intent": "terminology"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_complete",
+          "arguments": {
+            "session_id": "$session_id"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_dream",
+          "arguments": {}
+        }
+      ],
+      "arguments": {
+        "crystal_id": 1
+      },
+      "expected_subset": {
+        "crystal_id": 1,
+        "valid": true
+      }
+    },
+    {
+      "name": "hieronymus_rule_crystal_archive",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "ru"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "ユン is translated as Юн, not Юна.",
+            "source_role": "user",
+            "source_credibility": "user_rule",
+            "rule_intent": "terminology"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_complete",
+          "arguments": {
+            "session_id": "$session_id"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_dream",
+          "arguments": {}
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_termbase_propose",
+          "arguments": {
+            "series_slug": "book",
+            "category": "person_name",
+            "source_text": "ユン",
+            "canonical_translation": "Юн"
+          }
+        },
+        {
+          "kind": "sql",
+          "statement": "update term_rules set rule_crystal_id = 1 where id = 1",
+          "arguments": []
+        }
+      ],
+      "arguments": {
+        "crystal_id": 1
+      },
+      "expected_subset": {
+        "id": 1,
+        "crystal_type": "rule",
+        "status": "archived"
+      },
+      "persist": {
+        "table": "term_rules",
+        "where": {
+          "id": 1,
+          "status": "archived",
+          "rule_crystal_id": 1
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_create",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        }
+      ],
+      "arguments": {
+        "canonical_name": "Cooking Talent",
+        "series_slug": "book",
+        "semantic_tags": [
+          "talent"
+        ],
+        "status": "established"
+      },
+      "expected_subset": {
+        "canonical_name": "Cooking Talent",
+        "status": "established",
+        "semantic_tags": [
+          "talent"
+        ]
+      },
+      "persist": {
+        "table": "concepts",
+        "where": {
+          "canonical_name": "Cooking Talent",
+          "status": "established"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_get",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cooking Talent"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id"
+      },
+      "expected_subset": {
+        "canonical_name": "Cooking Talent"
+      }
+    },
+    {
+      "name": "hieronymus_concept_list",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cooking Talent"
+          }
+        }
+      ],
+      "arguments": {},
+      "expected_subset": [
+        {
+          "canonical_name": "Cooking Talent"
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_concept_update",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cooking Talent"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id",
+        "description": "A talent for cooking that manifests as magic."
+      },
+      "expected_subset": {
+        "id": "$id",
+        "description": "A talent for cooking that manifests as magic."
+      },
+      "persist": {
+        "table": "concepts",
+        "where": {
+          "id": "$id",
+          "description": "A talent for cooking that manifests as magic."
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_archive",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cooking Talent"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id",
+        "reason": "superseded by a cleaner concept"
+      },
+      "expected_subset": {
+        "status": "archived"
+      },
+      "persist": {
+        "table": "concepts",
+        "where": {
+          "id": "$id",
+          "status": "archived"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_merge",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "House Cat"
+          },
+          "save": "source_id=id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Feline"
+          },
+          "save": "target_id=id"
+        }
+      ],
+      "arguments": {
+        "source_concept_id": "$source_id",
+        "target_concept_id": "$target_id"
+      },
+      "expected_subset": {
+        "source": {
+          "merged_into_concept_id": "$target_id"
+        },
+        "target": {
+          "id": "$target_id"
+        }
+      },
+      "persist": {
+        "table": "concepts",
+        "where": {
+          "id": "$source_id",
+          "status": "merged"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_rename",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cat"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id",
+        "new_label": "House Cat"
+      },
+      "expected_subset": {
+        "id": "$id",
+        "canonical_name": "House Cat"
+      },
+      "persist": {
+        "table": "concepts",
+        "where": {
+          "id": "$id",
+          "canonical_name": "House Cat"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_semantic_tags_set",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cat"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id",
+        "semantic_tags": [
+          "feline",
+          "pet"
+        ]
+      },
+      "expected_subset": {
+        "semantic_tags": [
+          "feline",
+          "pet"
+        ]
+      },
+      "persist": {
+        "table": "concept_semantic_tags",
+        "where": {
+          "concept_id": "$id"
+        },
+        "expect_at_least": 2
+      }
+    },
+    {
+      "name": "hieronymus_concept_facet_add",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cat"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id",
+        "value": "猫",
+        "language": "ja",
+        "kind": "rendering"
+      },
+      "expected_subset": {
+        "concept_id": 1,
+        "value": "猫",
+        "kind": "rendering"
+      },
+      "persist": {
+        "table": "concept_facets",
+        "where": {
+          "concept_id": "$id",
+          "value": "猫"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_facet_update",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cat"
+          },
+          "save": "id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_facet_add",
+          "arguments": {
+            "concept_id": "$id",
+            "value": "猫",
+            "language": "ja"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "facet_id": "$id",
+        "value": "ネコ"
+      },
+      "expected_subset": {
+        "id": "$id",
+        "value": "ネコ"
+      },
+      "persist": {
+        "table": "concept_facets",
+        "where": {
+          "id": "$id",
+          "value": "ネコ"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_facet_list",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cat"
+          },
+          "save": "id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_facet_add",
+          "arguments": {
+            "concept_id": "$id",
+            "value": "猫",
+            "language": "ja"
+          }
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id"
+      },
+      "expected_subset": [
+        {
+          "value": "猫"
+        }
+      ]
+    },
+    {
+      "name": "hieronymus_concept_facet_set_canonical",
+      "setup": [
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Cat"
+          },
+          "save": "id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_facet_add",
+          "arguments": {
+            "concept_id": "$id",
+            "value": "猫",
+            "language": "ja"
+          },
+          "save": "first_facet_id=id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_facet_add",
+          "arguments": {
+            "concept_id": "$id",
+            "value": "Cat",
+            "is_canonical": true
+          },
+          "save": "second_facet_id=id"
+        }
+      ],
+      "arguments": {
+        "concept_id": "$id",
+        "facet_id": "$first_facet_id"
+      },
+      "expected_subset": {
+        "id": "$first_facet_id",
+        "is_canonical": true
+      },
+      "persist": {
+        "table": "concept_facets",
+        "where": {
+          "id": "$first_facet_id",
+          "is_canonical": 1
+        }
+      }
+    },
+    {
+      "name": "hieronymus_crystal_link_concept",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "The lighthouse keeper keeps a compass that points inward."
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_complete",
+          "arguments": {
+            "session_id": "$session_id"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_dream",
+          "arguments": {}
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_concept_create",
+          "arguments": {
+            "canonical_name": "Inward Compass"
+          },
+          "save": "id"
+        }
+      ],
+      "arguments": {
+        "crystal_id": 1,
+        "concept_id": "$id",
+        "link_type": "evidence"
+      },
+      "expected_subset": {
+        "id": 1,
+        "concept_ids": [
+          "$id"
+        ]
+      },
+      "persist": {
+        "table": "crystal_concepts",
+        "where": {
+          "crystal_id": 1,
+          "concept_id": "$id",
+          "link_type": "evidence"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_crystal_story_scopes_set",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "The lighthouse keeper keeps a compass that points inward."
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_complete",
+          "arguments": {
+            "session_id": "$session_id"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_dream",
+          "arguments": {}
+        }
+      ],
+      "arguments": {
+        "crystal_id": 1,
+        "story_scopes": [
+          "book:1/chapter:1"
+        ]
+      },
+      "expected_subset": {
+        "id": 1,
+        "story_scopes": [
+          "book:1/chapter:1"
+        ]
+      },
+      "persist": {
+        "table": "crystal_story_scopes",
+        "where": {
+          "crystal_id": 1,
+          "scope": "book:1/chapter:1"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_crystal_semantic_tags_set",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_series_create",
+          "arguments": {
+            "slug": "book",
+            "title": "Book",
+            "source_language": "ja",
+            "target_language": "en"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_start",
+          "arguments": {
+            "series_slug": "book"
+          },
+          "save": "session_id"
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_short_term_add",
+          "arguments": {
+            "session_id": "$session_id",
+            "kind": "note",
+            "text": "The lighthouse keeper keeps a compass that points inward."
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_session_complete",
+          "arguments": {
+            "session_id": "$session_id"
+          }
+        },
+        {
+          "kind": "call",
+          "tool": "hieronymus_dream",
+          "arguments": {}
+        }
+      ],
+      "arguments": {
+        "crystal_id": 1,
+        "semantic_tags": [
+          "compass"
+        ]
+      },
+      "expected_subset": {
+        "id": 1,
+        "semantic_tags": [
+          "compass"
+        ]
+      },
+      "persist": {
+        "table": "crystal_semantic_tags",
+        "where": {
+          "crystal_id": 1,
+          "tag": "compass"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_concept_proposals_list",
+      "arguments": {},
+      "expected_subset": [
+        {
+          "id": 1,
+          "series_slug": "book",
+          "concept_text": "Yun",
+          "source_form": "ユン",
+          "canonical_rendering": "Юн",
+          "status": "pending",
+          "approved_variants": [],
+          "forbidden_variants": []
+        }
+      ],
+      "setup": [
+        {
+          "kind": "sql",
+          "statement": "insert into strict_concept_proposals(series_slug, source_language, target_language, concept_text, source_form, canonical_rendering, status, created_at, updated_at) values ('book', 'ja', 'ru', 'Yun', 'ユン', 'Юн', 'pending', '2026-09-05T00:00:00+00:00', '2026-09-05T00:00:00+00:00')",
+          "arguments": []
+        }
+      ],
+      "persist": {
+        "table": "strict_concept_proposals",
+        "where": {
+          "id": 1,
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "name": "hieronymus_dream",
+      "setup": [
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/provider.conf",
+          "contents": "[test-lane]\nname = \"Test Lane\"\ntype = \"openai\"\nurl = \"<DREAM_PROVIDER_URL>/v1\"\nkey = \"test-key\"\ntimeout_seconds = 5.0\n\n[defaults]\nprovider = \"\"\nmodel = \"\"\n"
+        },
+        {
+          "kind": "write_file",
+          "path": "<ROOT>/dream.conf",
+          "contents": "[workflows.knowledge_crystals]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n\n[workflows.coverage_audit]\nprovider = \"test-lane\"\nmodel = \"test-model\"\nenabled = true\n"
+        }
+      ],
+      "arguments": {},
+      "expected_subset": {
+        "status": "completed",
+        "provider": "openai",
+        "input_count": 0
+      },
+      "persist": {
+        "table": "dream_runs",
+        "where": {
+          "status": "completed",
+          "provider": "openai"
+        }
+      }
+    }
+  ]
+}

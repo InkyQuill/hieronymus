@@ -1,0 +1,7 @@
+Usage: hieronymus dream [OPTIONS]
+
+Options:
+  --provider TEXT
+  --json
+  --wait           Wait for an active dream cycle to finish.
+  --help           Show this message and exit.

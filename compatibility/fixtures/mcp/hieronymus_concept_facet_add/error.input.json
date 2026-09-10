@@ -1,0 +1,23 @@
+{
+  "params": {
+    "arguments": {
+      "confidence": 0.9,
+      "kind": "name",
+      "language": "ja",
+      "language_tags": [
+        "ja"
+      ],
+      "semantic_tags": [
+        "ability"
+      ],
+      "story_scopes": [
+        "volume:1"
+      ],
+      "value": "センス"
+    },
+    "name": "hieronymus_concept_facet_add"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,4 @@
+Usage: hieronymus skills [OPTIONS] COMMAND [ARGS]...
+Try 'hieronymus skills --help' for help.
+
+Error: No such option: --compat-invalid-option

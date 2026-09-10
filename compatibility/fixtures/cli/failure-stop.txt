@@ -1,0 +1,4 @@
+Usage: hiero stop [OPTIONS]
+Try 'hiero stop --help' for help.
+
+Error: No such option: --compat-invalid-option

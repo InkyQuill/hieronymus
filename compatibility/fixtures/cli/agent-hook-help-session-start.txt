@@ -1,0 +1,6 @@
+Usage: hieronymus-agent-hook session-start [OPTIONS]
+
+Options:
+  --cwd DIRECTORY
+  --json
+  --help           Show this message and exit.

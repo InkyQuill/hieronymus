@@ -1,0 +1,6 @@
+{
+  "service": {
+    "available": true,
+    "mode": "local-http"
+  }
+}

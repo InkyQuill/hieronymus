@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "args": [
+        "search",
+        "synthetic-series",
+        "Sense"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "rag"
+      ],
+      "stderr": "",
+      "stdout": "No RAG results.\n"
+    },
+    {
+      "args": [
+        "search",
+        "unknown-series",
+        "Sense"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "rag"
+      ],
+      "stderr": "Error: unknown series: unknown-series\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.rag"
+}

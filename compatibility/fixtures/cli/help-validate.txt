@@ -1,0 +1,7 @@
+Usage: hiero validate [OPTIONS] SERIES_SLUG
+
+Options:
+  --raw-file FILE         [required]
+  --translated-file FILE  [required]
+  --json
+  --help                  Show this message and exit.

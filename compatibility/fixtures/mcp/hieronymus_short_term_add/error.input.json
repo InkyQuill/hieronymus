@@ -1,0 +1,17 @@
+{
+  "params": {
+    "arguments": {
+      "kind": "correction",
+      "metadata": {
+        "line": 12
+      },
+      "source_ref": "chapter-2",
+      "source_role": "agent",
+      "text": "Use Sense as a game-system term."
+    },
+    "name": "hieronymus_short_term_add"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,4 @@
+Usage: hiero doctor [OPTIONS]
+Try 'hiero doctor --help' for help.
+
+Error: No such option: --compat-invalid-option

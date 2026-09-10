@@ -1,0 +1,477 @@
+{
+  "adr": "0011",
+  "purpose": "Multilingual public MCP acceptance: English baseline, Japanese source and Russian target paraphrases; deterministic terminology and lexical short-term memory remain separate.",
+  "series": [
+    {
+      "slug": "lighthouse-chronicles",
+      "title": "Lighthouse Chronicles",
+      "source_language": "en",
+      "target_language": "ru"
+    },
+    {
+      "slug": "harbour-records",
+      "title": "Harbour Records",
+      "source_language": "en",
+      "target_language": "ru"
+    },
+    {
+      "slug": "literary-ja",
+      "title": "literary-ja",
+      "source_language": "ja",
+      "target_language": "ru"
+    },
+    {
+      "slug": "foreign-ja",
+      "title": "foreign-ja",
+      "source_language": "ja",
+      "target_language": "ru"
+    },
+    {
+      "slug": "literary-ru",
+      "title": "literary-ru",
+      "source_language": "ja",
+      "target_language": "ru"
+    },
+    {
+      "slug": "foreign-ru",
+      "title": "foreign-ru",
+      "source_language": "ja",
+      "target_language": "ru"
+    }
+  ],
+  "documents": [
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "physician",
+      "text": "The physician treated the wounded sailor aboard the vessel."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "physician-duplicate",
+      "text": "The physician treated the wounded sailor aboard the old vessel."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "carpenter",
+      "text": "The carpenter repaired the cabin door."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "lighthouse-keeper",
+      "text": "The lighthouse keeper trimmed the lamp every evening at dusk."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "nurse",
+      "text": "The nurse bandaged the fisherman's hand down on the pier."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "cartographer",
+      "text": "The cartographer drew charts of islands no ship had ever visited."
+    },
+    {
+      "series_slug": "lighthouse-chronicles",
+      "doc_id": "storm",
+      "text": "The storm drove the fishing fleet back into the harbour before dawn."
+    },
+    {
+      "series_slug": "harbour-records",
+      "doc_id": "foreign-doctor",
+      "text": "A doctor cared for an injured seaman on a ship in another port."
+    },
+    {
+      "series_slug": "harbour-records",
+      "doc_id": "foreign-vessel",
+      "text": "The physician treated the wounded sailor aboard the vessel of the harbour master."
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "ship-physician-ja",
+      "text": "船医は負傷した船乗りを手当てした。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "carpenter-ja",
+      "text": "大工は船室の扉を修理した。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "keeper-ja",
+      "text": "灯台守は毎晩、日暮れに灯火を整えた。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "cartographer-ja",
+      "text": "地図職人はまだ船が訪れたことのない島々の海図を描いた。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "storm-ja",
+      "text": "嵐のため漁船団は夜明け前に港へ引き返した。"
+    },
+    {
+      "series_slug": "foreign-ja",
+      "doc_id": "foreign-ja-physician",
+      "text": "けがをした水夫を治療したのは誰？"
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "ship-physician-ru",
+      "text": "Судовой врач перевязал раненого матроса на борту корабля."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "carpenter-ru",
+      "text": "Плотник починил дверь каюты."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "keeper-ru",
+      "text": "Смотритель маяка каждый вечер зажигал фонарь."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "cartographer-ru",
+      "text": "Картограф начертил карты островов, которых ещё не достигал ни один корабль."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "storm-ru",
+      "text": "Шторм заставил рыбацкую флотилию вернуться в гавань до рассвета."
+    },
+    {
+      "series_slug": "foreign-ru",
+      "doc_id": "foreign-ru-physician",
+      "text": "Кто оказал медицинскую помощь пострадавшему моряку?"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "nurse-ja",
+      "text": "看護婦は岸壁で漁師の手に包帯を巻いた。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "cook-ja",
+      "text": "料理人は船員たちのために熱い汁物を作った。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "captain-ja",
+      "text": "船長は危険な浅瀬を避けて船の進路を変えた。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "merchant-ja",
+      "text": "商人は市場で香辛料と絹を売った。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "gardener-ja",
+      "text": "庭師は春に果樹の枝を刈り込んだ。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "healer-ja",
+      "text": "村の薬師は子供の熱を下げる薬草を煎じた。"
+    },
+    {
+      "series_slug": "literary-ja",
+      "doc_id": "scribe-ja",
+      "text": "書記は王の命令を書き写して使者に渡した。"
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "nurse-ru",
+      "text": "Медсестра наложила повязку на руку рыбака на пристани."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "cook-ru",
+      "text": "Кок приготовил горячую похлёбку для команды."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "captain-ru",
+      "text": "Капитан изменил курс, чтобы обойти опасную мель."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "merchant-ru",
+      "text": "Купец торговал пряностями и шёлком на рынке."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "gardener-ru",
+      "text": "Садовник весной обрезал ветви яблонь."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "healer-ru",
+      "text": "Деревенская знахарка сварила отвар, чтобы у ребёнка спал жар."
+    },
+    {
+      "series_slug": "literary-ru",
+      "doc_id": "scribe-ru",
+      "text": "Писец переписал королевский указ и передал его гонцу."
+    }
+  ],
+  "memories": [
+    {
+      "series_slug": "lighthouse-chronicles",
+      "kind": "note",
+      "text": "The lighthouse lamp was electrified in nineteen hundred and two."
+    }
+  ],
+  "terms": [
+    {
+      "series_slug": "lighthouse-chronicles",
+      "category": "rule",
+      "source_text": "penicillin",
+      "canonical_translation": "пенициллин"
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "physician-paraphrase",
+      "query": "Which doctor cared for the injured seaman on the ship?",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": [
+        "physician",
+        "physician-duplicate"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "cartographer-paraphrase",
+      "query": "Who made maps of lands no vessel had reached?",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": [
+        "cartographer"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "lexical-keeper",
+      "query": "the lighthouse keeper trimmed the lamp at dusk",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": [
+        "lighthouse-keeper"
+      ],
+      "require_semantic_provenance": false,
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "distractor-control-carpenter",
+      "query": "Who fixed the door of the cabin?",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": [
+        "carpenter"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "foreign-series-isolation",
+      "query": "A doctor cared for an injured seaman on a ship.",
+      "series_slug": "lighthouse-chronicles",
+      "expected_top3_doc_ids": [
+        "physician",
+        "physician-duplicate"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "learned-memory-electrification",
+      "query": "the lighthouse lamp was electrified",
+      "series_slug": "lighthouse-chronicles",
+      "expected_memory_text": "The lighthouse lamp was electrified in nineteen hundred and two.",
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "terminology-independence",
+      "query": "The physician stockpiled penicillin before the storm.",
+      "series_slug": "lighthouse-chronicles",
+      "expected_contract_term": {
+        "source_text": "penicillin",
+        "canonical_translation": "пенициллин"
+      },
+      "expected_top3_doc_ids": [
+        "physician",
+        "physician-duplicate"
+      ],
+      "excluded_series": [
+        "harbour-records"
+      ],
+      "language": "en",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "excluded_doc_ids": [
+        "foreign-doctor",
+        "foreign-vessel"
+      ]
+    },
+    {
+      "query_id": "ship-physician-ja-paraphrase",
+      "query": "けがをした水夫を治療したのは誰？",
+      "series_slug": "literary-ja",
+      "language": "ja",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "expected_top3_doc_ids": [
+        "ship-physician-ja"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "foreign-ja"
+      ],
+      "excluded_doc_ids": [
+        "foreign-ja-physician"
+      ]
+    },
+    {
+      "query_id": "cartographer-ja-paraphrase",
+      "query": "未踏の島の地形を記したのは誰？",
+      "series_slug": "literary-ja",
+      "language": "ja",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "expected_top3_doc_ids": [
+        "cartographer-ja"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "foreign-ja"
+      ],
+      "excluded_doc_ids": [
+        "foreign-ja-physician"
+      ]
+    },
+    {
+      "query_id": "ship-physician-ru-paraphrase",
+      "query": "Кто оказал медицинскую помощь пострадавшему моряку?",
+      "series_slug": "literary-ru",
+      "language": "ru",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "expected_top3_doc_ids": [
+        "ship-physician-ru"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "foreign-ru"
+      ],
+      "excluded_doc_ids": [
+        "foreign-ru-physician"
+      ]
+    },
+    {
+      "query_id": "cartographer-ru-paraphrase",
+      "query": "Кто изобразил на бумаге неизведанные участки суши среди океана?",
+      "series_slug": "literary-ru",
+      "language": "ru",
+      "context": {
+        "viewpoint": null,
+        "story_position": null,
+        "acceptance": "retrieval"
+      },
+      "expected_top3_doc_ids": [
+        "cartographer-ru"
+      ],
+      "require_semantic_provenance": true,
+      "excluded_series": [
+        "foreign-ru"
+      ],
+      "excluded_doc_ids": [
+        "foreign-ru-physician"
+      ]
+    }
+  ]
+}

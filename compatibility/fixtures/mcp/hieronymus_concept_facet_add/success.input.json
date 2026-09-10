@@ -1,0 +1,16 @@
+{
+  "concept_id": 1,
+  "confidence": 0.9,
+  "kind": "name",
+  "language": "ja",
+  "language_tags": [
+    "ja"
+  ],
+  "semantic_tags": [
+    "ability"
+  ],
+  "story_scopes": [
+    "volume:1"
+  ],
+  "value": "センス"
+}

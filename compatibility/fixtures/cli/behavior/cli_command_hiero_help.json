@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "help"
+      ],
+      "stderr": "",
+      "stdout": "🪶 Hieronymus v0.7.0α\nRemembers things for you.\nAlpha software: local-first, usable at your own risk.\n\n📖 Service\n  hiero                  Start or connect to the local service\n  hiero status           Show daemon and provider status\n  hiero status --json    Emit daemon and provider status for scripts\n  hiero stop             Request graceful daemon shutdown\n  hiero restart          Restart the local daemon\n\n📖 Management\n  hiero config           Open the configuration web console\n  hiero config --json    Emit config, provider, dreaming, ingest, and release state\n  hiero admin            Open the local management web console\n  hiero admin --json     Emit management counts and available views\n  hiero doctor           Check configuration and service health\n  hiero doctor --json    Emit configuration and service diagnostics\n\n📖 Agent and automation\n  hiero session-start <series> --task-type <type> --json\n  hiero remember-short <session-id> --role user --kind correction\n      --text <text> --json\n  hiero recall <session-id> --series <series> --query <query>\n      --source-language <src> --target-language <dst>\n      --task-type <type> --json\n  hiero feedback <crystal-id> --event confirmed_by_user --role user --json\n  hiero skills install --target agents --target claude\n\n📖 Maintenance\n  hiero install codex --dry-run\n  hiero update           Update managed installs in place\n  hiero dream --json     Run local dreaming and emit machine-readable status\n\n📖 Examples\n  hiero status --json\n  hiero session-start oso --task-type translation --json\n  hiero recall 1 --series oso --query \"style\"\n      --source-language ja --target-language en\n      --task-type translation --json\n"
+    },
+    {
+      "args": [
+        "unexpected-argument"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "help"
+      ],
+      "stderr": "Usage: hiero help [OPTIONS]\nTry 'hiero help --help' for help.\n\nError: Got unexpected extra argument (unexpected-argument)\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.help"
+}

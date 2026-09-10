@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_termbase_validate: 1 validation error for hieronymus_termbase_validateArguments\nseries_slug\n  Field required [type=missing, input_value={'raw_text': 'ユン walk...xt': 'Yun walked home.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
+  }
+}

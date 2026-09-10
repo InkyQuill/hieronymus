@@ -1,0 +1,26 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "include_global": {
+          "invalid": "expected scalar"
+        },
+        "semantic_tag": "ability",
+        "status": "candidate"
+      },
+      "name": "hieronymus_concept_list"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_list: 1 validation error for hieronymus_concept_listArguments\ninclude_global\n  Input should be a valid boolean [type=bool_type, input_value={'invalid': 'expected scalar'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/bool_type",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "agent-hook",
+        "session-end"
+      ],
+      "stderr": "",
+      "stdout": "Hieronymus session hook complete\n"
+    },
+    {
+      "args": [
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "agent-hook",
+        "session-end"
+      ],
+      "stderr": "",
+      "stdout": "{\"event\": \"session-end\", \"handled\": true, \"service\": {\"available\": false, \"mode\": \"direct-local\", \"reason\": \"no running local service discovered\"}}\n"
+    },
+    {
+      "args": [
+        "unexpected-argument"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "agent-hook",
+        "session-end"
+      ],
+      "stderr": "Usage: hieronymus-agent-hook session-end [OPTIONS]\nTry 'hieronymus-agent-hook session-end --help' for help.\n\nError: Got unexpected extra argument (unexpected-argument)\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus-agent-hook.session-end"
+}

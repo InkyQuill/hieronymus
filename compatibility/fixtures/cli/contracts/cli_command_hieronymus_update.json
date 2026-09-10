@@ -1,0 +1,18 @@
+{
+  "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_update.json",
+  "contract_id": "cli.command.hieronymus.update",
+  "failure": {
+    "args": [
+      "--compat-invalid-option"
+    ],
+    "exit_code": 2,
+    "fixture": "compatibility/fixtures/cli/hieronymus-failure-update.txt"
+  },
+  "success": {
+    "args": [
+      "--help"
+    ],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/hieronymus-help-update.txt"
+  }
+}

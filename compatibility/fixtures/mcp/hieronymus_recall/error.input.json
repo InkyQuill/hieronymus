@@ -1,0 +1,12 @@
+{
+  "params": {
+    "arguments": {
+      "query": "Sense UI",
+      "series_slug": "synthetic-series"
+    },
+    "name": "hieronymus_recall"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "confidence": 0.9,
+        "kind": "name",
+        "language": "ja",
+        "language_tags": [
+          "ja"
+        ],
+        "semantic_tags": [
+          "ability"
+        ],
+        "story_scopes": [
+          "volume:1"
+        ],
+        "value": "センス"
+      },
+      "name": "hieronymus_concept_facet_add"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_facet_add: 1 validation error for hieronymus_concept_facet_addArguments\nconcept_id\n  Field required [type=missing, input_value={'confidence': 0.9, 'kind...], 'value': 'センス'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "params": {
+    "arguments": {
+      "provider": {
+        "invalid": "expected scalar"
+      }
+    },
+    "name": "hieronymus_dream"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

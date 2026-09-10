@@ -1,0 +1,4 @@
+Usage: hieronymus rag search [OPTIONS] SERIES_SLUG QUERY
+Try 'hieronymus rag search --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "confidence": 0.9,
+      "semantic_tags": [
+        "ability",
+        "ui"
+      ]
+    },
+    "name": "hieronymus_crystal_semantic_tags_set"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

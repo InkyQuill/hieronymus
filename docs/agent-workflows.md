@@ -1,128 +1,113 @@
-# Hieronymus Agent Workflows
+# Agent workflows
 
-Hieronymus agent integrations package skills, MCP configuration, and host-specific plugin manifests
-for local coding agents. The generated assets teach agents to recall memory, distinguish active rule
-crystals from advisory memory, write short-term observations, learn material deliberately, and read
-material casually.
+The Rust generator teaches automatic scoped memory maintenance: establish story context,
+recall before chapter work, capture significant observations, validate terminology and
+record correlated relevance feedback. Learned evidence can activate/revise terminology;
+clear independently delivered corrections apply immediately. No author label or routine
+approval queue confers authority. See [authority ingress](authority-ingress.md) for exact
+public DTOs, current-selection rules and receipt dependencies.
 
-Installers write the asset bundle under the global Hieronymus config root, patch host config files
-with backups, and report installed status only when both assets and host config entries are present.
+`hiero plugins generate` (`--dry-run`, `--json`) deterministically writes eight skills,
+MCP configuration and host manifests under `<data-root>/agent-plugins/`. It does not
+edit host profiles or book files. The generated targets are codex, claude, gemini,
+opencode, openclaw and pi; retained output is not proof of native support. The required
+native matrix is Claude/Codex/Pi. zCode's prior shared-Claude results remain historical,
+paused and unqualified.
 
-## Integrations
+The skills are hieronymus-bootstrap, recall, learn, read, remember, translate, review and
+orchestrate. They preserve source language and explicit narrative scope, distinguish
+current truth from research, and separate factual invalidation from relevance feedback.
+RAG reads use the current results/non_current envelope and must report unavailable
+semantics honestly. Ingest individual typed claims and real file evidence, not invented
+source_role/user_rule provenance. Two independent aligned paragraph anchors and resolved
+identity/scope can support a learned decision; ambiguous names remain tentative.
 
-The common bundle includes:
+## Installed host wiring
 
-- Hieronymus workflow skills under `skills/`.
-- MCP config under `mcp/hieronymus.mcp.json`.
-- Codex hook config under `hooks/hooks.codex.json`.
+The stable `hieronymus-mcp` command discovers the daemon; generated JSON contains no
+port or credential. A custom installation sets `HIERONYMUS_DATA_ROOT` and places its
+installed `bin` directory on PATH. Use each host's explicit MCP `2026-07-28` opt-in;
+never downgrade silently. Claude requires launcher environment `MCP_SDK_GENERATION=v2`
+and `MCP_PROTOCOL_NEGOTIATION=auto`. Codex requires `[features] mcp_2026_07_28=true`;
+the generated Codex server environment supplies `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`.
+zCode exposes a supported per-server `protocolVersion=2026-07-28` override outside the
+shared bundle; a disposable native zCode3.11.2 probe observed server/discover, tools/list, status and
+series_list with this override. This is protocol evidence, not candidate workflow acceptance.
+Historical P2 failures and newer qualification status are
+tracked in [host acceptance](agent-host-acceptance.md).
 
-`render_agent_plugin_assets(target)` adds one target-specific manifest:
+Pi can install `<data-root>/agent-plugins/pi` as an ordinary package:
 
-- `codex`: `.codex-plugin/plugin.json`, plus a root `.mcp.json` for Codex plugin validation.
-- `claude`: `.claude-plugin/plugin.json`.
-- `gemini`: `gemini-extension.json`.
-- `opencode`: `opencode/plugin.json`.
-- `openclaw`: `openclaw/plugin.json`.
-
-The MCP config invokes `hieronymus-mcp`. Codex hooks currently invoke
-`python -m hieronymus.agent_hooks session-start` and
-`python -m hieronymus.agent_hooks session-end`; the hook asset is packaged separately for later
-installer wiring and is not referenced from the Codex plugin manifest.
-
-## Learn vs Read
-
-`learn` is deliberate ingestion. The agent splits source material into observed facts or compact
-blocks, records source credibility, language tags, story scopes, and semantic tags, then stores the
-result as short-term memories. Later dreaming can distill crystals, lessons, erudition, and
-legacy compatibility proposals.
-
-Legacy `remember` and memory-add integrations are compatibility wrappers around the same short-term
-queue. They preserve the old searchable entry shape for callers, but the stored memory remains
-short-term until dreaming converts, supersedes, or discards it.
-
-Legacy memory search keeps raw short-term IDs when they are unambiguous. If a long-term crystal and
-short-term memory would otherwise share the same legacy `id`, the crystal is returned with a negative
-compatibility ID. Vague concept suggestions in proposal lists also use negative compatibility IDs;
-only positive proposal IDs are actionable legacy compatibility proposals.
-
-`read` is source ingestion plus temporary understanding. The agent imports each read file into RAG,
-where its direct content remains available for retrieval. It must not copy source text into
-short-term memory. Instead, it records its own conclusions—terms, concepts, significant facts,
-implications, uncertainties, and useful connections—as separate short-term blocks of 1–6 sentences.
-There is no total block limit: every important term, concept, and detail needs coverage in one or
-more compact blocks. Agents should use `read` for casual lookup, summaries, and one-off context
-unless the user asks Hieronymus to learn the material.
-
-Read, Learn, and Remember are agent judgment workflows. MCP tools are storage and retrieval
-primitives, not judgment engines. Read and Learn are no longer exposed as judgment-heavy MCP tools;
-agents should use the skill workflows plus `hieronymus_short_term_add_batch`.
-
-The MCP server continues to expose primitives only. Read, Learn, and Remember remain agent skills
-so host agents make contextual workflow decisions instead of asking Hieronymus MCP tools to judge
-translation intent.
-
-`remember` records corrections as short-term memory. For high-credibility user rules, phrase the
-memory as "User told me to ...", use user-rule credibility, and let dreaming crystallize it later.
-
-## Rule Crystals vs Advisory
-
-Active rule crystals are mandatory. Legacy termbase contract and validation wrappers source their
-requirements from active rule crystals, and those rules take priority over fuzzy recall and stylistic
-memory.
-
-Crystals and lessons are advisory. They can influence translation and review choices, but they must
-not silently override an active rule crystal.
-
-Agents must not approve legacy terminology proposals themselves. They may record proposals,
-uncertainty, conflicts, and supporting evidence, then leave approval to the human workflow.
-
-## Installing Agent Integrations
-
-### Project-local workflow skills
-
-Use project-local skills when a repository should carry the Hieronymus workflow instructions for
-agents that discover skills in the workspace:
-
-```bash
-hiero skills install --target agents --target claude
+```sh
+pi install npm:pi-mcp-adapter
+pi install <data-root>/agent-plugins/pi
 ```
 
-This writes the bundled skills into the current workspace's `.agents/skills` and `.claude/skills`
-directories. It is deliberately separate from `hiero install <agent>`: project-skill installation
-does not register MCP. It also does not install a plugin, patch a host configuration file, or write
-outside the current workspace.
+The first command installs Pi's separately packaged MCP prerequisite; restart Pi
+after installation. The Hieronymus package exposes all eight skills. Its generated `mcp.json` registers only
+`hieronymus-mcp` and pins
+`protocolVersion` to `2026-07-28`; `pi-mcp-adapter` owns discovery, lazy lifecycle,
+authoritative tool catalog, calls and error envelopes. Pi can use Hieronymus MCP tools and
+skills after package installation. This passive package has no input hook and does not
+recognize trusted corrections, mint Applied receipts, or block prompts.
 
-Use `hiero skills install --target agents --dry-run` or
-`hiero skills uninstall --target agents --dry-run` to inspect the affected paths without changing
-the workspace. `hiero skills uninstall --target agents --target claude` removes the bundled skills
-from those targets.
+Claude can install the generated local marketplace literally:
 
-Installing unconditionally overwrites existing Hieronymus-owned skill files so a project can be
-updated noninteractively. Uninstalling removes only owned `hieronymus-*` skill directories that
-contain a regular `SKILL.md`; unrelated skills and the parent skill directories are preserved.
+```sh
+claude plugin marketplace add --scope local <data-root>/agent-plugins
+claude plugin install --scope local hieronymus@hieronymus-local
+```
 
-### Global agent integrations
+The catalog at `.claude-plugin/marketplace.json` resolves `./claude` from the catalog root.
+The Claude manifest explicitly references `hooks/hooks.json`. zCode's supported isolated
+`plugins.dirs` setting can load that same Claude directory. A zCode launcher must set
+`HIERONYMUS_AGENT_HOST=zcode`; the identical shared hook defaults to claude otherwise.
+The installed handler validates the resulting supported host name. This is explicit
+launcher identity, not a guess based on transcript paths or prompt text.
 
-Use `hiero install --json` or `hiero install list` to see detected agent hosts and whether the
-Hieronymus plugin is installed.
+Codex uses its native local marketplace mechanism:
 
-Use `hiero install codex --dry-run` to inspect planned changes. Use `hiero install codex` to write
-plugin assets and patch the host config with backups under `~/.config/hieronymus/backups`.
+```sh
+codex plugin marketplace add <data-root>/agent-plugins --json
+codex plugin add hieronymus@hieronymus-local --json
+```
 
-Supported install targets in this pass:
+The generated `.agents/plugins/marketplace.json` references `./codex`. The Codex manifest
+references `hooks/hooks.codex.json`; optional hooks use the supported event-object,
+nested hooks/type=command format. Trust only the inspected hook commands through the
+host's supported trust interface. Codex 0.147 exposes hook key/currentHash in app-server
+`hooks/list` and accepts each exact `hooks.state."<key>".trusted_hash` through
+`config/batchWrite`; a changed hash needs a fresh decision. Do not use a blanket hook
+trust bypass. Tool approval is separate: `--ask-for-approval never` does not itself
+approve MCP tools. Disposable qualification must explicitly authorize the intended
+server tools with the host's supported tool approval settings.
 
-- `claude` writes Claude Code MCP registration into `~/.claude.json`.
-- `codex` writes Codex MCP and plugin registration into `~/.codex/config.toml`.
-- `opencode` writes OpenCode MCP and plugin registration into `~/.config/opencode/plugin.json`.
-- `openclaw` writes OpenClaw MCP and plugin registration into `~/.openclaw/openclaw.json`.
-- `gemini` writes Gemini CLI MCP and extension registration into `~/.gemini/settings.json`.
+Hook enablement remains an optional host trust/configuration choice. Current generated
+hooks subscribe to UserPromptSubmit, not an assumed cross-host SessionEnd event.
+Older legacy session-start/session-end CLI entrypoints remain available independently.
+Diagnostic native probes confirmed this hook shape on Claude 2.1.241, Codex 0.147.0 and
+zCode 3.11.2; candidate installation and complete S1–S7 workflows are separate gates.
 
-Reserved detectable targets:
+## First session and explicit selection
 
-- `mimo` detects Xiaomi MiMo through `~/.mimocode` and `~/.config/mimocode`, but does not write
-  host configuration until a stable noninteractive MCP or plugin configuration contract is
-  implemented. Aliases: `xiaomi-mimo`, `xiaomi_mimo`, `mimocode`.
-- `pi` is detected for status/doctor output, but Hieronymus does not write host configuration
-  because no safe Pi protocol is implemented.
-- `hermes` is detected for status/doctor output, but Hieronymus does not write host configuration
-  because no safe Hermes protocol is implemented.
+The first actual UserPromptSubmit without a binding returns read-only `binding_required`
+context with the actual host/session identity. It explicitly says the prompt was **not
+retained or applied** as a correction. It creates no domain session, origin or decision.
+The model establishes the real MCP session, imports/chooses actual evidence or claims,
+reads the authority revision and pipes those returned values to the installed
+`hiero agent-hook bind-context` command as documented in authority-ingress.md. It must
+not manually write host-context files, guess IDs or replay the initial prompt through
+a fabricated event. A subsequent genuine host prompt can then apply immediately.
+
+Every genuine invocation gets a fresh delivery UUID; identical text is not deduplication.
+Exact retry uses `retry-delivery --delivery-id` and its frozen saved context. New source
+selection or a later authority revision requires explicit rebinding from new observed
+outputs. Existing in-flight events are never rebased. An unresolved authentic signal
+increments revision and queues gathering but has no rule/claim effect; it cannot satisfy
+required_decision_id. Applied/Replayed hook results supply that dependency for model
+recall/contract/validation. Ordinary MCP cannot redeem host or console origins.
+
+No generated file itself proves trusted ingress, semantic retrieval or installed host
+acceptance. Native version, bundle hash, model, actual events and durable effects must
+be recorded by the acceptance run. No plugin rewrites user host configuration, reports
+into a book folder, or claims a pending consolidation completed.

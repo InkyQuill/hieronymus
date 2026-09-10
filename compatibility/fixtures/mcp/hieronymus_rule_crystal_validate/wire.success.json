@@ -1,0 +1,38 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "crystal_id": 1
+      },
+      "name": "hieronymus_rule_crystal_validate"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"crystal_id\": 1,\n  \"valid\": true,\n  \"enforceable\": false,\n  \"errors\": [],\n  \"warnings\": [\n    \"rule crystal is not linked to a concept\"\n  ],\n  \"parsed_rule\": {\n    \"source_text\": \"センス\",\n    \"canonical_translation\": \"Sense\",\n    \"forbidden_variants\": [\n      \"Feeling\"\n    ]\n  }\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "crystal_id": 1,
+      "enforceable": false,
+      "errors": [],
+      "parsed_rule": {
+        "canonical_translation": "Sense",
+        "forbidden_variants": [
+          "Feeling"
+        ],
+        "source_text": "センス"
+      },
+      "valid": true,
+      "warnings": [
+        "rule crystal is not linked to a concept"
+      ]
+    }
+  }
+}

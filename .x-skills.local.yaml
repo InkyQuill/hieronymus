@@ -1,0 +1,28 @@
+version: 1
+skills:
+    - name: good-rust-practices
+      source:
+        type: archive
+      fingerprint: 997c928ef34b1cf8586f059a5826299ffa05e759d88bd255b854792c7e061619
+    - name: sqlite-best-practices
+      source:
+        type: github
+        repository: erayack/sqlite-best-practices
+        path: .
+        ref: 0385ab90416b4ed6bb80bbfad69befc49114c29b
+      fingerprint: 9b051accb54bab8168eae1922e366397565e2b410851d03111e6eff0f8252ac6
+    - name: tailwind-v4
+      source:
+        type: github
+        repository: existential-birds/beagle
+        path: plugins/beagle-react/skills/tailwind-v4
+        ref: a5919c1415f2a98780d9da56212d9af52324f88c
+      fingerprint: 443d42610e06f7b52107d0fa960643dc59fd015a407641863aae798152c51ced
+    - name: using-svelte-5
+      source:
+        type: archive
+      fingerprint: 35d475fe462587bd3b4be424e7df012db7ea503e97b62ca4a826467022745b3b
+    - name: using-sveltekit
+      source:
+        type: archive
+      fingerprint: a6b0ab336ac1d1b6c269b1ca940287f19883fa23ee630647c07631864c4ebc08

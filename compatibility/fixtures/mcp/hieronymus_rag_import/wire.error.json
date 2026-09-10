@@ -1,0 +1,26 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "language_tags": [
+          "en"
+        ],
+        "path": "<SYNTHETIC_ROOT>/chapter.txt",
+        "source_ref": "chapter.txt"
+      },
+      "name": "hieronymus_rag_import"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_rag_import: 1 validation error for hieronymus_rag_importArguments\nseries_slug\n  Field required [type=missing, input_value={'language_tags': ['en'],...rce_ref': 'chapter.txt'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

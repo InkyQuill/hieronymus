@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "confidence": 0.8,
+      "description": "Synthetic game-system concept.",
+      "semantic_tags": [
+        "ability"
+      ]
+    },
+    "name": "hieronymus_concept_create"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

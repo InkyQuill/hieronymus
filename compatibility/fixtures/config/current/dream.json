@@ -1,0 +1,62 @@
+{
+  "dreaming": {
+    "enabled": false,
+    "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+    "max_changed_crystals_per_cycle": 200,
+    "max_long_term_records_affected_per_run": 1000,
+    "max_pending_short_term_memories": 200,
+    "max_related_concepts_per_cycle": 80,
+    "max_related_crystals_per_concept": 20,
+    "max_relation_records_per_pass": 1000,
+    "max_short_term_memories_per_cycle": 50,
+    "max_short_term_memories_per_run": 500,
+    "max_total_affected_crystals": 500,
+    "min_pending_short_term_memories": 20,
+    "not_enough_memories_cycle_threshold": 5,
+    "schedule_interval_minutes": 30
+  },
+  "workflows": {
+    "concepts": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    },
+    "coverage_audit": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    },
+    "knowledge_crystals": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    },
+    "reinforcement": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    },
+    "relations": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    },
+    "rule_crystals": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    },
+    "terminology_candidates": {
+      "enabled": false,
+      "max_records_per_pass": 500,
+      "model": "",
+      "provider": ""
+    }
+  }
+}

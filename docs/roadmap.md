@@ -1,10 +1,85 @@
 # Hieronymus Roadmap
 
+Hieronymus is an alpha local-first translation memory system. The Python alpha
+baseline below is closed and frozen as the behavioral reference for the Rust
+rewrite; new feature work happens in Rust after the cutover.
+
+## Product Direction
+
+[ADR 0016](adr/0016-autonomous-story-memory-product-vision.md) supersedes
+ADR 0005 and the human-only terminology lifecycle in ADR 0011. The target is
+autonomous story memory, with user corrections instead of required review,
+and agent plugins with shared workflow skills; Pi has a native package using the installed MCP adapter, while zCode's shared-Claude evidence is paused/unqualified
+bundle. Its implementation-gap list and acceptance scenarios govern
+follow-up planning. The frozen baseline below does not require preserving
+human approval gates; this documentation change does not implement their
+replacement or alter cutover requirements.
+
+## Rust Rewrite (active program)
+
+Normative sources: the 2026-08-31 ADRs (0008–0015) and
+`docs/superpowers/specs/2026-08-31-rust-*.md` (certification trimmed
+2026-09-03). Process per owner direction: port tests from the current Python
+behavior, adapt them as Rust tests against the frozen fixtures, implement until
+green; commit per slice, plain diff review — no evidence records, gates, or
+recorded attestations. Qualification stage (ADR 0013 spike, four measured
+records, gate `qualified` / `semantic-enabled`) is complete and merged.
+
+Planned slices, in order:
+
+1. Workspace skeleton: virtual Cargo workspace, domain library + `hiero`
+   binary, config files (`provider.conf`/`dream.conf`/`ingest.conf`/
+   `release.conf`) with typed round-trip and `Secret<T>`, data-root handling,
+   SQLite open/classify boundary.
+2. Series/memory storage: schema creation at the current Rust schema,
+   concepts/facets/crystals reads, short-term ingestion thresholds.
+3. Terminology: `term_rules`/`term_rule_forms`, deterministic validation,
+   recall contract section.
+4. Memory/recall: ranked recall lanes, RRF fusion, feedback, working copies,
+   reconsolidation.
+5. RAG/semantic: FTS5 lane, import pipeline, LanceDB/ort semantic lane behind
+   the qualified pins (LanceDB 0.37.1, ort 2.0.0-rc.13), generation lifecycle.
+6. Dreaming: phase pipeline, bounded mutation, audit, provider workflows.
+7. Daemon/transports: daemon lifecycle + discovery, MCP 2026-07-28 stdio +
+   Streamable HTTP, REST/WebSocket routes, light local auth (ADR 0012
+   amendment), embedded Svelte console.
+8. Upgrade tooling before any destructive cutover: `hiero migrate` preflight,
+   dry-run, typed conversion, backup/journal/promotion protocol.
+9. Distribution: one binary + command links, installer, update flow, manual
+   release rehearsal checklist, managed cutover.
+
+Done so far: slices 1–2 (skeleton, config, series, sessions, short-term
+memories, concepts/facets, crystals), slice 3 core (term_rules authority,
+contract, context disambiguation), slice 4 (FTS recall lane, RAG store with
+DOCX/PDF ingestion hardened against malformed documents, rag recall lane
+with active-rule-protected merge), `hiero` version/classify skeleton, CI
+workflows.
+
+Deferred capability gaps to close before cutover:
+
+- strict_terms → term_rules migration belongs to `hiero migrate` (slice 8).
+- concept recall boosts (`recall_boosts_for_crystals`) port with the
+  dreaming slice.
+- Dreaming provider fail-closed gate (workflow enabled/provider resolution)
+  ports with the provider-client slice.
+- Daemon/MCP wiring: the ported domain tools are advertised in the frozen
+  registry but not wired into the daemon's MCP `tools/call` dispatch (only
+  `hieronymus_status` is implemented), and the semantic recall lane is not
+  armed in the daemon (`arm_recall_service` has no non-test caller). A
+  wiring slice for both is required before cutover.
+
+## Python Alpha Baseline (closed, behavioral reference)
+
 Hieronymus is still an alpha local-first translation memory system. The current
 codebase already contains the core memory graph, primitive MCP tools, local
 service, React/OpenTUI management app, install/update flow, and dreaming
 pipeline. The alpha baseline roadmap is closed; future work should start from a
 new plan or ADR-backed decision when scope is approved.
+
+> **Note (2026-09-03):** the OpenTUI management app described below is
+> retired — [ADR 0014](adr/0014-web-console-replaces-terminal-ui.md) replaced
+> the terminal UI with the Svelte web console. The section is kept as the
+> behavioral history of the Python alpha.
 
 ## Product Surfaces
 

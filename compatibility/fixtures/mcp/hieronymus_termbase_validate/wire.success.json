@@ -1,0 +1,22 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "raw_text": "ユン walked home.",
+        "series_slug": "synthetic-series",
+        "translated_text": "Yun walked home."
+      },
+      "name": "hieronymus_termbase_validate"
+    }
+  },
+  "result": {
+    "content": [],
+    "isError": false,
+    "structuredContent": {
+      "result": []
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "params": {
+    "arguments": {
+      "language_tags": [
+        "ja",
+        "en"
+      ],
+      "source_language": "ja",
+      "target_language": "en",
+      "title": "Synthetic Series"
+    },
+    "name": "hieronymus_series_init"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,13 @@
+Usage: hiero recall [OPTIONS] SESSION_ID
+
+Options:
+  --series TEXT           [required]
+  --query TEXT            [required]
+  --source-language TEXT  [required]
+  --target-language TEXT  [required]
+  --task-type TEXT        [required]
+  --volume TEXT
+  --chapter TEXT
+  --limit INTEGER
+  --json
+  --help                  Show this message and exit.

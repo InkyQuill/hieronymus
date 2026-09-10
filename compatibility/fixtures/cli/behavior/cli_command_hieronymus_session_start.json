@@ -1,0 +1,60 @@
+{
+  "cases": [
+    {
+      "args": [
+        "synthetic-series",
+        "--task-type",
+        "translation"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "session-start"
+      ],
+      "stderr": "",
+      "stdout": "Session 1 started\n"
+    },
+    {
+      "args": [
+        "synthetic-series",
+        "--task-type",
+        "translation",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "session-start"
+      ],
+      "stderr": "",
+      "stdout": "{\"session_id\": 1}\n"
+    },
+    {
+      "args": [
+        "unknown-series",
+        "--task-type",
+        "translation"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "session-start"
+      ],
+      "stderr": "Error: unknown series: unknown-series\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus.session-start"
+}

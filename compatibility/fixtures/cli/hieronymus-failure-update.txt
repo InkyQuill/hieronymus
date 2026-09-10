@@ -1,0 +1,4 @@
+Usage: hieronymus update [OPTIONS]
+Try 'hieronymus update --help' for help.
+
+Error: No such option: --compat-invalid-option

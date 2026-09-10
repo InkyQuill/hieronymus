@@ -1,0 +1,10 @@
+Usage: hiero session-start [OPTIONS] SERIES_SLUG
+
+Options:
+  --source-language TEXT
+  --target-language TEXT
+  --task-type TEXT        [required]
+  --volume TEXT
+  --chapter TEXT
+  --json
+  --help                  Show this message and exit.

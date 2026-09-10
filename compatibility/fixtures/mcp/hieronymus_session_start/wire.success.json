@@ -1,0 +1,27 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "chapter": "2",
+        "series_slug": "synthetic-series",
+        "volume": "1"
+      },
+      "name": "hieronymus_session_start"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"session_id\": 1\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "session_id": 1
+    }
+  }
+}

@@ -4,72 +4,44 @@ For the long-term memory workflow, see [Memory Dreaming](memory-dreaming.md).
 
 ## Installation and Updates
 
-Install Hieronymus with:
+The Rust candidate is a Linux x86_64 archive with one native executable, four
+command names, an embedded console, and pinned semantic model/runtime assets.
+It needs no Python, Node or Bun at runtime. It is not yet cleared for product
+cutover: [the rehearsal](rust-cutover-rehearsal.md) records actual results and
+open authority, native agent-host and service-manager gates.
+
+Install a locally built, verified release into disposable roots:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | sh
+scripts/install.sh --release-dir /path/to/release-dist \
+  --app-dir /tmp/hiero-rehearsal/app --data-root /tmp/hiero-rehearsal/data \
+  --unit-dir /tmp/hiero-rehearsal/units --no-activate
+/tmp/hiero-rehearsal/app/bin/hiero version --json
 ```
 
-The installer keeps the managed application checkout at
-`~/.local/share/hieronymus/app` and installs the `hieronymus`, `hiero`, and
-`hieronymus-mcp` console commands through `uv tool install`. If `hiero` is not
-available after installation, add `~/.local/bin` to `PATH`.
-
-In an interactive terminal, the installer asks whether to install the stable or
-dev channel. Stable installs the latest tagged alpha release and dev installs
-the latest `main` commit. Non-interactive installs default to stable. To choose
-the channel explicitly:
+The installer places each release under `app/versions/<version>` and switches
+all stable `app/bin` aliases together. `--no-activate` stages the application
+without contacting the user service manager. Launch the foreground daemon
+for a disposable rehearsal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | HIERONYMUS_INSTALL_CHANNEL=stable sh
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | HIERONYMUS_INSTALL_CHANNEL=dev sh
+/tmp/hiero-rehearsal/app/bin/hiero daemon --data-root /tmp/hiero-rehearsal/data --port 0
 ```
 
-The installer writes the selected update channel to `release.conf`, so later
-`hiero update` calls follow the same stable or dev channel.
+In another terminal, `hiero status --json --data-root <root>` reports the
+authenticated daemon's semantic state. Only `ready` satisfies required
+semantic readiness; acquiring, rebuilding and failed do not. `hiero stop
+--data-root <root>` shuts down the owner. See [Distribution](distribution.md)
+for verified source configuration, update options and recovery boundaries.
+No public release URL is inferred from these local tests.
 
-Update an installed checkout:
-
-```bash
-hiero update
-```
-
-Check for updates without applying them:
-
-```bash
-hiero update --check
-```
-
-Uninstall the app:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh
-```
-
-The non-interactive uninstall one-liner removes the app and keeps settings/data
-by default.
-
-Choose data handling explicitly:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --keep-data
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --purge-data
-```
-
-For an interactive prompt, run the managed checkout script from a terminal:
-
-```bash
-~/.local/share/hieronymus/app/uninstall.sh
-```
-
-The uninstall script only removes Hieronymus-owned install and config/data
-paths. It does not remove translation workspace directories.
-
---purge-data removes the configured data root. If HIERONYMUS_DATA_ROOT is
-set, check it before purging.
-
-Unset or check `HIERONYMUS_DATA_ROOT` before using `--purge-data` if it points
-at data you want to keep, such as a data root inside a translation workspace.
+`hiero admin --data-root <root>` and `hiero config --data-root <root>` open
+the embedded browser console through a single-use launch grant. Refreshes
+reuse the browser cookie; restarting the daemon invalidates that session and
+requires another launch. Explicit foreign Origins are refused. Generated
+plugins use the stable `hieronymus-mcp` command, but current Claude/Codex
+initialize requests are incompatible with mandatory MCP 2026-07-28; see
+[actual host evidence](agent-host-acceptance.md).
 
 ## Data Root
 
@@ -80,6 +52,15 @@ different data root:
 ```bash
 export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memory
 ```
+
+## Uninstall
+
+`hiero uninstall --yes` removes the owned application, service unit and generated
+integration entries; it preserves databases and configuration by default. Add
+`--delete-data` only to remove the explicitly configured data root, including its
+models, backups and audit data. Check `--data-root` or `HIERONYMUS_DATA_ROOT` before
+using that option. A translation workspace should remain outside the application
+data root; owned-path cleanup does not remove unrelated book directories.
 
 ## Configuration
 
@@ -380,17 +361,118 @@ active session after session `1` has been completed and dreamed.
 Corrections enter the workflow as short-term memories and become rule crystals
 through dreaming.
 
+## Headless CLI
+
+Every headless command goes through the local daemon (ADR 0009): the CLI
+process never opens the database directly. Start the daemon with
+`hiero daemon` (or `hiero service start`) first; when the daemon is not
+running, commands report that honestly with the exact remediation instead of
+writing around it. The one exception is `hiero export`, which is read-only.
+
+### Call any advertised MCP tool
+
+`hiero tool-call <tool> --args '<json>'` posts one stateless `tools/call` to
+the daemon's authenticated `/mcp` route, so scripts can drive every tool an
+MCP host can. `--start-daemon` opts into spawning the daemon; `--json` prints
+the full MCP envelope.
+
+Start or complete a session:
+
+```bash
+hiero tool-call hieronymus_series_create --args '{"slug":"oso","title":"Only Sense Online","source_language":"ja","target_language":"en"}'
+hiero tool-call hieronymus_session_start --args '{"series_slug":"oso","volume":"01","chapter":"002"}'
+hiero tool-call hieronymus_session_complete --args '{"session_id":1}'
+```
+
+Recall:
+
+```bash
+hiero tool-call hieronymus_recall --args '{"session_id":2,"series_slug":"oso","query":"cultural terms"}'
+```
+
+Dream over pending completed-session memories:
+
+```bash
+hiero tool-call hieronymus_dream --args '{}'
+```
+
+Dreaming through the tool runs the deterministic provider behind the
+fail-closed workflow gate (the same path as the console's manual dreaming
+action). Configured LLM provider lanes — the scheduler, draining, and
+per-workflow providers — arrive with the dreaming plan; passing a named
+provider is rejected instead of silently substituted.
+
+RAG import and search:
+
+```bash
+hiero tool-call hieronymus_rag_import --args '{"series_slug":"oso","path":"/path/chapter-005.txt","source_ref":"book:5/chapter:5"}'
+hiero tool-call hieronymus_rag_search --args '{"series_slug":"oso","query":"Cooking Talent"}'
+```
+
+Termbase validation (candidate rules stay advisory until an explicit
+approval):
+
+```bash
+hiero tool-call hieronymus_termbase_propose --args '{"series_slug":"oso","category":"person_name","source_text":"ユン","canonical_translation":"Юн"}'
+hiero tool-call hieronymus_termbase_approve --args '{"series_slug":"oso","term_id":1}'
+hiero tool-call hieronymus_termbase_validate --args '{"series_slug":"oso","raw_text":"ユン stands up.","translated_text":"Юна встаёт."}'
+```
+
+### Export memory content as JSON
+
+```bash
+hiero export --output /path/hieronymus-memory.json [--json]
+```
+
+Export serializes the documented content tables (series, sessions,
+short-term memories, crystals, concepts, facets, terminology rules, RAG
+sources and chunks, dream runs) to one deterministic JSON document at the
+explicit destination. It is a read operation: it opens the database
+read-only and never copies a live SQLite file, so it is safe next to a
+running daemon.
+
+### Generate the agent plugin bundle
+
+```bash
+hiero plugins generate [--dry-run] [--json] [--data-root <path>]
+```
+
+Writes the installation-owned bundle under the config root's
+`agent-plugins/` directory: the eight workflow skills, the MCP registration,
+Codex hooks, local Claude/Codex marketplace catalogs, a passive Pi MCP/skills
+package, and one manifest per other supported host (`codex`, `claude`,
+`gemini`, `opencode`, `openclaw`). The MCP registration uses the stable
+`hieronymus-mcp` entry point, which discovers the local daemon through the
+data root's discovery record — generated configuration never contains a
+fixed port or a bearer token. The command only writes Hieronymus-owned
+files; it never rewrites your host configuration. Use `hiero uninstall` to
+remove the bundle.
+
+### Record recall feedback through the daemon
+
+```bash
+hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <ids>] [--miss <ids>]
+```
+
+The CLI posts to the daemon's `POST /recall/feedback` route, so CLI, REST,
+and MCP clients share one at-most-once feedback ledger and audit trail. It
+requires the local daemon to be running and rejects `--start-daemon`
+explicitly.
+
 ## Service Commands
 
 ```bash
-hiero
-hiero status --json
+hiero daemon
+hiero service install
+hiero service start
+hiero service status --json
+hiero service stop
 hiero doctor
-hiero admin
-hiero admin --json
-hiero install codex --dry-run
-hiero skills install --target agents --target claude
-hiero stop
+hiero semantic status
+hiero tool-call hieronymus_series_list --args '{}'
+hiero export --output ./memory.json
+hiero plugins generate
+hiero recall-feedback --recall-id <id> --idempotency-key <key>
 ```
 
 `hiero` is an alias for `hieronymus`; all subcommands work with either command.
@@ -442,3 +524,45 @@ bun run --cwd frontend build
 ```
 
 The wheel packages the resulting `frontend/dist` assets for the local service.
+
+### Configure Ollama semantic embeddings
+
+With the daemon running and an embedding model already installed in Ollama:
+
+```bash
+hiero semantic configure --provider ollama \
+  --base-url http://127.0.0.1:11434 --model nomic-embed-text:latest
+hiero semantic status --json
+hiero service status --json
+```
+
+`nomic-embed-text:latest` is an explicit example model selection, separate from
+chat/Dream profiles. Configuration persists provider, base URL and model in the
+application-owned `semantic.conf`, increments its revision and rearms the existing
+supervised worker. The configure acknowledgement reports `acquiring`; only the
+subsequent daemon state `ready` establishes readiness. Existing corpus chunks
+are rebuilt under the selected model's digest and actual dimensions. Status
+includes the effective identity and configuration revision. Changes to the
+installed model digest fail closed; configure again to rebuild under its new
+identity. Requests never pull models or silently truncate text.
+
+The pinned tokenizer is still required for existing local chunk segmentation;
+Ollama receives the exact original text, including text beyond local token
+truncation. No ONNX model or runtime is required for this backend. A normal
+installed bundle supplies the tokenizer. The configure command reuses a staged
+verified tokenizer and otherwise explicitly attempts acquisition from the pinned
+`DEFAULT_TOKENIZER_URL` in `semantic_model.rs`. That existing downloader currently
+rejects upstream redirects (including HTTP 302); for a development checkout,
+stage the verified pinned tokenizer in the semantic asset directory before
+configuring. The default ONNX `semantic enable --runtime <library>` path remains
+available.
+
+The authenticated REST equivalent is `POST /semantic/configure` with
+`{"provider":"ollama","base_url":"http://127.0.0.1:11434","model":"nomic-embed-text:latest"}`.
+Explicit tokenizer-only acquisition uses `POST /semantic/acquire` with
+`{"tokenizer_only":true}`. Neither status nor configuration reads download or
+pull models. Embedding requests allow at most 65,536 UTF-8 bytes, require exactly
+one finite nonzero vector with at most 16,384 components, bound response reads to
+1 MiB, and use a 30-second inference deadline (5 seconds for model discovery).
+Errors leave the semantic lane unavailable; FTS results cannot count as semantic
+success.

@@ -1,0 +1,16 @@
+{
+  "crystal_id": 1,
+  "enforceable": false,
+  "errors": [],
+  "parsed_rule": {
+    "canonical_translation": "Sense",
+    "forbidden_variants": [
+      "Feeling"
+    ],
+    "source_text": "センス"
+  },
+  "valid": true,
+  "warnings": [
+    "rule crystal is not linked to a concept"
+  ]
+}

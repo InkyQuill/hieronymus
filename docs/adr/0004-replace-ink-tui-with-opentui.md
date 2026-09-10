@@ -1,5 +1,8 @@
 # Replace Ink/React TUI with OpenTUI React TUI
 
+Status: Superseded by [ADR 0014](0014-web-console-replaces-terminal-ui.md).
+Retained as implementation history.
+
 ## Context
 In ADR 0002, we migrated the terminal user interfaces (`hiero config` and `hiero admin`) from Python's Textual framework to a TypeScript Ink/React frontend running under Node.js. While this successfully decoupled visualization from domain logic via a stdio JSON-RPC bridge, the Ink ecosystem has several limitations for building advanced, premium terminal applications:
 1. **Focus and Keyboard Management**: Ink has limited layout-driven keyboard and focus lifecycle control. Inputs, panels, and modal overrides require custom hooks catching raw keystrokes manually.

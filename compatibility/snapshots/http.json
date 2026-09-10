@@ -1,0 +1,783 @@
+{
+  "frontend_calls": [
+    {
+      "consumer": "checkProvider",
+      "method": "POST",
+      "path_template": "/api/providers/{id}/check"
+    },
+    {
+      "consumer": "deleteProvider",
+      "method": "DELETE",
+      "path_template": "/api/providers/{id}"
+    },
+    {
+      "consumer": "listProviders",
+      "method": "GET",
+      "path_template": "/api/providers"
+    },
+    {
+      "consumer": "loadAdminDashboard",
+      "method": "GET",
+      "path_template": "/api/admin/dashboard"
+    },
+    {
+      "consumer": "loadAdminSnapshot",
+      "method": "GET",
+      "path_template": "/api/admin/snapshot",
+      "query_fields": [
+        "selected_id",
+        "view"
+      ]
+    },
+    {
+      "consumer": "loadDreamSettings",
+      "method": "GET",
+      "path_template": "/api/settings/dream"
+    },
+    {
+      "consumer": "loadIngestSettings",
+      "method": "GET",
+      "path_template": "/api/settings/ingest"
+    },
+    {
+      "consumer": "loadReleaseSettings",
+      "method": "GET",
+      "path_template": "/api/settings/release"
+    },
+    {
+      "consumer": "refreshModels",
+      "method": "GET",
+      "path_template": "/api/providers/{id}/models"
+    },
+    {
+      "consumer": "runAdminAction",
+      "method": "POST",
+      "path_template": "/api/admin/actions/{action}"
+    },
+    {
+      "consumer": "saveDreamSettings",
+      "method": "POST",
+      "path_template": "/api/settings/dream"
+    },
+    {
+      "consumer": "saveIngestSettings",
+      "method": "POST",
+      "path_template": "/api/settings/ingest"
+    },
+    {
+      "consumer": "saveProvider",
+      "method": "POST",
+      "path_template": "/api/providers"
+    },
+    {
+      "consumer": "saveReleaseSettings",
+      "method": "POST",
+      "path_template": "/api/settings/release"
+    },
+    {
+      "consumer": "startAdminDreaming",
+      "method": "POST",
+      "path_template": "/api/admin/actions/run_manual_dreaming"
+    }
+  ],
+  "python_discovered_routes": [
+    {
+      "match": "prefix",
+      "method": "DELETE",
+      "value": "/api/providers/"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/admin"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/api/admin/dashboard"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/api/admin/snapshot"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/api/providers"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/api/settings/dream"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/api/settings/ingest"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/api/settings/release"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/config"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/health"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/status"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/ws/admin"
+    },
+    {
+      "match": "prefix",
+      "method": "GET",
+      "value": "/admin/"
+    },
+    {
+      "match": "prefix",
+      "method": "GET",
+      "value": "/api/providers/"
+    },
+    {
+      "match": "prefix",
+      "method": "GET",
+      "value": "/assets/"
+    },
+    {
+      "match": "prefix",
+      "method": "GET",
+      "value": "/config/"
+    },
+    {
+      "match": "exact",
+      "method": "POST",
+      "value": "/api/providers"
+    },
+    {
+      "match": "exact",
+      "method": "POST",
+      "value": "/api/settings/dream"
+    },
+    {
+      "match": "exact",
+      "method": "POST",
+      "value": "/api/settings/ingest"
+    },
+    {
+      "match": "exact",
+      "method": "POST",
+      "value": "/api/settings/release"
+    },
+    {
+      "match": "exact",
+      "method": "POST",
+      "value": "/shutdown"
+    },
+    {
+      "match": "prefix",
+      "method": "POST",
+      "value": "/api/admin/actions/"
+    },
+    {
+      "match": "prefix",
+      "method": "POST",
+      "value": "/api/mcp/"
+    },
+    {
+      "match": "prefix",
+      "method": "POST",
+      "value": "/api/providers/"
+    }
+  ],
+  "routes": [
+    {
+      "adr": "docs/adr/0014-web-console-replaces-terminal-ui.md",
+      "contract_id": "frontend.route.get.root",
+      "current_auth": "public-static",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "do_GET not-found fallback",
+      "method": "GET",
+      "path_template": "/",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "current": {
+          "error": "not_found",
+          "path": "string"
+        },
+        "target": "text/html"
+      },
+      "runtime_body_key": null,
+      "surface": "frontend",
+      "target_auth": "public-static"
+    },
+    {
+      "adr": null,
+      "contract_id": "frontend.route.get.admin",
+      "current_auth": "public-static",
+      "disposition": "preserve",
+      "frontend_consumers": [],
+      "handler": "_send_web_app",
+      "method": "GET",
+      "path_template": "/admin",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "text/html",
+      "runtime_body_key": null,
+      "surface": "frontend",
+      "target_auth": "public-static"
+    },
+    {
+      "adr": null,
+      "contract_id": "frontend.route.get.admin.path",
+      "current_auth": "public-static",
+      "disposition": "preserve",
+      "frontend_consumers": [],
+      "handler": "_send_web_app",
+      "method": "GET",
+      "path_template": "/admin/{path}",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "text/html",
+      "runtime_body_key": null,
+      "surface": "frontend",
+      "target_auth": "public-static"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.admin.actions.run_manual_dreaming",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "startAdminDreaming"
+      ],
+      "handler": "_start_manual_dreaming",
+      "method": "POST",
+      "path_template": "/api/admin/actions/run_manual_dreaming",
+      "query_fields": [],
+      "request_shape": {},
+      "response_shape": {
+        "started": "boolean",
+        "status": "string"
+      },
+      "runtime_body_key": null,
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.admin.actions.action",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "runAdminAction"
+      ],
+      "handler": "AdminBridge allowlisted action",
+      "method": "POST",
+      "path_template": "/api/admin/actions/{action}",
+      "query_fields": [],
+      "request_shape": {
+        "confirmed": "boolean?",
+        "id": "string | number"
+      },
+      "response_shape": "AdminActionResult",
+      "runtime_body_key": "admin_action",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.admin.dashboard",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "loadAdminDashboard"
+      ],
+      "handler": "AdminBridge.dashboard",
+      "method": "GET",
+      "path_template": "/api/admin/dashboard",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "AdminDashboard",
+      "runtime_body_key": "admin_dashboard",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.admin.snapshot",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "loadAdminSnapshot"
+      ],
+      "handler": "AdminBridge.snapshot",
+      "method": "GET",
+      "path_template": "/api/admin/snapshot",
+      "query_fields": [
+        "selected_id",
+        "view"
+      ],
+      "request_shape": null,
+      "response_shape": "AdminSnapshot",
+      "runtime_body_key": "admin_snapshot",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
+      "contract_id": "http.route.post.api.mcp.operation",
+      "current_auth": "daemon-token",
+      "disposition": "remove",
+      "frontend_consumers": [],
+      "handler": "MCP_OPERATION_HANDLERS",
+      "method": "POST",
+      "path_template": "/api/mcp/{operation}",
+      "query_fields": [],
+      "request_shape": "operation-specific JSON object",
+      "response_shape": {
+        "result": "operation-specific JSON value"
+      },
+      "runtime_body_key": "private_mcp_status",
+      "surface": "http",
+      "target_auth": "removed"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.providers",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "listProviders"
+      ],
+      "handler": "ConfigBridge.provider_list",
+      "method": "GET",
+      "path_template": "/api/providers",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "providers": "ProviderProfile[]"
+      },
+      "runtime_body_key": "provider_list",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.providers",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "saveProvider"
+      ],
+      "handler": "ConfigBridge.save_provider",
+      "method": "POST",
+      "path_template": "/api/providers",
+      "query_fields": [],
+      "request_shape": {
+        "provider": "ProviderDraft"
+      },
+      "response_shape": {
+        "provider": "ProviderProfile"
+      },
+      "runtime_body_key": "provider_save",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.delete.api.providers.id",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "deleteProvider"
+      ],
+      "handler": "ConfigBridge.delete_provider",
+      "method": "DELETE",
+      "path_template": "/api/providers/{id}",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "deleted": "string",
+        "error": "string"
+      },
+      "runtime_body_key": "provider_delete",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.providers.id",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "ConfigBridge.provider_detail",
+      "method": "GET",
+      "path_template": "/api/providers/{id}",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "provider": "ProviderProfile"
+      },
+      "runtime_body_key": "provider_detail",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.providers.id.check",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "checkProvider"
+      ],
+      "handler": "ConfigBridge.check_saved_provider",
+      "method": "POST",
+      "path_template": "/api/providers/{id}/check",
+      "query_fields": [],
+      "request_shape": {},
+      "response_shape": {
+        "check": "ProviderCheck"
+      },
+      "runtime_body_key": "provider_check",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.providers.id.models",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "refreshModels"
+      ],
+      "handler": "ConfigBridge.provider_models",
+      "method": "GET",
+      "path_template": "/api/providers/{id}/models",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "models": "string[]"
+      },
+      "runtime_body_key": "provider_models",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.settings.dream",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "loadDreamSettings"
+      ],
+      "handler": "ConfigBridge.dream_settings",
+      "method": "GET",
+      "path_template": "/api/settings/dream",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "dream": "DreamSettings",
+        "model_cache": "ModelCache",
+        "providers": "ProviderProfile[]"
+      },
+      "runtime_body_key": "dream_get",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.settings.dream",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "saveDreamSettings"
+      ],
+      "handler": "ConfigBridge.save_dream_settings",
+      "method": "POST",
+      "path_template": "/api/settings/dream",
+      "query_fields": [],
+      "request_shape": {
+        "dream": "DreamSettings"
+      },
+      "response_shape": {
+        "dream": "DreamSettings"
+      },
+      "runtime_body_key": "dream_post",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.settings.ingest",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "loadIngestSettings"
+      ],
+      "handler": "ConfigBridge.ingest_settings",
+      "method": "GET",
+      "path_template": "/api/settings/ingest",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "ingest": "IngestSettings"
+      },
+      "runtime_body_key": "ingest_get",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.settings.ingest",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "saveIngestSettings"
+      ],
+      "handler": "ConfigBridge.save_ingest_settings",
+      "method": "POST",
+      "path_template": "/api/settings/ingest",
+      "query_fields": [],
+      "request_shape": {
+        "ingest": "IngestSettings"
+      },
+      "response_shape": {
+        "ingest": "IngestSettings"
+      },
+      "runtime_body_key": "ingest_post",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.api.settings.release",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "loadReleaseSettings"
+      ],
+      "handler": "ConfigBridge.release_settings",
+      "method": "GET",
+      "path_template": "/api/settings/release",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "release": "ReleaseSettings"
+      },
+      "runtime_body_key": "release_get",
+      "surface": "http",
+      "target_auth": "browser-session"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.settings.release",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "saveReleaseSettings"
+      ],
+      "handler": "ConfigBridge.save_release_settings",
+      "method": "POST",
+      "path_template": "/api/settings/release",
+      "query_fields": [],
+      "request_shape": {
+        "release": "ReleaseSettings"
+      },
+      "response_shape": {
+        "release": "ReleaseSettings"
+      },
+      "runtime_body_key": "release_post",
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": null,
+      "contract_id": "frontend.route.get.assets.path",
+      "current_auth": "public-static",
+      "disposition": "preserve",
+      "frontend_consumers": [],
+      "handler": "_send_web_asset",
+      "method": "GET",
+      "path_template": "/assets/{path}",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "bytes with detected Content-Type",
+      "runtime_body_key": null,
+      "surface": "frontend",
+      "target_auth": "public-static"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.auth.launch-grant.exchange",
+      "current_auth": "absent",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "ADR 0012 launch-grant exchange",
+      "method": "POST",
+      "path_template": "/auth/launch-grant/exchange",
+      "query_fields": [],
+      "request_shape": {
+        "launch_grant": "single-use secret"
+      },
+      "response_shape": {
+        "csrf_token": "secret",
+        "session": "HttpOnly SameSite=Strict cookie"
+      },
+      "runtime_body_key": null,
+      "surface": "http",
+      "target_auth": "single-use-launch-grant-with-host-origin"
+    },
+    {
+      "adr": null,
+      "contract_id": "frontend.route.get.config",
+      "current_auth": "public-static",
+      "disposition": "preserve",
+      "frontend_consumers": [],
+      "handler": "_send_web_app",
+      "method": "GET",
+      "path_template": "/config",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "text/html",
+      "runtime_body_key": null,
+      "surface": "frontend",
+      "target_auth": "public-static"
+    },
+    {
+      "adr": null,
+      "contract_id": "frontend.route.get.config.path",
+      "current_auth": "public-static",
+      "disposition": "preserve",
+      "frontend_consumers": [],
+      "handler": "_send_web_app",
+      "method": "GET",
+      "path_template": "/config/{path}",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "text/html",
+      "runtime_body_key": null,
+      "surface": "frontend",
+      "target_auth": "public-static"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.health",
+      "current_auth": "daemon-token",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "do_GET",
+      "method": "GET",
+      "path_template": "/health",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "ok": "boolean",
+        "service": "string",
+        "version": "string"
+      },
+      "runtime_body_key": null,
+      "surface": "http",
+      "target_auth": "unauthenticated-minimal-liveness"
+    },
+    {
+      "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
+      "contract_id": "http.route.post.mcp",
+      "current_auth": "absent",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "standard Streamable HTTP endpoint",
+      "method": "POST",
+      "path_template": "/mcp",
+      "query_fields": [],
+      "request_shape": "MCP JSON-RPC 2.0 request",
+      "response_shape": "MCP JSON-RPC 2.0 response or request-scoped SSE stream",
+      "runtime_body_key": null,
+      "surface": "http",
+      "target_auth": "bearer-token-and-MCP-Protocol-Version"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.shutdown",
+      "current_auth": "daemon-token",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "do_POST",
+      "method": "POST",
+      "path_template": "/shutdown",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": {
+        "ok": "boolean",
+        "stopping": "boolean"
+      },
+      "runtime_body_key": null,
+      "surface": "http",
+      "target_auth": "bearer-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.get.status",
+      "current_auth": "daemon-token",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "status_payload",
+      "method": "GET",
+      "path_template": "/status",
+      "query_fields": [],
+      "request_shape": null,
+      "response_shape": "StatusPayload",
+      "runtime_body_key": "status",
+      "surface": "http",
+      "target_auth": "bearer-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "websocket.route.get.ws.admin",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "_handle_admin_websocket",
+      "method": "GET",
+      "path_template": "/ws/admin",
+      "query_fields": [],
+      "request_shape": {
+        "current": "WebSocket upgrade",
+        "target": {
+          "resume_from_last_event_id": "integer"
+        }
+      },
+      "response_shape": {
+        "current_event": {
+          "payload": "object",
+          "timestamp": "ISO-8601 string",
+          "type": "string"
+        },
+        "target_event": {
+          "event_id": "integer",
+          "event_type": "string",
+          "payload": "object",
+          "version": "integer"
+        },
+        "target_rotation": "credentials_rotated error followed by close"
+      },
+      "runtime_body_key": null,
+      "surface": "websocket",
+      "target_auth": "browser-session-with-credential-rotation-close"
+    }
+  ]
+}

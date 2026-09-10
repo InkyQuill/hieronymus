@@ -1,0 +1,4 @@
+Usage: hieronymus remember-short [OPTIONS] SESSION_ID
+Try 'hieronymus remember-short --help' for help.
+
+Error: Missing argument 'SESSION_ID'.

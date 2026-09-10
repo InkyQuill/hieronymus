@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hieronymus Rust Compatibility Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "python_reference",
+    "contracts",
+    "test_ownership",
+    "frontend_test_ownership"
+  ],
+  "properties": {
+    "manifest_version": {"type": "integer"},
+    "python_reference": {"type": "string"},
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "surface",
+          "acceptance_owner",
+          "technical_owner",
+          "python_entry_point",
+          "tests",
+          "fixture",
+          "rust_test_target",
+          "disposition",
+          "last_python_release",
+          "first_rust_release",
+          "implementation_status"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "surface": {
+            "type": "string",
+            "enum": [
+              "cli",
+              "mcp",
+              "http",
+              "websocket",
+              "config",
+              "database",
+              "agent-integration",
+              "frontend",
+              "install-update",
+              "diagnostics"
+            ]
+          },
+          "acceptance_owner": {"type": "string", "pattern": "\\S"},
+          "technical_owner": {
+            "type": "string",
+            "enum": [
+              "data-config",
+              "database-upgrade",
+              "terminology-memory",
+              "dreaming",
+              "semantic-rag",
+              "daemon-mcp-security",
+              "distribution-cutover"
+            ]
+          },
+          "python_entry_point": {"type": "string"},
+          "tests": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "fixture": {"type": "string"},
+          "rust_test_target": {"type": "string"},
+          "disposition": {
+            "type": "string",
+            "enum": ["preserve", "intentionally-change", "remove"]
+          },
+          "last_python_release": {"type": "string", "pattern": "\\S"},
+          "first_rust_release": {"type": ["string", "null"], "pattern": "\\S"},
+          "implementation_status": {
+            "type": "string",
+            "enum": ["outstanding", "implemented"]
+          },
+          "adr": {"type": ["string", "null"]}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "disposition": {
+                  "enum": ["intentionally-change", "remove"]
+                }
+              },
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["adr"],
+              "properties": {
+                "adr": {"type": "string", "pattern": "\\S"}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {"implementation_status": {"const": "implemented"}},
+              "required": ["implementation_status"]
+            },
+            "then": {
+              "properties": {
+                "first_rust_release": {"type": "string", "pattern": "\\S"}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {"implementation_status": {"const": "outstanding"}},
+              "required": ["implementation_status"]
+            },
+            "then": {
+              "properties": {"first_rust_release": {"type": "null"}}
+            }
+          }
+        ]
+      }
+    },
+    "test_ownership": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "disposition"],
+        "properties": {
+          "node_id": {"type": "string", "pattern": "^tests/.+::.+"},
+          "disposition": {
+            "type": "string",
+            "enum": ["public_contract", "implementation_internal"]
+          },
+          "contract_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "\\S"}
+          },
+          "reason": {"type": "string", "pattern": "\\S"}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"disposition": {"const": "public_contract"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["contract_ids"],
+              "not": {"required": ["reason"]}
+            }
+          },
+          {
+            "if": {
+              "properties": {"disposition": {"const": "implementation_internal"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["reason"],
+              "not": {"required": ["contract_ids"]}
+            }
+          }
+        ]
+      }
+    },
+    "frontend_test_ownership": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "disposition"],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "pattern": "^frontend/src/.+\\.test\\.ts::.+"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": ["public_contract", "implementation_internal"]
+          },
+          "contract_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "\\S"}
+          },
+          "reason": {"type": "string", "pattern": "\\S"}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"disposition": {"const": "public_contract"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["contract_ids"],
+              "not": {"required": ["reason"]}
+            }
+          },
+          {
+            "if": {
+              "properties": {"disposition": {"const": "implementation_internal"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["reason"],
+              "not": {"required": ["contract_ids"]}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

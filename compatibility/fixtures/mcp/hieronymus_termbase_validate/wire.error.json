@@ -1,0 +1,23 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "raw_text": "ユン walked home.",
+        "translated_text": "Yun walked home."
+      },
+      "name": "hieronymus_termbase_validate"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_termbase_validate: 1 validation error for hieronymus_termbase_validateArguments\nseries_slug\n  Field required [type=missing, input_value={'raw_text': 'ユン walk...xt': 'Yun walked home.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

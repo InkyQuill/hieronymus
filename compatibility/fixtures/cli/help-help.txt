@@ -1,0 +1,4 @@
+Usage: hiero help [OPTIONS]
+
+Options:
+  --help  Show this message and exit.

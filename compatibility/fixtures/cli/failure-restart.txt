@@ -1,0 +1,4 @@
+Usage: hiero restart [OPTIONS]
+Try 'hiero restart --help' for help.
+
+Error: No such option: --compat-invalid-option

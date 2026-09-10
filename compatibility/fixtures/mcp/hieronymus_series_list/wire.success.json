@@ -1,0 +1,35 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {},
+      "name": "hieronymus_series_list"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"slug\": \"synthetic-series\",\n  \"title\": \"Synthetic Series\",\n  \"source_language\": \"ja\",\n  \"target_language\": \"en\",\n  \"language_tags\": [\n    \"en\",\n    \"ja\"\n  ],\n  \"id\": 1\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "result": [
+        {
+          "id": 1,
+          "language_tags": [
+            "en",
+            "ja"
+          ],
+          "slug": "synthetic-series",
+          "source_language": "ja",
+          "target_language": "en",
+          "title": "Synthetic Series"
+        }
+      ]
+    }
+  }
+}

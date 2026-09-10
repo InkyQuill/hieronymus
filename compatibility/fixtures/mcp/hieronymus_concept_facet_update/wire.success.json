@@ -1,0 +1,50 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "facet_id": 1,
+        "language": "en",
+        "language_tags": [
+          "en"
+        ],
+        "semantic_tags": [
+          "canonical"
+        ],
+        "value": "Sense"
+      },
+      "name": "hieronymus_concept_facet_update"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"id\": 1,\n  \"concept_id\": 1,\n  \"language\": \"en\",\n  \"facet_type\": \"name\",\n  \"kind\": \"name\",\n  \"value\": \"Sense\",\n  \"confidence\": 0.9,\n  \"source_crystal_id\": null,\n  \"language_tags\": [\n    \"en\"\n  ],\n  \"story_scopes\": [\n    \"volume:1\"\n  ],\n  \"semantic_tags\": [\n    \"canonical\"\n  ],\n  \"is_canonical\": false\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "concept_id": 1,
+      "confidence": 0.9,
+      "facet_type": "name",
+      "id": 1,
+      "is_canonical": false,
+      "kind": "name",
+      "language": "en",
+      "language_tags": [
+        "en"
+      ],
+      "semantic_tags": [
+        "canonical"
+      ],
+      "source_crystal_id": null,
+      "story_scopes": [
+        "volume:1"
+      ],
+      "value": "Sense"
+    }
+  }
+}

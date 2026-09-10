@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "language_tags": [
+        "en"
+      ],
+      "path": "<SYNTHETIC_ROOT>/chapter.txt",
+      "source_ref": "chapter.txt"
+    },
+    "name": "hieronymus_rag_import"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

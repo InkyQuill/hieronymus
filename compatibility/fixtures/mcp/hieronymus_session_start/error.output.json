@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_session_start: 1 validation error for hieronymus_session_startArguments\nseries_slug\n  Field required [type=missing, input_value={'chapter': '2', 'volume': '1'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "items": [
+          {
+            "kind": "reading-conclusion",
+            "source_ref": "chapter-1",
+            "source_role": "agent",
+            "text": "The narrator distrusts the council."
+          },
+          {
+            "kind": "reading-conclusion",
+            "source_ref": "chapter-1",
+            "source_role": "agent",
+            "text": "The council controls the city."
+          }
+        ],
+        "session_id": 1
+      },
+      "name": "hieronymus_short_term_add_batch"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"memory_ids\": [\n    1,\n    2\n  ],\n  \"count\": 2\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "count": 2,
+      "memory_ids": [
+        1,
+        2
+      ]
+    }
+  }
+}

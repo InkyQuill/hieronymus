@@ -1,0 +1,14 @@
+{
+  "params": {
+    "arguments": {
+      "importance": 5,
+      "kind": "correction",
+      "source_ref": "chapter-2",
+      "text": "Use Sense, not Feeling."
+    },
+    "name": "hieronymus_memory_add"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "config"
+      ],
+      "stderr": "",
+      "stdout": "Open synthetic web console: /config\n"
+    },
+    {
+      "args": [
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "config"
+      ],
+      "stderr": "",
+      "stdout": "{\"config_root\": \"<SYNTHETIC_ROOT>/data\", \"database_path\": \"<SYNTHETIC_ROOT>/data/hieronymus.sqlite\", \"dream\": {\"dreaming\": {\"enabled\": false, \"general_prompt\": \"Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.\", \"max_changed_crystals_per_cycle\": 200, \"max_long_term_records_affected_per_run\": 1000, \"max_pending_short_term_memories\": 200, \"max_related_concepts_per_cycle\": 80, \"max_related_crystals_per_concept\": 20, \"max_relation_records_per_pass\": 1000, \"max_short_term_memories_per_cycle\": 50, \"max_short_term_memories_per_run\": 500, \"max_total_affected_crystals\": 500, \"min_pending_short_term_memories\": 20, \"not_enough_memories_cycle_threshold\": 5, \"schedule_interval_minutes\": 30}, \"workflows\": {\"concepts\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}, \"coverage_audit\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}, \"knowledge_crystals\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}, \"reinforcement\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}, \"relations\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}, \"rule_crystals\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}, \"terminology_candidates\": {\"enabled\": false, \"max_records_per_pass\": 500, \"model\": \"\", \"provider\": \"\"}}}, \"dream_config_path\": \"<SYNTHETIC_ROOT>/data/dream.conf\", \"dreaming\": {\"active_cycle\": null, \"active_provider\": \"deterministic\", \"cycle_active\": false, \"enabled\": false, \"last_error\": \"\", \"last_skip_reason\": \"\", \"last_skipped_at\": null, \"last_started_at\": null, \"max_pending_short_term_memories\": 200, \"max_short_term_memories_per_cycle\": 50, \"min_pending_short_term_memories\": 20, \"not_enough_memories_cycle_threshold\": 5, \"not_enough_memories_skipped_count\": 0, \"pending_completed_sessions\": 0, \"pending_short_term_memories\": 0, \"schedule_interval_minutes\": 30, \"skipped_count\": 0}, \"ingest\": {\"learn\": {\"max_block_chars\": 1200}, \"short_memory\": {\"rejection_sentence_count\": 30, \"rejection_symbol_count\": 0, \"warning_sentence_count\": 6, \"warning_symbol_count\": 0}}, \"ingest_config_path\": \"<SYNTHETIC_ROOT>/data/ingest.conf\", \"provider_catalog\": {\"defaults\": {\"model\": \"\", \"provider\": \"\"}, \"profiles\": {}}, \"provider_config_path\": \"<SYNTHETIC_ROOT>/data/provider.conf\", \"providers\": [{\"api_key_present\": false, \"base_url\": \"\", \"configured\": true, \"display_name\": \"Deterministic\", \"error\": \"\", \"model\": \"\", \"name\": \"deterministic\", \"timeout_seconds\": 0.0}, {\"api_key_present\": false, \"base_url\": \"\", \"configured\": false, \"display_name\": \"OpenAI compatible\", \"error\": \"provider profile missing\", \"model\": \"\", \"name\": \"openai\", \"timeout_seconds\": 0.0}, {\"api_key_present\": false, \"base_url\": \"\", \"configured\": false, \"display_name\": \"Gemini\", \"error\": \"provider profile missing\", \"model\": \"\", \"name\": \"gemini\", \"timeout_seconds\": 0.0}, {\"api_key_present\": false, \"base_url\": \"\", \"configured\": false, \"display_name\": \"Anthropic\", \"error\": \"provider profile missing\", \"model\": \"\", \"name\": \"anthropic\", \"timeout_seconds\": 0.0}], \"release\": {\"update_channel\": \"stable\", \"update_target\": \"latest\"}, \"release_config_path\": \"<SYNTHETIC_ROOT>/data/release.conf\", \"tui\": \"available\"}\n"
+    },
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "config"
+      ],
+      "stderr": "Usage: hiero [OPTIONS] COMMAND [ARGS]...\nTry 'hiero --help' for help.\n\nError: Invalid value for '--data-root': Directory '<SYNTHETIC_ROOT>/data' is a file.\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.config"
+}

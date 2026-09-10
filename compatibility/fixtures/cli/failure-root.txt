@@ -1,0 +1,4 @@
+Usage: hiero [OPTIONS] COMMAND [ARGS]...
+Try 'hiero --help' for help.
+
+Error: No such option: --compat-invalid-option

@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/hieronymus", "crates/hiero"]
+exclude = ["qualification"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+version = "0.8.0"
+license = "MIT"
+
+[workspace.dependencies]
+indexmap = "2"
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "collation"] }
+home = "0.5"
+tempfile = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde_json = "1"
+thiserror = "2"
+toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.22"
+sha2 = "0.10"
+csv = "1"
+serde_yaml_ng = "0.10"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+pdf-extract = "0.12"
+getrandom = "0.4"
+ctrlc = { version = "3", features = ["termination"] }
+base64 = "0.22"
+sha1 = "0.10"
+# Outbound TLS (rustls, no dynamic OpenSSL): pinned static root store, ring as
+# the crypto backend (the lightest hermetic build for the linux-only target).
+rustls = { version = "0.23", default-features = false, features = [
+  "logging",
+  "ring",
+  "std",
+  "tls12",
+] }
+webpki-roots = "0.26"
+# Dev-only certificate generation for loopback TLS tests.
+rcgen = "0.13"
+

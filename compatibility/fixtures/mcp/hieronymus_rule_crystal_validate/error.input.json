@@ -1,0 +1,9 @@
+{
+  "params": {
+    "arguments": {},
+    "name": "hieronymus_rule_crystal_validate"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

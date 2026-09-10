@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_crystal_semantic_tags_set: 1 validation error for hieronymus_crystal_semantic_tags_setArguments\ncrystal_id\n  Field required [type=missing, input_value={'confidence': 0.9, 'sema...ags': ['ability', 'ui']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
+  }
+}

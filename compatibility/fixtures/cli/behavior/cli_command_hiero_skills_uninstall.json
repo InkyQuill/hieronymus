@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "args": [
+        "--target",
+        "agents",
+        "--dry-run"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "skills",
+        "uninstall"
+      ],
+      "stderr": "",
+      "stdout": "Dry run: Remove project skills in .agents:\n- no Hieronymus skills found\n"
+    },
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "skills",
+        "uninstall"
+      ],
+      "stderr": "Usage: hiero [OPTIONS] COMMAND [ARGS]...\nTry 'hiero --help' for help.\n\nError: Invalid value for '--data-root': Directory '<SYNTHETIC_ROOT>/data' is a file.\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.skills.uninstall"
+}

@@ -1,0 +1,55 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "concept_id": 1,
+        "confidence": 0.9,
+        "kind": "name",
+        "language": "ja",
+        "language_tags": [
+          "ja"
+        ],
+        "semantic_tags": [
+          "ability"
+        ],
+        "story_scopes": [
+          "volume:1"
+        ],
+        "value": "センス"
+      },
+      "name": "hieronymus_concept_facet_add"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"id\": 1,\n  \"concept_id\": 1,\n  \"language\": \"ja\",\n  \"facet_type\": \"name\",\n  \"kind\": \"name\",\n  \"value\": \"センス\",\n  \"confidence\": 0.9,\n  \"source_crystal_id\": null,\n  \"language_tags\": [\n    \"ja\"\n  ],\n  \"story_scopes\": [\n    \"volume:1\"\n  ],\n  \"semantic_tags\": [\n    \"ability\"\n  ],\n  \"is_canonical\": false\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "concept_id": 1,
+      "confidence": 0.9,
+      "facet_type": "name",
+      "id": 1,
+      "is_canonical": false,
+      "kind": "name",
+      "language": "ja",
+      "language_tags": [
+        "ja"
+      ],
+      "semantic_tags": [
+        "ability"
+      ],
+      "source_crystal_id": null,
+      "story_scopes": [
+        "volume:1"
+      ],
+      "value": "センス"
+    }
+  }
+}

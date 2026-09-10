@@ -1,0 +1,934 @@
+{
+  "branches": [
+    {
+      "case_ids": [
+        "install.bun-bootstrap-not-on-path"
+      ],
+      "id": "install.bun.bootstrap-completed-without-binary"
+    },
+    {
+      "case_ids": [
+        "install.bun-bootstrap"
+      ],
+      "id": "install.bun.missing-bootstrap"
+    },
+    {
+      "case_ids": [
+        "install.bun-declined"
+      ],
+      "id": "install.bun.missing-declined"
+    },
+    {
+      "case_ids": [
+        "install.bun-upgrade-still-old"
+      ],
+      "id": "install.bun.old-after-upgrade"
+    },
+    {
+      "case_ids": [
+        "install.bun-upgrade-declined"
+      ],
+      "id": "install.bun.old-upgrade-declined"
+    },
+    {
+      "case_ids": [
+        "install.bun-upgrade"
+      ],
+      "id": "install.bun.old-upgraded"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.bun.present-supported"
+    },
+    {
+      "case_ids": [
+        "install.default-noninteractive-stable"
+      ],
+      "id": "install.channel.default-noninteractive"
+    },
+    {
+      "case_ids": [
+        "install.dev-success"
+      ],
+      "id": "install.channel.explicit-dev"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.channel.explicit-stable"
+    },
+    {
+      "case_ids": [
+        "install.invalid-channel"
+      ],
+      "id": "install.channel.invalid"
+    },
+    {
+      "case_ids": [
+        "install.existing-non-checkout"
+      ],
+      "id": "install.checkout.existing-non-git"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.checkout.existing-valid"
+    },
+    {
+      "case_ids": [
+        "install.wrong-origin"
+      ],
+      "id": "install.checkout.existing-wrong-origin"
+    },
+    {
+      "case_ids": [
+        "install.fresh-clone"
+      ],
+      "id": "install.checkout.fresh-clone"
+    },
+    {
+      "case_ids": [
+        "install.dev-success"
+      ],
+      "id": "install.dev.main"
+    },
+    {
+      "case_ids": [
+        "install.missing-git"
+      ],
+      "id": "install.git.missing"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.git.present"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.hiero.missing-warning"
+    },
+    {
+      "case_ids": [
+        "install.hiero-on-path"
+      ],
+      "id": "install.hiero.present"
+    },
+    {
+      "case_ids": [
+        "install.missing-bash"
+      ],
+      "id": "install.prerequisite.bash-missing"
+    },
+    {
+      "case_ids": [
+        "install.missing-curl"
+      ],
+      "id": "install.prerequisite.curl-missing"
+    },
+    {
+      "case_ids": [
+        "install.missing-mktemp"
+      ],
+      "id": "install.prerequisite.mktemp-missing"
+    },
+    {
+      "case_ids": [
+        "install.missing-python-warning"
+      ],
+      "id": "install.python.missing-warning"
+    },
+    {
+      "case_ids": [
+        "install.old-python-warning"
+      ],
+      "id": "install.python.old-warning"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.python.supported"
+    },
+    {
+      "case_ids": [
+        "install.dev-success"
+      ],
+      "id": "install.release-config.dev"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.release-config.stable"
+    },
+    {
+      "case_ids": [
+        "install.no-release-tags"
+      ],
+      "id": "install.stable.no-tags"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.stable.tags-found"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.uv-tool-reinstall"
+    },
+    {
+      "case_ids": [
+        "install.uv-bootstrap-not-on-path"
+      ],
+      "id": "install.uv.bootstrap-completed-without-binary"
+    },
+    {
+      "case_ids": [
+        "install.uv-bootstrap"
+      ],
+      "id": "install.uv.missing-bootstrap"
+    },
+    {
+      "case_ids": [
+        "install.uv-declined"
+      ],
+      "id": "install.uv.missing-declined"
+    },
+    {
+      "case_ids": [
+        "install.stable-success"
+      ],
+      "id": "install.uv.present"
+    },
+    {
+      "case_ids": [
+        "uninstall.keep-data-idempotent"
+      ],
+      "id": "uninstall.data.explicit-keep"
+    },
+    {
+      "case_ids": [
+        "uninstall.purge-data"
+      ],
+      "id": "uninstall.data.explicit-purge"
+    },
+    {
+      "case_ids": [
+        "uninstall.noninteractive-keep"
+      ],
+      "id": "uninstall.data.noninteractive-keep"
+    },
+    {
+      "case_ids": [
+        "uninstall.interactive-keep"
+      ],
+      "id": "uninstall.data.tty-keep"
+    },
+    {
+      "case_ids": [
+        "uninstall.interactive-remove"
+      ],
+      "id": "uninstall.data.tty-remove"
+    },
+    {
+      "case_ids": [
+        "uninstall.invalid-option"
+      ],
+      "id": "uninstall.option.invalid"
+    },
+    {
+      "case_ids": [
+        "uninstall.keep-data-idempotent"
+      ],
+      "id": "uninstall.option.keep"
+    },
+    {
+      "case_ids": [
+        "uninstall.purge-data"
+      ],
+      "id": "uninstall.option.purge"
+    },
+    {
+      "case_ids": [
+        "uninstall.unsafe-outside-path"
+      ],
+      "id": "uninstall.path.absolute-outside-owned-shape"
+    },
+    {
+      "case_ids": [
+        "uninstall.keep-data-idempotent"
+      ],
+      "id": "uninstall.path.accepted"
+    },
+    {
+      "case_ids": [
+        "uninstall.unsafe-path"
+      ],
+      "id": "uninstall.path.empty-root-dot-home"
+    },
+    {
+      "case_ids": [
+        "uninstall.unsafe-parent-path"
+      ],
+      "id": "uninstall.path.parent-segment"
+    },
+    {
+      "case_ids": [
+        "uninstall.unsafe-relative-path"
+      ],
+      "id": "uninstall.path.relative"
+    },
+    {
+      "case_ids": [
+        "uninstall.keep-data-idempotent"
+      ],
+      "id": "uninstall.repeat-safe"
+    },
+    {
+      "case_ids": [
+        "uninstall.uv-missing"
+      ],
+      "id": "uninstall.uv.missing"
+    },
+    {
+      "case_ids": [
+        "uninstall.tool-removal-failure-ignored"
+      ],
+      "id": "uninstall.uv.present-failure-ignored"
+    },
+    {
+      "case_ids": [
+        "uninstall.keep-data-idempotent"
+      ],
+      "id": "uninstall.uv.present-success"
+    },
+    {
+      "disposition": "implementation_internal",
+      "id": "install.channel.interactive-selection",
+      "reason": "The /dev/tty prompt adapter is shell-platform plumbing; explicit stable, dev, invalid, and noninteractive-default outcomes are frozen instead."
+    },
+    {
+      "disposition": "implementation_internal",
+      "id": "install.confirm.interactive-prompt",
+      "reason": "The /dev/tty confirmation adapter is shell-platform plumbing; accepted and declined dependency outcomes are frozen through environment overrides."
+    },
+    {
+      "disposition": "implementation_internal",
+      "id": "install.data-root.tilde-expansion",
+      "reason": "Tilde string expansion is shell-path plumbing; all persisted release-config effects are frozen with absolute synthetic data roots."
+    }
+  ],
+  "cases": [
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.stable-success",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch origin main",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach FETCH_HEAD",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.dev-success",
+      "release_config": "[updates]\nchannel = \"dev\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from main (dev).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "curl:-LsSf https://astral.sh/uv/install.sh -o <CASE_ROOT>/tmp/hieronymus-uv-install.<RANDOM>",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.uv-bootstrap",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": true
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "curl:-LsSf https://astral.sh/uv/install.sh -o <CASE_ROOT>/tmp/hieronymus-uv-install.<RANDOM>"
+      ],
+      "exit_class": "error",
+      "id": "install.uv-bootstrap-not-on-path",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: uv installation completed but uv was not found on PATH\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": true,
+      "bun_upgraded": false,
+      "commands": [
+        "curl:-fsSL https://bun.sh/install",
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.bun-bootstrap",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "curl:-fsSL https://bun.sh/install"
+      ],
+      "exit_class": "error",
+      "id": "install.bun-bootstrap-not-on-path",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: Bun installation completed but bun was not found on PATH\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": true,
+      "commands": [
+        "bun:--version",
+        "bun:upgrade",
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.bun-upgrade",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version"
+      ],
+      "exit_class": "error",
+      "id": "install.bun-upgrade-declined",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: Bun >= 1.3 is required to build the Hieronymus web console\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": true,
+      "commands": [
+        "bun:--version",
+        "bun:upgrade",
+        "bun:--version"
+      ],
+      "exit_class": "error",
+      "id": "install.bun-upgrade-still-old",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: Bun version is still 1.2.0; Bun >= 1.3 is required\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.missing-python-warning",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "warning: python3 is not installed. Python >= 3.12 is required to run Hieronymus.\n         Please install Python 3.12 or newer using your system's package manager.\n",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.old-python-warning",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "warning: Python version is 3.11.9. Python >= 3.12 is required to run Hieronymus.\n         Please upgrade Python to 3.12 or newer.\n",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:clone https://github.com/InkyQuill/hieronymus.git <CASE_ROOT>/managed/hieronymus/app",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.fresh-clone",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.default-noninteractive-stable",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "info: no interactive terminal; installing stable channel. Set HIERONYMUS_INSTALL_CHANNEL=dev for main.\n",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+        "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+      ],
+      "exit_class": "success",
+      "id": "install.hiero-on-path",
+      "release_config": "[updates]\nchannel = \"stable\"\n",
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "",
+      "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\n",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [],
+      "exit_class": "error",
+      "id": "install.missing-git",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: required command not found: git\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [],
+      "exit_class": "error",
+      "id": "install.missing-curl",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: required command not found: curl\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version"
+      ],
+      "exit_class": "error",
+      "id": "install.missing-mktemp",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: required command not found: mktemp\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [],
+      "exit_class": "error",
+      "id": "install.missing-bash",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: required command not found: bash\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version"
+      ],
+      "exit_class": "error",
+      "id": "install.uv-declined",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: uv is required to install Hieronymus\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [],
+      "exit_class": "error",
+      "id": "install.bun-declined",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: Bun >= 1.3 is required to build the Hieronymus web console\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+        "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git"
+      ],
+      "exit_class": "error",
+      "id": "install.no-release-tags",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: stable install requested, but no release tags were found\n       Set HIERONYMUS_INSTALL_CHANNEL=dev to install latest main.\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version"
+      ],
+      "exit_class": "error",
+      "id": "install.existing-non-checkout",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: <CASE_ROOT>/managed/hieronymus/app exists but is not a git checkout\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version"
+      ],
+      "exit_class": "error",
+      "id": "install.invalid-channel",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: HIERONYMUS_INSTALL_CHANNEL must be stable or dev\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "bun_bootstrapped": false,
+      "bun_upgraded": false,
+      "commands": [
+        "bun:--version",
+        "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin"
+      ],
+      "exit_class": "error",
+      "id": "install.wrong-origin",
+      "release_config": null,
+      "source": "install.sh",
+      "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+      "stderr": "error: existing checkout origin remote does not match https://github.com/InkyQuill/hieronymus.git\n",
+      "stdout": "",
+      "uv_bootstrapped": false
+    },
+    {
+      "app_exists": false,
+      "commands": [
+        "uv:tool uninstall hieronymus",
+        "uv:tool uninstall hieronymus"
+      ],
+      "data_exists": true,
+      "exit_class": "success",
+      "id": "uninstall.keep-data-idempotent",
+      "repeat_idempotent": true,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": true
+    },
+    {
+      "app_exists": false,
+      "commands": [
+        "uv:tool uninstall hieronymus"
+      ],
+      "data_exists": false,
+      "exit_class": "success",
+      "id": "uninstall.purge-data",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Removed Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": true
+    },
+    {
+      "app_exists": false,
+      "commands": [
+        "uv:tool uninstall hieronymus"
+      ],
+      "data_exists": false,
+      "exit_class": "success",
+      "id": "uninstall.interactive-remove",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Remove Hieronymus settings and data at <CASE_ROOT>/config/hieronymus? [y/N] Removed Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": true
+    },
+    {
+      "app_exists": false,
+      "commands": [
+        "uv:tool uninstall hieronymus"
+      ],
+      "data_exists": true,
+      "exit_class": "success",
+      "id": "uninstall.interactive-keep",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Remove Hieronymus settings and data at <CASE_ROOT>/config/hieronymus? [y/N] Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": true
+    },
+    {
+      "app_exists": false,
+      "commands": [
+        "uv:tool uninstall hieronymus"
+      ],
+      "data_exists": true,
+      "exit_class": "success",
+      "id": "uninstall.noninteractive-keep",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": true
+    },
+    {
+      "app_exists": true,
+      "commands": [],
+      "data_exists": true,
+      "exit_class": "error",
+      "id": "uninstall.invalid-option",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "error: unknown option: --invalid\nusage: ./uninstall.sh [--keep-data|--purge-data]\n",
+      "stdout": "",
+      "tool_removal_attempted": false
+    },
+    {
+      "app_exists": true,
+      "commands": [],
+      "data_exists": true,
+      "exit_class": "error",
+      "id": "uninstall.unsafe-path",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "error: refusing unsafe path for APP_DIR: <CASE_ROOT>/home\n",
+      "stdout": "",
+      "tool_removal_attempted": false
+    },
+    {
+      "app_exists": false,
+      "commands": [],
+      "data_exists": true,
+      "exit_class": "error",
+      "id": "uninstall.unsafe-parent-path",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "error: refusing unsafe path for APP_DIR: ../hieronymus/app\n",
+      "stdout": "",
+      "tool_removal_attempted": false
+    },
+    {
+      "app_exists": false,
+      "commands": [],
+      "data_exists": true,
+      "exit_class": "error",
+      "id": "uninstall.unsafe-relative-path",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "error: refusing unsafe path for APP_DIR: relative/hieronymus/app\n",
+      "stdout": "",
+      "tool_removal_attempted": false
+    },
+    {
+      "app_exists": true,
+      "commands": [],
+      "data_exists": true,
+      "exit_class": "error",
+      "id": "uninstall.unsafe-outside-path",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "error: refusing unsafe path for APP_DIR: <CASE_ROOT>/outside/app\n",
+      "stdout": "",
+      "tool_removal_attempted": false
+    },
+    {
+      "app_exists": false,
+      "commands": [],
+      "data_exists": true,
+      "exit_class": "success",
+      "id": "uninstall.uv-missing",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": false
+    },
+    {
+      "app_exists": false,
+      "commands": [
+        "uv:tool uninstall hieronymus"
+      ],
+      "data_exists": true,
+      "exit_class": "success",
+      "id": "uninstall.tool-removal-failure-ignored",
+      "repeat_idempotent": null,
+      "source": "uninstall.sh",
+      "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+      "stderr": "",
+      "stdout": "Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+      "tool_removal_attempted": true
+    }
+  ],
+  "entry_points": {
+    "hiero": "hieronymus.cli:main",
+    "hieronymus": "hieronymus.cli:main",
+    "hieronymus-agent-hook": "hieronymus.agent_hooks:main",
+    "hieronymus-mcp": "hieronymus.mcp_server:main"
+  },
+  "fixture": "compatibility/fixtures/install-update/cases.json",
+  "source_sha256": {
+    "install.sh": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+    "uninstall.sh": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383"
+  }
+}

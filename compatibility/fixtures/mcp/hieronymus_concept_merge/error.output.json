@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_concept_merge: 1 validation error for hieronymus_concept_mergeArguments\nsource_concept_id\n  Field required [type=missing, input_value={'reason': 'Synthetic mer... 'target_concept_id': 2}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
+  }
+}

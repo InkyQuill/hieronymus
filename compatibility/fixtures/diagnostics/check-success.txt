@@ -1,0 +1,218 @@
+Compatibility check passed
+Parity summary
+Contracts: 155
+By surface:
+  agent-integration: 10
+  cli: 56
+  config: 15
+  database: 3
+  diagnostics: 1
+  frontend: 6
+  http: 22
+  install-update: 2
+  mcp: 39
+  websocket: 1
+By disposition:
+  intentionally-change: 24
+  preserve: 130
+  remove: 1
+By technical owner:
+  daemon-mcp-security: 78
+  data-config: 8
+  database-upgrade: 3
+  distribution-cutover: 62
+  dreaming: 4
+Implementation state:
+  implemented (0):
+    (none)
+  changed (24):
+    database.upgrade.preflight
+    frontend.route.get.root
+    http.route.delete.api.providers.id
+    http.route.get.api.admin.dashboard
+    http.route.get.api.admin.snapshot
+    http.route.get.api.providers
+    http.route.get.api.providers.id
+    http.route.get.api.providers.id.models
+    http.route.get.api.settings.dream
+    http.route.get.api.settings.ingest
+    http.route.get.api.settings.release
+    http.route.get.health
+    http.route.get.status
+    http.route.post.api.admin.actions.action
+    http.route.post.api.admin.actions.run_manual_dreaming
+    http.route.post.api.providers
+    http.route.post.api.providers.id.check
+    http.route.post.api.settings.dream
+    http.route.post.api.settings.ingest
+    http.route.post.api.settings.release
+    http.route.post.auth.launch-grant.exchange
+    http.route.post.mcp
+    http.route.post.shutdown
+    websocket.route.get.ws.admin
+  removed (1):
+    http.route.post.api.mcp.operation
+  outstanding (155):
+    agent-integration.project-skills
+    agent-integration.target.claude
+    agent-integration.target.codex
+    agent-integration.target.gemini
+    agent-integration.target.gemini.failures
+    agent-integration.target.hermes
+    agent-integration.target.mimo
+    agent-integration.target.openclaw
+    agent-integration.target.opencode
+    agent-integration.target.pi
+    cli.command.hiero.admin
+    cli.command.hiero.config
+    cli.command.hiero.doctor
+    cli.command.hiero.dream
+    cli.command.hiero.feedback
+    cli.command.hiero.help
+    cli.command.hiero.init-series
+    cli.command.hiero.install
+    cli.command.hiero.propose-term
+    cli.command.hiero.rag
+    cli.command.hiero.rag.import
+    cli.command.hiero.rag.search
+    cli.command.hiero.recall
+    cli.command.hiero.remember
+    cli.command.hiero.remember-short
+    cli.command.hiero.restart
+    cli.command.hiero.session-complete
+    cli.command.hiero.session-start
+    cli.command.hiero.skills
+    cli.command.hiero.skills.install
+    cli.command.hiero.skills.uninstall
+    cli.command.hiero.status
+    cli.command.hiero.stop
+    cli.command.hiero.update
+    cli.command.hiero.validate
+    cli.command.hieronymus-agent-hook.session-end
+    cli.command.hieronymus-agent-hook.session-start
+    cli.command.hieronymus.admin
+    cli.command.hieronymus.config
+    cli.command.hieronymus.doctor
+    cli.command.hieronymus.dream
+    cli.command.hieronymus.feedback
+    cli.command.hieronymus.help
+    cli.command.hieronymus.init-series
+    cli.command.hieronymus.install
+    cli.command.hieronymus.propose-term
+    cli.command.hieronymus.rag
+    cli.command.hieronymus.rag.import
+    cli.command.hieronymus.rag.search
+    cli.command.hieronymus.recall
+    cli.command.hieronymus.remember
+    cli.command.hieronymus.remember-short
+    cli.command.hieronymus.restart
+    cli.command.hieronymus.session-complete
+    cli.command.hieronymus.session-start
+    cli.command.hieronymus.skills
+    cli.command.hieronymus.skills.install
+    cli.command.hieronymus.skills.uninstall
+    cli.command.hieronymus.status
+    cli.command.hieronymus.stop
+    cli.command.hieronymus.update
+    cli.command.hieronymus.validate
+    cli.script.hiero
+    cli.script.hieronymus
+    cli.script.hieronymus-agent-hook
+    cli.script.hieronymus-mcp
+    config.dream.current
+    config.dream.failures
+    config.dream.legacy
+    config.dream.roundtrip
+    config.ingest.current
+    config.ingest.failures
+    config.ingest.roundtrip
+    config.provider.current
+    config.provider.failures
+    config.provider.legacy
+    config.provider.roundtrip
+    config.release.current
+    config.release.failures
+    config.release.roundtrip
+    data-root.layout
+    database.migrations.current
+    database.schema.current
+    database.upgrade.preflight
+    diagnostics.compatibility.check
+    frontend.route.get.admin
+    frontend.route.get.admin.path
+    frontend.route.get.assets.path
+    frontend.route.get.config
+    frontend.route.get.config.path
+    frontend.route.get.root
+    http.route.delete.api.providers.id
+    http.route.get.api.admin.dashboard
+    http.route.get.api.admin.snapshot
+    http.route.get.api.providers
+    http.route.get.api.providers.id
+    http.route.get.api.providers.id.models
+    http.route.get.api.settings.dream
+    http.route.get.api.settings.ingest
+    http.route.get.api.settings.release
+    http.route.get.health
+    http.route.get.status
+    http.route.post.api.admin.actions.action
+    http.route.post.api.admin.actions.run_manual_dreaming
+    http.route.post.api.mcp.operation
+    http.route.post.api.providers
+    http.route.post.api.providers.id.check
+    http.route.post.api.settings.dream
+    http.route.post.api.settings.ingest
+    http.route.post.api.settings.release
+    http.route.post.auth.launch-grant.exchange
+    http.route.post.mcp
+    http.route.post.shutdown
+    install-update.install-script
+    install-update.uninstall-script
+    mcp.tool.hieronymus_concept_archive
+    mcp.tool.hieronymus_concept_create
+    mcp.tool.hieronymus_concept_facet_add
+    mcp.tool.hieronymus_concept_facet_list
+    mcp.tool.hieronymus_concept_facet_set_canonical
+    mcp.tool.hieronymus_concept_facet_update
+    mcp.tool.hieronymus_concept_get
+    mcp.tool.hieronymus_concept_list
+    mcp.tool.hieronymus_concept_merge
+    mcp.tool.hieronymus_concept_proposals_list
+    mcp.tool.hieronymus_concept_rename
+    mcp.tool.hieronymus_concept_semantic_tags_set
+    mcp.tool.hieronymus_concept_update
+    mcp.tool.hieronymus_crystal_link_concept
+    mcp.tool.hieronymus_crystal_semantic_tags_set
+    mcp.tool.hieronymus_crystal_story_scopes_set
+    mcp.tool.hieronymus_dream
+    mcp.tool.hieronymus_feedback
+    mcp.tool.hieronymus_memory_add
+    mcp.tool.hieronymus_memory_search
+    mcp.tool.hieronymus_rag_import
+    mcp.tool.hieronymus_rag_search
+    mcp.tool.hieronymus_recall
+    mcp.tool.hieronymus_rule_crystal_archive
+    mcp.tool.hieronymus_rule_crystal_validate
+    mcp.tool.hieronymus_rule_crystals_list
+    mcp.tool.hieronymus_series_create
+    mcp.tool.hieronymus_series_init
+    mcp.tool.hieronymus_series_list
+    mcp.tool.hieronymus_series_set_language_tags
+    mcp.tool.hieronymus_session_complete
+    mcp.tool.hieronymus_session_start
+    mcp.tool.hieronymus_short_term_add
+    mcp.tool.hieronymus_short_term_add_batch
+    mcp.tool.hieronymus_status
+    mcp.tool.hieronymus_termbase_approve
+    mcp.tool.hieronymus_termbase_contract
+    mcp.tool.hieronymus_termbase_propose
+    mcp.tool.hieronymus_termbase_validate
+    websocket.route.get.ws.admin
+Test ownership: 3195
+By test-ownership disposition:
+  implementation_internal: 2898
+  public_contract: 297
+Frontend test ownership: 16
+By frontend test-ownership disposition:
+  implementation_internal: 13
+  public_contract: 3

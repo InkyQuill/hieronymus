@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "term_id": 1
+    },
+    "name": "hieronymus_termbase_approve"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "args": [
+        "list"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "install"
+      ],
+      "stderr": "",
+      "stdout": "🪶 Hieronymus v0.7.0α\nRemembers things for you.\n\nAgent integration candidates:\n"
+    },
+    {
+      "args": [
+        "list",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "install"
+      ],
+      "stderr": "",
+      "stdout": "{\"candidates\": []}\n"
+    },
+    {
+      "args": [
+        "unknown-agent"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "install"
+      ],
+      "stderr": "Error: Unsupported agent target 'unknown-agent'; supported targets: claude, codex, openclaw, opencode, gemini, mimo, pi, hermes\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.install"
+}

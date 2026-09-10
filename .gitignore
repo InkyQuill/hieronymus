@@ -47,6 +47,14 @@ temp/
 
 # Project-local worktrees
 .worktrees/
+.claude/worktrees/
 
 # Temporary brainstorming companion state
 .superpowers/
+
+# Rust qualification artifacts
+qualification/.artifacts/
+qualification/harnesses/*/target/
+
+# Rust
+/target/

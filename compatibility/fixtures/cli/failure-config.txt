@@ -1,0 +1,4 @@
+Usage: hiero config [OPTIONS]
+Try 'hiero config --help' for help.
+
+Error: No such option: --compat-invalid-option

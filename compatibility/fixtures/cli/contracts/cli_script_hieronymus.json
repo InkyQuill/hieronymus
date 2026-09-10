@@ -1,0 +1,18 @@
+{
+  "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus.json",
+  "contract_id": "cli.script.hieronymus",
+  "failure": {
+    "args": [
+      "--compat-invalid-option"
+    ],
+    "exit_code": 2,
+    "fixture": "compatibility/fixtures/cli/failure-hieronymus-root.txt"
+  },
+  "success": {
+    "args": [
+      "--help"
+    ],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/help-hieronymus-root.txt"
+  }
+}

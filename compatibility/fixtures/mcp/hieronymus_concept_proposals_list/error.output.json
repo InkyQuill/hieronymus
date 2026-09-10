@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_concept_proposals_list: data root is not a directory: <SYNTHETIC_ROOT>/data",
+    "type": "MCPToolError"
+  }
+}

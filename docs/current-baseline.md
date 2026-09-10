@@ -1,5 +1,9 @@
 # Current Baseline
 
+> Historical record: Python source and commands below belong to the
+> [archived Python line](archive/python-v0.7.0.md). Current release acquisition uses
+> `bun scripts/stage-release-assets.ts`; these records are not active release gates.
+
 This document is the structural baseline for the current Hieronymus codebase.
 Execution plans and one-off implementation specs are not durable project state;
 completed behavior belongs here, in the usage guides, in ADRs, and in tests.

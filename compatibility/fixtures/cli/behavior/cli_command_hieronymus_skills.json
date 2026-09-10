@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "args": [
+        "install",
+        "--target",
+        "agents",
+        "--dry-run"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "skills"
+      ],
+      "stderr": "",
+      "stdout": "Dry run: Install project skills in .agents:\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-bootstrap\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-recall\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-learn\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-read\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-remember\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-translate\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-review\n- install: <SYNTHETIC_ROOT>/workspace/.agents/skills/hieronymus-orchestrate\n"
+    },
+    {
+      "args": [
+        "install"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "skills"
+      ],
+      "stderr": "Usage: hieronymus skills install [OPTIONS]\nTry 'hieronymus skills install --help' for help.\n\nError: supply at least one --target: agents or claude\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus.skills"
+}

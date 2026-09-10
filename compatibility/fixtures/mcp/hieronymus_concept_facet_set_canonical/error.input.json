@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "facet_id": 1
+    },
+    "name": "hieronymus_concept_facet_set_canonical"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

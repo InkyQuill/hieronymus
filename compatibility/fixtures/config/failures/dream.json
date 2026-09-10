@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[broken\nvalue = \"unterminated\n"
+      },
+      "id": "dream.invalid-toml",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "dream.conf is not valid TOML: Expected ']' at the end of a table declaration (at line 1, column 8)",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[workflows.unknown]\nprovider = \"\"\nmodel = \"\"\nenabled = false\n"
+      },
+      "id": "dream.unknown-workflow",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "workflows must contain exactly the seven Dream passes",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nmin_pending_short_term_memories = 20\nmax_pending_short_term_memories = 10\n"
+      },
+      "id": "dream.threshold-order",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "max_pending_short_term_memories must be greater than or equal to min_pending_short_term_memories",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[workflows.knowledge_crystals]\nprovider = \"anthropic\"\nmodel = \"\"\nenabled = true\n"
+      },
+      "id": "dream.enabled-workflow-empty-model",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "enabled workflow must have a model: knowledge_crystals",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nenabled = 'yes'\n"
+      },
+      "id": "dream.enabled-type",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "enabled must be a boolean",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nschedule_interval_minutes = true\n"
+      },
+      "id": "dream.schedule-type",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "schedule_interval_minutes must be an integer",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[workflows.knowledge_crystals]\nprovider = 123\n"
+      },
+      "id": "dream.workflow-provider-type",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "workflows.knowledge_crystals.provider must be a string",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[workflows.knowledge_crystals]\nenabled = 'true'\n"
+      },
+      "id": "dream.workflow-enabled-type",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "workflows.knowledge_crystals.enabled must be a boolean",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nschedule_interval_minutes = 0\n"
+      },
+      "id": "dream.schedule-minimum",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "schedule_interval_minutes must be at least 1",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nmin_pending_short_term_memories = -1\n"
+      },
+      "id": "dream.pending-minimum",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "min_pending_short_term_memories must be at least 1",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nmax_pending_short_term_memories = 0\n"
+      },
+      "id": "dream.pending-maximum-minimum",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "max_pending_short_term_memories must be at least 1",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nmax_short_term_memories_per_cycle = 0\n"
+      },
+      "id": "dream.cycle-maximum-minimum",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "max_short_term_memories_per_cycle must be at least 1",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.dream_config",
+      "error_type": "DreamConfigError",
+      "files": {
+        "dream.conf": "[dreaming]\nnot_enough_memories_cycle_threshold = 0\n"
+      },
+      "id": "dream.not-enough-minimum",
+      "loader": "hieronymus.dream_config:load_dream_config",
+      "message": "not_enough_memories_cycle_threshold must be at least 1",
+      "target": "dream.conf"
+    }
+  ],
+  "fixture": "compatibility/fixtures/config/failures/dream.json"
+}

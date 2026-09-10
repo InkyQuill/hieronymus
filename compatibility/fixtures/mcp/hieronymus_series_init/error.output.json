@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_series_init: 1 validation error for hieronymus_series_initArguments\nslug\n  Field required [type=missing, input_value={'language_tags': ['ja', ...le': 'Synthetic Series'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
+  }
+}

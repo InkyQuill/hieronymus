@@ -1,0 +1,4749 @@
+{
+  "command_paths": {
+    "hiero": [
+      "admin",
+      "config",
+      "doctor",
+      "dream",
+      "feedback",
+      "help",
+      "init-series",
+      "install",
+      "propose-term",
+      "rag",
+      "rag import",
+      "rag search",
+      "recall",
+      "remember",
+      "remember-short",
+      "restart",
+      "session-complete",
+      "session-start",
+      "skills",
+      "skills install",
+      "skills uninstall",
+      "status",
+      "stop",
+      "update",
+      "validate"
+    ],
+    "hieronymus": [
+      "admin",
+      "config",
+      "doctor",
+      "dream",
+      "feedback",
+      "help",
+      "init-series",
+      "install",
+      "propose-term",
+      "rag",
+      "rag import",
+      "rag search",
+      "recall",
+      "remember",
+      "remember-short",
+      "restart",
+      "session-complete",
+      "session-start",
+      "skills",
+      "skills install",
+      "skills uninstall",
+      "status",
+      "stop",
+      "update",
+      "validate"
+    ],
+    "hieronymus-agent-hook": [
+      "session-end",
+      "session-start"
+    ],
+    "hieronymus-mcp": []
+  },
+  "commands": {
+    "hiero": [
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_admin.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "admin"
+        ],
+        "contract_id": "cli.command.hiero.admin",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-admin.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_admin.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "admin"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "admin",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-admin.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_config.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "config"
+        ],
+        "contract_id": "cli.command.hiero.config",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-config.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_config.json",
+        "help": "Open the configuration web console.",
+        "invocation": [
+          "hiero",
+          "config"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "config",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-config.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_doctor.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "doctor"
+        ],
+        "contract_id": "cli.command.hiero.doctor",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-doctor.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_doctor.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "doctor"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--fix"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "autofix",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "doctor",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-doctor.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_dream.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "dream"
+        ],
+        "contract_id": "cli.command.hiero.dream",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-dream.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_dream.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "dream"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--provider"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "provider",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--wait"
+            ],
+            "default": false,
+            "help": "Wait for an active dream cycle to finish.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "wait",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "dream",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-dream.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_feedback.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "feedback"
+        ],
+        "contract_id": "cli.command.hiero.feedback",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-feedback.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_feedback.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "feedback"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "CRYSTAL_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "crystal_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--event"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "event_type",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--role"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_role",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--evidence"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "evidence",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--session-id"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "feedback",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-feedback.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_help.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "help"
+        ],
+        "contract_id": "cli.command.hiero.help",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-help.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_help.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "help"
+        ],
+        "kind": "command",
+        "parameters": [],
+        "path": "help",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-help.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_init_series.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "init-series"
+        ],
+        "contract_id": "cli.command.hiero.init-series",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-init-series.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_init_series.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "init-series"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--title"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "title",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-language"
+            ],
+            "default": "ja",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--target-language"
+            ],
+            "default": "en",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "init-series",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-init-series.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_install.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "install"
+        ],
+        "contract_id": "cli.command.hiero.install",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-install.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_install.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "install"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "APP"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "app",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--dry-run"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "dry_run",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--force"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "force",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "install",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-install.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_propose_term.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "propose-term"
+        ],
+        "contract_id": "cli.command.hiero.propose-term",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-propose-term.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_propose_term.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "propose-term"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--category"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "category",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_text",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--translation"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "translation",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--tag"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "tags",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "propose-term",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-propose-term.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "rag"
+        ],
+        "contract_id": "cli.command.hiero.rag",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-rag.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "rag"
+        ],
+        "kind": "group",
+        "parameters": [],
+        "path": "rag",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-rag.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag_import.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "rag",
+          "import"
+        ],
+        "contract_id": "cli.command.hiero.rag.import",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-rag-import.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag_import.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "rag",
+          "import"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "PATH"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "path",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": false,
+              "exists": true,
+              "file_okay": true,
+              "name": "file",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--type"
+            ],
+            "default": "auto",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_type",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "auto",
+                "text",
+                "glossary"
+              ],
+              "name": "choice"
+            }
+          },
+          {
+            "declarations": [
+              "--source-ref"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_ref",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--language-tag"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "language_tags",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--story-scope"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "story_scopes",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--semantic-tag"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "semantic_tags",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "rag import",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-rag-import.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag_search.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "rag",
+          "search"
+        ],
+        "contract_id": "cli.command.hiero.rag.search",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-rag-search.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag_search.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "rag",
+          "search"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "QUERY"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "query",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--limit"
+            ],
+            "default": 10,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "limit",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "rag search",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-rag-search.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_recall.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "recall"
+        ],
+        "contract_id": "cli.command.hiero.recall",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-recall.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_recall.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "recall"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SESSION_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--series"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--query"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "query",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_language",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--target-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target_language",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--task-type"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "task_type",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--volume"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "volume",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--chapter"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "chapter",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--limit"
+            ],
+            "default": 10,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "limit",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "recall",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-recall.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_remember.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "remember"
+        ],
+        "contract_id": "cli.command.hiero.remember",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-remember.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_remember.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "remember"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--kind"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "kind",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--text"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "text",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-ref"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_ref",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "remember",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-remember.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_remember_short.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "remember-short"
+        ],
+        "contract_id": "cli.command.hiero.remember-short",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-remember-short.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_remember_short.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "remember-short"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SESSION_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--role"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "role",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--kind"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "kind",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--text"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "text",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-ref"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_ref",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "remember-short",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-remember-short.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_restart.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "restart"
+        ],
+        "contract_id": "cli.command.hiero.restart",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-restart.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_restart.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "restart"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "restart",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-restart.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_session_complete.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "session-complete"
+        ],
+        "contract_id": "cli.command.hiero.session-complete",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-session-complete.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_session_complete.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "session-complete"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SESSION_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "session-complete",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-session-complete.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_session_start.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "session-start"
+        ],
+        "contract_id": "cli.command.hiero.session-start",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-session-start.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_session_start.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "session-start"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--target-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--task-type"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "task_type",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--volume"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "volume",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--chapter"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "chapter",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "session-start",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-session-start.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_skills.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "skills"
+        ],
+        "contract_id": "cli.command.hiero.skills",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-skills.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills.json",
+        "help": "Install the full Hieronymus workflow skill bundle in this project.",
+        "invocation": [
+          "hiero",
+          "skills"
+        ],
+        "kind": "group",
+        "parameters": [],
+        "path": "skills",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-skills.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_skills_install.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "skills",
+          "install"
+        ],
+        "contract_id": "cli.command.hiero.skills.install",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-skills-install.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills_install.json",
+        "help": "Install bundled skills in selected project agent directories.",
+        "invocation": [
+          "hiero",
+          "skills",
+          "install"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--target"
+            ],
+            "default": null,
+            "help": "Target to update. May be repeated. Omit only for interactive multi-select; non-TTY calls require a target.",
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "targets",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "agents",
+                "claude"
+              ],
+              "name": "choice"
+            }
+          },
+          {
+            "declarations": [
+              "--dry-run"
+            ],
+            "default": false,
+            "help": "Report actions without modifying the workspace.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "dry_run",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--yes"
+            ],
+            "default": false,
+            "help": "Accept only the interactive selection confirmation; ignored with explicit targets.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "assume_yes",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "skills install",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-skills-install.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_skills_uninstall.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "skills",
+          "uninstall"
+        ],
+        "contract_id": "cli.command.hiero.skills.uninstall",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-skills-uninstall.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills_uninstall.json",
+        "help": "Remove only bundled skills from selected project agent directories.",
+        "invocation": [
+          "hiero",
+          "skills",
+          "uninstall"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--target"
+            ],
+            "default": null,
+            "help": "Target to update. May be repeated. Omit only for interactive multi-select; non-TTY calls require a target.",
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "targets",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "agents",
+                "claude"
+              ],
+              "name": "choice"
+            }
+          },
+          {
+            "declarations": [
+              "--dry-run"
+            ],
+            "default": false,
+            "help": "Report actions without modifying the workspace.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "dry_run",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--yes"
+            ],
+            "default": false,
+            "help": "Accept only the interactive selection confirmation; ignored with explicit targets.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "assume_yes",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "skills uninstall",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-skills-uninstall.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_status.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "status"
+        ],
+        "contract_id": "cli.command.hiero.status",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-status.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_status.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "status"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "status",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-status.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_stop.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "stop"
+        ],
+        "contract_id": "cli.command.hiero.stop",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-stop.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_stop.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "stop"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "stop",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-stop.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_update.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "update"
+        ],
+        "contract_id": "cli.command.hiero.update",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/failure-update.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_update.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "update"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--check"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "check_only",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--dev"
+            ],
+            "default": false,
+            "help": "Allow updating to the latest main commit.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "allow_dev",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--target"
+            ],
+            "default": null,
+            "help": "Override the configured update channel for this run.",
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "latest",
+                "main"
+              ],
+              "name": "choice"
+            }
+          }
+        ],
+        "path": "update",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-update.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_validate.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "validate"
+        ],
+        "contract_id": "cli.command.hiero.validate",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/failure-validate.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hiero_validate.json",
+        "help": "",
+        "invocation": [
+          "hiero",
+          "validate"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--raw-file"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "raw_file",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": false,
+              "exists": true,
+              "file_okay": true,
+              "name": "file",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--translated-file"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "translated_file",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": false,
+              "exists": true,
+              "file_okay": true,
+              "name": "file",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "validate",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/help-validate.txt"
+      }
+    ],
+    "hieronymus": [
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_admin.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "admin"
+        ],
+        "contract_id": "cli.command.hieronymus.admin",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-admin.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_admin.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "admin"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "admin",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-admin.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_config.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "config"
+        ],
+        "contract_id": "cli.command.hieronymus.config",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-config.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_config.json",
+        "help": "Open the configuration web console.",
+        "invocation": [
+          "hieronymus",
+          "config"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "config",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-config.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_doctor.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "doctor"
+        ],
+        "contract_id": "cli.command.hieronymus.doctor",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-doctor.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_doctor.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "doctor"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--fix"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "autofix",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "doctor",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-doctor.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_dream.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "dream"
+        ],
+        "contract_id": "cli.command.hieronymus.dream",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-dream.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_dream.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "dream"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--provider"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "provider",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--wait"
+            ],
+            "default": false,
+            "help": "Wait for an active dream cycle to finish.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "wait",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "dream",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-dream.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_feedback.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "feedback"
+        ],
+        "contract_id": "cli.command.hieronymus.feedback",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-feedback.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_feedback.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "feedback"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "CRYSTAL_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "crystal_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--event"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "event_type",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--role"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_role",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--evidence"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "evidence",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--session-id"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "feedback",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-feedback.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_help.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "help"
+        ],
+        "contract_id": "cli.command.hieronymus.help",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-help.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_help.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "help"
+        ],
+        "kind": "command",
+        "parameters": [],
+        "path": "help",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-help.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_init_series.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "init-series"
+        ],
+        "contract_id": "cli.command.hieronymus.init-series",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-init-series.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_init_series.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "init-series"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--title"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "title",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-language"
+            ],
+            "default": "ja",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--target-language"
+            ],
+            "default": "en",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "init-series",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-init-series.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_install.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "install"
+        ],
+        "contract_id": "cli.command.hieronymus.install",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-install.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_install.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "install"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "APP"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "app",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--dry-run"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "dry_run",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--force"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "force",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "install",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-install.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_propose_term.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "propose-term"
+        ],
+        "contract_id": "cli.command.hieronymus.propose-term",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-propose-term.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_propose_term.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "propose-term"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--category"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "category",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_text",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--translation"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "translation",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--tag"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "tags",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "propose-term",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-propose-term.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "rag"
+        ],
+        "contract_id": "cli.command.hieronymus.rag",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-rag.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "rag"
+        ],
+        "kind": "group",
+        "parameters": [],
+        "path": "rag",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-rag.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag_import.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "rag",
+          "import"
+        ],
+        "contract_id": "cli.command.hieronymus.rag.import",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-rag-import.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag_import.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "rag",
+          "import"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "PATH"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "path",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": false,
+              "exists": true,
+              "file_okay": true,
+              "name": "file",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--type"
+            ],
+            "default": "auto",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_type",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "auto",
+                "text",
+                "glossary"
+              ],
+              "name": "choice"
+            }
+          },
+          {
+            "declarations": [
+              "--source-ref"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_ref",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--language-tag"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "language_tags",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--story-scope"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "story_scopes",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--semantic-tag"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "semantic_tags",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "rag import",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-rag-import.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag_search.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "rag",
+          "search"
+        ],
+        "contract_id": "cli.command.hieronymus.rag.search",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-rag-search.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag_search.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "rag",
+          "search"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "QUERY"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "query",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--limit"
+            ],
+            "default": 10,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "limit",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "rag search",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-rag-search.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_recall.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "recall"
+        ],
+        "contract_id": "cli.command.hieronymus.recall",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-recall.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_recall.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "recall"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SESSION_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--series"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--query"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "query",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_language",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--target-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target_language",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--task-type"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "task_type",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--volume"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "volume",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--chapter"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "chapter",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--limit"
+            ],
+            "default": 10,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "limit",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "recall",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-recall.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_remember.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "remember"
+        ],
+        "contract_id": "cli.command.hieronymus.remember",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-remember.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_remember.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "remember"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--kind"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "kind",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--text"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "text",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-ref"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_ref",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "remember",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-remember.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_remember_short.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "remember-short"
+        ],
+        "contract_id": "cli.command.hieronymus.remember-short",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-remember-short.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_remember_short.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "remember-short"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SESSION_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--role"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "role",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--kind"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "kind",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--text"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "text",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-ref"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_ref",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "remember-short",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-remember-short.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_restart.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "restart"
+        ],
+        "contract_id": "cli.command.hieronymus.restart",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-restart.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_restart.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "restart"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "restart",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-restart.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_session_complete.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "session-complete"
+        ],
+        "contract_id": "cli.command.hieronymus.session-complete",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-session-complete.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_session_complete.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "session-complete"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SESSION_ID"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "session_id",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "integer"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "session-complete",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-session-complete.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_session_start.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "session-start"
+        ],
+        "contract_id": "cli.command.hieronymus.session-start",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-session-start.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_session_start.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "session-start"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--source-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "source_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--target-language"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target_language",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--task-type"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "task_type",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--volume"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "volume",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--chapter"
+            ],
+            "default": "",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "chapter",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "session-start",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-session-start.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_skills.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "skills"
+        ],
+        "contract_id": "cli.command.hieronymus.skills",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-skills.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills.json",
+        "help": "Install the full Hieronymus workflow skill bundle in this project.",
+        "invocation": [
+          "hieronymus",
+          "skills"
+        ],
+        "kind": "group",
+        "parameters": [],
+        "path": "skills",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-skills.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_skills_install.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "skills",
+          "install"
+        ],
+        "contract_id": "cli.command.hieronymus.skills.install",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-skills-install.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills_install.json",
+        "help": "Install bundled skills in selected project agent directories.",
+        "invocation": [
+          "hieronymus",
+          "skills",
+          "install"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--target"
+            ],
+            "default": null,
+            "help": "Target to update. May be repeated. Omit only for interactive multi-select; non-TTY calls require a target.",
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "targets",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "agents",
+                "claude"
+              ],
+              "name": "choice"
+            }
+          },
+          {
+            "declarations": [
+              "--dry-run"
+            ],
+            "default": false,
+            "help": "Report actions without modifying the workspace.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "dry_run",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--yes"
+            ],
+            "default": false,
+            "help": "Accept only the interactive selection confirmation; ignored with explicit targets.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "assume_yes",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "skills install",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-skills-install.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_skills_uninstall.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "skills",
+          "uninstall"
+        ],
+        "contract_id": "cli.command.hieronymus.skills.uninstall",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-skills-uninstall.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills_uninstall.json",
+        "help": "Remove only bundled skills from selected project agent directories.",
+        "invocation": [
+          "hieronymus",
+          "skills",
+          "uninstall"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--target"
+            ],
+            "default": null,
+            "help": "Target to update. May be repeated. Omit only for interactive multi-select; non-TTY calls require a target.",
+            "is_flag": false,
+            "kind": "option",
+            "multiple": true,
+            "name": "targets",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "agents",
+                "claude"
+              ],
+              "name": "choice"
+            }
+          },
+          {
+            "declarations": [
+              "--dry-run"
+            ],
+            "default": false,
+            "help": "Report actions without modifying the workspace.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "dry_run",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--yes"
+            ],
+            "default": false,
+            "help": "Accept only the interactive selection confirmation; ignored with explicit targets.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "assume_yes",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "skills uninstall",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-skills-uninstall.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_status.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "status"
+        ],
+        "contract_id": "cli.command.hieronymus.status",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-status.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_status.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "status"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "status",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-status.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_stop.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "stop"
+        ],
+        "contract_id": "cli.command.hieronymus.stop",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-stop.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_stop.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "stop"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "stop",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-stop.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_update.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "update"
+        ],
+        "contract_id": "cli.command.hieronymus.update",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-update.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_update.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "update"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--check"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "check_only",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--dev"
+            ],
+            "default": false,
+            "help": "Allow updating to the latest main commit.",
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "allow_dev",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          },
+          {
+            "declarations": [
+              "--target"
+            ],
+            "default": null,
+            "help": "Override the configured update channel for this run.",
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "target",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "case_sensitive": true,
+              "choices": [
+                "latest",
+                "main"
+              ],
+              "name": "choice"
+            }
+          }
+        ],
+        "path": "update",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-update.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_validate.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "validate"
+        ],
+        "contract_id": "cli.command.hieronymus.validate",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [],
+        "failure_fixture": "compatibility/fixtures/cli/hieronymus-failure-validate.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_validate.json",
+        "help": "",
+        "invocation": [
+          "hieronymus",
+          "validate"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "SERIES_SLUG"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "argument",
+            "multiple": false,
+            "name": "series_slug",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "name": "text"
+            }
+          },
+          {
+            "declarations": [
+              "--raw-file"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "raw_file",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": false,
+              "exists": true,
+              "file_okay": true,
+              "name": "file",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--translated-file"
+            ],
+            "default": null,
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "translated_file",
+            "nargs": 1,
+            "required": true,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": false,
+              "exists": true,
+              "file_okay": true,
+              "name": "file",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "json_output",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "validate",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/hieronymus-help-validate.txt"
+      }
+    ],
+    "hieronymus-agent-hook": [
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_agent_hook_session_end.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "agent-hook",
+          "session-end"
+        ],
+        "contract_id": "cli.command.hieronymus-agent-hook.session-end",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/agent-hook-failure-session-end.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_agent_hook_session_end.json",
+        "help": "",
+        "invocation": [
+          "hieronymus-agent-hook",
+          "session-end"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "session-end",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/agent-hook-help-session-end.txt"
+      },
+      {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_agent_hook_session_start.json",
+        "canonical_rust_invocation": [
+          "hiero",
+          "agent-hook",
+          "session-start"
+        ],
+        "contract_id": "cli.command.hieronymus-agent-hook.session-start",
+        "exit_behavior": {
+          "click_exception": 1,
+          "success": 0,
+          "usage_error": 2
+        },
+        "failure_args": [
+          "--compat-invalid-option"
+        ],
+        "failure_fixture": "compatibility/fixtures/cli/agent-hook-failure-session-start.txt",
+        "fixture_contract": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_agent_hook_session_start.json",
+        "help": "",
+        "invocation": [
+          "hieronymus-agent-hook",
+          "session-start"
+        ],
+        "kind": "command",
+        "parameters": [
+          {
+            "declarations": [
+              "--cwd"
+            ],
+            "default": "<PATH>",
+            "help": null,
+            "is_flag": false,
+            "kind": "option",
+            "multiple": false,
+            "name": "cwd",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "allow_dash": false,
+              "dir_okay": true,
+              "exists": false,
+              "file_okay": false,
+              "name": "directory",
+              "readable": true,
+              "resolve_path": false,
+              "writable": false
+            }
+          },
+          {
+            "declarations": [
+              "--json"
+            ],
+            "default": false,
+            "help": null,
+            "is_flag": true,
+            "kind": "option",
+            "multiple": false,
+            "name": "as_json",
+            "nargs": 1,
+            "required": false,
+            "type": {
+              "name": "boolean"
+            }
+          }
+        ],
+        "path": "session-start",
+        "success_args": [
+          "--help"
+        ],
+        "success_fixture": "compatibility/fixtures/cli/agent-hook-help-session-start.txt"
+      }
+    ]
+  },
+  "script_contracts": {
+    "hiero": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hiero.json",
+      "canonical_rust_invocation": [
+        "hiero"
+      ],
+      "contract_id": "cli.script.hiero",
+      "entry_point": "hieronymus.cli:main",
+      "exit_behavior": {
+        "click_exception": 1,
+        "success": 0,
+        "usage_error": 2
+      },
+      "failure_args": [
+        "--compat-invalid-option"
+      ],
+      "failure_fixture": "compatibility/fixtures/cli/failure-root.txt",
+      "fixture_contract": "compatibility/fixtures/cli/contracts/cli_script_hiero.json",
+      "help": "",
+      "kind": "group",
+      "parameters": [
+        {
+          "declarations": [
+            "--data-root"
+          ],
+          "default": null,
+          "help": null,
+          "is_flag": false,
+          "kind": "option",
+          "multiple": false,
+          "name": "data_root",
+          "nargs": 1,
+          "required": false,
+          "type": {
+            "allow_dash": false,
+            "dir_okay": true,
+            "exists": false,
+            "file_okay": false,
+            "name": "directory",
+            "readable": true,
+            "resolve_path": false,
+            "writable": false
+          }
+        }
+      ],
+      "success_args": [
+        "--help"
+      ],
+      "success_fixture": "compatibility/fixtures/cli/help-root.txt"
+    },
+    "hieronymus": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus.json",
+      "canonical_rust_invocation": [
+        "hiero"
+      ],
+      "contract_id": "cli.script.hieronymus",
+      "entry_point": "hieronymus.cli:main",
+      "exit_behavior": {
+        "click_exception": 1,
+        "success": 0,
+        "usage_error": 2
+      },
+      "failure_args": [
+        "--compat-invalid-option"
+      ],
+      "failure_fixture": "compatibility/fixtures/cli/failure-hieronymus-root.txt",
+      "fixture_contract": "compatibility/fixtures/cli/contracts/cli_script_hieronymus.json",
+      "help": "",
+      "kind": "group",
+      "parameters": [
+        {
+          "declarations": [
+            "--data-root"
+          ],
+          "default": null,
+          "help": null,
+          "is_flag": false,
+          "kind": "option",
+          "multiple": false,
+          "name": "data_root",
+          "nargs": 1,
+          "required": false,
+          "type": {
+            "allow_dash": false,
+            "dir_okay": true,
+            "exists": false,
+            "file_okay": false,
+            "name": "directory",
+            "readable": true,
+            "resolve_path": false,
+            "writable": false
+          }
+        }
+      ],
+      "success_args": [
+        "--help"
+      ],
+      "success_fixture": "compatibility/fixtures/cli/help-hieronymus-root.txt"
+    },
+    "hieronymus-agent-hook": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus_agent_hook.json",
+      "canonical_rust_invocation": [
+        "hiero",
+        "agent-hook"
+      ],
+      "contract_id": "cli.script.hieronymus-agent-hook",
+      "entry_point": "hieronymus.agent_hooks:main",
+      "exit_behavior": {
+        "click_exception": 1,
+        "success": 0,
+        "usage_error": 2
+      },
+      "failure_args": [
+        "--compat-invalid-option"
+      ],
+      "failure_fixture": "compatibility/fixtures/cli/agent-hook-failure.txt",
+      "fixture_contract": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_agent_hook.json",
+      "help": "",
+      "kind": "group",
+      "parameters": [],
+      "success_args": [
+        "--help"
+      ],
+      "success_fixture": "compatibility/fixtures/cli/agent-hook-help.txt"
+    },
+    "hieronymus-mcp": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus_mcp.json",
+      "canonical_rust_invocation": [
+        "hiero",
+        "mcp"
+      ],
+      "contract_id": "cli.script.hieronymus-mcp",
+      "entry_point": "hieronymus.mcp_server:main",
+      "exit_behavior": {
+        "failure": 0,
+        "success": 0
+      },
+      "failure_args": [],
+      "failure_environment": {
+        "COLUMNS": "500",
+        "FORCE_COLOR": "0",
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        "LINES": "100",
+        "NO_COLOR": "1",
+        "TERM": "dumb"
+      },
+      "failure_fixture": "compatibility/fixtures/cli/mcp-entrypoint-failure.json",
+      "failure_invocation": [
+        "hieronymus-mcp"
+      ],
+      "failure_stdin": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}\n",
+      "fixture_contract": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_mcp.json",
+      "kind": "stdio",
+      "success_args": [],
+      "success_environment": {
+        "COLUMNS": "500",
+        "FORCE_COLOR": "0",
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        "LINES": "100",
+        "NO_COLOR": "1",
+        "TERM": "dumb"
+      },
+      "success_fixture": "compatibility/fixtures/cli/mcp-entrypoint-success.json",
+      "success_invocation": [
+        "hieronymus-mcp"
+      ],
+      "success_stdin": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"capabilities\":{},\"clientInfo\":{\"name\":\"compatibility-replay\",\"version\":\"1.0.0\"},\"protocolVersion\":\"2025-11-25\"}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}\n{\"id\":2,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}\n"
+    }
+  },
+  "scripts": {
+    "hiero": "hieronymus.cli:main",
+    "hieronymus": "hieronymus.cli:main",
+    "hieronymus-agent-hook": "hieronymus.agent_hooks:main",
+    "hieronymus-mcp": "hieronymus.mcp_server:main"
+  }
+}

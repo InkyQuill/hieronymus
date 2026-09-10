@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "Error executing tool hieronymus_rule_crystals_list: 1 validation error for hieronymus_rule_crystals_listArguments\nlimit\n  Input should be a valid integer [type=int_type, input_value={'invalid': 'expected scalar'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/int_type",
+    "type": "MCPToolError"
+  }
+}

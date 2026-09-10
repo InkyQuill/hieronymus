@@ -1,0 +1,22 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "reason": "Synthetic archive case."
+      },
+      "name": "hieronymus_concept_archive"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_archive: 1 validation error for hieronymus_concept_archiveArguments\nconcept_id\n  Field required [type=missing, input_value={'reason': 'Synthetic archive case.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

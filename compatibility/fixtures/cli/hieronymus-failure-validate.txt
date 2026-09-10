@@ -1,0 +1,4 @@
+Usage: hieronymus validate [OPTIONS] SERIES_SLUG
+Try 'hieronymus validate --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

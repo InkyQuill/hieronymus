@@ -1,0 +1,4 @@
+Usage: hieronymus-agent-hook [OPTIONS] COMMAND [ARGS]...
+Try 'hieronymus-agent-hook --help' for help.
+
+Error: No such option: --compat-invalid-option

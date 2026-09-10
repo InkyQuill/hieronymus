@@ -1,0 +1,22 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "new_label": "Sense Ability"
+      },
+      "name": "hieronymus_concept_rename"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_rename: 1 validation error for hieronymus_concept_renameArguments\nconcept_id\n  Field required [type=missing, input_value={'new_label': 'Sense Ability'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "args": [
+        "synthetic-series",
+        "--kind",
+        "correction",
+        "--text",
+        "Use Sense."
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "remember"
+      ],
+      "stderr": "",
+      "stdout": "Memory 1 stored\n"
+    },
+    {
+      "args": [
+        "synthetic-series",
+        "--kind",
+        "correction",
+        "--text",
+        "Use Sense.",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "remember"
+      ],
+      "stderr": "",
+      "stdout": "{\"memory_id\": 1}\n"
+    },
+    {
+      "args": [
+        "unknown-series",
+        "--kind",
+        "correction",
+        "--text",
+        "Sense"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "remember"
+      ],
+      "stderr": "Error: unknown series: unknown-series\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus.remember"
+}

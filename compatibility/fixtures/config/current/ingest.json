@@ -1,0 +1,11 @@
+{
+  "learn": {
+    "max_block_chars": 1200
+  },
+  "short_memory": {
+    "rejection_sentence_count": 30,
+    "rejection_symbol_count": 0,
+    "warning_sentence_count": 6,
+    "warning_symbol_count": 0
+  }
+}

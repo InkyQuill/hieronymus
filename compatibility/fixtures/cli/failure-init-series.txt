@@ -1,0 +1,4 @@
+Usage: hiero init-series [OPTIONS] SLUG
+Try 'hiero init-series --help' for help.
+
+Error: Missing argument 'SLUG'.

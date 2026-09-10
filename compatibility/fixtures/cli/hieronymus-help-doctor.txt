@@ -1,0 +1,6 @@
+Usage: hieronymus doctor [OPTIONS]
+
+Options:
+  --fix
+  --json
+  --help  Show this message and exit.

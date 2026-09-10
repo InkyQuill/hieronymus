@@ -1,0 +1,52 @@
+[package]
+name = "hiero"
+description = "Hieronymus command-line binary and local daemon."
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Release backend: embed the production console bundle (`frontend/dist`) at
+# compile time. Default OFF so ordinary developer tests never need Bun or the
+# bundle; release builds enable it through `scripts/release-build.sh`, which
+# builds the bundle first (spec §Build Ownership).
+console-embed = ["dep:rust-embed"]
+
+[dependencies]
+url = "2"
+flate2 = "1"
+tar = "0.4"
+hieronymus = { path = "../hieronymus" }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+ctrlc.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+base64.workspace = true
+sha1.workspace = true
+home.workspace = true
+# Temporary files for local tooling and tests.
+tempfile.workspace = true
+# Descriptor-relative export publication; version already present in Cargo.lock.
+rustix = { version = "=1.1.4", features = ["fs"] }
+# Release archive verification (`hiero update`, byte-for-byte parity with the
+# bootstrap installer's sha256sum check).
+sha2.workspace = true
+# The embedded console lookup/iteration (security spec §HTTP And Frontend
+# Contracts). `debug-embed` makes even test/debug builds carry the real
+# compile-time bytes; `interpolate-folder-path` resolves the bundle outside
+# `crates/hiero`.
+rust-embed = { version = "8", optional = true, features = [
+  "debug-embed",
+  "interpolate-folder-path",
+] }
+
+[dev-dependencies]
+rustls.workspace = true
+rcgen.workspace = true
+rusqlite.workspace = true
+# `tempfile` is a normal dependency (see above), so tests inherit it.

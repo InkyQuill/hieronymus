@@ -1,0 +1,15 @@
+[
+  {
+    "canonical_name": "Sense",
+    "confidence": 0.8,
+    "description": "Synthetic game-system concept.",
+    "id": 1,
+    "merged_into_concept_id": null,
+    "scope_key": "",
+    "scope_type": "global",
+    "semantic_tags": [
+      "ability"
+    ],
+    "status": "candidate"
+  }
+]
