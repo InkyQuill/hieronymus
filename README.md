@@ -19,10 +19,12 @@ With the GitHub CLI, installation requires no source checkout:
 gh release download v0.8.0 --repo InkyQuill/hieronymus --dir hieronymus-release \
   --pattern 'hieronymus-*-x86_64-unknown-linux-gnu.tar.gz' \
   --pattern '*.sha256' --pattern release.json --pattern install.sh
+echo 'dd27c2715e75dccefe246484bab544521df60bdf1eca0fe9260f7caee1c60eea  hieronymus-release/install.sh' | sha256sum --check
 bash hieronymus-release/install.sh --release-dir hieronymus-release
 ```
 
-The installer verifies the archive checksum and bundled native assets before
+The checksum above pins the v0.8.0 installer before execution. The installer
+then verifies the archive checksum and bundled native assets before
 installing. The application needs no Python, Bun or Rust compiler at runtime.
 The same four files can be downloaded from the release page without the GitHub CLI.
 
