@@ -50,6 +50,15 @@ const START_WAIT: Duration = Duration::from_secs(20);
 
 const POLL: Duration = Duration::from_millis(100);
 
+/// Discovery and MCP control operations must fail promptly when the local
+/// daemon stops responding.
+const MCP_CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Tool execution can include a supervised Dream run with several bounded
+/// provider calls. Keep the transport bounded without undercutting that work;
+/// stdio cancellation still closes the in-flight socket immediately.
+const MCP_TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
 /// The verdict of one discovery-health probe.
 #[derive(Debug)]
 pub enum DiscoveryHealth {
@@ -308,7 +317,10 @@ fn bearer_headers(address: SocketAddr, token: &Secret<String>) -> Vec<(String, S
             format!("Bearer {}", token.expose_secret()),
         ),
         ("Content-Type".to_string(), "application/json".to_string()),
-        ("Accept".to_string(), "application/json".to_string()),
+        (
+            "Accept".to_string(),
+            "application/json, text/event-stream".to_string(),
+        ),
     ]
 }
 
@@ -331,6 +343,17 @@ impl std::fmt::Debug for DaemonClient {
 }
 
 impl DaemonClient {
+    /// Switch only a local shell client to its separately stored authority credential.
+    pub fn with_local_credential(
+        mut self,
+        config: &HieronymusConfig,
+        kind: crate::daemon::discovery::LocalCredential,
+    ) -> Result<Self, ClientError> {
+        self.bearer = crate::daemon::discovery::read_local_credential(config, kind)
+            .map_err(|e| ClientError::Credential(e.to_string()))?;
+        Ok(self)
+    }
+
     pub fn address(&self) -> SocketAddr {
         self.address
     }
@@ -341,6 +364,13 @@ impl DaemonClient {
 
     /// Forward an MCP envelope using the same authenticated connection as native routes.
     pub fn forward_mcp(&self, body: &Value) -> Result<(u16, Vec<u8>), ClientError> {
+        self.forward_mcp_cancellable(body, &crate::client::Cancellation::default())
+    }
+    pub(crate) fn forward_mcp_cancellable(
+        &self,
+        body: &Value,
+        cancellation: &crate::client::Cancellation,
+    ) -> Result<(u16, Vec<u8>), ClientError> {
         let mut headers = bearer_headers(self.address, &self.bearer);
         let version = body
             .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")
@@ -350,14 +380,30 @@ impl DaemonClient {
         if let Some(method) = body.get("method").and_then(Value::as_str) {
             headers.push(("Mcp-Method".into(), method.into()));
             if matches!(method, "tools/call" | "resources/read" | "prompts/get")
-                && let Some(name) = body.pointer("/params/name").and_then(Value::as_str)
+                && let Some(name) = crate::daemon::protocol::request_name(body)
             {
-                headers.push(("Mcp-Name".into(), name.into()));
+                headers.push((
+                    "Mcp-Name".into(),
+                    crate::daemon::protocol::encode_header(name),
+                ));
             }
         }
         let payload = serde_json::to_vec(body)
             .map_err(|_| ClientError::Protocol("request cannot serialize"))?;
-        crate::client::post_json(self.address, "/mcp", &headers, &payload)
+        let timeout = if body.get("method").and_then(Value::as_str) == Some("tools/call") {
+            MCP_TOOL_CALL_TIMEOUT
+        } else {
+            MCP_CONTROL_TIMEOUT
+        };
+        crate::client::request_cancellable(
+            "POST",
+            self.address,
+            "/mcp",
+            &headers,
+            &payload,
+            timeout,
+            Some(cancellation),
+        )
     }
 
     /// One stateless tool call, returning the MCP result envelope.

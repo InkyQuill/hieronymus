@@ -11,31 +11,30 @@ use hiero::daemon::Daemon;
 use hieronymus::crystals::{CrystalStore, NewCrystal};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::feedback::FeedbackStore;
-use hieronymus::memory_models::TranslationContext;
 use hieronymus::recall::RecallService;
-use hieronymus::registry::Registry;
 use hieronymus::workspace::WorkspaceStore;
 
 /// A data root with one recalled crystal: returns the config, the recall id,
 /// and the crystal's activation id.
 fn recall_fixture(root: &std::path::Path) -> (HieronymusConfig, String, i64) {
     let config = HieronymusConfig::new(root.to_path_buf());
-    Registry::open(&config)
-        .unwrap()
-        .create_series("demo", "demo", "ja", "en", None)
-        .unwrap();
-    let context = TranslationContext::new("demo", "ja", "en", "translation");
+    let app = hiero::application::Application::open(&config).unwrap();
+    let (_, event) = common::authority::prepared(&app, root);
     let session = WorkspaceStore::open(&config)
         .unwrap()
-        .start_session(&context)
+        .get_session(event["session_id"].as_i64().unwrap())
         .unwrap();
+    let context = session.context.clone();
+    let mut crystal = NewCrystal::new("lesson", "Feedback surfaces cover chalk binding.");
+    crystal.claims = vec![
+        serde_json::from_value(serde_json::json!({
+            "text": crystal.text, "concept_id": null, "applicability": event["applicability"]
+        }))
+        .unwrap(),
+    ];
     CrystalStore::open(&config)
         .unwrap()
-        .add_crystal(
-            &context,
-            "lesson",
-            &NewCrystal::new("lesson", "Feedback surfaces cover chalk binding."),
-        )
+        .add_crystal(&context, "lesson", &crystal)
         .unwrap();
     let response = RecallService::open(&config)
         .unwrap()

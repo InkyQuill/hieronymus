@@ -60,7 +60,10 @@ pub fn launch(config: &HieronymusConfig, page: &str) -> Result<(), String> {
         ));
     }
 
-    let client = lifecycle::connect(config, true).map_err(|error| error.to_string())?;
+    let client = lifecycle::connect(config, true)
+        .map_err(|error| error.to_string())?
+        .with_local_credential(config, crate::daemon::discovery::LocalCredential::Console)
+        .map_err(|error| error.to_string())?;
     let response = client
         .post("/auth/launch-grant", &json!({}))
         .map_err(|error| error.to_string())?;

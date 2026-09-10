@@ -86,7 +86,8 @@
           "story_scopes",
           "semantic_tags",
           "score",
-          "rank_reason"
+          "rank_reason",
+          "claim_annotation"
         ],
         "row_subset": {
           "source": "rag"
@@ -96,5 +97,6 @@
         "series_isolation": "every row belongs to the queried series; foreign-series chunks are excluded inside the lane query, never post-filtered"
       }
     }
-  ]
+  ],
+  "authority_context_extension": "authority-context-v1.json: observed object envelope; Current and non_current rows separated by typed annotation."
 }

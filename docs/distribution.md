@@ -8,7 +8,9 @@ qualification records are not release-asset inputs.
 
 The daemon now serves the wired memory and retrieval tools. Both working
 memory and real semantic RAG are required. P1 autonomous correction/viewpoint
-runtime acceptance and actual Claude/Codex host handshakes remain open gates.
+runtime has passed scoped implementation gates; full installed 0.8.0 native/semantic
+workflow acceptance remains open. Actual modern protocol and hook diagnostic probes
+are distinct from that candidate qualification.
 
 ## Support matrix
 
@@ -64,6 +66,8 @@ configuration, which is what the frozen static-route suites pin.
   `hiero` binary plus relative command links `hieronymus -> hiero`,
   `hieronymus-agent-hook -> hiero`, `hieronymus-mcp -> hiero` (the binary
   routes those names by `argv[0]`; the links carry them into `PATH`);
+- bundled ONNX runtime/model/tokenizer, licenses/runtime notices and verified assets.json;
+- release.json naming the exact archive, version, target, channel and SHA256;
 - `hieronymus-<version>-x86_64-unknown-linux-gnu.tar.gz.sha256`
   (`sha256sum` format), verified together with an extraction round-trip
   (link targets, `hiero version`, `hieronymus version` probes).
@@ -74,20 +78,28 @@ pipeline locally is optional; CI runs it on every release tag.
 
 ## Release workflow
 
-`.github/workflows/release-rust.yml` runs the orchestration script on
-`ubuntu-latest` for `x86_64-unknown-linux-gnu` and publishes the archive and
-checksums to a GitHub release on `v*` tags. It pins Rust 1.96.0 and Bun 1.4.0
-and builds from the repository lockfiles (`Cargo.lock`, `bun.lock`).
+The 0.8.0 Rust alpha line is the release source authority; historical Python 1.x
+tags are not Rust version metadata. The competing Python publisher is retired.
+`.github/workflows/release-rust.yml` guards exact Cargo workspace/lock/inheritance
+and tag-to-HEAD equality before downloads, stages pinned native assets, builds
+the embedded console/native archive, validates release.json version/target/channel/
+archive/hash/null signature, and attaches archive, checksum and release.json.
+Rust 1.96.0, Bun 1.4.0 and build-only Python 3.12 remain pinned.
 
-Protection: the job declares the GitHub Environment `release`; the required
-reviewer (Pavel Obruchnikov `<me@inkyquill.net>`, ADR 0006) is configured in
-repository settings (Settings → Environments → `release` → Required
-reviewers). A workflow cannot create that rule, so a tag alone is
-insufficient to publish.
+`scripts/stage-release-assets.py` reuses verified acquisition for model/runtime,
+verifies committed tokenizer/license bytes and bounded HTTPS model-card transfer,
+checks runtime notices/version, then exports the three builder inputs. Cache hits
+are verified; fresh CI needs no machine-specific cache. `check-rust-release.py
+--allow-untagged` is an explicit local-candidate check, never used by publishing CI.
+`release-build.sh` honors CARGO_TARGET_DIR for the built binary; downloadable files
+still go to worktree target/release-dist.
 
-Transition: the Python-era `.github/workflows/release.yml` (uv +
-semantic-release + Hatch) remains the release authority on `main` until the
-distribution cutover completes; it is retired by the cutover task.
+The job declares the release environment. Actual remote required-reviewer settings
+are external and have not been verified by this source change. No tag, publication
+or feed deployment accompanies local candidate preparation. Attaching release.json
+does not create the updater's required `<base>/<channel>/release.json` HTTPS feed;
+local --release-dir installation is the documented available path until a real
+feed origin is selected and qualified.
 
 Signing/SBOM/provenance are WAIVED for the first Rust release line (spec
 amendment 2026-09-03): the release ships SHA-256 checksums and the owner
@@ -182,14 +194,15 @@ cp target/release-dist/hieronymus-$VERSION-x86_64-unknown-linux-gnu.tar.gz* "$RE
       backup under `<copy>/backups/`, a `complete` cutover journal,
       `hiero classify` reporting `rust-schema`, and doctor degraded-free on
       the copy.
-- [ ] **CLI, MCP HTTP, MCP stdio, web, dreaming fake-provider, FTS, and
-      semantic smoke** — `hiero agent-hook session-start --cwd <project>`;
+- [ ] **CLI, MCP HTTP, MCP stdio, web, dreaming fake-provider, working-memory,
+      and semantic smoke** — `hiero agent-hook session-start --cwd <project>`;
       MCP HTTP `tools/list` + one `tools/call` against the daemon; `hiero
       mcp` framed initialize/tools-list over stdio; `http://<host:port>/`
       serving the embedded console; a dreaming run with the fake provider on
-      a copied root; a recall over strict terms (FTS lane); `hiero semantic
-      status` (FTS-only is the required baseline; the semantic lane per the
-      qualification record).
+      a copied root; a `hieronymus_recall` that returns saved working memory;
+      a successful `hieronymus_rag_search` that returns the expected semantic-only
+      source; and `hiero semantic status --json` showing daemon state `ready`, an
+      intact active generation, and the selected provider/model identity.
 - [ ] **Forced daemon crash and restart** — `kill -9 $(jq .pid
       "$DATA/daemon.json")`; expect doctor `daemon-unreachable` (degraded),
       then `hiero service start` (or `systemctl --user restart
@@ -307,8 +320,8 @@ connect). That probe is recorded as unverified, not a passing IPv6 TLS claim.
 [The F2 rehearsal](rust-cutover-rehearsal.md) attributes each check to its actual
 archive and separates native ONNX/CLI/MCP/browser results from controlled
 provider or service-manager fixtures. Both mandatory memory lanes remain
-required. The accepted autonomous authority design and actual Claude/Codex
-initialize compatibility remain open product gates; zCode is unverified. Do not
+required. The accepted autonomous authority design and actual Claude/Codex/Pi
+native workflow compatibility remain open product gates; zCode is paused/unqualified. Do not
 infer readiness for live migration or publication from the packaging checks.
 
 The installed runtime has been exercised with an empty PATH and no external
@@ -317,3 +330,25 @@ prerequisites. Local rehearsal uses explicit disposable `--app-dir`,
 `--data-root`, `--unit-dir` and `--no-activate`; it does not operate the user's
 service manager. A separately compiled test-only version qualifies the
 version transition without changing or publishing the repository version.
+
+The owner amendments dated 2026-09-03 in the Rust migration program and
+compatibility contracts specifications preserve qualification records as archived
+evidence. PR CI validates retained fixtures with their explicit historical test
+inventory and runs the tool tests, but does not require archived measurement
+fingerprints or per-current-test manifest dispositions to remain fresh. Current
+Rust tests and installed artifact/native host acceptance govern this release.
+
+### Alternative semantic backend: Ollama
+
+ONNX remains the bundled default. `hiero semantic configure --provider ollama
+--base-url http://127.0.0.1:11434 --model <installed-model>` selects externally
+managed Ollama embeddings while retaining the bundle's pinned tokenizer for
+existing chunk segmentation. It does not require loading the ONNX model/runtime
+and never pulls an Ollama model. The existing authenticated daemon, revision
+acknowledgement, durable rebuild and strict semantic readiness checks apply.
+Provider/model digest/dimension changes require a coherent rebuilt generation.
+
+Development roots without bundled assets must stage the pinned tokenizer or
+complete explicit tokenizer acquisition; the current downloader rejects upstream
+redirects. See the Ollama setup section in `usage.md`. Native agent-host matrix
+qualification remains deferred separately from this embedding functionality.

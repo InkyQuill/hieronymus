@@ -4,11 +4,7 @@ use super::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Configure {
-    runtime_library: std::path::PathBuf,
-}
+type Configure = hieronymus::semantic_arming::SemanticConfiguration;
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +12,8 @@ struct Acquisition {
     url: Option<String>,
     sha256: Option<String>,
     bytes: Option<String>,
+    #[serde(default)]
+    tokenizer_only: bool,
 }
 
 // Final promotion is serialized. The enclosing connection worker remains
@@ -43,7 +41,7 @@ pub(super) fn handle(request: &Request, runtime: &DaemonRuntime, acquire: bool) 
         serde_json::from_slice::<Configure>(&request.body)
             .map_err(|e| e.to_string())
             .and_then(|settings| {
-                let acknowledgement = runtime.semantic.configure(settings.runtime_library)?;
+                let acknowledgement = runtime.semantic.configure_settings(settings)?;
                 use crate::daemon::semantic_worker::RequiredSemanticState;
                 let (state, detail) = match acknowledgement.state {
                     RequiredSemanticState::Acquiring => ("acquiring", Value::Null),
@@ -71,6 +69,11 @@ fn acquire_assets(
 
     let store = hieronymus::semantic_store::SemanticStore::open(config)
         .map_err(|error| error.to_string())?;
+    if settings.tokenizer_only
+        && (settings.url.is_some() || settings.sha256.is_some() || settings.bytes.is_some())
+    {
+        return Err("tokenizer_only cannot be combined with model artifact overrides".into());
+    }
     let url = settings.url.as_deref().unwrap_or(DEFAULT_MODEL_URL);
     let expected_sha = settings.sha256.as_deref().unwrap_or(MODEL_SHA256);
     let expected_bytes = match &settings.bytes {
@@ -112,7 +115,7 @@ fn acquire_assets(
     // Explicit acquisition: download only when the local file is missing or
     // fails its size pre-check; a healthy model is never re-fetched.
     let mut downloaded = false;
-    if local_status() != ModelStatus::Available {
+    if !settings.tokenizer_only && local_status() != ModelStatus::Available {
         let transport = HttpModelTransport::new(std::time::Duration::from_secs(600));
         store
             .acquire_model_verifying(&transport, url, expected_sha, expected_bytes)

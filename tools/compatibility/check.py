@@ -12,6 +12,7 @@ import sys
 # own import, which happens before this assignment can run.
 sys.dont_write_bytecode = True
 
+import argparse
 import json
 import os
 import tempfile
@@ -419,18 +420,23 @@ def _collection_without_repository_cache() -> Iterator[None]:
 
 def _state_inventory(
     repo_root: Path,
+    historical_test_inventory: Path | None = None,
 ) -> tuple[dict[str, bytes], set[str], list[dict[str, object]]]:
     with tempfile.TemporaryDirectory(prefix="hieronymus-state-check-") as directory:
         with _collection_without_repository_cache():
             artifacts = inventory_state.generate_state_artifacts(
-                repo_root, Path(directory) / "data-root"
+                repo_root,
+                Path(directory) / "data-root",
+                historical_test_inventory=historical_test_inventory,
             )
     artifacts.pop(str(MANIFEST))
     contracts = inventory_state._state_contracts()
     return artifacts, {str(contract["id"]) for contract in contracts}, contracts
 
 
-def generate_inventory(repo_root: Path) -> GeneratedInventory:
+def generate_inventory(
+    repo_root: Path, *, historical_test_inventory: Path | None = None
+) -> GeneratedInventory:
     """Regenerate every checked artifact in memory or in isolated state roots."""
     authority_problems = mcp_schema.authority_issues(repo_root)
     if authority_problems:
@@ -443,7 +449,7 @@ def generate_inventory(repo_root: Path) -> GeneratedInventory:
         ("cli", lambda: _cli_inventory(repo_root)),
         ("mcp", lambda: _mcp_inventory(repo_root)),
         ("http/frontend", lambda: _http_inventory(repo_root)),
-        ("state", lambda: _state_inventory(repo_root)),
+        ("state", lambda: _state_inventory(repo_root, historical_test_inventory)),
     )
     for family, generate in generators:
         family_artifacts, family_ids, family_contracts = generate()
@@ -607,13 +613,24 @@ def emit_report(failures: list[str], summary: str | None, output: TextIO) -> Non
         print(summary, file=output)
 
 
-def main(*, repo_root: Path = ROOT, output: TextIO = sys.stdout) -> int:
+def main(
+    *,
+    repo_root: Path = ROOT,
+    output: TextIO = sys.stdout,
+    historical_test_inventory: Path | None = None,
+) -> int:
     """Run the complete read-only compatibility check."""
     resolved_root = repo_root.resolve()
     with _isolated_check_environment():
         manifest, failures = manifest_failures(resolved_root)
         try:
-            generated = generate_inventory(resolved_root)
+            generated = (
+                generate_inventory(
+                    resolved_root, historical_test_inventory=historical_test_inventory
+                )
+                if historical_test_inventory
+                else generate_inventory(resolved_root)
+            )
         except Exception as error:  # noqa: BLE001 - report generator failures without a traceback
             failures.append(f"inventory generation failed: {type(error).__name__}: {error}")
         else:
@@ -627,4 +644,11 @@ def main(*, repo_root: Path = ROOT, output: TextIO = sys.stdout) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--historical-test-inventory",
+        type=Path,
+        help="explicit frozen state snapshot supplying historical test IDs only",
+    )
+    args = parser.parse_args()
+    raise SystemExit(main(historical_test_inventory=args.historical_test_inventory))

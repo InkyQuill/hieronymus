@@ -174,10 +174,16 @@ def test_stale_input_is_blocking() -> None:
     assert compute_gate(stale, ROOT).status == "blocked"
 
 
-def test_records_only_check_never_invokes_live_runners(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_records_only_check_never_invokes_live_runners(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repository: Path,
+) -> None:
+    # Fresh synthetic records test the checker seam, not current product qualification.
+    # Real checked-in measurements remain stale after their inputs change.
+    seed_accepted_records_and_projections(temp_repository)
     monkeypatch.setattr("socket.create_connection", fail_if_called)
     monkeypatch.setattr("subprocess.run", fail_if_called)
-    result = invoke_check("--records-only")
+    result = invoke_check("--records-only", cwd=temp_repository)
     assert result.exit_code == 0
 
 

@@ -85,6 +85,11 @@ fn semantic_payload(runtime: &DaemonRuntime) -> Value {
         }
     };
     payload["configuration_revision"] = json!(snapshot.configuration_revision);
+    payload["configuration"] = json!(snapshot.configuration);
+    payload["identity"] = json!(snapshot.identity.as_ref().map(|identity| json!({
+        "provider": identity.provider(), "model": identity.model(), "revision": identity.revision(),
+        "dimensions": identity.dimensions(), "normalization": identity.normalization(), "processing": identity.tokenizer(),
+    })));
     payload
 }
 

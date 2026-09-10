@@ -1,3 +1,26 @@
+# Agent host acceptance — current qualification status
+
+The historical P2 observations below describe its earlier binary and default protocol
+settings. They are not the current capability finding. Task6 added mandatory MCP2026
+discovery and trusted ingress; later native Claude2.1.241/Codex0.147.0 probes negotiated
+2026-07-28 successfully. Task7 diagnostic probes observed genuine UserPromptSubmit
+stdin on Claude2.1.241, Codex0.147.0 and zCode3.11.2 with supported plugin loading.
+These probes do not establish full generated-candidate S1–S7 or semantic workflow
+acceptance. That candidate qualification remains pending and must be recorded with
+exact artifact/bundle/model identities. See [current wiring](agent-workflows.md).
+
+The owner-authorized required matrix is now Claude/Codex/Pi. Generated Pi package and
+synthetic extension tests are preparation only; installed Pi TUI/PTy evidence is still
+required before native acceptance. All zCode observations below retain their original
+labels and remain paused/unqualified rather than being credited to Pi.
+Pi is a passive package for prompts, skills, and MCP reads and does not mint trusted
+provenance. Active Pi trusted ingress is deferred. The incomplete matrix is retained
+in [deferred qualification](deferred/2026-09-10-native-host-qualification.md) for the week of
+2026-09-14. It is not a current implementation/merge blocker and establishes neither native
+acceptance nor release readiness.
+
+## Historical P2 report (unchanged evidence)
+
 # Agent host acceptance — P2, 2026-09-07
 
 **Workflow acceptance is blocked. Bundle installation is not workflow support.**
@@ -104,3 +127,11 @@ The real retrieval fixture explicitly represents language and context; nonempty
 viewpoint/story-position context fails rather than being silently ignored. Once
 P1 runtime is implemented, add those public-MCP behavioral assertions before
 claiming completion. No storage-only correction test substitutes for them.
+
+## September 10 practical scope
+
+[Practical release acceptance](practical-release-acceptance-2026-09-10.md) records the
+owner-selected ordinary MCP checks, including installed Pi save/RAG/Dream and actual
+Claude/Codex marketplace skill calls. Full native correction/event-order qualification
+remains [deferred](deferred/2026-09-10-native-host-qualification.md). Local marketplace
+installation is not public marketplace publication.

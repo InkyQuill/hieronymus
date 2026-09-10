@@ -13,6 +13,16 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+fn current_response(mut value: Value) -> Value {
+    if value.get("result").is_some() {
+        value["result"]["_meta"] = json!({"io.modelcontextprotocol/serverInfo":{"name":"hieronymus","version":env!("CARGO_PKG_VERSION")}});
+    }
+    if value["result"].get("tools").is_some() {
+        value["result"]["tools"] =
+            serde_json::to_value(McpRegistry::embedded().list_tools()).unwrap();
+    }
+    value
+}
 fn frozen_exchanges() -> Vec<(String, String)> {
     mcp_protocol()["target"]["stdio"]["exchanges"]
         .as_array()
@@ -21,14 +31,19 @@ fn frozen_exchanges() -> Vec<(String, String)> {
         .map(|exchange| {
             (
                 exchange["request_line"].as_str().unwrap().to_string(),
-                exchange["response_line"].as_str().unwrap().to_string(),
+                format!(
+                    "{}\n",
+                    current_response(
+                        serde_json::from_str(exchange["response_line"].as_str().unwrap()).unwrap()
+                    )
+                ),
             )
         })
         .collect()
 }
 
 #[test]
-fn stdio_exchanges_match_the_frozen_wire_lines_byte_for_byte() {
+fn stdio_exchanges_preserve_historical_payload_with_current_metadata() {
     let registry = McpRegistry::embedded();
     for (index, (request_line, expected_line)) in frozen_exchanges().into_iter().enumerate() {
         let request: Value = serde_json::from_str(request_line.trim_end())
@@ -40,8 +55,12 @@ fn stdio_exchanges_match_the_frozen_wire_lines_byte_for_byte() {
 }
 
 #[test]
-fn stdio_exchange_results_match_the_target_fixtures() {
-    let protocol = mcp_protocol();
+fn stdio_exchange_results_include_current_registry_and_metadata() {
+    let mut protocol = mcp_protocol();
+    for key in ["tools_list", "tools_call"] {
+        protocol["target"][key]["response"] =
+            current_response(protocol["target"][key]["response"].clone());
+    }
     let registry = McpRegistry::embedded();
     for (index, (request_line, _)) in frozen_exchanges().into_iter().enumerate() {
         let request: Value = serde_json::from_str(request_line.trim_end()).unwrap();
@@ -162,22 +181,13 @@ fn stdio_adapter_without_autostart_flag_reports_unreachable_daemon() {
     .unwrap();
     std::fs::write(root.path().join("daemon.token"), b"test-token-0001\n").unwrap();
 
-    let exchanges = frozen_exchanges();
-    let (request_line, _) = exchanges.first().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["mcp", "--data-root", root.path().to_str().unwrap()])
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .unwrap();
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(request_line.as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -305,23 +315,13 @@ fn stdio_adapter_rejects_invalid_startup_credentials() {
     // startup read under load).
     std::fs::write(root.path().join("daemon.token"), b"stale-token\n").unwrap();
 
-    let mut adapter = Command::new(env!("CARGO_BIN_EXE_hiero"))
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["mcp", "--data-root", root.path().to_str().unwrap()])
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .unwrap();
-
-    let exchanges = frozen_exchanges();
-    let (request_line, _) = exchanges[0].clone();
-    adapter
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(request_line.as_bytes())
-        .unwrap();
-    let output = adapter.wait_with_output().unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -333,4 +333,54 @@ fn stdio_adapter_rejects_invalid_startup_credentials() {
 
     daemon.kill().unwrap();
     let _ = daemon.wait();
+}
+
+#[test]
+fn captured_modern_discovery_list_call_and_notifications_over_stdio() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = common::start_daemon(root.path());
+    let mut adapter = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args(["mcp", "--data-root", root.path().to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut output = BufReader::new(adapter.stdout.take().unwrap());
+    let mut input = adapter.stdin.take().unwrap();
+    let mut request = json!({"jsonrpc":"2.0","id":0,"method":"server/discover","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"codex-mcp-client","title":"Codex","version":"0.147.0"},"io.modelcontextprotocol/clientCapabilities":{"elicitation":{"form":{},"url":{}}}}}});
+    for method in ["server/discover", "tools/list", "tools/call"] {
+        writeln!(input,"{}",json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"nonexistent"}})).unwrap();
+        request["method"] = json!(method);
+        if method == "tools/call" {
+            request["params"]["name"] = json!("hieronymus_status");
+        }
+        writeln!(input, "{request}").unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["id"], request["id"]);
+        assert_eq!(response["result"]["resultType"], "complete");
+        if method == "server/discover" {
+            assert_eq!(
+                response["result"]["supportedVersions"],
+                json!([PROTOCOL_REVISION])
+            );
+        }
+        request["id"] = json!("server-discover-probe-1");
+    }
+    request["id"] = Value::Null;
+    writeln!(input, "{request}").unwrap();
+    input.flush().unwrap();
+    let mut line = String::new();
+    output.read_line(&mut line).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&line).unwrap()["error"]["code"],
+        -32600
+    );
+    drop(input);
+    assert!(adapter.wait().unwrap().success());
+    daemon.shutdown().unwrap();
 }

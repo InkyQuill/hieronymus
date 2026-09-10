@@ -18,6 +18,7 @@ pub struct RagSourceRecord {
 /// side tables and the owning source's `source_ref`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RagChunkRecord {
+    pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub source_id: i64,
     pub series_slug: String,

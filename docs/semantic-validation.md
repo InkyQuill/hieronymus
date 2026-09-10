@@ -308,3 +308,25 @@ schema guard **33 passed, 1 required-assets live ignored**; current acquisition
 **141 passed**; Cargo formatting, full Ruff checks and formatting (217 files),
 and diff whitespace checks passed. Ignored default tests do not establish live
 support; the separately requested 206.44-second live run above does.
+
+## Ollama transport and selection checks
+
+Offline fixtures in `ollama_embeddings` verify exact Unicode text over the real
+HTTP transport, `truncate:false`, identity/count/dimension/finite-value bounds,
+error propagation, and coherent SQLite/LanceDB index-to-query behavior. These
+fixtures do not establish embedding quality.
+
+A separate explicitly ignored `semantic_cli` test exercises production arming,
+CLI/REST persistence, configuration rejection and daemon restart using a loopback
+Ollama API and a real pinned tokenizer. It requires an explicit verified fixture
+and fails if that input is absent:
+
+```bash
+HIERO_OLLAMA_TEST_TOKENIZER=/absolute/path/to/pinned/tokenizer.json \
+  cargo test -p hiero --test semantic_cli \
+  ollama_cli_configures_arms_and_restarts_without_onnx_assets -- --ignored
+```
+
+A real installed Ollama model and public MCP query must be exercised separately
+for practical integration acceptance. Native Claude/Codex/Pi host-matrix
+qualification is deferred and is not implied by either fixture suite.

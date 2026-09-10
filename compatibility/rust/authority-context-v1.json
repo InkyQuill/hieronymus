@@ -1,0 +1,662 @@
+{
+  "version": 1,
+  "description": "Active Rust additive input fields and observed read envelope; frozen Python snapshot stays historical. Existing capture arguments confer no explicit-user origin. Read responses are objects with resulting_revision and results, plus non_current/exhaustion where applicable.",
+  "tool_properties": {
+    "hieronymus_recall": {
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      },
+      "required_decision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "hieronymus_memory_search": {
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      },
+      "required_decision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "volume": {
+        "type": "string",
+        "default": ""
+      },
+      "chapter": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "hieronymus_rag_search": {
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      },
+      "required_decision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "volume": {
+        "type": "string",
+        "default": ""
+      },
+      "chapter": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "hieronymus_termbase_contract": {
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      },
+      "required_decision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "hieronymus_termbase_validate": {
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      },
+      "required_decision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "hieronymus_session_start": {
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      }
+    },
+    "hieronymus_memory_add": {
+      "claims": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/ClaimInput"
+        },
+        "default": [],
+        "description": "Ordinary captured assertions as ClaimInput objects: text and concept_id are siblings of applicability. Use concept_id:null when identity is unknown; never invent an ID. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth; capture never grants explicit-user authority."
+      },
+      "story_timeline_id": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_scene_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_viewpoint": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StoryViewpoint"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "story_query_mode": {
+        "enum": [
+          "Current",
+          "OmniscientResearch"
+        ],
+        "default": "Current"
+      },
+      "volume": {
+        "type": "string",
+        "default": ""
+      },
+      "chapter": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "hieronymus_short_term_add": {
+      "claims": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/ClaimInput"
+        },
+        "default": [],
+        "description": "Ordinary captured assertions as ClaimInput objects: text and concept_id are siblings of applicability. Use concept_id:null when identity is unknown; never invent an ID. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth; capture never grants explicit-user authority."
+      }
+    },
+    "hieronymus_concept_facet_add": {
+      "claims": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/ClaimInput"
+        },
+        "default": [],
+        "description": "Ordinary captured assertions; never explicit-user authority."
+      }
+    },
+    "hieronymus_concept_facet_update": {
+      "claims": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/ClaimInput"
+        },
+        "default": [],
+        "description": "Ordinary captured assertions; never explicit-user authority."
+      }
+    },
+    "hieronymus_rag_import": {
+      "claims": {
+        "type": "object",
+        "propertyNames": {
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "description": "New claims keyed by zero-based numeric chunk index, for example {\"0\":[{\"text\":\"Alex speaks briefly.\",\"concept_id\":null,\"applicability\":{...}}]}. text and concept_id belong on ClaimInput, outside applicability. The applicability ellipsis is a placeholder for a complete ApplicabilityV1 object using observed context, never invented IDs or chronology.",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClaimInput"
+          }
+        }
+      },
+      "claim_lineage": {
+        "type": "object",
+        "propertyNames": {
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "description": "Existing claim identities keyed by zero-based numeric chunk index. Use only to bind an already observed claim_id; use claims to create a new assertion.",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExistingClaimInput"
+          }
+        }
+      }
+    }
+  },
+  "batch_item_claims": {
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/ClaimInput"
+    },
+    "default": [],
+    "description": "Ordinary ClaimInput assertions for this item. text and concept_id are siblings of applicability; use concept_id:null when identity is unknown and never invent an ID. Missing resolved context or knowledge gates keep claims conservatively excluded from current truth."
+  },
+  "definitions": {
+    "StoryViewpoint": {
+      "oneOf": [
+        {
+          "enum": [
+            "Narrator",
+            "Unspecified"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Character": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "Character"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ApplicabilityV1": {
+      "type": "object",
+      "properties": {
+        "series_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeline_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "volume_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "chapter_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope_predicates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata_state": {
+          "enum": [
+            "Resolved",
+            "Unspecified"
+          ]
+        },
+        "knowledge_gates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "viewpoint": {
+                "oneOf": [
+                  {
+                    "enum": [
+                      "Narrator",
+                      "All"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "Character": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "Character"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "known_from": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "known_until": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "viewpoint",
+              "known_from",
+              "known_until"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "series_id",
+        "timeline_id",
+        "volume_key",
+        "chapter_key",
+        "scope_predicates",
+        "valid_from",
+        "valid_until",
+        "metadata_state",
+        "knowledge_gates"
+      ],
+      "additionalProperties": false
+    },
+    "ClaimInput": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "concept_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "applicability": {
+          "$ref": "#/$defs/ApplicabilityV1"
+        }
+      },
+      "required": [
+        "text",
+        "concept_id",
+        "applicability"
+      ],
+      "additionalProperties": false
+    },
+    "ExistingClaimInput": {
+      "type": "object",
+      "properties": {
+        "claim_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "concept_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "applicability": {
+          "$ref": "#/$defs/ApplicabilityV1"
+        }
+      },
+      "required": [
+        "claim_id",
+        "concept_id",
+        "applicability"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

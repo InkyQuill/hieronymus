@@ -36,7 +36,7 @@
       "arguments": {
         "series_slug": "book",
         "raw_text": "猫",
-        "translated_text": "котик"
+        "translated_text": "пёс"
       },
       "expected": {
         "finding_kinds": []
@@ -78,7 +78,7 @@
       "arguments": {
         "series_slug": "book",
         "raw_text": "猫",
-        "translated_text": "котик"
+        "translated_text": "пёс"
       },
       "expected": {
         "finding_kinds": ["missing_canonical"]

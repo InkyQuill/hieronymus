@@ -488,7 +488,7 @@ fn seed_series_and_session(daemon: &hiero::daemon::Daemon) -> i64 {
         daemon,
         2,
         "hieronymus_session_start",
-        json!({"series_slug": "demo"}),
+        json!({"series_slug": "demo", "volume":"I", "chapter":"Opening"}),
     );
     session["session_id"].as_i64().unwrap()
 }
@@ -509,6 +509,19 @@ fn import(daemon: &hiero::daemon::Daemon, root: &Path, name: &str, text: &str) -
     )
 }
 
+/// These positive retrieval fixtures explicitly supply source applicability;
+/// ordinary raw imports in worker tests remain unbound source material.
+fn import_current(daemon: &hiero::daemon::Daemon, root: &Path, name: &str, text: &str) -> Value {
+    let config = HieronymusConfig::new(root);
+    let path = write_source(root, name, text);
+    call_tool(
+        daemon,
+        3,
+        "hieronymus_rag_import",
+        json!({"series_slug":"demo", "path":path, "claims":{"0":[current_story::claim(&config, "demo", text)]}}),
+    )
+}
+
 /// Recall with a query the FTS lane cannot match: any returned rag row must
 /// have come from the armed semantic lane.
 fn semantic_recall(daemon: &hiero::daemon::Daemon, session_id: i64, query: &str) -> Vec<Value> {
@@ -520,6 +533,7 @@ fn semantic_recall(daemon: &hiero::daemon::Daemon, session_id: i64, query: &str)
             "session_id": session_id,
             "series_slug": "demo",
             "query": query,
+            "volume": "I", "chapter": "Opening",
             "limit": 5,
         }),
     );
@@ -562,6 +576,7 @@ fn import_queues_rebuild_activates_generation_and_serves_semantic_recall() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_semantic_daemon(root.path(), TestArm::fast());
     let session_id = seed_series_and_session(&daemon);
+    current_story::register(&HieronymusConfig::new(root.path()), "demo");
 
     let empty = wait_for_state(&daemon, "ready");
     assert_eq!(
@@ -569,7 +584,7 @@ fn import_queues_rebuild_activates_generation_and_serves_semantic_recall() {
         "an empty corpus with a loaded model/runtime is ready-for-ingest, never an error"
     );
 
-    let imported = import(
+    let imported = import_current(
         &daemon,
         root.path(),
         "chapter-1.txt",
@@ -630,7 +645,8 @@ fn restart_keeps_imported_documents_retrievable_and_ready() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_semantic_daemon(root.path(), TestArm::fast());
     let session_id = seed_series_and_session(&daemon);
-    import(
+    current_story::register(&HieronymusConfig::new(root.path()), "demo");
+    import_current(
         &daemon,
         root.path(),
         "chapter-1.txt",
@@ -647,7 +663,7 @@ fn restart_keeps_imported_documents_retrievable_and_ready() {
         &restarted,
         5,
         "hieronymus_session_start",
-        json!({"series_slug": "demo"}),
+        json!({"series_slug": "demo", "volume":"I", "chapter":"Opening"}),
     );
     let new_session = session["session_id"].as_i64().unwrap();
     // Restart reconciliation settles straight to ready: the active generation
@@ -750,14 +766,27 @@ fn cancel_stops_the_rebuild_and_a_retry_rebuilds() {
     // generation, a non-empty corpus — so the honest verdict is `failed`.
     // The pre-C3 loop reported `ready` here from the cancellation alone.
     let cancelled = wait_for_state(&daemon, "failed");
-    assert!(
-        cancelled
-            .detail
-            .as_deref()
-            .unwrap_or_default()
-            .contains("no valid current semantic generation"),
-        "the cancellation must be reported as an uncovered corpus: {cancelled:?}"
-    );
+    // The failed diagnostic can be the generic uncovered-corpus verdict or
+    // the more specific durable-intent recovery verdict. Pin the actual
+    // cancelled job, uncovered generation and owed revision instead of which
+    // readiness publication won that race.
+    let db = rusqlite::Connection::open(config.database_path()).unwrap();
+    let corpus_revision = hieronymus::rag::current_corpus_revision(&db).unwrap();
+    assert!(corpus_revision > 0);
+    let cancelled_job = jobs.job(&job_id).unwrap().unwrap();
+    assert_eq!(cancelled_job.status, "cancelled");
+    let manifest = store
+        .generation_manifest(&cancelled_job.generation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(manifest.status, "cancelled");
+    assert!(!manifest.active);
+    assert_eq!(manifest.corpus_revision, corpus_revision);
+    // Queue admission may already have consumed the durable intent. If the
+    // lost-wakeup recovery path still sees it, it must describe this corpus.
+    if let Some(owed) = hieronymus::rag::pending_semantic_work_intent(&db).unwrap() {
+        assert_eq!(owed, corpus_revision);
+    }
     assert!(require_semantic_ready(&cancelled.required()).is_err());
 
     // Retry: new authoritative rows queue a fresh rebuild that completes.
@@ -1381,11 +1410,11 @@ fn rag_search(daemon: &hiero::daemon::Daemon, id: i64, series: &str, query: &str
         daemon,
         id,
         "hieronymus_rag_search",
-        json!({"series_slug": series, "query": query, "limit": 5}),
+        json!({"series_slug": series, "query": query, "limit": 5,"volume":"I","chapter":"Opening"}),
     );
-    payload
+    payload["results"]
         .as_array()
-        .unwrap_or_else(|| panic!("rag search must answer a bare row array: {payload}"))
+        .unwrap_or_else(|| panic!("rag search must answer an observed result envelope: {payload}"))
         .clone()
 }
 
@@ -1505,6 +1534,8 @@ fn rag_search_serves_semantic_rows_for_the_queried_series_only() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_semantic_daemon(root.path(), TestArm::fast());
     seed_series_and_session(&daemon);
+    let config = HieronymusConfig::new(root.path());
+    current_story::register(&config, "demo");
     call_tool(
         &daemon,
         12,
@@ -1527,6 +1558,12 @@ fn rag_search_serves_semantic_rows_for_the_queried_series_only() {
         13,
         "hieronymus_rag_import",
         json!({"series_slug": "ghost", "path": foreign.to_str().unwrap()}),
+    );
+    call_tool(
+        &daemon,
+        130,
+        "hieronymus_rag_import",
+        json!({"series_slug":"demo","path":root.path().join("chapter-1.txt"),"claims":{"0":[current_story::claim(&config,"demo","The archivist catalogued every rumour of the drowned city before the tide returned.")]}}),
     );
     wait_for_state(&daemon, "ready");
 
@@ -1598,10 +1635,12 @@ fn mixed_recall_warns_when_required_semantics_did_not_run() {
         "test",
     )
     .unwrap();
+    let config = HieronymusConfig::new(root.path());
+    current_story::register(&config, "book");
     let session = app
         .call(
             "hieronymus_session_start",
-            &json!({"series_slug": "book"}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening"}),
             "test",
         )
         .unwrap();
@@ -1612,6 +1651,7 @@ fn mixed_recall_warns_when_required_semantics_did_not_run() {
             "session_id": session_id,
             "kind": "note",
             "text": "The physician keeps a ledger of the drowned.",
+            "claims": [current_story::claim(&config, "book", "The physician keeps a ledger of the drowned.")],
         }),
         "test",
     )
@@ -1660,7 +1700,8 @@ fn mixed_recall_over_ready_semantics_carries_no_unavailable_warning() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_semantic_daemon(root.path(), TestArm::fast());
     let session_id = seed_series_and_session(&daemon);
-    import(
+    current_story::register(&HieronymusConfig::new(root.path()), "demo");
+    import_current(
         &daemon,
         root.path(),
         "chapter-1.txt",
@@ -1676,6 +1717,7 @@ fn mixed_recall_over_ready_semantics_carries_no_unavailable_warning() {
             "session_id": session_id,
             "series_slug": "demo",
             "query": "zzqxj nonlexical probe",
+            "volume": "I", "chapter": "Opening",
             "limit": 5,
         }),
     );
@@ -1924,9 +1966,10 @@ fn stale_ready_evidence_after_import(post_job: bool) {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_semantic_daemon(root.path(), TestArm::fast());
     seed_series_and_session(&daemon);
+    current_story::register(&HieronymusConfig::new(root.path()), "demo");
     wait_for_state(&daemon, "ready");
     if !post_job {
-        import(
+        import_current(
             &daemon,
             root.path(),
             "first.txt",
@@ -1962,7 +2005,7 @@ fn stale_ready_evidence_after_import(post_job: bool) {
         }),
     );
     if post_job {
-        import(
+        import_current(
             &daemon,
             root.path(),
             "first.txt",
@@ -1970,7 +2013,7 @@ fn stale_ready_evidence_after_import(post_job: bool) {
         );
     }
     assert!(!arrivals.recv_timeout(Duration::from_secs(20)).unwrap());
-    import(
+    import_current(
         &daemon,
         root.path(),
         "late.txt",
@@ -2061,4 +2104,134 @@ fn migration_queued_empty_generation_settles_and_later_import_is_indexed() {
     let active = store.active_generation().unwrap().unwrap();
     assert!(active.written_count > 0);
     group.stop_and_join().unwrap();
+}
+
+#[path = "../../hieronymus/tests/support/current_story.rs"]
+mod current_story;
+
+#[test]
+fn rag_search_separates_current_and_research_and_honors_receipts() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    let config = HieronymusConfig::new(root.path());
+    current_story::register(&config, "demo");
+    for (index, text) in [
+        "The bridge is visible now.",
+        "The bridge conceals a future revelation.",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut claim = current_story::claim(&config, "demo", text);
+        if index == 1 {
+            let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+            let pos: i64 = db
+                .query_row(
+                    "select id from story_positions where chapter_key='Revelation'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            claim.applicability.knowledge_gates[0].known_from = Some(pos);
+        }
+        let path = write_source(root.path(), &format!("bridge-{index}.txt"), text);
+        call_tool(
+            &daemon,
+            200 + index as i64,
+            "hieronymus_rag_import",
+            json!({"series_slug":"demo","path":path,"claims":{"0":[claim]}}),
+        );
+    }
+    wait_for_state(&daemon, "ready");
+    let args = json!({"series_slug":"demo","query":"bridge","volume":"I","chapter":"Opening","story_viewpoint":"Narrator"});
+    let current = call_tool(&daemon, 210, "hieronymus_rag_search", args.clone());
+    assert!(current["resulting_revision"].is_u64());
+    assert_eq!(current["results"].as_array().unwrap().len(), 1);
+    assert_eq!(current["non_current"].as_array().unwrap().len(), 1);
+    assert_eq!(current["non_current"][0]["text"], "");
+    assert_eq!(current["non_current"][0]["display_text"], "");
+    let mut research = args.clone();
+    research["story_query_mode"] = json!("OmniscientResearch");
+    let research = call_tool(&daemon, 211, "hieronymus_rag_search", research);
+    assert_eq!(research["results"].as_array().unwrap().len(), 1);
+    assert!(
+        research["non_current"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("future revelation")
+    );
+    assert_eq!(
+        research["non_current"][0]["claim_annotation"]["disposition"]["status"],
+        "outside_context"
+    );
+    let mut dependent = args;
+    dependent["required_decision_id"] = json!("missing");
+    let error = call_tool_error(&daemon, 212, "hieronymus_rag_search", dependent);
+    assert!(error.contains("required decision"));
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn rag_search_reports_exhaustion_after_512_ineligible_candidates() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_semantic_daemon(root.path(), TestArm::fast());
+    seed_series_and_session(&daemon);
+    let config = HieronymusConfig::new(root.path());
+    current_story::register(&config, "demo");
+    let db = rusqlite::Connection::open(config.database_path()).unwrap();
+    let future: i64 = db
+        .query_row(
+            "select id from story_positions where chapter_key='Revelation'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let base = current_story::claim(&config, "demo", "secret secret secret");
+    let mut claims = serde_json::Map::new();
+    let mut paragraphs = vec![];
+    for index in 0..513 {
+        let mut claim = base.clone();
+        if index < 512 {
+            claim.applicability.knowledge_gates[0].known_from = Some(future);
+        } else {
+            claim.text =
+                "secret eligible orchard meadow afternoon flowers river winter distant village"
+                    .into();
+        }
+        paragraphs.push(claim.text.clone());
+        claims.insert(index.to_string(), json!([claim]));
+    }
+    let path = write_source(root.path(), "budget.txt", &paragraphs.join("\n\n"));
+    call_tool(
+        &daemon,
+        300,
+        "hieronymus_rag_import",
+        json!({"series_slug":"demo","path":path,"claims":claims}),
+    );
+    assert_eq!(
+        db.query_row("select count(*) from rag_chunks", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        513
+    );
+    wait_for_state(&daemon, "ready");
+    let result = call_tool(
+        &daemon,
+        301,
+        "hieronymus_rag_search",
+        json!({"series_slug":"demo","query":"secret secret secret","limit":1,"volume":"I","chapter":"Opening"}),
+    );
+    assert_eq!(result["results"], json!([]), "{result}");
+    assert_eq!(result["candidate_exhausted"], true, "{result}");
+    assert_eq!(result["non_current"].as_array().unwrap().len(), 1);
+    let filled = call_tool(
+        &daemon,
+        302,
+        "hieronymus_rag_search",
+        json!({"series_slug":"demo","query":"eligible","limit":1,"volume":"I","chapter":"Opening"}),
+    );
+    assert_eq!(filled["results"].as_array().unwrap().len(), 1);
+    assert_eq!(filled["candidate_exhausted"], false);
+    daemon.shutdown().unwrap();
 }

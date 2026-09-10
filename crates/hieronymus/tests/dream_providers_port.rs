@@ -614,6 +614,150 @@ fn provider_pass_sends_openai_payload_and_parses_fenced_output() {
 }
 
 #[test]
+fn correction_json_mode_requests_json_without_a_context_hint() {
+    let selected = json!({"text": "translate this as Б"});
+    let expected_context = selected.clone();
+    let server = LoopbackLlm::start(Box::new(move |request| {
+        let payload = request.json();
+        assert_eq!(payload["response_format"], json!({"type": "json_object"}));
+        let prompt = payload["messages"][0]["content"].as_str().unwrap();
+        let instruction: Value = serde_json::from_str(prompt).unwrap();
+        assert_eq!(instruction["selected_context"], expected_context);
+        // OpenAI-compatible JSON mode requires an explicit JSON instruction
+        // in message content, even when the prompt itself is serialized JSON.
+        if !prompt.to_ascii_lowercase().contains("json") {
+            return (
+                400,
+                json!({"error": "JSON instruction required"}).to_string(),
+            );
+        }
+        (
+            200,
+            openai_envelope(r#"{"decisions":{"version":1,"mutations":[]}}"#),
+        )
+    }));
+    let provider = LlmDreamProvider::new(
+        "local-llm",
+        openai_profile(&server.url("/v1")),
+        "test-model",
+    )
+    .unwrap();
+
+    let result = provider.run_correction(&selected).unwrap();
+
+    assert_eq!(
+        result,
+        json!({"decisions": {"version": 1, "mutations": []}})
+    );
+    assert_eq!(server.request_count(), 1);
+}
+
+#[test]
+fn correction_prompt_examples_match_strict_dtos_and_bound_followup_authority() {
+    use hieronymus::dream_output::parse_decisions;
+    let server = LoopbackLlm::start(Box::new(|_| {
+        (
+            200,
+            openai_envelope(r#"{"decisions":{"version":1,"mutations":[]}}"#),
+        )
+    }));
+    let provider = LlmDreamProvider::new(
+        "local-llm",
+        openai_profile(&server.url("/v1")),
+        "test-model",
+    )
+    .unwrap();
+    provider
+        .run_correction(&json!({"request": {"operation": "already applied"}}))
+        .unwrap();
+    let requests = server.requests.lock().unwrap();
+    let payload = requests[0].json();
+    let prompt: Value =
+        serde_json::from_str(payload["messages"][0]["content"].as_str().unwrap()).unwrap();
+    let protocol = &prompt["protocol"];
+    let examples = protocol["examples"]
+        .as_array()
+        .expect("canonical decision examples");
+    assert_eq!(examples.len(), 5);
+    let mut variants = std::collections::BTreeSet::new();
+    for example in examples {
+        let parsed = parse_decisions(example.clone()).expect("example matches strict DTOs");
+        assert_eq!(parsed.mutations.len(), 1);
+        let mutation = &example["decisions"]["mutations"][0];
+        assert!(mutation.get("type").is_none());
+        assert_eq!(mutation.as_object().unwrap().len(), 1);
+        let (tag, fields) = mutation.as_object().unwrap().iter().next().unwrap();
+        let mut internally_tagged = fields.clone();
+        internally_tagged["type"] = json!(tag);
+        let mut malformed = example.clone();
+        malformed["decisions"]["mutations"][0] = internally_tagged;
+        assert!(parse_decisions(malformed).is_err());
+        let mut unknown_field = example.clone();
+        unknown_field["decisions"]["mutations"][0][tag]["actor"] = json!("explicit_user");
+        assert!(parse_decisions(unknown_field).is_err());
+        if let Some(rule) = mutation.get("LearnedRule") {
+            assert!(rule.get("type").is_none());
+            let operation = rule["operation"]
+                .as_object()
+                .expect("operation is externally tagged");
+            assert_eq!(operation.len(), 1);
+            variants.insert(operation.keys().next().unwrap().as_str());
+            assert_eq!(rule["applicability"].as_object().unwrap().len(), 9);
+            assert_eq!(
+                rule["applicability"]["knowledge_gates"][0]
+                    .as_object()
+                    .unwrap()
+                    .len(),
+                3
+            );
+            let mut string_operation = example.clone();
+            string_operation["decisions"]["mutations"][0]["LearnedRule"]["operation"] =
+                json!(rule["operation"].to_string());
+            assert!(parse_decisions(string_operation).is_err());
+            if let Some(replace) = operation.get("Replace") {
+                assert_eq!(replace["rendering"].as_object().unwrap().len(), 5);
+            }
+        } else {
+            assert!(mutation.get("ClaimLineage").is_some());
+            variants.insert("ClaimLineage");
+        }
+    }
+    assert_eq!(
+        variants,
+        ["Activate", "Replace", "Scope", "Archive", "ClaimLineage"]
+            .into_iter()
+            .collect()
+    );
+    assert!(
+        parse_decisions(protocol["empty_result"].clone())
+            .unwrap()
+            .mutations
+            .is_empty()
+    );
+    let instruction = prompt["task"].as_str().unwrap();
+    for boundary in [
+        "externally tagged",
+        "never emit type",
+        "never encode an operation as a string",
+        "no unknown fields",
+        "already applied",
+        "must not replay, replace, broaden, archive",
+        "actor",
+        "origin",
+        "identity",
+        "selection",
+        "evidence",
+        "explicit-user authority",
+        "correction/relevance",
+    ] {
+        assert!(
+            instruction.contains(boundary),
+            "missing prompt boundary: {boundary}"
+        );
+    }
+}
+
+#[test]
 fn provider_pass_retries_retryable_failures_then_succeeds() {
     let transport = FakeTransport::new(vec![
         Err(HttpError::Network("connection reset".to_string())),

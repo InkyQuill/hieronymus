@@ -44,50 +44,110 @@ pub enum SemanticConfigError {
     Invalid(String),
 }
 
-#[derive(serde::Deserialize)]
+/// Application-owned embedding selection. Omitted provider preserves old ONNX settings.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RuntimeConfiguration {
-    runtime_library: PathBuf,
+pub struct SemanticConfiguration {
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_library: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default)]
-    configuration_revision: u64,
+    pub configuration_revision: u64,
+}
+fn default_provider() -> String {
+    "onnx".into()
+}
+impl SemanticConfiguration {
+    pub fn ollama(url: &str, model: &str) -> Self {
+        Self {
+            provider: "ollama".into(),
+            runtime_library: None,
+            base_url: Some(url.into()),
+            model: Some(model.into()),
+            configuration_revision: 0,
+        }
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        match self.provider.as_str() {
+            "onnx" if self.base_url.is_none() && self.model.is_none() => {
+                if !self
+                    .runtime_library
+                    .as_ref()
+                    .is_some_and(|p| p.is_absolute())
+                {
+                    return Err("runtime_library must be an absolute path".into());
+                }
+                Ok(())
+            }
+            "ollama" if self.runtime_library.is_none() => {
+                crate::ollama_embeddings::validate_endpoint(
+                    self.base_url
+                        .as_deref()
+                        .ok_or("Ollama base_url is required")?,
+                    self.model.as_deref().ok_or("Ollama model is required")?,
+                )
+            }
+            _ => Err(
+                "provider must be onnx (runtime_library only) or ollama (base_url and model only)"
+                    .into(),
+            ),
+        }
+    }
 }
 
-fn load_configuration(
+pub fn load_configuration(
     config: &HieronymusConfig,
-) -> Result<Option<RuntimeConfiguration>, SemanticConfigError> {
+) -> Result<Option<SemanticConfiguration>, SemanticConfigError> {
     let text = match std::fs::read_to_string(semantic_config_path(config)) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let settings: RuntimeConfiguration =
+    let settings: SemanticConfiguration =
         toml::from_str(&text).map_err(|error| SemanticConfigError::Invalid(error.to_string()))?;
-    if !settings.runtime_library.is_absolute() {
-        return Err(SemanticConfigError::Invalid(
-            "runtime_library must be an absolute path".into(),
-        ));
-    }
+    settings.validate().map_err(SemanticConfigError::Invalid)?;
     Ok(Some(settings))
 }
 
-/// Owner-only persistence. Callers must hold the root's writer authority.
-/// Resolve symlinks once so restart never depends on the daemon's cwd.
-pub fn save_runtime_library(config: &HieronymusConfig, runtime: &Path) -> Result<(), String> {
-    if !runtime.is_absolute() || !runtime.is_file() {
-        return Err("runtime_library must name an existing absolute file".into());
+/// Persist under the existing single writer/revision authority, without model requests.
+pub fn save_configuration(
+    config: &HieronymusConfig,
+    settings: &SemanticConfiguration,
+) -> Result<(), String> {
+    settings.validate()?;
+    let mut settings = settings.clone();
+    if let Some(runtime) = &settings.runtime_library {
+        if !runtime.is_file() {
+            return Err("runtime_library must name an existing absolute file".into());
+        }
+        settings.runtime_library = Some(runtime.canonicalize().map_err(|e| e.to_string())?);
     }
-    let runtime = runtime.canonicalize().map_err(|error| error.to_string())?;
-    let revision = configuration_revision(config)
-        .map_err(|error| error.to_string())?
+    settings.configuration_revision = configuration_revision(config)
+        .map_err(|e| e.to_string())?
         .checked_add(1)
         .ok_or("semantic configuration revision exhausted")?;
-    std::fs::create_dir_all(config.config_root()).map_err(|error| error.to_string())?;
-    let text = format!(
-        "runtime_library = {}\nconfiguration_revision = {revision}\n",
-        toml::Value::String(runtime.to_string_lossy().into_owned())
-    );
+    std::fs::create_dir_all(config.config_root()).map_err(|e| e.to_string())?;
+    let text = toml::to_string(&settings).map_err(|e| e.to_string())?;
     crate::atomic::atomic_write_text(&semantic_config_path(config), &text)
-        .map_err(|error| format!("semantic.conf write failed: {error}"))
+        .map_err(|e| format!("semantic.conf write failed: {e}"))
+}
+
+pub fn save_runtime_library(config: &HieronymusConfig, runtime: &Path) -> Result<(), String> {
+    save_configuration(
+        config,
+        &SemanticConfiguration {
+            provider: "onnx".into(),
+            runtime_library: Some(runtime.into()),
+            base_url: None,
+            model: None,
+            configuration_revision: 0,
+        },
+    )
 }
 
 pub fn configuration_revision(config: &HieronymusConfig) -> Result<u64, SemanticConfigError> {
@@ -123,9 +183,10 @@ pub fn verify_runtime_library(runtime: &Path) -> Result<(), String> {
 pub fn load_runtime_library(
     config: &HieronymusConfig,
 ) -> Result<Option<PathBuf>, SemanticConfigError> {
-    Ok(load_configuration(config)?
-        .map(|settings| settings.runtime_library)
-        .or_else(|| bundled_asset_root().map(|root| root.join("lib/libonnxruntime.so"))))
+    match load_configuration(config)? {
+        Some(settings) => Ok(settings.runtime_library),
+        None => Ok(bundled_asset_root().map(|root| root.join("lib/libonnxruntime.so"))),
+    }
 }
 
 /// The outcome of arming: a recall service plus whether the semantic lane is
@@ -205,13 +266,25 @@ pub fn arming_verdict(config: &HieronymusConfig, runtime_library: &Path) -> Lane
 
 fn load_lane(config: &HieronymusConfig, runtime_library: &Path) -> Result<SemanticLane, String> {
     let store = SemanticStore::open(config).map_err(|error| error.to_string())?;
-    let provider = store
-        .load_embedding_provider(runtime_library)
-        .map_err(|error| error.to_string())?;
+    let provider: Box<dyn EmbeddingProvider> =
+        match load_configuration(config).map_err(|e| e.to_string())? {
+            Some(settings) if settings.provider == "ollama" => Box::new(
+                crate::ollama_embeddings::OllamaEmbeddingProvider::load(
+                    settings.base_url.as_deref().unwrap(),
+                    settings.model.as_deref().unwrap(),
+                )
+                .map_err(|e| e.to_string())?,
+            ),
+            _ => Box::new(
+                store
+                    .load_embedding_provider(runtime_library)
+                    .map_err(|e| e.to_string())?,
+            ),
+        };
     let tokenizer = store
         .load_model_tokenizer()
         .map_err(|error| error.to_string())?;
-    Ok(SemanticLane::new(Box::new(provider), Box::new(tokenizer)))
+    Ok(SemanticLane::new(provider, Box::new(tokenizer)))
 }
 
 /// Report-only semantic health: what doctor and `hiero semantic status`
@@ -219,6 +292,7 @@ fn load_lane(config: &HieronymusConfig, runtime_library: &Path) -> Result<Semant
 /// read-only connection; never downloads, never loads the runtime, never
 /// creates the database, and never opens the vector store.
 pub struct SemanticStatus {
+    pub configuration: Option<SemanticConfiguration>,
     pub model_status: ModelStatus,
     pub active_generation: Option<GenerationManifest>,
     /// Whether the active generation's index survived on disk (`true` when no
@@ -232,6 +306,8 @@ pub fn semantic_status(
 ) -> Result<SemanticStatus, crate::semantic_error::SemanticError> {
     let (active_generation, generation_intact) = SemanticStore::probe_active_generation(config)?;
     Ok(SemanticStatus {
+        configuration: load_configuration(config)
+            .map_err(|e| crate::semantic_error::SemanticError::Store(e.to_string()))?,
         model_status: SemanticStore::model_status_for(config),
         active_generation,
         generation_intact,

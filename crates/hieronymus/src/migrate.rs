@@ -35,7 +35,8 @@ use serde::Serialize;
 
 use crate::data_root::HieronymusConfig;
 use crate::db::{
-    DatabaseState, SUPPORTED_RUST_SCHEMA_VERSION, apply_terminology_schema_steps, classify_database,
+    DatabaseState, SUPPORTED_RUST_SCHEMA_VERSION, apply_terminology_schema_steps,
+    classify_database, prepare_terminology_import_schema,
 };
 use crate::terminology::rule_text;
 
@@ -1652,7 +1653,9 @@ pub(crate) fn authoritative_row_counts(
 /// Row accounting here means what it says: an ordered schema step adds tables,
 /// it never adds, drops, or rewrites an authoritative row. Every table present
 /// before the steps must hold exactly the same number of rows afterwards, and
-/// every table the steps introduced must be empty.
+/// newly introduced tables must be empty except the exact v5 legacy backfill:
+/// one authority state per series, one applicability/authority per prior rule,
+/// and a shared legacy-import receipt only when prior rules exist.
 ///
 /// `baseline` is `None` only for a re-verification that runs AFTER the
 /// transaction committed, where the durable rebuild job has legitimately added
@@ -1673,11 +1676,21 @@ pub(crate) fn verify_rust_upgraded_target(
             let preserved = baseline
                 .iter()
                 .all(|(table, count)| after.get(table) == Some(count));
-            let new_tables_empty = after
+            let rule_count = baseline.get("term_rules").copied().unwrap_or(0);
+            let series_count = baseline.get("series").copied().unwrap_or(0);
+            let new_tables_accounted = after
                 .iter()
                 .filter(|(table, _)| !baseline.contains_key(*table))
-                .all(|(_, count)| *count == 0);
-            preserved && new_tables_empty
+                .all(|(table, count)| {
+                    let expected = match table.as_str() {
+                        "authority_state" => series_count,
+                        "applicabilities" | "rule_authority" => rule_count,
+                        "origin_receipts" => i64::from(rule_count > 0),
+                        _ => 0,
+                    };
+                    *count == expected
+                });
+            preserved && new_tables_accounted
         }
         None => false,
     };
@@ -1900,7 +1913,7 @@ pub fn run_dry_run_in(
         // Rehearse the upgrade's target-schema SQL steps.
         {
             let transaction = connection.transaction()?;
-            apply_terminology_schema_steps(&transaction)?;
+            prepare_terminology_import_schema(&transaction)?;
             transaction.commit()?;
         }
 
@@ -1910,6 +1923,7 @@ pub fn run_dry_run_in(
         let conversion = {
             let transaction = connection.transaction()?;
             let conversion = convert_strict_terms(&transaction)?;
+            crate::schema_upgrade::apply_steps(&transaction, 4, SUPPORTED_RUST_SCHEMA_VERSION)?;
             rebuild_strict_terms_fts(&transaction)?;
             transaction.commit()?;
             conversion

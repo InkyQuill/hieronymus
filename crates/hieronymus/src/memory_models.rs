@@ -23,6 +23,23 @@ pub fn normalize_string_tuple<'a>(
     normalized
 }
 
+/// Normalize additional predicates while preserving exact identity-key payloads.
+/// Whitespace inside `volume:` and `chapter:` labels belongs to the identity.
+pub(crate) fn normalize_story_scopes<'a>(values: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut result = Vec::new();
+    for value in values {
+        let value = if value.starts_with("volume:") || value.starts_with("chapter:") {
+            value
+        } else {
+            value.trim()
+        };
+        if !value.is_empty() && !result.iter().any(|item| item == value) {
+            result.push(value.to_owned());
+        }
+    }
+    result
+}
+
 /// The translation task context. Constructing one normalizes typed metadata:
 /// story scopes seed from `volume:`/`chapter:` when not given explicitly,
 /// language tags seed from the default directions, semantic tags from `tags`.
@@ -38,6 +55,10 @@ pub struct TranslationContext {
     pub language_tags: Vec<String>,
     pub story_scopes: Vec<String>,
     pub semantic_tags: Vec<String>,
+    pub story_timeline_id: Option<i64>,
+    pub story_scene_key: Option<String>,
+    pub story_viewpoint: crate::story_applicability::Viewpoint,
+    pub story_query_mode: crate::story_applicability::QueryMode,
     language_tags_explicit: bool,
     story_scopes_explicit: bool,
     semantic_tags_explicit: bool,
@@ -57,6 +78,10 @@ impl PartialEq for TranslationContext {
             && self.language_tags == other.language_tags
             && self.story_scopes == other.story_scopes
             && self.semantic_tags == other.semantic_tags
+            && self.story_timeline_id == other.story_timeline_id
+            && self.story_scene_key == other.story_scene_key
+            && self.story_viewpoint == other.story_viewpoint
+            && self.story_query_mode == other.story_query_mode
     }
 }
 
@@ -80,6 +105,10 @@ impl TranslationContext {
             language_tags: Vec::new(),
             story_scopes: Vec::new(),
             semantic_tags: Vec::new(),
+            story_timeline_id: None,
+            story_scene_key: None,
+            story_viewpoint: Default::default(),
+            story_query_mode: Default::default(),
             language_tags_explicit: false,
             story_scopes_explicit: false,
             semantic_tags_explicit: false,
@@ -110,11 +139,11 @@ impl TranslationContext {
         }
         if !self.story_scopes_explicit {
             let mut seeds: Vec<String> = Vec::new();
-            if !self.volume.trim().is_empty() {
-                seeds.push(format!("volume:{}", self.volume.trim()));
+            if !self.volume.is_empty() {
+                seeds.push(format!("volume:{}", self.volume));
             }
-            if !self.chapter.trim().is_empty() {
-                seeds.push(format!("chapter:{}", self.chapter.trim()));
+            if !self.chapter.is_empty() {
+                seeds.push(format!("chapter:{}", self.chapter));
             }
             self.story_scopes = seeds;
         }
@@ -137,7 +166,7 @@ impl TranslationContext {
             self.language_tags_explicit = true;
         }
         if let Some(scopes) = story_scopes {
-            self.story_scopes = normalize_string_tuple(scopes.iter().map(String::as_str), false);
+            self.story_scopes = normalize_story_scopes(scopes.iter().map(String::as_str));
             self.story_scopes_explicit = true;
         }
         if let Some(tags) = semantic_tags {
@@ -166,6 +195,7 @@ pub type MetadataMap = BTreeMap<String, serde_json::Value>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShortTermMemoryRecord {
+    pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub session_id: i64,
     pub source_role: String,
@@ -185,6 +215,7 @@ pub struct ShortTermMemoryRecord {
 /// crystal's deterministic authority lives in `term_rules`, not here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrystalRecord {
+    pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub crystal_type: String,
     pub text: String,

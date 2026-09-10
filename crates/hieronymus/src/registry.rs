@@ -91,6 +91,10 @@ impl Registry {
             transaction.query_row("select id from series where slug = ?1", [slug], |row| {
                 row.get(0)
             })?;
+        transaction.execute(
+            "insert into authority_state(series_id) values (?1) on conflict(series_id) do nothing",
+            [series_id],
+        )?;
         replace_series_language_tags(&transaction, series_id, &normalized_tags, &now)?;
         transaction.commit()?;
         self.get_series(slug)

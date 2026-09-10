@@ -659,6 +659,7 @@ fn combine_crystals(
     absorbed: i64,
     cycle_id: i64,
 ) -> Result<(), DreamError> {
+    crate::claim_capture::copy_crystal_lineage_tx(transaction, absorbed, survivor)?;
     transaction.execute(
         "insert or ignore into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
          select ?1, concept_id, link_type, confidence, created_at

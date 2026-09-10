@@ -68,7 +68,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hieronymus::data_root::HieronymusConfig;
-use hieronymus::semantic_arming::{load_runtime_library, save_runtime_library};
+use hieronymus::semantic_arming::{
+    SemanticConfiguration, load_configuration, load_runtime_library, save_configuration,
+    save_runtime_library,
+};
 use hieronymus::semantic_embeddings::{EmbeddingIdentity, EmbeddingProvider};
 use hieronymus::semantic_error::SemanticError;
 use hieronymus::semantic_jobs::{
@@ -280,6 +283,45 @@ impl SemanticArm for OnnxArm {
     }
 }
 
+/// Explicit text backend. Identity is resolved during supervised arming, never config reads.
+struct OllamaArm {
+    settings: SemanticConfiguration,
+    identity: Mutex<EmbeddingIdentity>,
+}
+impl SemanticArm for OllamaArm {
+    fn identity(&self) -> EmbeddingIdentity {
+        self.identity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+    fn precheck(&self, config: &HieronymusConfig) -> Result<(), String> {
+        SemanticStore::open(config)
+            .map_err(|e| e.to_string())?
+            .load_model_tokenizer()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    fn arm(&self, config: &HieronymusConfig) -> Result<ArmedPair, String> {
+        let store = SemanticStore::open(config).map_err(|e| e.to_string())?;
+        let tokenizer = store.load_model_tokenizer().map_err(|e| e.to_string())?;
+        let provider = hieronymus::ollama_embeddings::OllamaEmbeddingProvider::load(
+            self.settings.base_url.as_deref().unwrap(),
+            self.settings.model.as_deref().unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
+        let mut identity = self.identity.lock().unwrap_or_else(|e| e.into_inner());
+        if identity.revision() != "unresolved" && *identity != *provider.identity() {
+            return Err("Ollama identity changed; configure again and rebuild".into());
+        }
+        *identity = provider.identity().clone();
+        Ok(ArmedPair {
+            provider: Box::new(provider),
+            tokenizer: Box::new(tokenizer),
+        })
+    }
+}
+
 /// The unconfigured arm: no runtime location was persisted. Queues jobs under
 /// the pinned identity (so a later-configured daemon rebuilds them) but never
 /// arms, keeping the state honestly `Failed`.
@@ -368,6 +410,20 @@ pub(crate) fn resolve_arm(config: &HieronymusConfig) -> Arc<dyn SemanticArm> {
     if let Some(arm) = registered {
         return arm;
     }
+    match load_configuration(config) {
+        Ok(Some(settings)) if settings.provider == "ollama" => {
+            let identity =
+                hieronymus::ollama_embeddings::OllamaEmbeddingProvider::unresolved_identity(
+                    settings.model.as_deref().unwrap(),
+                );
+            return Arc::new(OllamaArm {
+                settings,
+                identity: Mutex::new(identity),
+            });
+        }
+        Err(error) => return Arc::new(UnconfiguredArm(Some(error.to_string()))),
+        _ => {}
+    }
     match load_runtime_library(config) {
         Ok(Some(runtime)) => Arc::new(OnnxArm::new(runtime)),
         Ok(None) => Arc::new(UnconfiguredArm(None)),
@@ -399,12 +455,14 @@ struct ControllerInner {
 /// callers must not combine it with an independent settings-file read.
 #[derive(Clone, Debug)]
 pub struct ConfigurationAcknowledgement {
+    pub configuration: Option<SemanticConfiguration>,
+    pub identity: Option<EmbeddingIdentity>,
     pub state: RequiredSemanticState,
     pub configuration_revision: u64,
 }
 
 struct ReloadRequest {
-    runtime: Option<PathBuf>,
+    settings: Option<SemanticConfiguration>,
     reply: std::sync::mpsc::Sender<Result<ConfigurationAcknowledgement, String>>,
 }
 
@@ -469,6 +527,8 @@ impl SemanticController {
             readiness_epoch: Mutex::new(0),
             identity: Mutex::new(identity),
             state: Mutex::new(ConfigurationAcknowledgement {
+                configuration: load_configuration(&config).map_err(|e| e.to_string())?,
+                identity: None,
                 state: initial,
                 configuration_revision: hieronymus::semantic_arming::configuration_revision(
                     &config,
@@ -532,14 +592,31 @@ impl SemanticController {
     /// The acknowledgement means the old lane has lost readiness and the worker
     /// has re-resolved settings; it never claims that inference has succeeded.
     pub fn configure(&self, runtime: PathBuf) -> Result<ConfigurationAcknowledgement, String> {
-        self.reload(Some(runtime))
+        self.configure_settings(SemanticConfiguration {
+            provider: "onnx".into(),
+            runtime_library: Some(runtime),
+            base_url: None,
+            model: None,
+            configuration_revision: 0,
+        })
+    }
+
+    pub fn configure_settings(
+        &self,
+        settings: SemanticConfiguration,
+    ) -> Result<ConfigurationAcknowledgement, String> {
+        settings.validate()?;
+        self.reload(Some(settings))
     }
 
     pub fn reload_configuration(&self) -> Result<(), String> {
         self.reload(None).map(|_| ())
     }
 
-    fn reload(&self, runtime: Option<PathBuf>) -> Result<ConfigurationAcknowledgement, String> {
+    fn reload(
+        &self,
+        settings: Option<SemanticConfiguration>,
+    ) -> Result<ConfigurationAcknowledgement, String> {
         let _serial = self
             .inner
             .configuration_lock
@@ -547,7 +624,7 @@ impl SemanticController {
             .map_err(|e| e.to_string())?;
         let (reply, receive) = std::sync::mpsc::channel();
         *self.inner.reload.lock().map_err(|e| e.to_string())? =
-            Some(ReloadRequest { runtime, reply });
+            Some(ReloadRequest { settings, reply });
         self.inner
             .wake
             .send(())
@@ -673,6 +750,7 @@ fn run_worker(
     let mut recovery_owed = false;
     let mut rearm_deadline = std::time::Instant::now();
     let mut rearm_blocked = false;
+    let mut identity_check_deadline = std::time::Instant::now();
     let stop_flag = Arc::clone(&stop);
     let rebuild = RebuildConfig {
         stop_check: Some(Arc::new(move || stop_flag.load(Ordering::Acquire))),
@@ -690,8 +768,8 @@ fn run_worker(
             .unwrap_or_else(|e| e.into_inner())
             .take();
         if let Some(request) = reload {
-            let result = match request.runtime {
-                Some(runtime) => save_runtime_library(&context.inner.config, &runtime),
+            let result = match request.settings {
+                Some(settings) => save_configuration(&context.inner.config, &settings),
                 None => Ok(()),
             };
             let result = result.and_then(|_| {
@@ -703,6 +781,9 @@ fn run_worker(
                 // old Ready revision before this point, but never Ready for the
                 // new revision until the normal evidence gate establishes it.
                 let acknowledgement = ConfigurationAcknowledgement {
+                    configuration: load_configuration(&context.inner.config)
+                        .map_err(|e| e.to_string())?,
+                    identity: None,
                     state: RequiredSemanticState::Acquiring,
                     configuration_revision: revision,
                 };
@@ -765,6 +846,17 @@ fn run_worker(
             set_state(&context.inner, RequiredSemanticState::Acquiring);
             match arm_both_lanes(&context) {
                 Ok(indexing) => {
+                    *context
+                        .inner
+                        .identity
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = indexing.provider.identity().clone();
+                    context
+                        .inner
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .identity = Some(indexing.provider.identity().clone());
                     pair = Some(indexing);
                     query_installed = true;
                     failure_detail = None;
@@ -789,6 +881,21 @@ fn run_worker(
             );
             wait_for_wakeup(&context, &stop);
             continue;
+        }
+
+        // External model tags can change without semantic.conf changing. Verify
+        // before claiming ongoing readiness; every inference also checks independently.
+        if identity_check_deadline <= std::time::Instant::now() {
+            identity_check_deadline = std::time::Instant::now() + REARM_POLL;
+            if let Some(armed) = pair.as_ref()
+                && let Err(error) = armed.provider.verify_identity()
+            {
+                fail(&context.inner, &mut failure_detail, error.to_string());
+                pair = None;
+                query_installed = false;
+                rearm_deadline = std::time::Instant::now() + REARM_POLL;
+                continue;
+            }
         }
 
         // 4. Evidence: what this service could actually answer with right
@@ -942,6 +1049,26 @@ fn run_worker(
 fn arm_both_lanes(context: &WorkerContext) -> Result<ArmedPair, String> {
     let indexing = context.arm.arm(&context.inner.config)?;
     install_query_lane(context)?;
+    // A provider switch (or a job queued before external identity resolution)
+    // must replace its incompatible pending target, otherwise run_rebuild
+    // correctly rejects it forever and never reaches the new generation.
+    let jobs = SemanticJobStore::open(&context.inner.config).map_err(|e| e.to_string())?;
+    let store = SemanticStore::open(&context.inner.config).map_err(|e| e.to_string())?;
+    for job_id in jobs.claimable_jobs().map_err(|e| e.to_string())? {
+        if let Some(job) = jobs.job(&job_id).map_err(|e| e.to_string())?
+            && let Some(manifest) = store
+                .generation_manifest(&job.generation_id)
+                .map_err(|e| e.to_string())?
+            && manifest.identity != *indexing.provider.identity()
+        {
+            store
+                .cancel_generation(&job.generation_id)
+                .map_err(|e| e.to_string())?;
+            jobs.reconcile().map_err(|e| e.to_string())?;
+            queue_semantic_rebuild(&context.inner.config, indexing.provider.identity())
+                .map_err(|e| e.to_string())?;
+        }
+    }
     Ok(indexing)
 }
 
@@ -1336,10 +1463,11 @@ fn activation_sample(
         .tokenize(&AuthoritativeChunk {
             chunk_id: 0,
             series_slug: series_slug.clone(),
-            text,
+            text: text.clone(),
         })
         .map_err(|error| format!("the activation sample could not be tokenized: {error}"))?;
     Ok(Some(SemanticSample {
+        text,
         series_slug,
         token_ids,
     }))

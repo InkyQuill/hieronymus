@@ -387,6 +387,15 @@ fn reinforce_and_supersede_actions_apply_through_the_run_transaction() {
     assert_eq!(old.status, "superseded");
     let new = store.get(new_id).unwrap();
     assert_eq!(new.supersedes_crystal_id, Some(old_id));
+    assert_eq!(
+        query(
+            &config,
+            "select count(*) from claim_bindings old where old.crystal_id=?1 and not exists(select 1 from claim_bindings new where new.crystal_id=?2 and new.claim_id=old.claim_id)",
+            &[&old_id, &new_id]
+        )[0][0],
+        json!(0),
+        "Dream supersede must retain all original masks"
+    );
 
     // Reinforce projection: the clamped delta landed and the event records
     // the actual deltas, consumed exactly once.
@@ -770,4 +779,19 @@ fn mixed_output_applies_valid_entries_and_audits_rejections_individually() {
         rows.map(|row| row.unwrap()).collect::<Vec<_>>().join("\n")
     };
     assert!(!all.contains("sk-leak-secret"), "credential leaked: {all}");
+}
+
+#[test]
+fn correction_decisions_are_strict_versioned_drafts_without_actor_or_selection() {
+    use hieronymus::dream_output::parse_decisions;
+    assert!(parse_decisions(json!({"decisions":{"version":1,"mutations":[]}})).is_ok());
+    for value in [
+        json!({"decisions":{"version":2,"mutations":[]}}),
+        json!({"decisions":{"version":1,"mutations":[],"actor_kind":"explicit_user"}}),
+        json!({"decisions":{"version":1,"mutations":[],"evidence_refs":[]}}),
+        json!({"decisions":{"version":1,"mutations":[]},"supersede_actions":[]}),
+        json!({"decisions":{"version":1,"mutations":vec![json!({"ClaimLineage":{"input_claim_ids":[1],"output_claim_ids":[2]}});101]}}),
+    ] {
+        assert!(parse_decisions(value).is_err());
+    }
 }

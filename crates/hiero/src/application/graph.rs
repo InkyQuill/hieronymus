@@ -372,6 +372,8 @@ fn concept_semantic_tags_set(
 
 #[derive(Deserialize)]
 struct FacetAdd {
+    #[serde(default)]
+    claims: Vec<hieronymus::claim_capture::ClaimInput>,
     concept_id: i64,
     value: String,
     #[serde(default)]
@@ -421,12 +423,13 @@ fn concept_facet_add(application: &Application, arguments: &Value) -> Result<Val
         semantic_tags: args.semantic_tags.unwrap_or_default(),
     };
     let facet = concepts(application)?
-        .add_facet(
+        .add_facet_with_claims(
             args.concept_id,
             &args.value,
             &fields,
             args.confidence,
             args.is_canonical,
+            &args.claims,
         )
         .map_err(domain)?;
     Ok(facet_payload(&facet))
@@ -436,6 +439,8 @@ fn concept_facet_add(application: &Application, arguments: &Value) -> Result<Val
 
 #[derive(Deserialize)]
 struct FacetUpdate {
+    #[serde(default)]
+    claims: Vec<hieronymus::claim_capture::ClaimInput>,
     facet_id: i64,
     #[serde(flatten)]
     patch: FacetPatch,
@@ -447,7 +452,7 @@ struct FacetUpdate {
 fn concept_facet_update(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<FacetUpdate>(arguments)?;
     let facet = concepts(application)?
-        .update_facet(args.facet_id, &args.patch)
+        .update_facet_with_claims(args.facet_id, &args.patch, &args.claims)
         .map_err(domain)?;
     Ok(facet_payload(&facet))
 }

@@ -109,7 +109,7 @@ impl FeedbackStore {
     }
 }
 
-fn record_recall_outcome_tx(
+pub(crate) fn record_recall_outcome_tx(
     transaction: &rusqlite::Transaction<'_>,
     request: &RecallFeedback,
 ) -> Result<FeedbackOutcome, FeedbackError> {

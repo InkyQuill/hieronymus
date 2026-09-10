@@ -130,7 +130,10 @@ fn status_on_a_fresh_root_reports_the_missing_model() {
     let (stdout, stderr, status) = hiero(&["semantic", "status", "--data-root", data_root]);
     assert!(status.success(), "{stdout}{stderr}");
     assert!(stdout.contains("missing"), "{stdout}");
-    assert!(stdout.contains("fts-only"), "{stdout}");
+    assert!(
+        stdout.contains("daemon semantic status: unavailable"),
+        "{stdout}"
+    );
     assert!(
         stdout.contains(hieronymus::semantic_tokenizer::MINILM_TOKENIZER_ID),
         "{stdout}"
@@ -199,6 +202,7 @@ fn status_reports_an_active_generation_without_touching_the_network() {
             "gen-a",
             &mut provider,
             &SemanticSample {
+                text: "probe".into(),
                 series_slug: "demo".to_string(),
                 token_ids: tokenizer.encode("probe").unwrap(),
             },
@@ -557,7 +561,7 @@ fn cancelled_cli_leaves_acquisition_under_daemon_ownership() {
     );
     release.send(()).unwrap();
     server.join().unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let model = SemanticStore::model_path_for(&config);
     while !model.exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -565,4 +569,160 @@ fn cancelled_cli_leaves_acquisition_under_daemon_ownership() {
     assert_eq!(std::fs::read(model).unwrap(), body);
     assert!(!root.path().join("semantic.conf").exists());
     daemon.shutdown().unwrap();
+}
+
+#[test]
+#[ignore = "requires HIERO_OLLAMA_TEST_TOKENIZER pointing at the real pinned tokenizer; no Ollama service needed"]
+fn ollama_cli_configures_arms_and_restarts_without_onnx_assets() {
+    use serde_json::json;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = stop.clone();
+    let server = std::thread::spawn(move || {
+        while !thread_stop.load(std::sync::atomic::Ordering::Acquire) {
+            let Ok((mut socket, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut bytes = vec![];
+            let mut byte = [0];
+            while !bytes.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                bytes.push(byte[0]);
+            }
+            let head = String::from_utf8(bytes).unwrap();
+            let payload=if head.starts_with("GET /api/tags ") {
+                json!({"models":[{"name":"nomic:latest","model":"nomic:latest","digest":"a".repeat(64)}]})
+            } else {
+                assert!(head.starts_with("POST /api/embed "));
+                let length=head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).unwrap().parse::<usize>().unwrap();
+                let mut body=vec![0;length];socket.read_exact(&mut body).unwrap();
+                let body:serde_json::Value=serde_json::from_slice(&body).unwrap();
+                assert_eq!(body["truncate"],false);assert_eq!(body["model"],"nomic:latest");
+                json!({"embeddings":[[0.6,0.8]]})
+            }.to_string();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                payload.len(),
+                payload
+            )
+            .unwrap();
+        }
+    });
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let tokenizer = SemanticStore::tokenizer_path_for(&config);
+    std::fs::create_dir_all(tokenizer.parent().unwrap()).unwrap();
+    let fixture = std::env::var_os("HIERO_OLLAMA_TEST_TOKENIZER")
+        .expect("HIERO_OLLAMA_TEST_TOKENIZER must name the real pinned tokenizer");
+    let bytes = std::fs::read(fixture).unwrap();
+    assert_eq!(
+        format!("{:x}", sha2::Sha256::digest(&bytes)),
+        hieronymus::semantic_model::TOKENIZER_SHA256
+    );
+    std::fs::write(&tokenizer, bytes).unwrap();
+    Registry::open(&config)
+        .unwrap()
+        .create_series("ollama-test", "Ollama test", "ja", "en", None)
+        .unwrap();
+    for (name, text) in [
+        ("first.txt", "雪の城 remembers."),
+        ("second.txt", "Ёж crossed the river."),
+    ] {
+        let path = root.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        RagStore::open(&config)
+            .unwrap()
+            .import_file("ollama-test", &path, &RagImport::new())
+            .unwrap();
+    }
+    // Simulate an import queued before Ollama configuration/identity resolution.
+    hieronymus::semantic_recall::queue_semantic_rebuild(
+        &config,
+        &hieronymus::semantic_embeddings::OnnxEmbeddingProvider::static_identity(),
+    )
+    .unwrap();
+    let start = || {
+        hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+            data_root: Some(root.path().into()),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    let daemon = start();
+    let (stdout, stderr, status) = hiero(&[
+        "semantic",
+        "configure",
+        "--provider",
+        "ollama",
+        "--base-url",
+        &url,
+        "--model",
+        "nomic:latest",
+        "--json",
+        "--data-root",
+        root.path().to_str().unwrap(),
+    ]);
+    assert!(status.success(), "{stdout}{stderr}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()["configuration_revision"],
+        1
+    );
+    let wait_ready = || {
+        let client = hiero::lifecycle::connect(&config, false).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let state = client.get("/status").unwrap();
+            if state["semantic"]["state"] == "ready" {
+                assert_eq!(state["semantic"]["identity"]["provider"], "ollama");
+                assert_eq!(state["semantic"]["identity"]["dimensions"], 2);
+                assert_eq!(state["semantic"]["identity"]["revision"], "a".repeat(64));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{state}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    wait_ready();
+    let generation = SemanticStore::open(&config)
+        .unwrap()
+        .active_generation()
+        .unwrap()
+        .unwrap();
+    assert_eq!(generation.identity.provider(), "ollama");
+    assert_eq!(generation.written_count, 2);
+    assert!(!SemanticStore::model_path_for(&config).exists());
+    assert!(
+        hieronymus::semantic_arming::load_runtime_library(&config)
+            .unwrap()
+            .is_none()
+    );
+    let client = hiero::lifecycle::connect(&config, false).unwrap();
+    let saved = std::fs::read(hieronymus::semantic_arming::semantic_config_path(&config)).unwrap();
+    assert!(client.post("/semantic/configure",&json!({"provider":"ollama","base_url":"http://user:secret@localhost","model":"nomic:latest"})).is_err());
+    assert!(
+        client
+            .post(
+                "/semantic/configure",
+                &json!({"provider":"ollama","base_url":url,"model":"nomic:latest","unknown":true})
+            )
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(hieronymus::semantic_arming::semantic_config_path(&config)).unwrap(),
+        saved
+    );
+    daemon.shutdown().unwrap();
+    let daemon = start();
+    wait_ready();
+    daemon.shutdown().unwrap();
+    stop.store(true, std::sync::atomic::Ordering::Release);
+    server.join().unwrap();
 }

@@ -75,6 +75,12 @@ const STEPS: &[Step] = &[
         sql: include_str!("../migrations/004-lazy-dream-links.sql"),
         converter: None,
     },
+    Step {
+        from: 4,
+        to: 5,
+        sql: include_str!("../migrations/005-autonomous-authority.sql"),
+        converter: None,
+    },
 ];
 
 /// Step 2 -> 3's typed converter: give `semantic_generations` the

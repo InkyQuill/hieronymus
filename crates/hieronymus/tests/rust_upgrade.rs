@@ -1329,3 +1329,320 @@ fn v3_materialized_batches_upgrade_without_replaying_terminal_pairs() {
     );
     assert_eq!(progress.process(3, 1).unwrap(), 0);
 }
+
+// Autonomous authority v5: migration effects are exercised through the real
+// ordered runner, never by creating replacement test-only authority tables.
+const V5_TABLES: &[&str] = &[
+    "authority_state",
+    "origin_receipts",
+    "decision_records",
+    "decision_evidence",
+    "evidence_records",
+    "story_timelines",
+    "story_positions",
+    "applicabilities",
+    "knowledge_gates",
+    "memory_claims",
+    "claim_bindings",
+    "claim_effects",
+    "rule_authority",
+    "rule_exclusions",
+    "claim_derivations",
+    "provider_recovery_state",
+    "consolidation_results",
+    "consolidation_jobs",
+];
+
+fn v4_authority_fixture() -> Connection {
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch("pragma foreign_keys = on;")
+        .unwrap();
+    connection.execute_batch(RUST_V1_SQL).unwrap();
+    seed_v1_rows(&connection);
+    connection
+        .execute_batch(
+            "update term_rules set provenance = 'dream:learned' where id = 1;
+         insert into term_rules(id,source_language,target_language,source_text,
+           canonical_translation,status,provenance,created_at,updated_at)
+         values(2,'ja','en','月','Moon','candidate','agent','2026-01-01','2026-01-01');
+         insert into term_rule_story_scopes values(1,'Book I/Interlude α');",
+        )
+        .unwrap();
+    let tx = connection.transaction().unwrap();
+    apply_steps(&tx, 1, 4).unwrap();
+    tx.commit().unwrap();
+    connection.execute_batch(
+        "insert into dream_link_batches(id,session_id,created_cycle,lazy_pairs) values(1,1,1,1);
+         insert into dream_link_crystals values(1,0,1),(1,1,2);
+         insert into dream_link_pairs values(1,1,2,'applied',1,'{}');"
+    ).unwrap();
+    connection
+}
+
+#[test]
+fn v5_backfills_every_legacy_rule_without_inventing_series_ownership() {
+    let mut connection = v4_authority_fixture();
+    let tx = connection.transaction().unwrap();
+    apply_steps(&tx, 4, 5).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(scalar(&connection, "pragma user_version"), 5);
+    assert_eq!(
+        scalar(&connection, "select count(*) from rule_authority"),
+        2
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from authority_state where revision=0"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from rule_authority where rule_id=1 and authority='explicit_user' and legacy_protected=1 and decision_id is null and consolidation_result_id is null"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from rule_authority where rule_id=2 and authority='learned' and legacy_protected=0"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from applicabilities where series_id is null and metadata_state='legacy_global' and scope_predicates_json='[]'"
+        ),
+        2
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from origin_receipts where kind='legacy_import'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(&connection, "select count(*) from pragma_foreign_key_check"),
+        0
+    );
+    assert_eq!(
+        scalar(&connection, "select count(*) from dream_link_crystals"),
+        2
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from dream_link_pairs where status='applied' and applied_cycle=1 and result_json='{}'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from term_rule_story_scopes where story_scope='Book I/Interlude α'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "select count(*) from term_rules where status='active' and provenance='dream:learned'"
+        ),
+        1
+    );
+}
+
+#[test]
+fn v5_legacy_global_rules_upgrade_even_without_a_series() {
+    let mut connection = v4_authority_fixture();
+    connection
+        .execute_batch(
+            "delete from crystal_activations; delete from task_sessions; delete from series;",
+        )
+        .unwrap();
+    let tx = connection.transaction().unwrap();
+    apply_steps(&tx, 4, 5).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(scalar(&connection, "select count(*) from series"), 0);
+    assert_eq!(
+        scalar(&connection, "select count(*) from rule_authority"),
+        2
+    );
+    assert_eq!(
+        scalar(&connection, "select count(*) from pragma_foreign_key_check"),
+        0
+    );
+}
+
+#[test]
+fn v5_marker_failure_rolls_back_tables_backfill_and_markers() {
+    let mut connection = v4_authority_fixture();
+    connection.execute_batch("create trigger refuse_v5 before update on hieronymus_meta when new.schema_version=5 begin select raise(abort,'injected before v5 marker'); end;").unwrap();
+    let tx = connection.transaction().unwrap();
+    let error = apply_steps(&tx, 4, 5).unwrap_err();
+    assert!(
+        error.to_string().contains("injected before v5 marker"),
+        "{error}"
+    );
+    tx.rollback().unwrap();
+    assert_eq!(scalar(&connection, "pragma user_version"), 4);
+    assert_eq!(
+        scalar(&connection, "select schema_version from hieronymus_meta"),
+        4
+    );
+    for table in V5_TABLES {
+        assert!(
+            !table_names(&connection).contains(&table.to_string()),
+            "{table}"
+        );
+    }
+    assert_eq!(scalar(&connection, "select count(*) from term_rules"), 2);
+}
+
+#[test]
+fn v5_rejects_partial_schema_and_startup_missing_authority_columns() {
+    let mut connection = v4_authority_fixture();
+    connection
+        .execute_batch("create table authority_state(series_id integer);")
+        .unwrap();
+    let tx = connection.transaction().unwrap();
+    assert!(apply_steps(&tx, 4, 5).is_err());
+    tx.rollback().unwrap();
+    assert_eq!(scalar(&connection, "pragma user_version"), 4);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("hieronymus.sqlite");
+    let connection = hieronymus::db::open_migrated(&path).unwrap();
+    assert_eq!(scalar(&connection, "pragma user_version"), 5);
+    connection
+        .execute_batch("alter table authority_state drop column revision;")
+        .unwrap();
+    assert!(hieronymus::db::verify_current_rust_schema(&path).is_err());
+}
+
+#[test]
+fn v5_fresh_and_v4_upgraded_schemas_are_identical() {
+    let root = tempfile::tempdir().unwrap();
+    let fresh = hieronymus::db::open_migrated(&root.path().join("hieronymus.sqlite")).unwrap();
+    let mut upgraded = v4_authority_fixture();
+    let tx = upgraded.transaction().unwrap();
+    apply_steps(&tx, 4, 5).unwrap();
+    tx.commit().unwrap();
+    fn objects(connection: &Connection) -> Vec<(String, String)> {
+        connection.prepare("select name,sql from sqlite_master where sql is not null and name not like 'sqlite_%' order by name").unwrap()
+            .query_map([], |row| Ok((row.get(0)?,row.get(1)?))).unwrap()
+            .collect::<rusqlite::Result<_>>().unwrap()
+    }
+    assert_eq!(objects(&fresh), objects(&upgraded));
+    for table in V5_TABLES {
+        assert!(table_names(&fresh).contains(&table.to_string()), "{table}");
+    }
+}
+
+#[test]
+fn v5_series_initialization_preserves_revision_and_rolls_back_with_series() {
+    use hieronymus::registry::Registry;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    let registry = Registry::open(&config).unwrap();
+    registry
+        .create_series("one", "One", "ja", "en", None)
+        .unwrap();
+    let connection = open(&config.database_path());
+    assert_eq!(
+        scalar(&connection, "select revision from authority_state"),
+        0
+    );
+    connection
+        .execute_batch("update authority_state set revision=7;")
+        .unwrap();
+    registry
+        .create_series("one", "Renamed", "ja", "en", None)
+        .unwrap();
+    assert_eq!(
+        scalar(&connection, "select revision from authority_state"),
+        7
+    );
+    connection.execute_batch("create trigger refuse_authority before insert on authority_state begin select raise(abort,'authority unavailable'); end;").unwrap();
+    assert!(
+        registry
+            .create_series("two", "Two", "ja", "en", None)
+            .is_err()
+    );
+    assert_eq!(scalar(&connection, "select count(*) from series"), 1);
+}
+
+#[test]
+fn v5_constraints_preserve_history_and_reject_forged_legacy_authority() {
+    let mut c = v4_authority_fixture();
+    let tx = c.transaction().unwrap();
+    apply_steps(&tx, 4, 5).unwrap();
+    tx.commit().unwrap();
+    c.execute_batch(
+        "insert into origin_receipts values('agent-origin','agent','client',1,'event','text','{}','hash','now');
+         insert into applicabilities(id,series_id,scope_predicates_json,metadata_state) values(10,1,'[]','unspecified');
+         insert into decision_records values('decision',1,'agent-origin','agent',0,1,'{}','{}','applied','now');
+         insert into provider_recovery_state values('default','unconfigured','now','now');
+         insert into consolidation_jobs(decision_id,state,attempts,provider_slot_id,created_at,updated_at) values('decision','pending',0,'default','now','now');
+         insert into consolidation_results(result_id,job_decision_id,generation,state,created_at,updated_at) values('result','decision',0,'reserved','now','now');
+         insert into memory_claims(id,series_id,text,revision,status,applicability_id,created_at,updated_at) values(1,1,'claim',0,'current',10,'now','now');
+         insert into claim_bindings(claim_id,crystal_id) values(1,1);"
+    ).unwrap();
+    for sql in [
+        "insert into applicabilities(series_id,scope_predicates_json,metadata_state) values(null,'[]','legacy_global')",
+        "update applicabilities set scope_predicates_json='[\"changed\"]' where id=1",
+        "update rule_authority set origin_id='agent-origin' where rule_id=1",
+        "update rule_authority set decision_id='decision' where rule_id=1",
+        "insert into applicabilities(series_id,scope_predicates_json,metadata_state) values(null,'[]','unspecified')",
+        "insert into applicabilities(series_id,scope_predicates_json,metadata_state) values(1,'broken','resolved')",
+        "update authority_state set revision=-1",
+        "insert into claim_bindings(claim_id,crystal_id,facet_id) values(1,1,1)",
+        "insert into claim_bindings(claim_id) values(1)",
+        "insert into claim_bindings(claim_id,crystal_id) values(1,1)",
+        "insert into knowledge_gates(applicability_id,viewpoint_kind) values(10,'character')",
+        "insert into knowledge_gates(applicability_id,viewpoint_kind,viewpoint_concept_id) values(10,'narrator',1)",
+        "update consolidation_results set state='prepared'",
+        "update consolidation_results set state='complete',canonical_output='{}',expected_revision=1,origin_id='agent-origin'",
+        "insert into rule_exclusions(rule_id,applicability_id) values(1,10)",
+        "insert into rule_exclusions(rule_id,applicability_id,decision_id,consolidation_result_id) values(1,10,'decision','result')",
+        "insert into claim_derivations values(1,1,'result')",
+        "delete from origin_receipts where id='agent-origin'",
+        "delete from term_rules where id=1",
+        "delete from crystals where id=1",
+    ] {
+        assert!(
+            c.execute_batch(sql).is_err(),
+            "accepted invalid authority write: {sql}"
+        );
+    }
+    c.execute_batch("update consolidation_results set state='prepared',canonical_output='{}',expected_revision=1,origin_id='agent-origin'; update consolidation_results set state='complete',completion_receipt='{}';").unwrap();
+    assert_eq!(
+        scalar(&c, "select count(*) from pragma_foreign_key_check"),
+        0
+    );
+}
+
+#[test]
+fn v5_backfills_session_story_context_as_unspecified() {
+    let mut db = v4_authority_fixture();
+    db.execute("insert into task_sessions(series_slug,source_language,target_language,task_type,status,created_at,last_activity_at) select slug,'en','ru','translation','active','now','now' from series limit 1",[]).unwrap();
+    let tx = db.transaction().unwrap();
+    apply_steps(&tx, 4, 5).unwrap();
+    tx.commit().unwrap();
+    let row:(Option<i64>,Option<String>,String)=db.query_row("select story_timeline_id,story_scene_key,story_viewpoint_json from task_sessions order by id desc limit 1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    assert_eq!(row, (None, None, "\"Unspecified\"".into()));
+}
+
+#[test]
+fn v5_requires_durable_story_context_columns_at_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("db.sqlite");
+    let db = hieronymus::db::open_migrated(&path).unwrap();
+    db.execute_batch("alter table task_sessions drop column story_scene_key")
+        .unwrap();
+    assert!(hieronymus::db::verify_current_rust_schema(&path).is_err());
+}

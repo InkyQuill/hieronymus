@@ -149,7 +149,10 @@ fn a_launch_grant_exchanges_once_then_reports_reuse() {
         "/auth/launch-grant",
         &[(
             "Authorization".to_string(),
-            format!("Bearer {}", daemon.bearer().expose_secret()),
+            format!(
+                "Bearer {}",
+                common::console_credential(&daemon).expose_secret()
+            ),
         )],
         b"",
     );
@@ -206,7 +209,10 @@ fn a_grant_exchange_still_requires_the_exact_origin() {
         "/auth/launch-grant",
         &[(
             "Authorization".to_string(),
-            format!("Bearer {}", daemon.bearer().expose_secret()),
+            format!(
+                "Bearer {}",
+                common::console_credential(&daemon).expose_secret()
+            ),
         )],
         b"",
     );
@@ -316,7 +322,7 @@ fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_daemon(root.path());
     let port = daemon.local_addr().port();
-    let bearer = daemon.bearer().expose_secret().clone();
+    let bearer = common::console_credential(&daemon).expose_secret().clone();
 
     for page in ["admin", "config"] {
         let out = root.path().join(format!("opened-{page}.txt"));
@@ -367,7 +373,7 @@ fn cli_reports_opener_failure_without_exposing_the_grant() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_daemon(root.path());
     let port = daemon.local_addr().port();
-    let bearer = daemon.bearer().expose_secret().clone();
+    let bearer = common::console_credential(&daemon).expose_secret().clone();
 
     let (stdout, stderr, code) = run_console_cli(
         root.path(),
@@ -402,4 +408,69 @@ fn cli_rejects_unknown_flags_like_its_siblings() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--json"), "{stderr}");
+}
+
+#[test]
+fn local_authority_credentials_are_distinct_private_and_stable() {
+    use hiero::daemon::discovery::{LocalCredential, read_local_credential};
+    let (root, daemon) = start_daemon_on_ephemeral_port();
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    let console = read_local_credential(&config, LocalCredential::Console).unwrap();
+    let host = read_local_credential(&config, LocalCredential::HostEvent).unwrap();
+    assert!(console.expose_secret() != host.expose_secret());
+    assert!(console.expose_secret() != daemon.bearer().expose_secret());
+    assert!(host.expose_secret() != daemon.bearer().expose_secret());
+    for (path, token) in [
+        ("/auth/launch-grant", &host),
+        ("/authority/host-event", &console),
+    ] {
+        let response = send_request(
+            daemon.local_addr().port(),
+            "POST",
+            path,
+            &[(
+                "Authorization".into(),
+                format!("Bearer {}", token.expose_secret()),
+            )],
+            b"{}",
+        );
+        assert_eq!(response.status, 401);
+    }
+    for kind in [LocalCredential::Console, LocalCredential::HostEvent] {
+        assert_eq!(
+            std::fs::metadata(kind.path(&config))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    daemon.shutdown().unwrap();
+    let daemon = start_daemon(root.path());
+    assert!(
+        read_local_credential(&config, LocalCredential::Console)
+            .unwrap()
+            .expose_secret()
+            == console.expose_secret()
+    );
+    assert!(
+        read_local_credential(&config, LocalCredential::HostEvent)
+            .unwrap()
+            .expose_secret()
+            == host.expose_secret()
+    );
+    let status = send_request(
+        daemon.local_addr().port(),
+        "GET",
+        "/status",
+        &[(
+            "Authorization".into(),
+            format!("Bearer {}", daemon.bearer().expose_secret()),
+        )],
+        b"",
+    );
+    let text = String::from_utf8_lossy(&status.raw_body);
+    assert!(!text.contains(console.expose_secret()));
+    assert!(!text.contains(host.expose_secret()));
 }

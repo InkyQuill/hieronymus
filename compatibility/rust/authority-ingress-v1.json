@@ -1,0 +1,2937 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "hieronymus_decide",
+      "description": "Submit an evidence-grounded learned decision at the observed revision. Ordinary MCP never confers explicit-user authority.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "decision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            }
+          },
+          "series_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "concept_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_language": {
+            "type": "string"
+          },
+          "target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "applicability": {
+            "$ref": "#/$defs/ApplicabilityV1"
+          },
+          "operation": {
+            "$ref": "#/$defs/OperationV1"
+          },
+          "receipt_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "decision_id",
+          "expected_revision",
+          "evidence_refs",
+          "series_id",
+          "source_language",
+          "applicability",
+          "operation"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "ApplicabilityV1": {
+            "type": "object",
+            "properties": {
+              "series_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "timeline_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "chapter_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "scope_predicates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "valid_from": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "valid_until": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "metadata_state": {
+                "enum": [
+                  "Resolved",
+                  "Unspecified"
+                ]
+              },
+              "knowledge_gates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "viewpoint": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "Narrator",
+                            "All"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "Character": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "Character"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "known_from": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "known_until": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "viewpoint",
+                    "known_from",
+                    "known_until"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "series_id",
+              "timeline_id",
+              "volume_key",
+              "chapter_key",
+              "scope_predicates",
+              "valid_from",
+              "valid_until",
+              "metadata_state",
+              "knowledge_gates"
+            ],
+            "additionalProperties": false
+          },
+          "EvidenceRef": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "source_passage",
+                  "aligned_rendering",
+                  "observation",
+                  "user_event"
+                ]
+              },
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string"
+              },
+              "span_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "span_end": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "content_hash",
+              "span_start",
+              "span_end"
+            ],
+            "additionalProperties": false
+          },
+          "RenderingV1": {
+            "type": "object",
+            "properties": {
+              "source_forms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "canonical": {
+                "type": "string"
+              },
+              "approved_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "forbidden_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "case_sensitive": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source_forms",
+              "canonical",
+              "approved_variants",
+              "forbidden_variants",
+              "case_sensitive"
+            ],
+            "additionalProperties": false
+          },
+          "FactEffect": {
+            "oneOf": [
+              {
+                "const": "Invalidate"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Qualify": {
+                    "type": "object",
+                    "properties": {
+                      "qualification": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "qualification"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Qualify"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "CorrectionIntentV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Fact": {
+                    "type": "object",
+                    "properties": {
+                      "claim_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "claim_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "effect": {
+                        "$ref": "#/$defs/FactEffect"
+                      }
+                    },
+                    "required": [
+                      "claim_id",
+                      "claim_revision",
+                      "effect"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Fact"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Relevance": {
+                    "type": "object",
+                    "properties": {
+                      "recall_id": {
+                        "type": "string"
+                      },
+                      "useful": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "missed": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "recall_id",
+                      "useful",
+                      "missed"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Relevance"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Rendering": {
+                    "type": "object",
+                    "properties": {
+                      "replaces": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "value": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "replaces",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Rendering"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "OperationV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Activate": {
+                    "type": "object",
+                    "properties": {
+                      "candidate_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "candidate_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "candidate_id",
+                      "candidate_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Activate"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Replace": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "rendering": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "rendering"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Replace"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Scope": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "new_applicability": {
+                        "$ref": "#/$defs/ApplicabilityV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "new_applicability"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Scope"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Archive": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Archive"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Correct": {
+                    "type": "object",
+                    "properties": {
+                      "intent": {
+                        "$ref": "#/$defs/CorrectionIntentV1"
+                      }
+                    },
+                    "required": [
+                      "intent"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Correct"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Snapshot": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "file"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "retained"
+                  },
+                  "evidence_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "evidence_id",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Binding": {
+            "type": "object",
+            "properties": {
+              "concept_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_language": {
+                "type": "string"
+              },
+              "target_language": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "applicability": {
+                "$ref": "#/$defs/ApplicabilityV1"
+              },
+              "position_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "paragraph_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "paragraph_end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "identity_anchor": {
+                "type": "boolean"
+              },
+              "aligned_source_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rendering": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_rule": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_claim": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "claim_effect": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FactEffect"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "conflict_kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "concept_id",
+              "source_language",
+              "applicability",
+              "position_id",
+              "paragraph_start",
+              "paragraph_end",
+              "identity_anchor"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hieronymus_correct",
+      "description": "Submit a typed correction draft. Unverified user claims remain tentative or are rejected; authentic corrections use the separate console/host ingress.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "decision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            }
+          },
+          "series_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "concept_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_language": {
+            "type": "string"
+          },
+          "target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "applicability": {
+            "$ref": "#/$defs/ApplicabilityV1"
+          },
+          "operation": {
+            "$ref": "#/$defs/OperationV1"
+          },
+          "receipt_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "decision_id",
+          "expected_revision",
+          "evidence_refs",
+          "series_id",
+          "source_language",
+          "applicability",
+          "operation"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "ApplicabilityV1": {
+            "type": "object",
+            "properties": {
+              "series_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "timeline_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "chapter_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "scope_predicates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "valid_from": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "valid_until": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "metadata_state": {
+                "enum": [
+                  "Resolved",
+                  "Unspecified"
+                ]
+              },
+              "knowledge_gates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "viewpoint": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "Narrator",
+                            "All"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "Character": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "Character"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "known_from": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "known_until": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "viewpoint",
+                    "known_from",
+                    "known_until"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "series_id",
+              "timeline_id",
+              "volume_key",
+              "chapter_key",
+              "scope_predicates",
+              "valid_from",
+              "valid_until",
+              "metadata_state",
+              "knowledge_gates"
+            ],
+            "additionalProperties": false
+          },
+          "EvidenceRef": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "source_passage",
+                  "aligned_rendering",
+                  "observation",
+                  "user_event"
+                ]
+              },
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string"
+              },
+              "span_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "span_end": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "content_hash",
+              "span_start",
+              "span_end"
+            ],
+            "additionalProperties": false
+          },
+          "RenderingV1": {
+            "type": "object",
+            "properties": {
+              "source_forms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "canonical": {
+                "type": "string"
+              },
+              "approved_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "forbidden_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "case_sensitive": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source_forms",
+              "canonical",
+              "approved_variants",
+              "forbidden_variants",
+              "case_sensitive"
+            ],
+            "additionalProperties": false
+          },
+          "FactEffect": {
+            "oneOf": [
+              {
+                "const": "Invalidate"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Qualify": {
+                    "type": "object",
+                    "properties": {
+                      "qualification": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "qualification"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Qualify"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "CorrectionIntentV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Fact": {
+                    "type": "object",
+                    "properties": {
+                      "claim_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "claim_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "effect": {
+                        "$ref": "#/$defs/FactEffect"
+                      }
+                    },
+                    "required": [
+                      "claim_id",
+                      "claim_revision",
+                      "effect"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Fact"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Relevance": {
+                    "type": "object",
+                    "properties": {
+                      "recall_id": {
+                        "type": "string"
+                      },
+                      "useful": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "missed": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "recall_id",
+                      "useful",
+                      "missed"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Relevance"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Rendering": {
+                    "type": "object",
+                    "properties": {
+                      "replaces": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "value": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "replaces",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Rendering"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "OperationV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Activate": {
+                    "type": "object",
+                    "properties": {
+                      "candidate_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "candidate_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "candidate_id",
+                      "candidate_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Activate"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Replace": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "rendering": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "rendering"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Replace"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Scope": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "new_applicability": {
+                        "$ref": "#/$defs/ApplicabilityV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "new_applicability"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Scope"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Archive": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Archive"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Correct": {
+                    "type": "object",
+                    "properties": {
+                      "intent": {
+                        "$ref": "#/$defs/CorrectionIntentV1"
+                      }
+                    },
+                    "required": [
+                      "intent"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Correct"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Snapshot": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "file"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "retained"
+                  },
+                  "evidence_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "evidence_id",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Binding": {
+            "type": "object",
+            "properties": {
+              "concept_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_language": {
+                "type": "string"
+              },
+              "target_language": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "applicability": {
+                "$ref": "#/$defs/ApplicabilityV1"
+              },
+              "position_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "paragraph_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "paragraph_end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "identity_anchor": {
+                "type": "boolean"
+              },
+              "aligned_source_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rendering": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_rule": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_claim": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "claim_effect": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FactEffect"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "conflict_kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "concept_id",
+              "source_language",
+              "applicability",
+              "position_id",
+              "paragraph_start",
+              "paragraph_end",
+              "identity_anchor"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hieronymus_order_register",
+      "description": "Explicitly import a complete immutable order manifest from a local file or retained snapshot. The supplied hash covers all bytes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "series_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "snapshot": {
+            "$ref": "#/$defs/Snapshot"
+          },
+          "timeline_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "series_id",
+          "snapshot",
+          "expected_revision"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "ApplicabilityV1": {
+            "type": "object",
+            "properties": {
+              "series_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "timeline_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "chapter_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "scope_predicates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "valid_from": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "valid_until": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "metadata_state": {
+                "enum": [
+                  "Resolved",
+                  "Unspecified"
+                ]
+              },
+              "knowledge_gates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "viewpoint": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "Narrator",
+                            "All"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "Character": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "Character"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "known_from": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "known_until": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "viewpoint",
+                    "known_from",
+                    "known_until"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "series_id",
+              "timeline_id",
+              "volume_key",
+              "chapter_key",
+              "scope_predicates",
+              "valid_from",
+              "valid_until",
+              "metadata_state",
+              "knowledge_gates"
+            ],
+            "additionalProperties": false
+          },
+          "EvidenceRef": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "source_passage",
+                  "aligned_rendering",
+                  "observation",
+                  "user_event"
+                ]
+              },
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string"
+              },
+              "span_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "span_end": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "content_hash",
+              "span_start",
+              "span_end"
+            ],
+            "additionalProperties": false
+          },
+          "RenderingV1": {
+            "type": "object",
+            "properties": {
+              "source_forms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "canonical": {
+                "type": "string"
+              },
+              "approved_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "forbidden_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "case_sensitive": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source_forms",
+              "canonical",
+              "approved_variants",
+              "forbidden_variants",
+              "case_sensitive"
+            ],
+            "additionalProperties": false
+          },
+          "FactEffect": {
+            "oneOf": [
+              {
+                "const": "Invalidate"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Qualify": {
+                    "type": "object",
+                    "properties": {
+                      "qualification": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "qualification"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Qualify"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "CorrectionIntentV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Fact": {
+                    "type": "object",
+                    "properties": {
+                      "claim_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "claim_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "effect": {
+                        "$ref": "#/$defs/FactEffect"
+                      }
+                    },
+                    "required": [
+                      "claim_id",
+                      "claim_revision",
+                      "effect"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Fact"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Relevance": {
+                    "type": "object",
+                    "properties": {
+                      "recall_id": {
+                        "type": "string"
+                      },
+                      "useful": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "missed": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "recall_id",
+                      "useful",
+                      "missed"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Relevance"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Rendering": {
+                    "type": "object",
+                    "properties": {
+                      "replaces": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "value": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "replaces",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Rendering"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "OperationV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Activate": {
+                    "type": "object",
+                    "properties": {
+                      "candidate_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "candidate_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "candidate_id",
+                      "candidate_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Activate"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Replace": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "rendering": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "rendering"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Replace"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Scope": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "new_applicability": {
+                        "$ref": "#/$defs/ApplicabilityV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "new_applicability"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Scope"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Archive": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Archive"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Correct": {
+                    "type": "object",
+                    "properties": {
+                      "intent": {
+                        "$ref": "#/$defs/CorrectionIntentV1"
+                      }
+                    },
+                    "required": [
+                      "intent"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Correct"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Snapshot": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "file"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "retained"
+                  },
+                  "evidence_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "evidence_id",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Binding": {
+            "type": "object",
+            "properties": {
+              "concept_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_language": {
+                "type": "string"
+              },
+              "target_language": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "applicability": {
+                "$ref": "#/$defs/ApplicabilityV1"
+              },
+              "position_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "paragraph_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "paragraph_end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "identity_anchor": {
+                "type": "boolean"
+              },
+              "aligned_source_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rendering": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_rule": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_claim": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "claim_effect": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FactEffect"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "conflict_kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "concept_id",
+              "source_language",
+              "applicability",
+              "position_id",
+              "paragraph_start",
+              "paragraph_end",
+              "identity_anchor"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hieronymus_evidence_capture",
+      "description": "Explicitly import a full source/target UTF-8 snapshot or reuse immutable retained evidence. Selection uses absolute full-document byte offsets; expected_text is an assertion, never inline evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "series_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "snapshot": {
+            "$ref": "#/$defs/Snapshot"
+          },
+          "kind": {
+            "enum": [
+              "source_passage",
+              "aligned_rendering"
+            ]
+          },
+          "selection": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expected_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "expected_text"
+            ],
+            "additionalProperties": false
+          },
+          "binding": {
+            "$ref": "#/$defs/Binding"
+          }
+        },
+        "required": [
+          "series_id",
+          "snapshot",
+          "kind",
+          "selection",
+          "binding"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "ApplicabilityV1": {
+            "type": "object",
+            "properties": {
+              "series_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "timeline_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "chapter_key": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "scope_predicates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "valid_from": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "valid_until": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "metadata_state": {
+                "enum": [
+                  "Resolved",
+                  "Unspecified"
+                ]
+              },
+              "knowledge_gates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "viewpoint": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "Narrator",
+                            "All"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "Character": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "Character"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "known_from": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "known_until": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "viewpoint",
+                    "known_from",
+                    "known_until"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "series_id",
+              "timeline_id",
+              "volume_key",
+              "chapter_key",
+              "scope_predicates",
+              "valid_from",
+              "valid_until",
+              "metadata_state",
+              "knowledge_gates"
+            ],
+            "additionalProperties": false
+          },
+          "EvidenceRef": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "source_passage",
+                  "aligned_rendering",
+                  "observation",
+                  "user_event"
+                ]
+              },
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string"
+              },
+              "span_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "span_end": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "content_hash",
+              "span_start",
+              "span_end"
+            ],
+            "additionalProperties": false
+          },
+          "RenderingV1": {
+            "type": "object",
+            "properties": {
+              "source_forms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "canonical": {
+                "type": "string"
+              },
+              "approved_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "forbidden_variants": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "case_sensitive": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source_forms",
+              "canonical",
+              "approved_variants",
+              "forbidden_variants",
+              "case_sensitive"
+            ],
+            "additionalProperties": false
+          },
+          "FactEffect": {
+            "oneOf": [
+              {
+                "const": "Invalidate"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Qualify": {
+                    "type": "object",
+                    "properties": {
+                      "qualification": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "qualification"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Qualify"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "CorrectionIntentV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Fact": {
+                    "type": "object",
+                    "properties": {
+                      "claim_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "claim_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "effect": {
+                        "$ref": "#/$defs/FactEffect"
+                      }
+                    },
+                    "required": [
+                      "claim_id",
+                      "claim_revision",
+                      "effect"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Fact"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Relevance": {
+                    "type": "object",
+                    "properties": {
+                      "recall_id": {
+                        "type": "string"
+                      },
+                      "useful": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "missed": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "recall_id",
+                      "useful",
+                      "missed"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Relevance"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Rendering": {
+                    "type": "object",
+                    "properties": {
+                      "replaces": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "value": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "replaces",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Rendering"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "OperationV1": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "Activate": {
+                    "type": "object",
+                    "properties": {
+                      "candidate_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "candidate_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "candidate_id",
+                      "candidate_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Activate"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Replace": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "rendering": {
+                        "$ref": "#/$defs/RenderingV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "rendering"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Replace"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Scope": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "new_applicability": {
+                        "$ref": "#/$defs/ApplicabilityV1"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision",
+                      "new_applicability"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Scope"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Archive": {
+                    "type": "object",
+                    "properties": {
+                      "rule_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "rule_revision": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "rule_revision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Archive"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "Correct": {
+                    "type": "object",
+                    "properties": {
+                      "intent": {
+                        "$ref": "#/$defs/CorrectionIntentV1"
+                      }
+                    },
+                    "required": [
+                      "intent"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "Correct"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Snapshot": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "file"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "retained"
+                  },
+                  "evidence_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "evidence_id",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "Binding": {
+            "type": "object",
+            "properties": {
+              "concept_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_language": {
+                "type": "string"
+              },
+              "target_language": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "applicability": {
+                "$ref": "#/$defs/ApplicabilityV1"
+              },
+              "position_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "paragraph_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "paragraph_end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "identity_anchor": {
+                "type": "boolean"
+              },
+              "aligned_source_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rendering": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_rule": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contradicts_claim": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "claim_effect": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FactEffect"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "conflict_kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "concept_id",
+              "source_language",
+              "applicability",
+              "position_id",
+              "paragraph_start",
+              "paragraph_end",
+              "identity_anchor"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ]
+}

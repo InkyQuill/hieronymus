@@ -337,6 +337,7 @@ fn sample(config: &HieronymusConfig, tokenizer: &mut ModelTokenizer) -> Semantic
         )
         .unwrap();
     SemanticSample {
+        text: "probe".into(),
         series_slug,
         token_ids: tokenizer.encode(&text).unwrap(),
     }

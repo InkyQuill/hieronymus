@@ -31,6 +31,25 @@ pub enum ClientError {
     Status { status: u16, detail: String },
 }
 
+/// One request's cancellation handle. It never represents a protocol session.
+#[derive(Default)]
+pub struct Cancellation {
+    cancelled: std::sync::atomic::AtomicBool,
+    stream: std::sync::Mutex<Option<TcpStream>>,
+}
+impl Cancellation {
+    pub fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(stream) = self.stream.lock().unwrap().as_ref() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 /// POST a JSON body to `http://address/path`: the historical entry point,
 /// kept as a thin wrapper over [`request_json`].
 pub fn post_json(
@@ -66,6 +85,17 @@ pub fn request_json_within(
     body: &[u8],
     timeout: Duration,
 ) -> Result<(u16, Vec<u8>), ClientError> {
+    request_cancellable(method, address, path, headers, body, timeout, None)
+}
+pub(crate) fn request_cancellable(
+    method: &str,
+    address: SocketAddr,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    timeout: Duration,
+    cancellation: Option<&Cancellation>,
+) -> Result<(u16, Vec<u8>), ClientError> {
     // The method goes into the request line: refuse anything that is not a
     // plain token before any I/O.
     if method.is_empty()
@@ -90,6 +120,13 @@ pub fn request_json_within(
     let connect_timeout = CONNECT_TIMEOUT.min(timeout);
     let mut stream =
         TcpStream::connect_timeout(&address, connect_timeout).map_err(ClientError::Connect)?;
+    if let Some(cancellation) = cancellation {
+        let mut socket = cancellation.stream.lock().unwrap();
+        if cancellation.is_cancelled() {
+            return Err(ClientError::Protocol("request cancelled"));
+        }
+        *socket = Some(stream.try_clone()?);
+    }
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
 
@@ -167,6 +204,54 @@ pub fn request_json_within(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_closes_the_inflight_socket() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_rx_tx, accepted_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            accepted_rx_tx.send(()).unwrap();
+            let mut data = [0; 1024];
+            loop {
+                match stream.read(&mut data) {
+                    Ok(0) => return true,
+                    Ok(_) => {}
+                    Err(_) => return false,
+                }
+            }
+        });
+        let cancellation = std::sync::Arc::new(Cancellation::default());
+        let worker_cancel = cancellation.clone();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            result_tx
+                .send(request_cancellable(
+                    "POST",
+                    address,
+                    "/mcp",
+                    &[],
+                    b"{}",
+                    Duration::from_secs(2),
+                    Some(&worker_cancel),
+                ))
+                .unwrap()
+        });
+        accepted_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        cancellation.cancel();
+        assert!(
+            result_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_err()
+        );
+        worker.join().unwrap();
+        assert!(server.join().unwrap());
+    }
 
     #[test]
     fn header_injection_is_refused() {

@@ -59,3 +59,26 @@ The first Rust release may ship fewer supported platforms than the aspirational
 proposal. It will have a reliable FTS-only mode and a reproducible path to
 enable semantic retrieval rather than silently depending on unverified native
 libraries.
+## Amendment — 2026-09-10: explicit Ollama embeddings
+
+The current authority and semantic specifications require a working semantic
+lane. They supersede this ADR's original FTS-only release acceptance language:
+lexical fallback remains diagnostic degraded behavior and cannot satisfy semantic
+readiness or strict RAG requests.
+
+ONNX remains the default embedding provider. Explicitly configured Ollama
+`/api/embed` is an alternative that satisfies the semantic lane when its verified
+generation and query lane are ready. Chat/Dream profiles remain separate.
+Ollama receives exact original chunk/query text with `truncate:false`; the pinned
+MiniLM tokenizer remains the existing local segmentation policy, not a claim
+about Ollama's tokenizer. Ollama arming needs that tokenizer asset but no ONNX
+model or runtime library.
+
+Generations record provider, model, discovered immutable SHA-256 model digest,
+actual dimensions, client normalization, exact-text/truncation/input-bound policy
+and pinned segmentation identity. Discovery is checked when arming and before
+and after inference; an identity change requires reconfiguration and rebuilding.
+Provider/model switches cannot reuse incompatible generations or pending jobs.
+No model is pulled implicitly. Native Claude/Codex/Pi acceptance matrix testing
+remains a separate deferred qualification; a local Ollama smoke establishes
+integration, not model quality or host-matrix acceptance.

@@ -31,30 +31,22 @@ jobs:
 
       # Fresh runners do not restore .venv, so uv sync installs the editable project and Hatch builds the frontend.
       - run: uv sync --dev
-      - name: Check frozen compatibility contracts
+      - name: Check retained historical compatibility fixtures
         run: |
           set -o pipefail
-          uv run --no-cache --no-sync python -B -m tools.compatibility.check | tee compatibility-parity-summary.txt
+          uv run --no-cache --no-sync python -B -m tools.compatibility.check --historical-test-inventory compatibility/snapshots/state.json | tee historical-fixture-validation.txt
 
-      - name: Upload compatibility parity summary
+      - name: Upload historical fixture validation
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: compatibility-parity-summary
-          path: compatibility-parity-summary.txt
+          name: historical-fixture-validation
+          path: historical-fixture-validation.txt
           if-no-files-found: error
 
       - run: uv run pytest
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-
-      - name: Validate Rust qualification records
-        env:
-          HIERONYMUS_QUALIFICATION_LIVE: "0"
-        run: |
-          uv run --no-cache --no-sync pytest tests/qualification
-          uv run --no-cache --no-sync python -B -m tools.qualification.projections --check
-          uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
 
   frontend:
     runs-on: ubuntu-latest

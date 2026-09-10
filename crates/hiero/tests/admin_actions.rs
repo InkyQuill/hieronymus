@@ -83,6 +83,7 @@ fn seed(db: &Connection) {
         insert into series(slug, title, default_source_language, default_target_language,
                            created_at, updated_at)
           values ('s2', 'Series Two', 'ja', 'en', '2026-02-03T04:05:06Z', '2026-02-03T04:05:06Z');
+        insert into authority_state(series_id) select id from series;
         ",
     )
     .unwrap();
@@ -1373,4 +1374,65 @@ fn dream_proposal_materialization_preserves_variant_evidence() {
         ),
         1
     );
+}
+
+#[test]
+fn merge_and_split_keep_original_claim_lineage() {
+    use hieronymus::{
+        claim_capture::{ClaimInput, capture_claim_tx},
+        claim_reads::ClaimTarget,
+        story_applicability::*,
+    };
+    let fx = setup();
+    let mut conn = db(&fx);
+    let tx = conn.transaction().unwrap();
+    for id in [1, 2] {
+        capture_claim_tx(
+            &tx,
+            ClaimTarget::Crystal(id),
+            &ClaimInput {
+                text: format!("Original assertion {id}"),
+                concept_id: None,
+                applicability: ApplicabilityV1 {
+                    series_id: 1,
+                    timeline_id: None,
+                    volume_key: None,
+                    chapter_key: None,
+                    scope_predicates: vec![],
+                    valid_from: None,
+                    valid_until: None,
+                    metadata_state: MetadataState::Unspecified,
+                    knowledge_gates: vec![],
+                },
+            },
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    let out=run(&fx,"merge_selected",json!({"ids":[1,2],"view":"Crystals","confirmed":true,"title":"Combined","text":"Combined assertions."})).unwrap();
+    let merged = out["result"]["entity_id"].as_i64().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "select count(*) from claim_bindings where crystal_id=?",
+            [merged],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+    let _out=run(&fx,"split_crystal",json!({"id":merged,"confirmed":true,"parts":[{"title":"First","text":"First assertion."},{"title":"Second","text":"Second assertion."}]})).unwrap();
+    let counts:Vec<i64>=conn.prepare("select count(b.claim_id) from crystals c left join claim_bindings b on b.crystal_id=c.id where c.id>? group by c.id").unwrap().query_map([merged],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+    assert_eq!(counts, vec![2, 2]);
+}
+#[test]
+fn admin_capture_validates_supplied_claims_before_commit() {
+    let fx = setup();
+    let before = count(&db(&fx), "select count(*) from crystals");
+    let result = run(
+        &fx,
+        "add_memory",
+        json!({"series":"s1","text":"Captured assertion.","claims":[{"text":"claim","concept_id":null,"applicability":{"series_id":999,"timeline_id":null,"volume_key":null,"chapter_key":null,"scope_predicates":[],"valid_from":null,"valid_until":null,"metadata_state":"Unspecified","knowledge_gates":[]}}]}),
+    );
+    assert!(result.is_err(), "claims dropped: {result:?}");
+    assert_eq!(count(&db(&fx), "select count(*) from crystals"), before);
 }

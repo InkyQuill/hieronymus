@@ -1,6 +1,9 @@
 //! Behavior ported from `tests/test_termbase_contract.py` and
 //! `tests/test_termbase_validate.py` (core deterministic contract; concept
 //! context resolution ports with the recall slice).
+//! These tests deliberately exercise the retained trusted-local compatibility
+//! lifecycle. They do not grant public MCP authority or establish current
+//! learned/user-decision acceptance; those have dedicated authority tests.
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::memory_models::TranslationContext;
@@ -9,7 +12,10 @@ use hieronymus::terminology::{ProposeFields, Source, Termbase};
 
 fn open_termbase(root: &tempfile::TempDir) -> Termbase {
     let config = HieronymusConfig::new(root.path().join("hieronymus"));
-    Registry::open(&config).unwrap();
+    Registry::open(&config)
+        .unwrap()
+        .create_series("demo", "demo", "ja", "en", None)
+        .unwrap();
     let context = TranslationContext::new("demo", "ja", "en", "translation");
     Termbase::open(&config, &context).unwrap()
 }
@@ -235,7 +241,10 @@ fn validate_reports_forbidden_and_missing_canonical() {
 fn ambiguous_sources_warn_instead_of_enforcing() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path().join("hieronymus"));
-    Registry::open(&config).unwrap();
+    Registry::open(&config)
+        .unwrap()
+        .create_series("demo", "demo", "ja", "en", None)
+        .unwrap();
     let concept_store = hieronymus::concepts::ConceptStore::open(&config).unwrap();
     let concept_a = concept_store
         .create_concept("Yuni A", &Default::default())
@@ -295,7 +304,10 @@ fn ambiguous_sources_warn_instead_of_enforcing() {
 fn context_tags_disambiguate_conflicting_source_surfaces() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path().join("hieronymus"));
-    Registry::open(&config).unwrap();
+    Registry::open(&config)
+        .unwrap()
+        .create_series("demo", "demo", "ja", "en", None)
+        .unwrap();
     let concept_store = hieronymus::concepts::ConceptStore::open(&config).unwrap();
     let concept_a = concept_store
         .create_concept("Magic A", &Default::default())
