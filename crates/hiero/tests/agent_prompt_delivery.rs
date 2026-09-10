@@ -352,16 +352,17 @@ fn browser_fixture() {
     let config = HieronymusConfig::new(root.path());
     let dist = common::repo_root().join("frontend/dist");
     assert!(dist.join("index.html").is_file(), "build frontend first");
+    let app = Application::open(&config).unwrap();
+    let (draft, event) = common::authority::prepared(&app, root.path());
+    app.call("hieronymus_decide", &draft, "agent").unwrap();
+    let memory=app.call("hieronymus_short_term_add",&json!({"session_id":event["session_id"],"text":"Mira knows the secret","kind":"observation","source_role":"assistant","claims":[{"text":"Mira knows the secret","concept_id":draft["concept_id"],"applicability":event["applicability"]}]}),"agent").unwrap();
+    drop(app);
     let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
         data_root: Some(root.path().into()),
         port: 0,
         assets: hiero::daemon::Assets::Dist(dist),
     })
     .unwrap();
-    let app = Application::open(&config).unwrap();
-    let (draft, event) = common::authority::prepared(&app, root.path());
-    app.call("hieronymus_decide", &draft, "agent").unwrap();
-    let memory=app.call("hieronymus_short_term_add",&json!({"session_id":event["session_id"],"text":"Mira knows the secret","kind":"observation","source_role":"assistant","claims":[{"text":"Mira knows the secret","concept_id":draft["concept_id"],"applicability":event["applicability"]}]}),"agent").unwrap();
     let client = hiero::lifecycle::connect(&config, false)
         .unwrap()
         .with_local_credential(&config, hiero::daemon::discovery::LocalCredential::Console)

@@ -120,7 +120,7 @@ fn unresolved_authentic_signal_is_durable_replayable_and_consumed_by_worker() {
 
 #[test]
 fn console_current_rules_obey_partial_exclusions_and_viewpoint() {
-    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let (_draft, mut event) = common::authority::prepared_with(
@@ -141,6 +141,7 @@ fn console_current_rules_obey_partial_exclusions_and_viewpoint() {
         },
         root.path(),
     );
+    let daemon = common::start_daemon(root.path());
     let headers = browser(&daemon);
     event["expected_revision"] = json!(1);
     event["selected_rule"] = Value::Null;
@@ -242,7 +243,7 @@ fn console_current_rules_obey_partial_exclusions_and_viewpoint() {
 
 #[test]
 fn console_selection_preserves_registered_nondefault_pair() {
-    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let (mut draft, mut event) = common::authority::prepared_with(
@@ -272,6 +273,8 @@ fn console_selection_preserves_registered_nondefault_pair() {
     event["target_language"] = json!("fr");
     let applied = app.call("hieronymus_decide", &draft, "agent").unwrap();
     assert!(applied.get("Applied").is_some(), "{applied}");
+    let memory=app.call("hieronymus_short_term_add",&json!({"session_id":event["session_id"],"kind":"note","text":"A claim.","claims":[{"text":"A claim.","concept_id":draft["concept_id"],"applicability":event["applicability"]}]}),"agent").unwrap();
+    let daemon = common::start_daemon(root.path());
     let headers = browser(&daemon);
     for rule in [Value::Null, event["selected_rule"]["id"].clone()] {
         let (status, selection) = post(
@@ -284,7 +287,6 @@ fn console_selection_preserves_registered_nondefault_pair() {
         assert_eq!(selection["target_language"], "fr");
         assert_eq!(selection["source_language"], "en");
     }
-    let memory=app.call("hieronymus_short_term_add",&json!({"session_id":event["session_id"],"kind":"note","text":"A claim.","claims":[{"text":"A claim.","concept_id":draft["concept_id"],"applicability":event["applicability"]}]}),"agent").unwrap();
     let (status, claims) = post(
         &daemon,
         &headers,
@@ -303,15 +305,16 @@ fn console_selection_preserves_registered_nondefault_pair() {
 
 #[test]
 fn unresolved_signal_conflicts_staleness_and_transaction_failure_leave_no_partial_work() {
-    let (root, daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let (mut draft, mut event) = common::authority::prepared(&app, root.path());
     app.call("hieronymus_decide", &draft, "agent").unwrap();
     event["text"] = json!("unclear correction");
-    let headers = browser(&daemon);
     let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
     db.execute_batch("create trigger reject_signal_job before insert on consolidation_jobs begin select raise(abort,'injected job failure'); end;").unwrap();
+    let daemon = common::start_daemon(root.path());
+    let headers = browser(&daemon);
     let (status, _) = post(&daemon, &headers, "/api/authority/correct", &event);
     assert_ne!(status, 200);
     assert_eq!(

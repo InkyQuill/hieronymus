@@ -99,7 +99,7 @@ fn generated_optional_prompt_hook_executes_installed_handler() {
 fn ordinary_work_then_independent_correction_uses_receipt_before_validation() {
     use hiero::application::Application;
     use hieronymus::data_root::HieronymusConfig;
-    let (root, _daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let mut calls = Vec::new();
@@ -134,6 +134,7 @@ fn ordinary_work_then_independent_correction_uses_receipt_before_validation() {
     );
     // Context is assembled only from actual producer/session/recall outputs.
     let binding = json!({"version":1,"host":"claude","host_session_id":"observed-work-session","series_id":event["series_id"],"session_id":event["session_id"],"expected_revision":recalled["resulting_revision"],"source_language":event["source_language"],"target_language":event["target_language"],"applicability":event["applicability"],"selected_sources":event["selected_sources"],"selected_claims":[],"selected_rule":event["selected_rule"]});
+    let _daemon = common::start_daemon(root.path());
     let bound = hook_cli(root.path(), &["bind-context"], &binding);
     assert!(
         bound.status.success(),
@@ -271,12 +272,13 @@ fn claude_marketplace_points_to_generated_bundle() {
 fn ambiguous_prompt_records_one_tentative_job_without_claiming_applied_dependency() {
     use hiero::{agent_prompt_delivery, application::Application};
     use hieronymus::data_root::HieronymusConfig;
-    let (root, _daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let (draft, event) = common::authority::prepared(&app, root.path());
     app.call("hieronymus_decide", &draft, "agent").unwrap();
     let binding = json!({"version":1,"host":"claude","host_session_id":"ambiguous-host-session","series_id":event["series_id"],"session_id":event["session_id"],"expected_revision":event["expected_revision"],"source_language":event["source_language"],"target_language":event["target_language"],"applicability":event["applicability"],"selected_sources":[],"selected_claims":[],"selected_rule":null});
+    let _daemon = common::start_daemon(root.path());
     let bound = hook_cli(root.path(), &["bind-context"], &binding);
     assert!(
         bound.status.success(),
@@ -358,7 +360,7 @@ fn unhelpful_recall_uses_installed_feedback_without_invalidating_the_claim() {
         data_root::HieronymusConfig,
         workspace::WorkspaceStore,
     };
-    let (root, _daemon) = common::start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let (draft, event) = common::authority::prepared(&app, root.path());
@@ -385,6 +387,7 @@ fn unhelpful_recall_uses_installed_feedback_without_invalidating_the_claim() {
         .iter()
         .find(|r| r["activation_id"].is_i64())
         .expect("actual recalled activation");
+    let _daemon = common::start_daemon(root.path());
     let run = || {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_hiero"))
             .args([
