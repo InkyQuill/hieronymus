@@ -1,5 +1,8 @@
 # Compatibility freeze
 
+Python source references in historical documents and fixtures resolve on
+`stale/python-v0.7.0`. See [the archive policy](../docs/archive/python-v0.7.0.md).
+
 The checked-in manifest, snapshots, and fixtures are the reviewed Python
 reference boundary for the Rust migration. Current Rust plans and accepted
 ADR amendments govern behavior; these snapshots are historical inputs, not a

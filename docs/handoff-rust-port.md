@@ -1,5 +1,9 @@
 # Rust Port Handoff (2026-09-03)
 
+> Historical record: Python source and commands below belong to the
+> [archived Python line](archive/python-v0.7.0.md). Current release acquisition uses
+> `bun scripts/stage-release-assets.ts`; these records are not active release gates.
+
 Handoff for continuing the Hieronymus Python→Rust rewrite on another
 machine. Everything needed is in this repository; nothing lives outside it
 except the git remote.

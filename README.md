@@ -1,138 +1,65 @@
 # Hieronymus
 
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/InkyQuill/hieronymus?utm_source=oss&utm_medium=github&utm_campaign=InkyQuill%2Fiview&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+Hieronymus is a local-first translation memory MCP for literary translation.
+It keeps approved terminology deterministic while providing searchable working
+memory and semantic recall for translation decisions, plot facts and voice notes.
 
-Hieronymus is alpha local-first translation memory software for long-form book
-translation. It can be used today, but it is still changing quickly and should
-be used at your own risk.
+The application is a Rust 1.96 workspace with SQLite/FTS5, LanceDB and mandatory
+ONNX semantic inference. A Svelte 5 console is built with Bun 1.4.0 and embedded
+in the release binary. Python is not required to build, test, release or run it.
 
-It keeps strict terminology stable per series while also giving translator agents a searchable fuzzy memory for decisions, plot facts, voice notes, unresolved questions, and future memory-crystal consolidation.
+## Install a native candidate
 
-## Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | sh
-```
-
-The installer creates a managed checkout at
-`~/.local/share/hieronymus/app` and installs console commands through
-`uv tool install`. In an interactive terminal it asks whether to install the
-stable channel or the dev channel. Stable installs the latest tagged alpha
-release; dev installs the latest `main` commit. For non-interactive installs,
-the default is stable. Set `HIERONYMUS_INSTALL_CHANNEL=dev` to install from
-`main`.
-
-Update managed installs in place with:
+The supported target is Linux x86_64. Given a verified release directory containing
+`release.json`, its archive and checksum file, run from this checkout:
 
 ```bash
-hiero update
+./install.sh --release-dir /path/to/release-dist
 ```
 
-## Configuration
-
-Open the local configuration TUI with:
+For a disposable installation without service activation:
 
 ```bash
-hiero config
+./install.sh --release-dir /path/to/release-dist \
+  --app-dir /tmp/hiero-rehearsal/app --data-root /tmp/hiero-rehearsal/data \
+  --unit-dir /tmp/hiero-rehearsal/units --no-activate
 ```
 
-`hiero config` starts the local service when needed and opens its Svelte web
-console in the default browser. See the [usage guide](docs/usage.md) for details.
+The installer delegates to `scripts/install.sh`; it is intended for checkout
+usage. The installed executable includes its model/runtime assets and needs no
+Bun or compiler. No public release feed is assumed. Native host acceptance and
+installed workflow qualification remain separate gates; see the
+[rehearsal](docs/rust-cutover-rehearsal.md) and
+[host acceptance record](docs/agent-host-acceptance.md).
 
-For scripts and health checks, use machine-readable status:
+`hiero config` opens the local web console. `hiero status --json` reports service
+and semantic readiness. `hiero uninstall --yes` removes owned application files
+and integrations while preserving data by default. See the [usage guide](docs/usage.md)
+and [distribution guide](docs/distribution.md) for configuration, updates and recovery.
 
-```bash
-hiero config --json
-```
+## Develop and verify
 
-Dreaming configuration is stored in plaintext local config under the configured
-Hieronymus data root. API key values may be stored locally and are redacted from
-doctor output, JSON bridge responses, logs, provider checks, and audit records.
-
-Supported provider runtime types for `provider.conf` profiles:
-
-- `deterministic`: offline local fallback.
-- `openai`: OpenAI and OpenAI-compatible endpoints, through the official `openai` SDK.
-- `google`: Gemini API, through the official `google-genai` SDK. Legacy `gemini`
-  configuration is migrated to this canonical type on load.
-- `anthropic`: Anthropic Messages and Models APIs, through the official `anthropic` SDK.
-- `ollama`: local Ollama chat/model endpoints, through the official `ollama` SDK;
-  an API key is optional for local servers.
-
-When a remote provider profile has an API key, Config queries its official SDK's
-model-list API and caches the result. If lookup is unavailable, the configured
-model and provider defaults remain usable. Ollama also lists models from a
-configured local endpoint without a key.
-
-Dreaming automation is controlled by `autostart_enabled`,
-`min_interval_minutes`, `new_short_term_memory_threshold`, and
-`max_cycles_per_autostart`.
-
-## Frontend Development
-
-The Svelte web console lives under `frontend/`. Use Bun >=1.3 from the repository root:
+Install the pinned Rust toolchain and Bun 1.4.0 (`rust-toolchain.toml`, `mise.toml`).
+Build dependencies are Rust/Cargo, Bun, Git and the standard Linux build tools.
 
 ```bash
 bun install --cwd frontend --frozen-lockfile
 bun run --cwd frontend build
+bun test scripts/*.test.ts
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-features --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
+bun run --cwd frontend typecheck
 bun run --cwd frontend test
 ```
 
-After `bun run --cwd frontend build`, source checkouts can launch the TUI
-through the CLI fallback to `frontend/dist/main.js`. Installed packages
-bundle the `hieronymus/frontend/dist/main.js` artifact automatically.
+The release helpers use Bun's built-in TypeScript support. Follow
+[build ownership](docs/distribution.md#build-ownership) to acquire pinned assets
+and build an archive. Ordinary tests use fixtures; real model and installed-artifact
+tests require explicit disposable inputs and are ignored by default.
 
-Command summary:
-
-- `hiero config` edits local `dream.conf`, `provider.conf`, `ingest.conf`,
-  and `release.conf` settings in a local TUI.
-- `hiero config --json` prints secret-safe provider and dreaming status for
-  automation.
-- `hiero dream --wait` waits for an active dream cycle instead of failing fast.
-
-Uninstall the app with:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh
-```
-
-The non-interactive uninstall one-liner removes the app and keeps settings/data
-by default.
-
-To choose data handling explicitly:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --keep-data
-curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --purge-data
-```
-
-For an interactive prompt, run the managed checkout script from a terminal:
-
-```bash
-~/.local/share/hieronymus/app/uninstall.sh
-```
-
-The prompt uses ~/.config/hieronymus unless HIERONYMUS_DATA_ROOT is set.
-
---purge-data removes the configured data root. If HIERONYMUS_DATA_ROOT is
-set, check it before purging.
-
-The uninstall script only removes Hieronymus-owned install and config/data paths.
-It does not remove translation workspace directories.
-
-Repository: <https://github.com/InkyQuill/hieronymus>
-
-## Status
-
-Alpha implementation exists for local series setup, rule-crystal validation,
-memory import/search, MCP/CLI workflows, dreaming, and the local web management
-console. No 1.x release is approved yet.
-
-## Documents
-
-- [Usage guide](docs/usage.md)
-- [Management TUI usage](docs/usage.md#management-tui)
-- [Agent workflows](docs/agent-workflows.md)
-- [Service toolkit](docs/service-toolkit.md)
-- [Current baseline](docs/current-baseline.md)
-- [Roadmap](docs/roadmap.md)
+The previous Python application, package, tests and qualification orchestration
+are archived on [`stale/python-v0.7.0`](https://github.com/InkyQuill/hieronymus/tree/stale/python-v0.7.0).
+Historical fixtures remain available to Rust migration tests. See
+[the archive policy](docs/archive/python-v0.7.0.md) for older plans and records.

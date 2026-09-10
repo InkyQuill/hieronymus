@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/hieronymus", "crates/hiero"]
-exclude = ["qualification", "tests/qualification/fixtures/process-smoke"]
+exclude = ["qualification"]
 
 [workspace.package]
 edition = "2024"

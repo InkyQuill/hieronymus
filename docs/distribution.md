@@ -20,7 +20,7 @@ are distinct from that candidate qualification.
 | Semantic retrieval | Required — qualified multilingual MiniLM replacement; see `docs/semantic-validation.md` |
 | Release readiness | Real semantic lane must report `ready`; acquiring, rebuilding, missing/mismatched assets and FTS-only operation do not pass |
 | Rust pin | 1.96.0 (`rust-toolchain.toml`) |
-| Bun pin (console build only) | 1.4.0 (`frontend/bun.lock`, CI `setup-bun`) |
+| Bun pin (console and release helpers) | 1.4.0 (`frontend/bun.lock`, CI `setup-bun`) |
 
 macOS and Windows receive no installer (spec §Support Matrix); a later ADR is
 required per additional target after native release and service-lifecycle
@@ -57,6 +57,26 @@ backend compiles to a no-op, so all-features builds never require Bun.
 The shipping binary serves the embedded console through `Assets::release()`
 (the `hiero daemon` path); `Assets::default()` remains the empty set in every
 configuration, which is what the frozen static-route suites pin.
+
+## Pinned release acquisition
+
+From the checkout, run `bun scripts/stage-release-assets.ts`. It prints a JSON
+object with `HIERO_RELEASE_ONNX_RUNTIME`, `HIERO_RELEASE_ONNX_SHA256` and
+`HIERO_RELEASE_MODEL_DIR`; set those exact values in the environment before
+`./scripts/release-build.sh`. CI uses `--github-env "$GITHUB_ENV"` to export them.
+The helper verifies fixed model/tokenizer/license/card and runtime archive/library
+hashes, bounds transfers and extraction, and restricts HTTPS redirect hosts.
+Runtime notices come from a fresh extraction of the verified archive; internal
+library links are materialized as regular files. Successful extractions are kept
+under ignored `qualification/.artifacts/models/.release-runtime-*` for the build.
+Run in an owned checkout; do not modify staged files while a release build runs.
+
+`bun scripts/check-rust-release.ts --allow-untagged` checks a local candidate.
+Publishing requires `--ref refs/tags/v<workspace-version>` resolving to the exact
+checked-out commit. Add `--release-dir target/release-dist --channel stable`
+to bind metadata to the actual archive bytes. Offline behavioral tests run with
+`bun test scripts/*.test.ts`. This replaces the archived Python acquisition and
+release helpers; no Python or uv step is part of the release pipeline.
 
 ## Artifacts
 

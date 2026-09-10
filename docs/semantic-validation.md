@@ -1,5 +1,9 @@
 # Semantic validation: real hybrid relevance
 
+> Historical record: Python source and commands below belong to the
+> [archived Python line](archive/python-v0.7.0.md). Current release acquisition uses
+> `bun scripts/stage-release-assets.ts`; these records are not active release gates.
+
 The first record below is historical S3 English qualification. P2 multilingual
 qualification and its release limits are recorded in the subsequent section;
 the historical result does not establish current multilingual or host support.

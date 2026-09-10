@@ -1,5 +1,8 @@
 # Documentation Index
 
+Python source references in historical documents and fixtures resolve on
+`stale/python-v0.7.0`. See [the archive policy](archive/python-v0.7.0.md).
+
 Status classification after the start of the Rust rewrite (2026-09-03).
 The Rust migration is normative; Python-era documents are kept as the
 behavioral reference being ported, then retired at cutover.

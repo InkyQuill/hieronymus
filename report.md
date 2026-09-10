@@ -1,5 +1,9 @@
 # Hieronymus App Review
 
+> Historical record: Python source and commands below belong to the
+> [archived Python line](docs/archive/python-v0.7.0.md). Current release acquisition uses
+> `bun scripts/stage-release-assets.ts`; these records are not active release gates.
+
 Scope: full-repo pass focused on `src/hieronymus/` (Python backend/daemon), `frontend/src/web`
 (Svelte + Tailwind console), packaging (`hatch_build.py`, `pyproject.toml`), and the shell
 installer (`install.sh`). Reviewed at commit `11fdedc` on `agent/tailwind-web-console`.

@@ -1,5 +1,9 @@
 # Rust qualification
 
+> Historical record: Python source and commands below belong to the
+> [archived Python line](../docs/archive/python-v0.7.0.md). Current release acquisition uses
+> `bun scripts/stage-release-assets.ts`; these records are not active release gates.
+
 This directory contains isolated, test-only evidence for the proposed Rust migration. It is
 not a production Rust workspace. Qualification failures block the dependent implementation
 plan; they are not fixed by weakening the frozen compatibility contracts.

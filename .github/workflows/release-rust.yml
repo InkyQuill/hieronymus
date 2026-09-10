@@ -26,28 +26,26 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-      - name: Verify exact Rust source and tag
-        run: python scripts/check-rust-release.py --ref "$RELEASE_REF"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: "1.4.0"
+      - name: Verify exact Rust source and tag
+        run: bun scripts/check-rust-release.ts --ref "$RELEASE_REF"
+      - run: bun test scripts/*.test.ts
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --target x86_64-unknown-linux-gnu
       - name: Acquire and verify pinned native assets
-        run: python scripts/stage-release-assets.py --github-env "$GITHUB_ENV"
+        run: bun scripts/stage-release-assets.ts --github-env "$GITHUB_ENV"
       - name: Build the release artifacts
         run: ./scripts/release-build.sh
       - name: Verify packaged version and archive metadata
-        run: python scripts/check-rust-release.py --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
+        run: bun scripts/check-rust-release.ts --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
       - name: Publish the verified GitHub release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scripts/check-rust-release.py --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
-          archive="target/release-dist/$(python -c 'import json; print(json.load(open("target/release-dist/release.json"))["archive"])')"
+          bun scripts/check-rust-release.ts --ref "$RELEASE_REF" --release-dir target/release-dist --channel stable
+          archive="target/release-dist/$(bun -e 'console.log((await Bun.file("target/release-dist/release.json").json()).archive)')"
           checksums="${archive}.sha256"
           test -f "$checksums"
           cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
