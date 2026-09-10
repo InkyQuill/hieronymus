@@ -42,7 +42,10 @@ and [distribution guide](docs/distribution.md) for configuration, updates and re
 Install the pinned Rust toolchain and Bun 1.4.0 (`rust-toolchain.toml`, `mise.toml`).
 Build dependencies are Rust/Cargo, Bun, Git, the standard Linux build tools and
 `protoc` (Protocol Buffers compiler, required by LanceDB). On Debian/Ubuntu,
-install it with `sudo apt-get install protobuf-compiler`. It is only needed when
+install it and the standard proto definitions with
+`sudo apt-get install protobuf-compiler libprotobuf-dev`.
+Run `./scripts/check-protobuf.sh` to verify compilation of standard imports.
+These dependencies are only needed when
 building from source, not when running the installed application.
 
 ```bash
