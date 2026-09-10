@@ -32,6 +32,11 @@ jobs:
       - name: Verify exact Rust source and tag
         run: bun scripts/check-rust-release.ts --ref "$RELEASE_REF"
       - run: bun test scripts/*.test.ts
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends protobuf-compiler
+          protoc --version
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --target x86_64-unknown-linux-gnu
       - name: Acquire and verify pinned native assets
