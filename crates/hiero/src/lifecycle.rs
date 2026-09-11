@@ -562,7 +562,17 @@ pub fn default_service_options(config: &HieronymusConfig) -> std::io::Result<Ser
     Ok(ServiceOptions {
         data_root: config.data_root().to_path_buf(),
         unit_dir: service::default_unit_dir(),
-        binary: std::env::current_exe()?,
+        binary: {
+            #[cfg(windows)]
+            {
+                crate::desktop::launch::stable_cli(&std::env::current_exe()?)
+                    .map_err(std::io::Error::other)?
+            }
+            #[cfg(not(windows))]
+            {
+                std::env::current_exe()?
+            }
+        },
         use_manager: true,
     })
 }
@@ -645,6 +655,9 @@ pub(crate) fn start_guarded(
         .map_err(|error| LifecycleError::Service(error.to_string()))?;
     let health = checked_probe(config)?;
     if health.is_live() {
+        #[cfg(windows)]
+        service::windows::rearm_guarded(options, operation)
+            .map_err(|error| LifecycleError::Service(error.to_string()))?;
         return Ok(vec![health.detail()]);
     }
     // An unavailable endpoint does not prove ownership is free. Repair only
@@ -708,6 +721,13 @@ pub(crate) fn stop_guarded(
         }
         return Ok(lines);
     };
+    #[cfg(windows)]
+    if options.use_manager {
+        // Suppression must finish and read back before the shutdown request.
+        // Failure/indeterminate timeout aborts without signalling the daemon.
+        service::stop_guarded(options, operation)
+            .map_err(|error| LifecycleError::Service(error.to_string()))?;
+    }
     let client = open(config, record.clone())?;
     // `POST /shutdown` sets the stop flag before it answers, so the daemon can
     // legitimately tear the connection down before (or while) its 200 reaches

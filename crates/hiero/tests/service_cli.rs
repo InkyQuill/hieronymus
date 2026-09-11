@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! `hiero service` CLI surface: install (idempotent unit render), status,
 //! uninstall, and the lifecycle commands' refusal to touch the systemd user
 //! manager for an overridden `--unit-dir` (which is how these tests — and any

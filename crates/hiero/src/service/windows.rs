@@ -1,0 +1,668 @@
+//! Per-user Task Scheduler backend. No task End/Stop primitive is used: common
+//! lifecycle owns authenticated shutdown; suppression disables future recovery.
+use super::*;
+use crate::platform::{
+    windows_broker::{self, TaskAction},
+    windows_identity,
+};
+use ::windows::{
+    Win32::System::{
+        Com::{
+            CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+            CoUninitialize,
+        },
+        TaskScheduler::*,
+        Variant::VARIANT,
+    },
+    core::BSTR,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+pub const SERVICE_UNIT_NAME: &str = "hieronymus-task.json";
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRecord {
+    pub binary: PathBuf,
+    pub data_root: PathBuf,
+    pub unit_dir: PathBuf,
+    pub sid: String,
+    pub tray: bool,
+    pub enabled: bool,
+    pub recovery: bool,
+}
+impl TaskRecord {
+    fn new(options: &ServiceOptions, tray: bool) -> Result<Self, String> {
+        let result = Self {
+            binary: options.binary.clone(),
+            unit_dir: options
+                .unit_dir
+                .canonicalize()
+                .unwrap_or_else(|_| options.unit_dir.clone()),
+            data_root: options
+                .data_root
+                .canonicalize()
+                .map_err(|_| "Task root is unavailable")?,
+            sid: windows_identity::sid().map_err(|_| "Windows user identity is unavailable")?,
+            tray,
+            enabled: true,
+            recovery: !tray,
+        };
+        result.xml()?;
+        Ok(result)
+    }
+    pub fn xml(&self) -> Result<String, String> {
+        if self.tray {
+            return super::windows_task::render_login_in_directory(
+                &self.binary,
+                &self.data_root,
+                &self.unit_dir,
+                &self.sid,
+                self.enabled,
+            );
+        }
+        super::windows_task::render(
+            &self.binary,
+            &self.data_root,
+            &self.sid,
+            self.tray,
+            self.enabled,
+            self.recovery,
+        )
+    }
+    pub fn name(&self) -> String {
+        super::windows_task::name(&self.data_root, &self.sid, self.tray)
+    }
+    fn owned(&self, expected: &Self) -> Result<(), String> {
+        if self.binary != expected.binary
+            || self.data_root != expected.data_root
+            || self.unit_dir != expected.unit_dir
+            || self.sid != expected.sid
+            || self.tray != expected.tray
+        {
+            return Err("Task registration belongs to another installation".into());
+        }
+        Ok(())
+    }
+}
+pub fn default_unit_dir() -> PathBuf {
+    home::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("AppData/Local/Hieronymus/tasks")
+}
+pub fn manager_enabled(options: &ServiceOptions) -> bool {
+    options.use_manager
+}
+pub fn render_unit(binary: &Path, data_root: &Path) -> Result<String, ServiceError> {
+    let record = TaskRecord::new(
+        &ServiceOptions {
+            binary: binary.into(),
+            data_root: data_root.into(),
+            unit_dir: default_unit_dir(),
+            use_manager: false,
+        },
+        false,
+    )
+    .map_err(ServiceError::Invalid)?;
+    serde_json::to_string(&record)
+        .map_err(|_| ServiceError::Invalid("Could not encode native task".into()))
+}
+pub fn parse_unit(text: &str) -> Result<UnitDefinition, String> {
+    let record: TaskRecord =
+        serde_json::from_str(text).map_err(|_| "Invalid native task record")?;
+    record.xml()?;
+    Ok(UnitDefinition {
+        binary: record.binary,
+        data_root: record.data_root,
+    })
+}
+fn record_path(options: &ServiceOptions, tray: bool) -> PathBuf {
+    options.unit_dir.join(if tray {
+        "hieronymus-tray-task.json"
+    } else {
+        SERVICE_UNIT_NAME
+    })
+}
+fn read_record(options: &ServiceOptions, tray: bool) -> Result<Option<TaskRecord>, String> {
+    read_json(&record_path(options, tray))
+}
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    use std::io::Read;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("Could not read native registration state".into()),
+    };
+    let mut bytes = Vec::new();
+    file.take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read native registration state")?;
+    if bytes.len() > 65536 {
+        return Err("Native registration state exceeds its bound".into());
+    }
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| "Invalid native registration state".into())
+}
+pub fn read_unit(options: &ServiceOptions) -> Result<Option<UnitDefinition>, String> {
+    let record = if options.use_manager {
+        serde_json::from_value::<Option<TaskRecord>>(windows_broker::task(
+            options,
+            TaskAction::Inspect,
+            false,
+        )?)
+        .map_err(|_| "Invalid task readback")?
+    } else {
+        read_record(options, false)?
+    };
+    Ok(record.map(|r| UnitDefinition {
+        binary: r.binary,
+        data_root: r.data_root,
+    }))
+}
+pub(crate) fn validate_unit_root(options: &ServiceOptions) -> Result<(), ServiceError> {
+    if let Some(record) = read_record(options, false).map_err(ServiceError::Invalid)? {
+        record
+            .owned(&TaskRecord::new(options, false).map_err(ServiceError::Invalid)?)
+            .map_err(ServiceError::Invalid)?;
+    }
+    if options.use_manager {
+        read_unit(options).map_err(ServiceError::Invalid)?;
+    }
+    Ok(())
+}
+pub(crate) fn install_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
+    if !options.binary.is_file() {
+        return Err(ServiceError::Invalid(
+            "Service binary does not exist".into(),
+        ));
+    }
+    if options.use_manager {
+        windows_broker::task(options, TaskAction::Install, false).map_err(ServiceError::Manager)?;
+    } else {
+        hieronymus::atomic::atomic_write_text(
+            &options.unit_path(),
+            &serde_json::to_string(
+                &TaskRecord::new(options, false).map_err(ServiceError::Invalid)?,
+            )
+            .map_err(|_| ServiceError::Invalid("Could not encode native registration".into()))?,
+        )?;
+    }
+    Ok(vec![
+        "Windows daemon task installed for on-demand startup (not started)".into(),
+    ])
+}
+pub(crate) fn uninstall_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
+    if options.use_manager {
+        windows_broker::task(options, TaskAction::Remove, false).map_err(ServiceError::Manager)?;
+    } else if options.unit_path().exists() {
+        std::fs::remove_file(options.unit_path())?;
+    }
+    Ok(vec!["Windows daemon task removed".into()])
+}
+pub(crate) fn start_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    if !options.use_manager {
+        return Err(ServiceError::Manager(
+            "Native manager integration is disabled".into(),
+        ));
+    }
+    windows_broker::task(options, TaskAction::Start, false).map_err(ServiceError::Manager)?;
+    Ok(vec!["Windows daemon task started".into()])
+}
+pub(crate) fn rearm_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<(), ServiceError> {
+    operation.register_unit(options)?;
+    if options.use_manager {
+        windows_broker::task(options, TaskAction::Rearm, false).map_err(ServiceError::Manager)?;
+    }
+    Ok(())
+}
+pub(crate) fn stop_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    if options.use_manager {
+        windows_broker::task(options, TaskAction::Suppress, false)
+            .map_err(ServiceError::Manager)?;
+    }
+    Ok(vec![
+        "Windows daemon recovery disabled until explicit Start".into(),
+    ])
+}
+// Legacy Linux-registration APIs remain callable but never pretend to manage Windows login.
+pub(crate) fn owned_login_link(_: &ServiceOptions) -> Result<Option<PathBuf>, ServiceError> {
+    Err(ServiceError::Invalid(
+        "Windows login uses a separate native tray task".into(),
+    ))
+}
+pub(crate) fn disable_login_guarded(
+    _: &ServiceOptions,
+    _: &LifecycleOperation,
+) -> Result<(), ServiceError> {
+    Err(ServiceError::Invalid(
+        "Windows login uses a separate native tray task".into(),
+    ))
+}
+/// Compatibility name for the updater's preserved three-operation seam.
+pub struct SystemdManager<'a> {
+    options: ServiceOptions,
+    operation: &'a LifecycleOperation,
+}
+impl<'a> SystemdManager<'a> {
+    pub fn new(options: ServiceOptions, operation: &'a LifecycleOperation) -> Self {
+        Self { options, operation }
+    }
+}
+impl ServiceManager for SystemdManager<'_> {
+    fn stop(&self) -> Result<(), ServiceError> {
+        if !self.options.use_manager {
+            return Ok(());
+        }
+        crate::lifecycle::stop_guarded(
+            &HieronymusConfig::new(&self.options.data_root),
+            &self.options,
+            self.operation,
+        )
+        .map(|_| ())
+        .map_err(|e| ServiceError::Manager(e.to_string()))
+    }
+    fn reload(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        if !self.options.use_manager {
+            return Ok(());
+        }
+        install_guarded(&self.options, self.operation).map(|_| ())
+    }
+    fn start(&self) -> Result<(), ServiceError> {
+        if !self.options.use_manager {
+            return Ok(());
+        }
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
+        crate::lifecycle::checked_probe(&HieronymusConfig::new(&self.options.data_root))
+            .map_err(|e| ServiceError::Manager(e.to_string()))?;
+        start_guarded(&self.options, self.operation).map(|_| ())
+    }
+}
+struct Scheduler {
+    folder: Option<ITaskFolder>,
+}
+impl Drop for Scheduler {
+    fn drop(&mut self) {
+        drop(self.folder.take());
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+impl Scheduler {
+    fn connect() -> Result<Self, String> {
+        unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED)
+                .ok()
+                .map_err(|_| "Could not initialize native COM")?;
+            let result = (|| {
+                let service: ITaskService =
+                    CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)
+                        .map_err(|_| "Task Scheduler is unavailable")?;
+                let empty = VARIANT::default();
+                service
+                    .Connect(&empty, &empty, &empty, &empty)
+                    .map_err(|_| "Could not connect to user Task Scheduler")?;
+                service
+                    .GetFolder(&BSTR::from("\\"))
+                    .map_err(|_| "Could not open Task Scheduler folder")
+            })();
+            match result {
+                Ok(folder) => Ok(Self {
+                    folder: Some(folder),
+                }),
+                Err(error) => {
+                    CoUninitialize();
+                    Err(error.into())
+                }
+            }
+        }
+    }
+    fn folder(&self) -> &ITaskFolder {
+        self.folder.as_ref().unwrap()
+    }
+    fn task(&self, name: &str) -> Result<Option<IRegisteredTask>, String> {
+        match unsafe { self.folder().GetTask(&BSTR::from(name)) } {
+            Ok(task) => Ok(Some(task)),
+            Err(e) if e.code().0 as u32 == 0x80070002 => Ok(None),
+            Err(_) => Err("Could not inspect native task".into()),
+        }
+    }
+    fn xml(&self, name: &str) -> Result<Option<String>, String> {
+        self.task(name)?
+            .map(|t| {
+                unsafe { t.Xml() }
+                    .map(|s| s.to_string())
+                    .map_err(|_| "Could not read native task definition".into())
+            })
+            .transpose()
+    }
+    fn put(&self, record: &TaskRecord, exists: bool) -> Result<(), String> {
+        unsafe {
+            self.folder()
+                .RegisterTask(
+                    &BSTR::from(record.name()),
+                    &BSTR::from(record.xml()?),
+                    if exists { TASK_UPDATE.0 } else { TASK_CREATE.0 },
+                    &VARIANT::from(record.sid.as_str()),
+                    &VARIANT::default(),
+                    TASK_LOGON_INTERACTIVE_TOKEN,
+                    &VARIANT::default(),
+                )
+                .map_err(|_| "Could not register native interactive-user task")?;
+        }
+        Ok(())
+    }
+    fn remove(&self, name: &str) -> Result<(), String> {
+        unsafe { self.folder().DeleteTask(&BSTR::from(name), 0) }
+            .map_err(|_| "Could not remove owned native task".into())
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Journal {
+    before: Option<TaskRecord>,
+    after: Option<TaskRecord>,
+}
+fn save(path: &Path, record: &Option<TaskRecord>) -> Result<(), String> {
+    match record {
+        Some(record) => hieronymus::atomic::atomic_write(
+            path,
+            &serde_json::to_vec(record).map_err(|_| "Could not encode native record")?,
+        )
+        .map_err(|_| "Could not persist native registration".into()),
+        None => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("Could not remove native registration record".into()),
+        },
+    }
+}
+fn canonical_task_xml(xml: &str) -> Result<String, String> {
+    // Both documents pass through the SAME native schema/default serializer.
+    // Complete tree comparison below still rejects extra security/execution fields.
+    unsafe {
+        let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)
+            .map_err(|_| "Task definition parser is unavailable")?;
+        let definition = service
+            .NewTask(0)
+            .map_err(|_| "Could not create task definition parser")?;
+        definition
+            .SetXmlText(&BSTR::from(xml))
+            .map_err(|_| "Native task XML is invalid")?;
+        let mut canonical = BSTR::new();
+        definition
+            .XmlText(&mut canonical)
+            .map_err(|_| "Could not serialize native task definition")?;
+        Ok(canonical.to_string())
+    }
+}
+fn matches(xml: &Option<String>, record: &Option<TaskRecord>) -> bool {
+    match (xml, record) {
+        (None, None) => true,
+        (Some(xml), Some(record)) => record
+            .xml()
+            .and_then(|expected| {
+                super::windows_task::equivalent(
+                    &canonical_task_xml(xml)?,
+                    &canonical_task_xml(&expected)?,
+                )
+            })
+            .is_ok(),
+        _ => false,
+    }
+}
+fn rollback(
+    scheduler: &Scheduler,
+    expected: &TaskRecord,
+    path: &Path,
+    journal: &Journal,
+) -> Result<(), String> {
+    for record in [&journal.before, &journal.after].into_iter().flatten() {
+        record.owned(expected)?;
+    }
+    let actual = scheduler.xml(&expected.name())?;
+    if !matches(&actual, &journal.before) && !matches(&actual, &journal.after) {
+        return Err(
+            "Pending task transaction conflicts with external changes; no task was overwritten"
+                .into(),
+        );
+    }
+    if !matches(&actual, &journal.before) {
+        match &journal.before {
+            Some(record) => scheduler.put(record, actual.is_some())?,
+            None => scheduler.remove(&expected.name())?,
+        }
+    }
+    if !matches(&scheduler.xml(&expected.name())?, &journal.before) {
+        return Err("Native registration rollback readback failed".into());
+    }
+    save(path, &journal.before)
+}
+/// Called only by the committed broker while both continuation gates are held.
+pub(crate) fn execute(
+    options: &ServiceOptions,
+    action: TaskAction,
+    tray: bool,
+) -> Result<Value, String> {
+    let expected = TaskRecord::new(options, tray)?;
+    let scheduler = Scheduler::connect()?;
+    let path = record_path(options, tray);
+    let pending = path.with_extension("pending.json");
+    if let Some(journal) = read_json::<Journal>(&pending)? {
+        if matches!(action, TaskAction::Inspect) {
+            // Passive readback must never repair/mutate before caller authentication.
+            for record in [&journal.before, &journal.after].into_iter().flatten() {
+                record.owned(&expected)?;
+            }
+            let actual = scheduler.xml(&expected.name())?;
+            let active = if matches(&actual, &journal.before) {
+                &journal.before
+            } else if matches(&actual, &journal.after) {
+                &journal.after
+            } else {
+                return Err("Pending task transaction conflicts with external changes".into());
+            };
+            return serde_json::to_value(active)
+                .map_err(|_| "Could not encode pending task readback".into());
+        }
+        rollback(&scheduler, &expected, &path, &journal)?;
+        std::fs::remove_file(&pending).map_err(|_| "Could not clear recovered task transaction")?;
+    }
+    let mut before = read_record(options, tray)?;
+    if let Some(record) = &before {
+        record.owned(&expected)?;
+    }
+    let xml = scheduler.xml(&expected.name())?;
+    // Native enabled state is the login preference authority, including an OS UI toggle.
+    if let (Some(record), Some(xml)) = (&mut before, &xml) {
+        let doc = roxmltree::Document::parse(xml).map_err(|_| "Invalid task readback")?;
+        let enabled = doc
+            .descendants()
+            .find(|n| n.has_tag_name("Settings"))
+            .and_then(|n| n.children().find(|n| n.has_tag_name("Enabled")))
+            .and_then(|n| n.text());
+        record.enabled = match enabled {
+            Some("true") => true,
+            Some("false") => false,
+            _ => return Err("Native task has invalid enabled state".into()),
+        };
+    }
+    if !matches(&xml, &before) {
+        return Err(
+            "Native task is foreign, missing or modified; registration was not changed".into(),
+        );
+    }
+    if matches!(action, TaskAction::Inspect) {
+        return serde_json::to_value(before).map_err(|_| "Could not encode task readback".into());
+    }
+    let mut after = before.clone().unwrap_or(expected.clone());
+    match action {
+        TaskAction::Install => {}
+        TaskAction::Start | TaskAction::Rearm => {
+            after.enabled = true;
+            after.recovery = !tray;
+        }
+        TaskAction::Suppress => {
+            after.enabled = false;
+            after.recovery = false;
+        }
+        TaskAction::EnableLogin => {
+            if !tray {
+                return Err("Login operation requires a tray task".into());
+            }
+            after.enabled = true;
+        }
+        TaskAction::DisableLogin => {
+            if !tray {
+                return Err("Login operation requires a tray task".into());
+            }
+            after.enabled = false;
+        }
+        TaskAction::Remove | TaskAction::Inspect => {}
+    }
+    if matches!(action, TaskAction::Remove | TaskAction::Suppress) && before.is_none() {
+        return Ok(Value::Null);
+    }
+    let after = if matches!(action, TaskAction::Remove) {
+        None
+    } else {
+        Some(after)
+    };
+    let journal = Journal { before, after };
+    hieronymus::atomic::atomic_write(
+        &pending,
+        &serde_json::to_vec(&journal).map_err(|_| "Could not encode task transaction")?,
+    )
+    .map_err(|_| "Could not persist task transaction")?;
+    let result = (|| {
+        match &journal.after {
+            Some(record) => scheduler.put(record, xml.is_some())?,
+            None => scheduler.remove(&expected.name())?,
+        }
+        if !matches(&scheduler.xml(&expected.name())?, &journal.after) {
+            return Err("Native task registration readback failed".into());
+        }
+        save(&path, &journal.after)
+    })();
+    if let Err(error) = result {
+        rollback(&scheduler, &expected, &path, &journal).map_err(|_| "Native task mutation failed and rollback is pending; retry only after inspecting registration")?;
+        std::fs::remove_file(&pending)
+            .map_err(|_| "Native task rollback completed but its journal remains")?;
+        return Err(error);
+    }
+    std::fs::remove_file(&pending)
+        .map_err(|_| "Native task registered but its transaction journal remains")?;
+    if matches!(action, TaskAction::Start) {
+        let task = scheduler
+            .task(&expected.name())?
+            .ok_or("Registered daemon task disappeared")?;
+        unsafe { task.Run(&VARIANT::default()) }.map_err(
+            |_| "Native task could not start; recovery remains armed for this explicit Start",
+        )?;
+    }
+    serde_json::to_value(journal.after).map_err(|_| "Could not encode native result".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct DisposableTask {
+        record: TaskRecord,
+    }
+    impl Drop for DisposableTask {
+        fn drop(&mut self) {
+            // This name was created exclusively from this test's fresh TempDir.
+            if let Ok(scheduler) = Scheduler::connect()
+                && scheduler.task(&self.record.name()).ok().flatten().is_some()
+            {
+                let _ = scheduler.remove(&self.record.name());
+            }
+        }
+    }
+    #[test]
+    fn native_pending_registration_recovers_exact_prior_definition_and_rejects_foreign_task() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let units = temp.path().join("units");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&units).unwrap();
+        let options = ServiceOptions {
+            data_root: root,
+            unit_dir: units,
+            binary: std::env::current_exe().unwrap(),
+            use_manager: true,
+        };
+        let before = TaskRecord::new(&options, false).unwrap();
+        let _cleanup = DisposableTask {
+            record: before.clone(),
+        };
+        let scheduler = Scheduler::connect().unwrap();
+        assert!(scheduler.task(&before.name()).unwrap().is_none());
+        scheduler.put(&before, false).unwrap();
+        let path = record_path(&options, false);
+        save(&path, &Some(before.clone())).unwrap();
+        let mut after = before.clone();
+        after.enabled = false;
+        after.recovery = false;
+        let journal = Journal {
+            before: Some(before.clone()),
+            after: Some(after.clone()),
+        };
+        hieronymus::atomic::atomic_write(
+            &path.with_extension("pending.json"),
+            &serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+        scheduler.put(&after, true).unwrap();
+        assert!(matches(
+            &scheduler.xml(&before.name()).unwrap(),
+            &Some(after)
+        ));
+        // Production interrupted-registration recovery performs real scheduler rollback.
+        let pending_readback = execute(&options, TaskAction::Inspect, false).unwrap();
+        assert_eq!(pending_readback["enabled"], false);
+        assert!(path.with_extension("pending.json").exists());
+        let readback = execute(&options, TaskAction::Install, false).unwrap();
+        assert_eq!(
+            serde_json::from_value::<TaskRecord>(readback).unwrap(),
+            before
+        );
+        assert!(matches(
+            &scheduler.xml(&before.name()).unwrap(),
+            &Some(before.clone())
+        ));
+        assert!(!path.with_extension("pending.json").exists());
+        let mut foreign = before.clone();
+        foreign.binary = temp.path().join("foreign.exe");
+        std::fs::write(&foreign.binary, b"fixture").unwrap();
+        scheduler.put(&foreign, true).unwrap();
+        assert!(execute(&options, TaskAction::Install, false).is_err());
+        assert!(matches(
+            &scheduler.xml(&before.name()).unwrap(),
+            &Some(foreign)
+        ));
+    }
+}

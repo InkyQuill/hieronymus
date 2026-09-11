@@ -382,7 +382,15 @@ fn parse_arguments(
 }
 
 fn run(arguments: &[String]) -> Result<ExitCode, String> {
+    #[cfg(windows)]
+    if arguments.as_slice() == ["__windows-native-broker"] {
+        return hiero::platform::windows_broker::run().map(|_| ExitCode::SUCCESS);
+    }
     if argv0_command().is_none() && arguments.first().map(String::as_str) == Some("desktop") {
+        #[cfg(windows)]
+        return hiero::desktop::windows_registration::run(&arguments[1..])
+            .map(|_| ExitCode::SUCCESS);
+        #[cfg(not(windows))]
         return hiero::desktop::linux_cli::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
     }
     let parsed = parse_arguments(arguments, argv0_command())?;
@@ -472,6 +480,12 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             if parsed.port.is_some() || parsed.start_daemon || parsed.json || parsed.dry_run {
                 return Err("usage: hiero tray [--data-root <path>]".into());
             }
+            #[cfg(windows)]
+            hiero::desktop::launch::launch_with_options(
+                &load_config(data_root),
+                &service_options(&parsed, data_root)?,
+            )?;
+            #[cfg(not(windows))]
             hiero::desktop::launch::launch(&load_config(data_root))?;
             Ok(ExitCode::SUCCESS)
         }
@@ -1388,6 +1402,12 @@ fn service_options(
         Some(path) => absolute_path(path),
         None => std::env::current_exe()
             .map_err(|error| format!("could not locate the running binary: {error}"))?,
+    };
+    #[cfg(windows)]
+    let binary = if parsed.binary.is_none() {
+        hiero::desktop::launch::stable_cli(&binary)?
+    } else {
+        binary
     };
     Ok(service::ServiceOptions {
         data_root: absolute_path(load_config(data_root).data_root()),

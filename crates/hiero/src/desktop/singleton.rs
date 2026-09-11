@@ -162,7 +162,11 @@ fn parse_logind_session(output: &str) -> io::Result<String> {
         })?;
     Ok(format!("logind-{session}"))
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+fn trusted_session() -> io::Result<String> {
+    crate::platform::windows_identity::session()
+}
+#[cfg(not(any(target_os = "linux", windows)))]
 fn trusted_session() -> io::Result<String> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

@@ -13,3 +13,6 @@ pub use settings::{
 };
 pub use singleton::{SingletonOutcome, TraySingleton};
 pub use state::{Accent, Action, DesktopState, Event, View};
+
+#[cfg(windows)]
+pub mod windows_registration;

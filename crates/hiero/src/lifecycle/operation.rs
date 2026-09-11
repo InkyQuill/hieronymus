@@ -44,6 +44,8 @@ impl LifecycleOperation {
             }
             Err(TryLockError::Error(error)) => return Err(error),
         }
+        #[cfg(windows)]
+        crate::platform::native_gate::check(&root)?;
         file.set_len(0)?;
         writeln!(file, "{} lifecycle", std::process::id())?;
         Ok(Self {
@@ -65,6 +67,8 @@ impl LifecycleOperation {
             .map_err(|_| io::Error::other("unit registration guard was poisoned"))?;
         std::fs::create_dir_all(&options.unit_dir)?;
         let unit_dir = options.unit_dir.canonicalize()?;
+        #[cfg(windows)]
+        crate::platform::native_gate::check(&unit_dir)?;
         if let Some(held) = registration.as_ref() {
             if held.unit_dir != unit_dir {
                 return Err(io::Error::new(

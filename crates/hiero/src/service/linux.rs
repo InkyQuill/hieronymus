@@ -12,44 +12,15 @@
 //! which keeps tests away from the real user manager and makes custom
 //! locations usable on non-systemd setups.
 
-use crate::lifecycle::operation::LifecycleOperation;
+use super::*;
 use hieronymus::data_root::HieronymusConfig;
-use hieronymus::ownership::RootOwnership;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Name of the unit this project installs.
 pub const SERVICE_UNIT_NAME: &str = "hieronymus.service";
 
-/// Seconds between daemon restart attempts (on-failure backoff policy).
 const RESTART_SECONDS: &str = "5s";
-
-#[derive(Debug, thiserror::Error)]
-pub enum ServiceError {
-    #[error("{0}")]
-    Manager(String),
-    #[error("{0}")]
-    Invalid(String),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-
-/// Everything one service subcommand needs: the data root to serve, the unit
-/// directory, the binary the unit must exec, and whether manager integration
-/// is allowed at all (CLI `--no-activate` sets it to `false`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceOptions {
-    pub data_root: PathBuf,
-    pub unit_dir: PathBuf,
-    pub binary: PathBuf,
-    pub use_manager: bool,
-}
-
-impl ServiceOptions {
-    pub fn unit_path(&self) -> PathBuf {
-        self.unit_dir.join(SERVICE_UNIT_NAME)
-    }
-}
 
 /// Default per-user unit directory (systemd user units).
 pub fn default_unit_dir() -> PathBuf {
@@ -184,14 +155,6 @@ fn absolute(path: &Path) -> Result<PathBuf, ServiceError> {
     }
 }
 
-/// The parsed execution definition of one unit file, as far as this project
-/// renders and reads them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnitDefinition {
-    pub binary: PathBuf,
-    pub data_root: PathBuf,
-}
-
 /// Parse `ExecStart="…" daemon --data-root "…"`, optionally behind the exact
 /// fixed `/usr/bin/env --` dispatcher. Returns
 /// `Err` with a reason when the unit is not one of ours or is broken.
@@ -232,7 +195,6 @@ pub fn parse_unit(text: &str) -> Result<UnitDefinition, String> {
     }
 }
 
-/// Escape systemd command arguments and disable specifier/environment expansion.
 fn encode_unit_path(path: &Path) -> Result<String, ServiceError> {
     let value = path
         .to_str()
@@ -249,7 +211,6 @@ fn encode_unit_path(path: &Path) -> Result<String, ServiceError> {
         .replace('$', "$$"))
 }
 
-/// Decode the renderer's bounded subset; reject expansions or malformed quoting.
 fn tokenize(input: &str) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -300,27 +261,6 @@ pub fn read_unit(options: &ServiceOptions) -> Result<Option<UnitDefinition>, Str
         .map_err(|reason| format!("{}: {reason}", path.display()))
 }
 
-/// Install (or idempotently reinstall) the unit. The unit file is written
-/// atomically; the manager, when engaged, is reloaded and the unit enabled
-/// in headless mode (desktop mode retains on-demand startup), **without starting it** — the start decision belongs to the caller after
-/// the schema check (bootstrap installer step 8).
-pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
-    let config = HieronymusConfig::new(&options.data_root);
-    let operation = LifecycleOperation::acquire(&config)?;
-    operation.register_unit(options)?;
-    let health = crate::lifecycle::checked_probe(&config)
-        .map_err(|error| ServiceError::Invalid(error.to_string()))?;
-    // Missing/unreachable discovery is not proof that an owner is absent.
-    // Keep the offline claim through both unit publication and reload/enable;
-    // an authenticated live owner already supplies the required identity.
-    let _ownership = if health.is_live() {
-        None
-    } else {
-        Some(RootOwnership::acquire(&config, "service-install")?)
-    };
-    install_guarded(options, &operation)
-}
-
 // The caller retains offline RootOwnership through this call, or has just
 // authenticated the live owner. Do not reacquire ownership here: startup and
 // update already hold it while installing the unit.
@@ -363,16 +303,6 @@ pub(crate) fn install_guarded(
         );
     }
     Ok(lines)
-}
-
-/// Gracefully stop the daemon, then remove its unit; databases, configuration,
-/// models, backups, and audit data are never touched. Idempotent: a missing unit is a no-op.
-pub fn uninstall(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
-    let config = HieronymusConfig::new(&options.data_root);
-    let operation = LifecycleOperation::acquire(&config)?;
-    crate::lifecycle::stop_guarded(&config, options, &operation)
-        .map_err(|error| ServiceError::Invalid(error.to_string()))?;
-    uninstall_guarded(options, &operation)
 }
 
 pub(crate) fn uninstall_guarded(
@@ -451,100 +381,6 @@ pub(crate) fn disable_login_guarded(
     Ok(())
 }
 
-/// What `hiero service status` reports.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceStatus {
-    pub unit_path: PathBuf,
-    pub definition: Option<UnitDefinition>,
-    /// Why the definition is not consistent with these options, if it is not.
-    pub problems: Vec<String>,
-}
-
-impl ServiceStatus {
-    pub fn consistent(&self) -> bool {
-        self.definition.is_some() && self.problems.is_empty()
-    }
-
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "unit": self.unit_path,
-            "installed": self.definition.is_some(),
-            "consistent": self.consistent(),
-            "binary": self.definition.as_ref().map(|definition| definition.binary.clone()),
-            "data_root": self.definition.as_ref().map(|definition| definition.data_root.clone()),
-            "problems": self.problems,
-        })
-    }
-
-    pub fn render_human(&self) -> String {
-        match &self.definition {
-            None => format!(
-                "service unit: not installed ({} does not exist)",
-                self.unit_path.display()
-            ),
-            Some(definition) => {
-                let mut text = format!(
-                    "service unit: {}\n  binary: {}\n  data root: {}",
-                    self.unit_path.display(),
-                    definition.binary.display(),
-                    definition.data_root.display()
-                );
-                for problem in &self.problems {
-                    text.push_str(&format!("\n  problem: {problem}"));
-                }
-                text
-            }
-        }
-    }
-}
-
-/// Compare the installed unit against the expected definition.
-pub fn status(options: &ServiceOptions) -> Result<ServiceStatus, ServiceError> {
-    let definition = read_unit(options).map_err(ServiceError::Invalid)?;
-    let mut problems = Vec::new();
-    if let Some(definition) = &definition {
-        if !definition.binary.is_file() {
-            problems.push(format!(
-                "unit binary does not exist: {}",
-                definition.binary.display()
-            ));
-        }
-        if definition.data_root != options.data_root {
-            problems.push(format!(
-                "unit serves data root {} but this root is {}",
-                definition.data_root.display(),
-                options.data_root.display()
-            ));
-        }
-    }
-    Ok(ServiceStatus {
-        unit_path: options.unit_path(),
-        definition,
-        problems,
-    })
-}
-
-/// Start or stop the daemon through the manager. Refuses (instead of
-/// degrading) because an explicit lifecycle request that cannot be executed
-/// must fail loudly, with the manual command in the message.
-pub fn start(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
-    let config = HieronymusConfig::new(&options.data_root);
-    let operation = LifecycleOperation::acquire(&config)?;
-    operation.register_unit(options)?;
-    if !options.unit_path().exists() {
-        return Err(ServiceError::Invalid(
-            "no service unit; install one with `hiero service install`".into(),
-        ));
-    }
-    crate::lifecycle::start_guarded(&config, options, &operation)
-        .map_err(|error| ServiceError::Manager(error.to_string()))
-}
-
-pub fn stop(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
-    crate::lifecycle::stop(&HieronymusConfig::new(&options.data_root), options)
-        .map_err(|error| ServiceError::Manager(error.to_string()))
-}
-
 pub(crate) fn start_guarded(
     options: &ServiceOptions,
     operation: &LifecycleOperation,
@@ -582,21 +418,6 @@ pub(crate) fn validate_unit_root(options: &ServiceOptions) -> Result<(), Service
         }
     }
     Ok(())
-}
-
-/// The three manager lifecycle operations `hiero update`'s rollback state
-/// machine drives, behind a trait so tests can assert the exact call sequence
-/// and script a chosen call to fail. Each operation is all-or-nothing: it
-/// either completes or returns [`ServiceError`], never a partial success the
-/// caller has to interpret.
-pub trait ServiceManager {
-    /// Stop the managed unit (the candidate the failed activation may have
-    /// started). A unit that is already stopped is still `Ok`.
-    fn stop(&self) -> Result<(), ServiceError>;
-    /// Re-read unit files after the on-disk unit was restored.
-    fn reload(&self) -> Result<(), ServiceError>;
-    /// Start the managed unit (the restored previous version).
-    fn start(&self) -> Result<(), ServiceError>;
 }
 
 /// The production [`ServiceManager`]: the systemd **user** manager, contacted
@@ -650,59 +471,6 @@ impl ServiceManager for SystemdManager<'_> {
             .map_err(|error| ServiceError::Manager(error.to_string()))?;
         run_systemctl(&["start", SERVICE_UNIT_NAME])
     }
-}
-
-/// Verdict of comparing the installed unit against the expected definition and
-/// the currently running binary — doctor's service-definition check (security
-/// spec §Service Installation).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UnitVerdict {
-    Absent,
-    Consistent,
-    /// The unit is unreadable, is not one of ours, or its binary is gone.
-    Broken(String),
-    /// The unit serves a different data root than the one being checked.
-    DataRootMismatch {
-        unit_root: PathBuf,
-    },
-    /// The unit still execs a different binary than the running one (typical
-    /// after an update that did not reinstall the unit).
-    StaleBinary {
-        unit_binary: PathBuf,
-    },
-}
-
-/// Read the unit for `options` and compare it with `current_binary`.
-pub fn check_unit(options: &ServiceOptions, current_binary: &Path) -> UnitVerdict {
-    let definition = match read_unit(options) {
-        Ok(Some(definition)) => definition,
-        Ok(None) => return UnitVerdict::Absent,
-        Err(reason) => return UnitVerdict::Broken(reason),
-    };
-    if !definition.binary.is_file() {
-        return UnitVerdict::Broken(format!(
-            "unit binary does not exist: {}",
-            definition.binary.display()
-        ));
-    }
-    if definition.data_root != options.data_root {
-        return UnitVerdict::DataRootMismatch {
-            unit_root: definition.data_root.clone(),
-        };
-    }
-    let same_binary = match (
-        definition.binary.canonicalize(),
-        current_binary.canonicalize(),
-    ) {
-        (Ok(unit), Ok(current)) => unit == current,
-        _ => definition.binary == current_binary,
-    };
-    if !same_binary {
-        return UnitVerdict::StaleBinary {
-            unit_binary: definition.binary.clone(),
-        };
-    }
-    UnitVerdict::Consistent
 }
 
 fn lifecycle(

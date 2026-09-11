@@ -25,7 +25,9 @@
 //! and page path plus the opener's own (secret-free) cause — never the
 //! fragment or the grant.
 
-use std::process::{Command, Stdio};
+#[cfg(all(test, unix))]
+use crate::platform::browser::open_with_command;
+#[cfg(all(test, unix))]
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -37,17 +39,6 @@ use crate::lifecycle;
 /// The console pages the CLI can open. Each name is also the SPA entry path:
 /// the Svelte app switches its initial view on `window.location.pathname`.
 pub const PAGES: [&str; 2] = ["admin", "config"];
-
-/// Test/debug seam: overrides the browser opener command (one executable name
-/// or path, invoked with the URL as its only argument). It is honored in
-/// release builds so the integration tests can point it at a capture script,
-/// but it is deliberately kept out of the user-facing usage text. Unset in
-/// normal use, where `xdg-open` is the opener.
-const OPENER_ENV: &str = "HIERO_CONSOLE_BROWSER";
-
-/// The default opener for the Linux cutover target (ADR 0013). No macOS `open`
-/// fallback: the first Rust cutover is `x86_64-unknown-linux-gnu` only.
-const DEFAULT_OPENER: &str = "xdg-open";
 
 /// Mint a launch grant through the local daemon and open `page` in the
 /// browser, already carrying the grant in its URL fragment.
@@ -99,52 +90,12 @@ pub fn launch_with_options(
     // The cause from `open_in_browser` is a fixed secret-free diagnostic, so it is safe to surface. Manually browsing
     // to the page is not an option — the console cannot sign in on its own, so
     // the only recovery is to re-run this command where a browser can open.
-    open_in_browser(&url).map_err(|cause| {
+    crate::platform::browser::open(options, &url).map_err(|cause| {
         format!(
             "could not open a browser for {origin}/{page} ({cause}). Re-run `hiero {page}` from \
              a terminal where a browser can open."
         )
     })
-}
-
-/// Invoke the platform opener with `url`, discarding its streams so the URL
-/// (which carries the grant) cannot be echoed anywhere. Returns `Err` when the
-/// opener cannot be spawned, exits non-zero, or exceeds its ten-second budget.
-fn open_in_browser(url: &str) -> Result<(), String> {
-    let opener = std::env::var(OPENER_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_OPENER.to_string());
-
-    open_with_command(&opener, url, Duration::from_secs(10))
-}
-
-fn open_with_command(opener: &str, url: &str, timeout: Duration) -> Result<(), String> {
-    let mut child = Command::new(opener)
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "browser opener could not be started".to_owned())?;
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("browser opener timed out or could not be observed".into());
-            }
-        }
-    };
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err("browser opener failed".into())
-    }
 }
 
 #[cfg(test)]
