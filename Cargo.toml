@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/hieronymus", "crates/hiero"]
+members = ["crates/hieronymus", "crates/hiero", "crates/hiero-desktop"]
+default-members = ["crates/hieronymus", "crates/hiero"]
 exclude = ["qualification"]
 
 [workspace.package]
