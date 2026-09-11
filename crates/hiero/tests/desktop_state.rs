@@ -177,7 +177,8 @@ fn successful_start_keeps_missing_record_transitional_until_deadline_expires() {
     let view = state.apply(Event::StartupDeadlineExpired);
     assert_eq!(view.accent, Accent::Red);
     assert_eq!(view.reason, "Server unavailable");
-    assert!(view.can_start);
+    assert!(!view.can_start);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Red);
 }
 
 #[test]
@@ -213,7 +214,7 @@ fn ready_snapshot_during_restart_survives_successful_completion() {
 }
 
 #[test]
-fn failed_quit_keeps_tray_open_and_failure_visible_across_snapshot() {
+fn failed_quit_keeps_reason_and_no_exit_but_tracks_current_health() {
     let mut state = DesktopState::new();
     state.apply(Event::Begin(Action::Quit));
     let view = state.apply(Event::Finished {
@@ -227,7 +228,7 @@ fn failed_quit_keeps_tray_open_and_failure_visible_across_snapshot() {
     assert!(!view.exit_requested);
 
     let view = state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
-    assert_eq!(view.accent, Accent::Red);
+    assert_eq!(view.accent, Accent::Green);
     assert_eq!(view.reason, "daemon did not stop");
     assert!(!view.exit_requested);
 }
@@ -274,4 +275,39 @@ fn invalid_identity_is_immediately_red_without_losing_busy_operation() {
     assert_eq!(view.accent, Accent::Red);
     assert_eq!(view.reason, "Invalid server identity");
     assert!(view.busy);
+}
+
+#[test]
+fn failed_start_never_proves_absence_and_authenticated_snapshot_recovers() {
+    for action in [Action::Start, Action::Restart] {
+        let mut state = DesktopState::new();
+        state.apply(Event::Begin(action.clone()));
+        let view = state.apply(Event::Finished {
+            action,
+            error: Some("Operation busy".into()),
+        });
+        assert!(!view.can_start);
+        assert_eq!(view.accent, Accent::Red);
+        let view = state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+        assert_eq!(view.accent, Accent::Green);
+        assert_eq!(view.reason, "Ready");
+    }
+}
+#[test]
+fn browser_error_reason_tracks_changing_health_accent() {
+    let mut state = DesktopState::new();
+    state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+    state.apply(Event::Begin(Action::OpenConsole));
+    state.apply(Event::Finished {
+        action: Action::OpenConsole,
+        error: Some("Browser failed".into()),
+    });
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
+    state.apply(Event::ProbeTimeout);
+    let view = state.apply(Event::ProbeTimeout);
+    assert_eq!(view.accent, Accent::Red);
+    assert_eq!(view.reason, "Browser failed");
+    let view = state.apply(Event::Snapshot(snapshot(ReadinessLevel::Degraded, &[])));
+    assert_eq!(view.accent, Accent::Amber);
+    assert_eq!(view.reason, "Browser failed");
 }

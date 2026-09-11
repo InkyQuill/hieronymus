@@ -34,7 +34,7 @@ use serde_json::{Value, json};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::secret::Secret;
 
-use crate::client::{ClientError, request_json_within};
+use crate::client::{ClientError, request_json_until};
 use crate::daemon::discovery::{
     self, CredentialError, DiscoveryError, DiscoveryRecord, read_discovery, read_token,
 };
@@ -220,6 +220,12 @@ impl DiscoveryHealth {
 /// The shared authenticated discovery-health probe (ADR 0009). Read-only: it
 /// never starts, writes, or deletes anything.
 pub fn probe(config: &HieronymusConfig) -> DiscoveryHealth {
+    probe_with_deadline(config, Instant::now() + PROBE_TIMEOUT)
+}
+
+/// Caller-scoped transport deadline; other lifecycle consumers retain their
+/// existing request and operation budgets. This probe remains read-only.
+pub fn probe_with_deadline(config: &HieronymusConfig, deadline: Instant) -> DiscoveryHealth {
     let record = match read_discovery(config) {
         Ok(record) => record,
         Err(DiscoveryError::Missing { path }) => return DiscoveryHealth::NoRecord { path },
@@ -243,7 +249,7 @@ pub fn probe(config: &HieronymusConfig) -> DiscoveryHealth {
             return DiscoveryHealth::NoCredential { record, detail };
         }
     };
-    match authenticated_status(address, &token) {
+    match authenticated_status(address, &token, deadline) {
         Err(error) => DiscoveryHealth::Unreachable {
             record,
             detail: error.to_string(),
@@ -301,14 +307,15 @@ fn loopback_address(record: &DiscoveryRecord) -> Option<SocketAddr> {
 fn authenticated_status(
     address: SocketAddr,
     token: &Secret<String>,
+    deadline: Instant,
 ) -> Result<(u16, Value), ClientError> {
-    let (status, body) = request_json_within(
+    let (status, body) = request_json_until(
         "GET",
         address,
         "/status",
         &bearer_headers(address, token),
         b"",
-        PROBE_TIMEOUT,
+        deadline,
     )?;
     let parsed = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
     Ok((status, parsed))
@@ -472,13 +479,13 @@ impl DaemonClient {
             other => serde_json::to_vec(other)
                 .map_err(|_| ClientError::Protocol("request cannot serialize"))?,
         };
-        let (status, raw) = request_json_within(
+        let (status, raw) = request_json_until(
             method,
             self.address,
             path,
             &bearer_headers(self.address, &self.bearer),
             &payload,
-            timeout,
+            Instant::now() + timeout,
         )?;
         let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
         if !(200..300).contains(&status) {
@@ -511,6 +518,26 @@ pub fn connect(
     let operation = LifecycleOperation::acquire(config)?;
     let options = default_service_options(config)?;
     start_guarded(config, &options, &operation)
+        .map_err(|error| ClientError::NotDiscovered(error.to_string()))?;
+    match probe(config) {
+        DiscoveryHealth::Live { record, .. } => open(config, record),
+        other => Err(other.into_client_error()),
+    }
+}
+
+/// Connect within an already-owned operation; never acquire recursively.
+pub(crate) fn connect_guarded(
+    config: &HieronymusConfig,
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<DaemonClient, ClientError> {
+    operation.check(config)?;
+    if let DiscoveryHealth::Live { record, .. } =
+        checked_probe(config).map_err(|error| ClientError::NotDiscovered(error.to_string()))?
+    {
+        return open(config, record);
+    }
+    start_guarded(config, options, operation)
         .map_err(|error| ClientError::NotDiscovered(error.to_string()))?;
     match probe(config) {
         DiscoveryHealth::Live { record, .. } => open(config, record),
@@ -919,6 +946,43 @@ mod tests {
             instance_id: instance_id.to_string(),
             started_at: "2026-09-04T00:00:00+00:00".to_string(),
         }
+    }
+
+    #[test]
+    fn control_post_preserves_supplied_total_budget_with_trickling_response() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut bytes = [0; 1024];
+            assert!(stream.read(&mut bytes).unwrap() > 0);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                .unwrap();
+            for _ in 0..100 {
+                if stream.write_all(b" ").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let client = DaemonClient {
+            address,
+            bearer: Secret::new("test-token".into()),
+            record: seeded_record(address.port(), &"ab".repeat(16)),
+        };
+        let began = Instant::now();
+        assert!(
+            client
+                .post_with_timeout("/auth/launch-grant", &json!({}), Duration::from_millis(60))
+                .is_err()
+        );
+        assert!(began.elapsed() < Duration::from_millis(500));
+        server.join().unwrap();
     }
 
     #[test]

@@ -47,7 +47,7 @@ pub struct DesktopState {
     view: View,
     status_view: View,
     pending_action: Option<Action>,
-    operation_failure: Option<String>,
+    operation_failure: Option<(Action, String)>,
     awaiting_startup: bool,
     snapshot_observed_during_lifecycle: bool,
 }
@@ -99,14 +99,16 @@ impl DesktopState {
         self.consecutive_failures = 0;
         self.awaiting_startup = false;
         self.status_view = view_from_summary(summary);
+        if matches!(
+            self.operation_failure,
+            Some((Action::Start | Action::Restart, _))
+        ) {
+            self.operation_failure = None;
+        }
         self.show_status_when_unblocked();
     }
 
     fn apply_probe_timeout(&mut self) {
-        if self.operation_failure.is_some() {
-            return;
-        }
-
         let pending_lifecycle =
             matches!(self.pending_action, Some(Action::Start | Action::Restart));
         if self.awaiting_startup || pending_lifecycle {
@@ -145,9 +147,7 @@ impl DesktopState {
                 exit_requested: false,
             };
         }
-        if self.pending_action.is_none() {
-            self.view = self.status_view.clone();
-        }
+        self.show_status_when_unblocked();
     }
 
     fn apply_startup_deadline_expired(&mut self) {
@@ -159,11 +159,12 @@ impl DesktopState {
 
         self.awaiting_startup = false;
         self.snapshot_observed_during_lifecycle = false;
+        self.consecutive_failures = MAX_CONSECUTIVE_FAILURES;
         self.status_view = View {
             accent: Accent::Red,
             reason: "Server unavailable".to_owned(),
             busy: false,
-            can_start: true,
+            can_start: false,
             exit_requested: false,
         };
         self.view = self.status_view.clone();
@@ -184,10 +185,9 @@ impl DesktopState {
             can_start: false,
             exit_requested: false,
         };
-        if self.operation_failure.is_none() {
-            self.view = self.status_view.clone();
-            self.view.busy = self.pending_action.is_some();
-        }
+        self.view = self.status_view.clone();
+        self.view.busy = self.pending_action.is_some();
+        self.show_status_when_unblocked();
     }
 
     fn apply_stopped(&mut self) {
@@ -216,10 +216,7 @@ impl DesktopState {
             exit_requested: false,
         };
 
-        if self.pending_action.is_some() || self.operation_failure.is_some() {
-            return;
-        }
-        self.view = self.status_view.clone();
+        self.show_status_when_unblocked();
     }
 
     fn begin(&mut self, action: Action) {
@@ -228,6 +225,10 @@ impl DesktopState {
         }
         self.operation_failure = None;
         self.view.exit_requested = false;
+        if !matches!(action, Action::SetAutostart(_)) {
+            // Any server-affecting action invalidates a prior absence snapshot.
+            self.status_view.can_start = false;
+        }
         if matches!(action, Action::Start | Action::Restart) {
             self.snapshot_observed_during_lifecycle = false;
         }
@@ -253,7 +254,7 @@ impl DesktopState {
         if let Some(error) = error {
             self.awaiting_startup = false;
             self.snapshot_observed_during_lifecycle = false;
-            self.operation_failure = Some(error.clone());
+            self.operation_failure = Some((action.clone(), error.clone()));
             let lifecycle_failure =
                 matches!(action, Action::Start | Action::Restart | Action::Quit);
             self.view = View {
@@ -264,7 +265,7 @@ impl DesktopState {
                 },
                 reason: error,
                 busy: false,
-                can_start: matches!(action, Action::Start | Action::Restart),
+                can_start: false,
                 exit_requested: false,
             };
             return;
@@ -301,8 +302,11 @@ impl DesktopState {
     }
 
     fn show_status_when_unblocked(&mut self) {
-        if self.pending_action.is_none() && self.operation_failure.is_none() {
+        if self.pending_action.is_none() {
             self.view = self.status_view.clone();
+            if let Some((_, reason)) = &self.operation_failure {
+                self.view.reason = reason.clone();
+            }
         }
     }
 }

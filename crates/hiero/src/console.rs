@@ -7,7 +7,7 @@
 //!
 //! Flow (ADR 0012 as amended 2026-09-03, ADR 0013):
 //!
-//! 1. [`lifecycle::connect`] discovers (and, if absent, starts) the local
+//! 1. The shared guarded lifecycle connection discovers (and, if absent, starts) the local
 //!    daemon and yields a bearer-authenticated `lifecycle::DaemonClient`.
 //! 2. `POST /auth/launch-grant` mints a 60-second, single-use grant.
 //! 3. The platform opener (`xdg-open`; Linux is the only cutover target) is
@@ -26,6 +26,7 @@
 //! fragment or the grant.
 
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
@@ -60,7 +61,23 @@ pub fn launch(config: &HieronymusConfig, page: &str) -> Result<(), String> {
         ));
     }
 
-    let client = lifecycle::connect(config, true)
+    let options = lifecycle::default_service_options(config)
+        .map_err(|_| "Could not locate service configuration")?;
+    launch_with_options(config, &options, page)
+}
+
+/// Shared serialized console operation, including optional start and opener.
+pub fn launch_with_options(
+    config: &HieronymusConfig,
+    options: &crate::service::ServiceOptions,
+    page: &str,
+) -> Result<(), String> {
+    if !PAGES.contains(&page) {
+        return Err("Unknown console page".into());
+    }
+    let operation = lifecycle::operation::LifecycleOperation::acquire(config)
+        .map_err(|_| "Another lifecycle operation is in progress or the root is unavailable")?;
+    let client = lifecycle::connect_guarded(config, options, &operation)
         .map_err(|error| error.to_string())?
         .with_local_credential(config, crate::daemon::discovery::LocalCredential::Console)
         .map_err(|error| error.to_string())?;
@@ -79,8 +96,7 @@ pub fn launch(config: &HieronymusConfig, page: &str) -> Result<(), String> {
     // opener. Never logged, never printed.
     let url = format!("{origin}/{page}#launch_grant={grant}");
 
-    // The cause from `open_in_browser` is secret-free (an opener name plus a
-    // spawn error or exit status), so it is safe to surface. Manually browsing
+    // The cause from `open_in_browser` is a fixed secret-free diagnostic, so it is safe to surface. Manually browsing
     // to the page is not an option — the console cannot sign in on its own, so
     // the only recovery is to re-run this command where a browser can open.
     open_in_browser(&url).map_err(|cause| {
@@ -93,31 +109,77 @@ pub fn launch(config: &HieronymusConfig, page: &str) -> Result<(), String> {
 
 /// Invoke the platform opener with `url`, discarding its streams so the URL
 /// (which carries the grant) cannot be echoed anywhere. Returns `Err` when the
-/// opener cannot be spawned or exits non-zero.
+/// opener cannot be spawned, exits non-zero, or exceeds its ten-second budget.
 fn open_in_browser(url: &str) -> Result<(), String> {
     let opener = std::env::var(OPENER_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_OPENER.to_string());
 
-    let status = Command::new(&opener)
+    open_with_command(&opener, url, Duration::from_secs(10))
+}
+
+fn open_with_command(opener: &str, url: &str, timeout: Duration) -> Result<(), String> {
+    let mut child = Command::new(opener)
         .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .map_err(|error| format!("{opener}: {error}"))?;
+        .spawn()
+        .map_err(|_| "browser opener could not be started".to_owned())?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("browser opener timed out or could not be observed".into());
+            }
+        }
+    };
 
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{opener} exited with {status}"))
+        Err("browser opener failed".into())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn browser_timeout_is_bounded_reaped_and_secret_free() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let opener = directory.path().join("opener");
+        let pid_file = directory.path().join("pid");
+        std::fs::write(
+            &opener,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec sleep 30\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let started = Instant::now();
+        let error = open_with_command(
+            opener.to_str().unwrap(),
+            "http://127.0.0.1/admin#launch_grant=SECRET",
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(!error.contains("SECRET"));
+        assert!(!error.contains("http"));
+        let pid = std::fs::read_to_string(pid_file).unwrap();
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
 
     #[test]
     fn unknown_pages_are_rejected_before_any_daemon_contact() {

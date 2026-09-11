@@ -76,18 +76,53 @@ fn systemctl_on_path() -> bool {
 }
 
 fn run_systemctl(arguments: &[&str]) -> Result<(), ServiceError> {
-    let output = Command::new("systemctl")
+    run_manager(
+        Path::new("systemctl"),
+        arguments,
+        std::time::Duration::from_secs(30),
+    )
+}
+
+// Mutation commands do not consume stdout. Bound the client process without
+// killing a daemon or claiming a timed-out manager job was cancelled.
+fn run_manager(
+    executable: &Path,
+    arguments: &[&str],
+    timeout: std::time::Duration,
+) -> Result<(), ServiceError> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut child = Command::new(executable)
         .arg("--user")
         .args(arguments)
-        .output()
-        .map_err(|error| ServiceError::Manager(format!("could not run systemctl: {error}")))?;
-    if output.status.success() {
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            ServiceError::Manager("could not run systemctl; check the user service manager".into())
+        })?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ServiceError::Manager(format!(
+                    "systemctl --user {} timed out or could not be observed; inspect the user service before retrying",
+                    arguments.join(" ")
+                )));
+            }
+        }
+    };
+    if status.success() {
         return Ok(());
     }
     Err(ServiceError::Manager(format!(
-        "systemctl --user {} failed: {}",
-        arguments.join(" "),
-        String::from_utf8_lossy(&output.stderr).trim()
+        "systemctl --user {} failed; inspect the user service manager",
+        arguments.join(" ")
     )))
 }
 
@@ -587,6 +622,35 @@ mod tests {
             binary: temp.path().join("bin/hiero"),
             use_manager: false,
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn manager_timeout_is_bounded_reaped_and_output_is_not_a_diagnostic() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("manager");
+        let pid_file = root.path().join("pid");
+        std::fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nprintf 'SECRET' >&2\nexec sleep 30\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let began = std::time::Instant::now();
+        let error = run_manager(
+            &executable,
+            &["start", SERVICE_UNIT_NAME],
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(began.elapsed() < std::time::Duration::from_secs(1));
+        assert!(!error.to_string().contains("SECRET"));
+        let pid = std::fs::read_to_string(pid_file).unwrap();
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
     }
 
     #[test]

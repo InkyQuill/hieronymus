@@ -4,7 +4,7 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -87,6 +87,69 @@ pub fn request_json_within(
 ) -> Result<(u16, Vec<u8>), ClientError> {
     request_cancellable(method, address, path, headers, body, timeout, None)
 }
+/// An absolute wall-clock budget covering connection and every read/write,
+/// including a peer that keeps trickling bytes before each idle timeout.
+pub fn request_json_until(
+    method: &str,
+    address: SocketAddr,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    deadline: Instant,
+) -> Result<(u16, Vec<u8>), ClientError> {
+    request_transport(
+        method,
+        address,
+        path,
+        headers,
+        body,
+        TransportBudget {
+            timeout: deadline.saturating_duration_since(Instant::now()),
+            deadline: Some(deadline),
+        },
+        None,
+    )
+}
+
+struct TransportBudget {
+    timeout: Duration,
+    deadline: Option<Instant>,
+}
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Option<Instant>,
+}
+fn remaining(deadline: Instant) -> std::io::Result<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "local request deadline expired",
+        ))
+    } else {
+        Ok(remaining)
+    }
+}
+impl Read for DeadlineStream {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.stream.set_read_timeout(Some(remaining(deadline)?))?;
+        }
+        self.stream.read(bytes)
+    }
+}
+impl Write for DeadlineStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.stream.set_write_timeout(Some(remaining(deadline)?))?;
+        }
+        self.stream.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
+
 pub(crate) fn request_cancellable(
     method: &str,
     address: SocketAddr,
@@ -94,6 +157,28 @@ pub(crate) fn request_cancellable(
     headers: &[(String, String)],
     body: &[u8],
     timeout: Duration,
+    cancellation: Option<&Cancellation>,
+) -> Result<(u16, Vec<u8>), ClientError> {
+    request_transport(
+        method,
+        address,
+        path,
+        headers,
+        body,
+        TransportBudget {
+            timeout,
+            deadline: None,
+        },
+        cancellation,
+    )
+}
+fn request_transport(
+    method: &str,
+    address: SocketAddr,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    budget: TransportBudget,
     cancellation: Option<&Cancellation>,
 ) -> Result<(u16, Vec<u8>), ClientError> {
     // The method goes into the request line: refuse anything that is not a
@@ -117,8 +202,9 @@ pub(crate) fn request_cancellable(
             return Err(ClientError::Protocol("header value contains CR/LF"));
         }
     }
+    let timeout = budget.deadline.map_or(Ok(budget.timeout), remaining)?;
     let connect_timeout = CONNECT_TIMEOUT.min(timeout);
-    let mut stream =
+    let stream =
         TcpStream::connect_timeout(&address, connect_timeout).map_err(ClientError::Connect)?;
     if let Some(cancellation) = cancellation {
         let mut socket = cancellation.stream.lock().unwrap();
@@ -129,6 +215,10 @@ pub(crate) fn request_cancellable(
     }
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
+    let mut stream = DeadlineStream {
+        stream,
+        deadline: budget.deadline,
+    };
 
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {}\r\n", address);
     for (name, value) in headers {
@@ -204,6 +294,41 @@ pub(crate) fn request_cancellable(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absolute_deadline_bounds_trickling_response() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut request = [0; 1024];
+            assert!(socket.read(&mut request).unwrap() > 0);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                .unwrap();
+            for _ in 0..100 {
+                if socket.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let began = std::time::Instant::now();
+        let result = request_json_until(
+            "GET",
+            address,
+            "/status",
+            &[],
+            b"",
+            began + Duration::from_millis(60),
+        );
+        assert!(result.is_err());
+        assert!(began.elapsed() < Duration::from_millis(500));
+        server.join().unwrap();
+    }
 
     #[test]
     fn cancellation_closes_the_inflight_socket() {
