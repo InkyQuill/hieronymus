@@ -23,6 +23,25 @@ struct Assignment {
     configuration: Option<ProviderProfile>,
 }
 
+impl Assignment {
+    /// Capabilities and display names are presentation metadata. Only fields
+    /// used to construct the actual client can invalidate an observation.
+    fn same_client(&self, other: &Self) -> bool {
+        self.profile == other.profile
+            && self.model == other.model
+            && match (&self.configuration, &other.configuration) {
+                (Some(left), Some(right)) => {
+                    left.provider_type() == right.provider_type()
+                        && left.url() == right.url()
+                        && left.key() == right.key()
+                        && left.timeout_seconds() == right.timeout_seconds()
+                }
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
 struct Entry {
     sequence: u64,
     outcome: Option<ProviderOutcome>,
@@ -223,34 +242,34 @@ impl RuntimeReadiness {
                 {
                     continue;
                 }
-                let same_assignment = |other: &&Assignment| {
-                    other.profile == assignment.profile && other.model == assignment.model
-                };
-                let previous: Vec<_> = state.assignments.iter().filter(same_assignment).collect();
-                let current: Vec<_> = assignments.iter().filter(same_assignment).collect();
-                let previous_key = if previous == current {
-                    state
-                        .entries
-                        .keys()
-                        .find(|key| {
-                            key.profile == assignment.profile && key.model == assignment.model
-                        })
-                        .cloned()
-                } else {
-                    None
-                };
+                let previous_key = state
+                    .assignments
+                    .iter()
+                    .any(|previous| previous.same_client(assignment))
+                    .then(|| {
+                        state
+                            .entries
+                            .keys()
+                            .find(|key| {
+                                key.profile == assignment.profile && key.model == assignment.model
+                            })
+                            .cloned()
+                    })
+                    .flatten();
                 let key = previous_key.unwrap_or_else(|| ProviderKey {
                     profile: assignment.profile.clone(),
                     model: assignment.model.clone(),
                     revision: state.generation,
                 });
-                next.entry(key.clone()).or_insert_with(|| {
-                    state.entries.remove(&key).unwrap_or_else(|| {
-                        let mut entry = empty_entry();
-                        entry.capabilities = current.iter().map(|a| a.capability.clone()).collect();
-                        entry
+                let mut entry = state.entries.remove(&key).unwrap_or_else(empty_entry);
+                entry.capabilities = assignments
+                    .iter()
+                    .filter(|current| {
+                        current.profile == assignment.profile && current.model == assignment.model
                     })
-                });
+                    .map(|current| current.capability.clone())
+                    .collect();
+                next.insert(key, entry);
             }
             state.entries = next;
             state.assignments = assignments;

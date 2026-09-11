@@ -395,3 +395,151 @@ fn editing_another_active_provider_preserves_failure_and_rotated_keys_reject_old
     runtime.completed(&old, 4, ProviderOutcome::Success);
     assert_eq!(runtime.snapshot().level, ReadinessLevel::Degraded);
 }
+
+#[test]
+fn changing_shared_capabilities_preserves_failure_revision_and_sequence() {
+    let (_root, config, runtime, _catalog) = configured();
+    let mut dream = hieronymus::dream_config::load_dream_config(&config).unwrap();
+    let knowledge = dream.workflows.get_mut("knowledge_crystals").unwrap();
+    knowledge.enabled = true;
+    knowledge.provider = "primary".into();
+    knowledge.model = "model".into();
+    save_dream_config(&config, &dream).unwrap();
+    let initial = runtime.snapshot().providers[0].clone();
+    runtime.completed(&key(initial.revision), 10, ProviderOutcome::Unavailable);
+    let observed_at = runtime.snapshot().providers[0].observed_at.clone();
+
+    // Removing one capability must retain the failure of the still-used client.
+    dream
+        .workflows
+        .get_mut("knowledge_crystals")
+        .unwrap()
+        .enabled = false;
+    save_dream_config(&config, &dream).unwrap();
+    let remaining = runtime.snapshot();
+    assert_eq!(remaining.level, ReadinessLevel::Degraded);
+    assert_eq!(remaining.providers[0].condition, ProviderCondition::Failed);
+    assert_eq!(remaining.providers[0].revision, initial.revision);
+    assert_eq!(remaining.providers[0].capabilities, ["coverage_audit"]);
+    assert_eq!(remaining.providers[0].observed_at, observed_at);
+
+    // Re-adding an assignment updates labels, never observation ordering.
+    dream
+        .workflows
+        .get_mut("knowledge_crystals")
+        .unwrap()
+        .enabled = true;
+    save_dream_config(&config, &dream).unwrap();
+    runtime.completed(&key(initial.revision), 9, ProviderOutcome::Success);
+    let shared = runtime.snapshot();
+    assert_eq!(shared.level, ReadinessLevel::Degraded);
+    assert_eq!(shared.providers[0].condition, ProviderCondition::Failed);
+    assert_eq!(shared.providers[0].revision, initial.revision);
+    assert_eq!(
+        shared.providers[0].capabilities,
+        ["knowledge_crystals", "coverage_audit"]
+    );
+    assert_eq!(shared.providers[0].observed_at, observed_at);
+    runtime.completed(&key(initial.revision), 11, ProviderOutcome::Success);
+    assert_eq!(
+        runtime.snapshot().providers[0].condition,
+        ProviderCondition::Healthy
+    );
+}
+
+#[test]
+fn adding_a_shared_capability_preserves_existing_failure() {
+    let (_root, config, runtime, _catalog) = configured();
+    let initial = runtime.snapshot().providers[0].clone();
+    runtime.completed(&key(initial.revision), 10, ProviderOutcome::Unavailable);
+    let mut dream = hieronymus::dream_config::load_dream_config(&config).unwrap();
+    let knowledge = dream.workflows.get_mut("knowledge_crystals").unwrap();
+    knowledge.enabled = true;
+    knowledge.provider = "primary".into();
+    knowledge.model = "model".into();
+    save_dream_config(&config, &dream).unwrap();
+    let shared = runtime.snapshot();
+    assert_eq!(shared.level, ReadinessLevel::Degraded);
+    assert_eq!(shared.providers[0].condition, ProviderCondition::Failed);
+    assert_eq!(shared.providers[0].revision, initial.revision);
+    assert_eq!(
+        shared.providers[0].capabilities,
+        ["knowledge_crystals", "coverage_audit"]
+    );
+}
+
+#[test]
+fn display_only_profile_rename_preserves_existing_failure() {
+    let (_root, config, runtime, mut catalog) = configured();
+    let initial = runtime.snapshot().providers[0].clone();
+    runtime.completed(&key(initial.revision), 10, ProviderOutcome::Unavailable);
+    let observed_at = runtime.snapshot().providers[0].observed_at.clone();
+    catalog.providers.insert(
+        "primary".into(),
+        ProviderProfile::new(
+            "Renamed display label",
+            "openai",
+            "https://example.invalid/v1",
+            "SECRET-KEY",
+            3.0,
+        ),
+    );
+    save_provider_catalog(&config, &catalog).unwrap();
+    runtime.completed(&key(initial.revision), 9, ProviderOutcome::Success);
+    let renamed = runtime.snapshot();
+    assert_eq!(renamed.level, ReadinessLevel::Degraded);
+    assert_eq!(renamed.providers[0].condition, ProviderCondition::Failed);
+    assert_eq!(renamed.providers[0].revision, initial.revision);
+    assert_eq!(renamed.providers[0].observed_at, observed_at);
+}
+
+#[test]
+fn effective_client_changes_reset_and_reject_old_completions() {
+    for change in ["key", "model", "endpoint", "type", "timeout"] {
+        let (_root, config, runtime, mut catalog) = configured();
+        let initial = runtime.snapshot().providers[0].clone();
+        let old = key(initial.revision);
+        runtime.completed(&old, 10, ProviderOutcome::Unavailable);
+        catalog.providers.insert(
+            "primary".into(),
+            ProviderProfile::new(
+                "Primary",
+                if change == "type" {
+                    "anthropic"
+                } else {
+                    "openai"
+                },
+                if change == "endpoint" {
+                    "https://changed.invalid/v1"
+                } else {
+                    "https://example.invalid/v1"
+                },
+                if change == "key" {
+                    "REPLACEMENT-KEY"
+                } else {
+                    "SECRET-KEY"
+                },
+                if change == "timeout" { 4.0 } else { 3.0 },
+            ),
+        );
+        if change == "model" {
+            catalog.defaults.model = "replacement-model".into();
+        }
+        save_provider_catalog(&config, &catalog).unwrap();
+        let after = runtime.snapshot().providers[0].clone();
+        assert_eq!(after.condition, ProviderCondition::Untested, "{change}");
+        assert!(after.revision > initial.revision, "{change}");
+        let current = ProviderKey {
+            profile: after.provider,
+            model: after.model,
+            revision: after.revision,
+        };
+        runtime.completed(&current, 11, ProviderOutcome::Authentication);
+        runtime.completed(&old, 12, ProviderOutcome::Success);
+        assert_eq!(
+            runtime.snapshot().providers[0].condition,
+            ProviderCondition::Failed,
+            "{change}"
+        );
+    }
+}
