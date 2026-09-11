@@ -107,7 +107,7 @@ fn missing_record_during_explicit_start_remains_transitional() {
 }
 
 #[test]
-fn successful_start_keeps_missing_record_transitional_until_probe_deadline() {
+fn successful_start_keeps_missing_record_transitional_until_deadline_expires() {
     let mut state = DesktopState::new();
     state.apply(Event::Begin(Action::Start));
     state.apply(Event::Finished {
@@ -118,10 +118,45 @@ fn successful_start_keeps_missing_record_transitional_until_probe_deadline() {
     assert_eq!(state.apply(Event::Stopped).accent, Accent::Amber);
     assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
     assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
-    let view = state.apply(Event::ProbeTimeout);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
+    assert_eq!(state.apply(Event::Stopped).accent, Accent::Amber);
+
+    let view = state.apply(Event::StartupDeadlineExpired);
     assert_eq!(view.accent, Accent::Red);
     assert_eq!(view.reason, "Server unavailable");
     assert!(view.can_start);
+}
+
+#[test]
+fn ready_snapshot_during_start_survives_successful_completion() {
+    let mut state = DesktopState::new();
+    state.apply(Event::Begin(Action::Start));
+    state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+
+    let view = state.apply(Event::Finished {
+        action: Action::Start,
+        error: None,
+    });
+
+    assert_eq!(view.accent, Accent::Green);
+    assert_eq!(view.reason, "Ready");
+    assert!(!view.busy);
+}
+
+#[test]
+fn ready_snapshot_during_restart_survives_successful_completion() {
+    let mut state = DesktopState::new();
+    state.apply(Event::Begin(Action::Restart));
+    state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+
+    let view = state.apply(Event::Finished {
+        action: Action::Restart,
+        error: None,
+    });
+
+    assert_eq!(view.accent, Accent::Green);
+    assert_eq!(view.reason, "Ready");
+    assert!(!view.busy);
 }
 
 #[test]

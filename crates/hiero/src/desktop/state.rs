@@ -31,6 +31,7 @@ pub struct View {
 pub enum Event {
     Snapshot(ReadinessSummary),
     ProbeTimeout,
+    StartupDeadlineExpired,
     InvalidIdentity,
     Stopped,
     Begin(Action),
@@ -48,6 +49,7 @@ pub struct DesktopState {
     pending_action: Option<Action>,
     operation_failure: Option<String>,
     awaiting_startup: bool,
+    snapshot_observed_during_lifecycle: bool,
 }
 
 impl Default for DesktopState {
@@ -73,6 +75,7 @@ impl DesktopState {
             pending_action: None,
             operation_failure: None,
             awaiting_startup: false,
+            snapshot_observed_during_lifecycle: false,
         }
     }
 
@@ -80,6 +83,7 @@ impl DesktopState {
         match event {
             Event::Snapshot(summary) => self.apply_snapshot(summary),
             Event::ProbeTimeout => self.apply_probe_timeout(),
+            Event::StartupDeadlineExpired => self.apply_startup_deadline_expired(),
             Event::InvalidIdentity => self.apply_invalid_identity(),
             Event::Stopped => self.apply_stopped(),
             Event::Begin(action) => self.begin(action),
@@ -89,6 +93,9 @@ impl DesktopState {
     }
 
     fn apply_snapshot(&mut self, summary: ReadinessSummary) {
+        if matches!(self.pending_action, Some(Action::Start | Action::Restart)) {
+            self.snapshot_observed_during_lifecycle = true;
+        }
         self.consecutive_failures = 0;
         self.awaiting_startup = false;
         self.status_view = view_from_summary(summary);
@@ -96,23 +103,31 @@ impl DesktopState {
     }
 
     fn apply_probe_timeout(&mut self) {
+        if self.pending_action.is_some() || self.operation_failure.is_some() {
+            self.snapshot_observed_during_lifecycle = false;
+            return;
+        }
+
+        if self.awaiting_startup {
+            self.view = View {
+                accent: Accent::Amber,
+                reason: "Starting".to_owned(),
+                busy: false,
+                can_start: false,
+                exit_requested: false,
+            };
+            return;
+        }
+
         self.consecutive_failures = self
             .consecutive_failures
             .saturating_add(1)
             .min(MAX_CONSECUTIVE_FAILURES);
 
-        if self.pending_action.is_some() || self.operation_failure.is_some() {
-            return;
-        }
-
         if self.consecutive_failures < MAX_CONSECUTIVE_FAILURES {
             self.status_view = View {
                 accent: Accent::Amber,
-                reason: if self.awaiting_startup {
-                    "Starting".to_owned()
-                } else {
-                    "Checking".to_owned()
-                },
+                reason: "Checking".to_owned(),
                 busy: false,
                 can_start: false,
                 exit_requested: false,
@@ -122,17 +137,40 @@ impl DesktopState {
                 accent: Accent::Red,
                 reason: "Server unavailable".to_owned(),
                 busy: false,
-                can_start: self.awaiting_startup,
+                can_start: false,
                 exit_requested: false,
             };
-            self.awaiting_startup = false;
         }
         self.view = self.status_view.clone();
+    }
+
+    fn apply_startup_deadline_expired(&mut self) {
+        let pending_lifecycle =
+            matches!(self.pending_action, Some(Action::Start | Action::Restart));
+        if !self.awaiting_startup && !pending_lifecycle {
+            return;
+        }
+
+        self.awaiting_startup = false;
+        self.snapshot_observed_during_lifecycle = false;
+        self.status_view = View {
+            accent: Accent::Red,
+            reason: "Server unavailable".to_owned(),
+            busy: false,
+            can_start: true,
+            exit_requested: false,
+        };
+        self.view = self.status_view.clone();
+        if pending_lifecycle {
+            self.view.busy = true;
+            self.view.can_start = false;
+        }
     }
 
     fn apply_invalid_identity(&mut self) {
         self.consecutive_failures = MAX_CONSECUTIVE_FAILURES;
         self.awaiting_startup = false;
+        self.snapshot_observed_during_lifecycle = false;
         self.status_view = View {
             accent: Accent::Red,
             reason: "Invalid server identity".to_owned(),
@@ -150,6 +188,7 @@ impl DesktopState {
         let starting = self.awaiting_startup
             || matches!(self.pending_action, Some(Action::Start | Action::Restart));
         if starting {
+            self.snapshot_observed_during_lifecycle = false;
             if self.pending_action.is_none() && self.operation_failure.is_none() {
                 self.view = View {
                     accent: Accent::Amber,
@@ -183,6 +222,9 @@ impl DesktopState {
         }
         self.operation_failure = None;
         self.view.exit_requested = false;
+        if matches!(action, Action::Start | Action::Restart) {
+            self.snapshot_observed_during_lifecycle = false;
+        }
         self.pending_action = Some(action.clone());
         self.view = View {
             accent: match action {
@@ -204,6 +246,7 @@ impl DesktopState {
 
         if let Some(error) = error {
             self.awaiting_startup = false;
+            self.snapshot_observed_during_lifecycle = false;
             self.operation_failure = Some(error.clone());
             let lifecycle_failure =
                 matches!(action, Action::Start | Action::Restart | Action::Quit);
@@ -224,19 +267,26 @@ impl DesktopState {
         match action {
             Action::Quit => {
                 self.awaiting_startup = false;
+                self.snapshot_observed_during_lifecycle = false;
                 self.view.busy = false;
                 self.view.exit_requested = true;
             }
             Action::Start | Action::Restart => {
                 self.consecutive_failures = 0;
-                self.awaiting_startup = true;
-                self.view = View {
-                    accent: Accent::Amber,
-                    reason: "Starting".to_owned(),
-                    busy: false,
-                    can_start: false,
-                    exit_requested: false,
-                };
+                if self.snapshot_observed_during_lifecycle {
+                    self.snapshot_observed_during_lifecycle = false;
+                    self.awaiting_startup = false;
+                    self.view = self.status_view.clone();
+                } else {
+                    self.awaiting_startup = true;
+                    self.view = View {
+                        accent: Accent::Amber,
+                        reason: "Starting".to_owned(),
+                        busy: false,
+                        can_start: false,
+                        exit_requested: false,
+                    };
+                }
             }
             Action::OpenConsole | Action::SetAutostart(_) => {
                 self.view = self.status_view.clone();
