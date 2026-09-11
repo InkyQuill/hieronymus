@@ -136,6 +136,11 @@ pub fn render_unit(binary: &Path, data_root: &Path) -> Result<String, ServiceErr
         .to_str()
         .is_some_and(|p| p.contains(['\'', '"', '\\', '$']))
     {
+        // GNU env consumes NAME=VALUE operands even after --, including
+        // absolute-looking names. Such a path cannot be the dispatched CLI.
+        if binary.to_str().is_some_and(|path| path.contains('=')) {
+            return Err(ServiceError::Invalid("service executable paths requiring the env dispatcher cannot contain an equal sign".into()));
+        }
         if !Path::new("/usr/bin/env").is_file() {
             return Err(ServiceError::Invalid("special executable paths require /usr/bin/env; install coreutils or choose another application directory".into()));
         }
@@ -198,6 +203,12 @@ pub fn parse_unit(text: &str) -> Result<UnitDefinition, String> {
     let tokens = tokenize(&line["ExecStart=".len()..])?;
     let arguments = match tokens.as_slice() {
         [dispatcher, separator, rest @ ..] if dispatcher == "/usr/bin/env" && separator == "--" => {
+            if rest.first().is_some_and(|binary| binary.contains('=')) {
+                return Err(
+                    "environment assignments are not executable identities in a unit dispatcher"
+                        .into(),
+                );
+            }
             rest
         }
         [dispatcher, ..] if dispatcher == "/usr/bin/env" => {

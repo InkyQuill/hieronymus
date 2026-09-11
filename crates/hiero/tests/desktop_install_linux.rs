@@ -494,3 +494,30 @@ fn interrupted_install_preserves_explicit_opt_out_and_no_activate_skips_default_
         "repair must preserve explicit opt-out"
     );
 }
+
+#[test]
+fn env_dispatcher_rejects_absolute_assignment_operands() {
+    use hiero::service::parse_unit;
+    assert!(
+        parse_unit("ExecStart=\"/usr/bin/env\" -- \"/a=b\" daemon --data-root \"/root\"").is_err()
+    );
+}
+
+#[test]
+fn env_dispatcher_renderer_rejects_assignments_without_changing_direct_units() {
+    use hiero::service::{parse_unit, render_unit};
+    use std::path::Path;
+    for binary in ["/a=$b/hiero", "/a='b/hiero", "/a=\"b/hiero", "/a=\\b/hiero"] {
+        assert!(
+            render_unit(Path::new(binary), Path::new("/root")).is_err(),
+            "{binary}"
+        );
+    }
+    let binary = Path::new("/a=b/hiero");
+    let root = Path::new("/root=x");
+    let unit = render_unit(binary, root).unwrap();
+    assert!(unit.contains("ExecStart=\"/a=b/hiero\" daemon"));
+    let parsed = parse_unit(&unit).unwrap();
+    assert_eq!(parsed.binary, binary);
+    assert_eq!(parsed.data_root, root);
+}
