@@ -205,6 +205,17 @@ mod managed {
             std::fs::write(&script, r##"#!/bin/sh
 printf '%s\n' "$*" >> "$HIERO_TEST_ROOT/manager.log"
 case "$2" in
+  enable)
+    if test -n "$HIERO_TEST_PAUSE_INSTALL"; then
+      touch "$HIERO_TEST_ROOT/install-entered"
+      n=0
+      while test ! -e "$HIERO_TEST_ROOT/continue"; do
+        n=$((n+1))
+        test "$n" -lt 1000 || exit 24
+        sleep 0.02
+      done
+    fi
+    ;;
   start)
     test -z "$HIERO_TEST_START_FAIL" || exit 23
     if test -n "$HIERO_TEST_PAUSE_START"; then
@@ -326,6 +337,160 @@ esac
             fixture.options.unit_path().exists(),
             "quit preserves future login registration"
         );
+    }
+
+    fn assert_install_refuses_unverified_owner(unreachable: bool) {
+        use hiero::daemon::discovery;
+        let fixture = Fixture::new();
+        std::fs::remove_file(fixture.options.unit_path()).unwrap();
+        if unreachable {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            discovery::write_token(
+                &fixture.config,
+                &discovery::generate_bearer_token().unwrap(),
+            )
+            .unwrap();
+            discovery::write_discovery(
+                &fixture.config,
+                &discovery::DiscoveryRecord {
+                    discovery_version: discovery::DISCOVERY_VERSION,
+                    protocol_version: hiero::daemon::registry::PROTOCOL_REVISION.into(),
+                    host: "127.0.0.1".into(),
+                    port,
+                    pid: std::process::id(),
+                    instance_id: "ab".repeat(16),
+                    started_at: "2026-09-11T00:00:00+00:00".into(),
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                hiero::lifecycle::probe(&fixture.config),
+                hiero::lifecycle::DiscoveryHealth::Unreachable { .. }
+            ));
+        }
+        let owner = RootOwnership::acquire(&fixture.config, "unverifiable-daemon").unwrap();
+        let install = || {
+            fixture
+                .command("service")
+                .arg("install")
+                .arg("--binary")
+                .arg(&fixture.options.binary)
+                .output()
+                .unwrap()
+        };
+        let blocked = install();
+        assert!(
+            !blocked.status.success(),
+            "installation must refuse an unverifiable owner"
+        );
+        assert!(String::from_utf8_lossy(&blocked.stderr).contains("owns this data root"));
+        assert!(
+            !fixture.options.unit_path().exists(),
+            "refusal must precede unit writes"
+        );
+        assert!(
+            fixture.manager_calls().is_empty(),
+            "refusal must precede reload/enable"
+        );
+        drop(owner);
+        let permitted = install();
+        assert!(
+            permitted.status.success(),
+            "{}",
+            String::from_utf8_lossy(&permitted.stderr)
+        );
+        assert!(fixture.options.unit_path().exists());
+        assert_eq!(
+            fixture.manager_calls(),
+            ["--user daemon-reload", "--user enable hieronymus.service"]
+        );
+    }
+
+    #[test]
+    fn install_refuses_owner_with_missing_discovery_then_succeeds_after_release() {
+        assert_install_refuses_unverified_owner(false);
+    }
+
+    #[test]
+    fn install_refuses_owner_with_unreachable_discovery_then_succeeds_after_release() {
+        assert_install_refuses_unverified_owner(true);
+    }
+
+    fn assert_installation_retains_owner(start: bool) {
+        let fixture = Fixture::new();
+        std::fs::remove_file(fixture.options.unit_path()).unwrap();
+        let mut command = fixture.command(if start { "start" } else { "service" });
+        if !start {
+            command
+                .arg("install")
+                .arg("--binary")
+                .arg(&fixture.options.binary);
+        }
+        let child = command
+            .env("HIERO_TEST_PAUSE_INSTALL", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        fixture.wait_for(|| fixture.root.path().join("install-entered").exists());
+        let competing = RootOwnership::acquire(&fixture.config, "competing-daemon");
+        let blocked =
+            matches!(&competing, Err(error) if error.kind() == std::io::ErrorKind::WouldBlock);
+        drop(competing);
+        std::fs::write(fixture.root.path().join("continue"), b"").unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            blocked,
+            "offline ownership must remain held through manager enable"
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(hiero::lifecycle::probe(&fixture.config).is_live(), start);
+    }
+
+    #[test]
+    fn service_installation_holds_owner_through_manager_enable() {
+        assert_installation_retains_owner(false);
+    }
+
+    #[test]
+    fn startup_installation_holds_owner_then_releases_it_before_start() {
+        assert_installation_retains_owner(true);
+    }
+
+    #[test]
+    fn install_accepts_authenticated_live_owner_without_reacquiring_it() {
+        let fixture = Fixture::new();
+        let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
+            data_root: Some(fixture.config.data_root().to_path_buf()),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        let output = fixture
+            .command("service")
+            .arg("install")
+            .arg("--binary")
+            .arg(&fixture.options.binary)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(hiero::lifecycle::probe(&fixture.config).is_live());
+        assert!(!hiero::lifecycle::root_is_released(&fixture.config).unwrap());
+        assert_eq!(
+            fixture.manager_calls(),
+            ["--user daemon-reload", "--user enable hieronymus.service"]
+        );
+        daemon.shutdown().unwrap();
     }
 
     #[test]

@@ -14,6 +14,7 @@
 
 use crate::lifecycle::operation::LifecycleOperation;
 use hieronymus::data_root::HieronymusConfig;
+use hieronymus::ownership::RootOwnership;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -214,11 +215,22 @@ pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
     let config = HieronymusConfig::new(&options.data_root);
     let operation = LifecycleOperation::acquire(&config)?;
     operation.register_unit(options)?;
-    crate::lifecycle::checked_probe(&config)
+    let health = crate::lifecycle::checked_probe(&config)
         .map_err(|error| ServiceError::Invalid(error.to_string()))?;
+    // Missing/unreachable discovery is not proof that an owner is absent.
+    // Keep the offline claim through both unit publication and reload/enable;
+    // an authenticated live owner already supplies the required identity.
+    let _ownership = if health.is_live() {
+        None
+    } else {
+        Some(RootOwnership::acquire(&config, "service-install")?)
+    };
     install_guarded(options, &operation)
 }
 
+// The caller retains offline RootOwnership through this call, or has just
+// authenticated the live owner. Do not reacquire ownership here: startup and
+// update already hold it while installing the unit.
 pub(crate) fn install_guarded(
     options: &ServiceOptions,
     operation: &LifecycleOperation,

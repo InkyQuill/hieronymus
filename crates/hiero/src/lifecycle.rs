@@ -547,6 +547,7 @@ pub fn default_service_options(config: &HieronymusConfig) -> std::io::Result<Ser
 fn ensure_service_started(
     options: &ServiceOptions,
     operation: &LifecycleOperation,
+    ownership: RootOwnership,
 ) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     let fail = |lines: &[String], message: String| {
@@ -564,6 +565,9 @@ fn ensure_service_started(
             Err(error) => return Err(fail(&lines, error.to_string())),
         }
     }
+    // Installation must exclude an unverifiable owner, but the daemon must
+    // be allowed to take ownership when the manager starts it.
+    drop(ownership);
     match service::start_guarded(options, operation) {
         Ok(started) => lines.extend(started),
         Err(error) => return Err(fail(&lines, error.to_string())),
@@ -618,13 +622,12 @@ pub(crate) fn start_guarded(
     }
     // An unavailable endpoint does not prove ownership is free. Repair only
     // while the OS lock excludes a daemon publishing discovery concurrently.
-    {
-        let _ownership = RootOwnership::acquire(config, "lifecycle-start")?;
-        if let Some(record) = health.record() {
-            discovery::remove_discovery(config, &record.instance_id);
-        }
+    let ownership = RootOwnership::acquire(config, "lifecycle-start")?;
+    if let Some(record) = health.record() {
+        discovery::remove_discovery(config, &record.instance_id);
     }
-    let mut lines = ensure_service_started(options, operation).map_err(LifecycleError::Service)?;
+    let mut lines =
+        ensure_service_started(options, operation, ownership).map_err(LifecycleError::Service)?;
     let deadline = Instant::now() + START_WAIT;
     loop {
         let health = checked_probe(config)?;
