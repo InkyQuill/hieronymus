@@ -30,3 +30,6 @@ pub fn run_with_service_options(
 
 #[cfg(any(windows, test))]
 mod windows_pixels;
+
+#[cfg(any(windows, test))]
+mod windows_events;

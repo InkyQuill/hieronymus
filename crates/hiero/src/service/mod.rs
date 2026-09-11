@@ -15,7 +15,7 @@ pub use windows::*;
 #[cfg(windows)]
 pub(crate) use windows::{
     disable_login_guarded, install_guarded, owned_login_link, start_guarded, stop_guarded,
-    uninstall_guarded, validate_unit_root,
+    uninstall_guarded, validate_unit_root_guarded,
 };
 pub mod windows_task;
 
@@ -242,4 +242,13 @@ fn same_path(left: &Path, right: &Path) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,
     }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn validate_unit_root_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<(), ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)
 }

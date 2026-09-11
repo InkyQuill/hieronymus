@@ -1,5 +1,5 @@
 //! Main-thread Win32 presentation. A hidden TOP-LEVEL window receives broadcasts;
-//! callbacks enqueue numeric events, and the common worker owns lifecycle I/O.
+//! callbacks retain bounded flags across modal loops; the common worker owns lifecycle I/O.
 use crate::{
     menu::{MenuId, MenuProjection},
     render_icon,
@@ -27,11 +27,11 @@ use windows_sys::Win32::{
 };
 const WAKE: u32 = WM_APP + 1;
 const TRAY: u32 = WM_APP + 2;
-const NATIVE_EVENT: u32 = WM_APP + 3;
-const MENU: usize = 1;
-const APPEARANCE: usize = 2;
-const EXPLORER: usize = 3;
-const TEARDOWN: usize = 4;
+use super::windows_events::{APPEARANCE, EXPLORER, MENU, PendingEvents, TEARDOWN};
+thread_local! {
+    // One owner window per UI thread. Callbacks never borrow the presentation state.
+    static PENDING: PendingEvents = PendingEvents::default();
+}
 const KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
 static TASKBAR_CREATED: OnceLock<u32> = OnceLock::new();
 fn wide(s: &str) -> Vec<u16> {
@@ -65,8 +65,16 @@ unsafe extern "system" fn window_proc(
         }
     };
     if let Some(event) = event {
-        unsafe {
-            PostMessageW(window, NATIVE_EVENT, event, 0);
+        if PENDING.with(|pending| pending.record(event)) {
+            unsafe {
+                PostMessageW(window, WAKE, 0, 0);
+            }
+        }
+        if event == TEARDOWN {
+            // Finish menu modality so the owner can drain confirmed teardown promptly.
+            unsafe {
+                EndMenu();
+            }
         }
         return 0;
     }
@@ -400,14 +408,23 @@ pub fn run_with_service_options(
     controller.submit(Action::Start)?;
     let mut message: MSG = unsafe { zeroed() };
     let result = loop {
-        let received = unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) };
-        if received == -1 {
-            break Err("Windows tray message loop failed".into());
+        // Modal menus can consume every posted wake, so consult persistent state
+        // before blocking. Dispatch first so this message's flags are drained too.
+        if PENDING.with(|pending| pending.pending() == 0) {
+            let received = unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) };
+            if received == -1 {
+                break Err("Windows tray message loop failed".into());
+            }
+            if received == 0 {
+                break Ok(());
+            }
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
         }
-        if received == 0 {
-            break Ok(());
-        }
-        if message.message == NATIVE_EVENT && message.wParam == TEARDOWN {
+        let events = PENDING.with(PendingEvents::take);
+        if events & TEARDOWN != 0 {
             // Logoff belongs to this session; never submit Quit against another
             // session's shared root. Controller shutdown only joins its worker.
             break Ok(());
@@ -435,7 +452,7 @@ pub fn run_with_service_options(
             Accent::Amber => [229, 167, 43],
             Accent::Red => [217, 74, 72],
         };
-        if message.message == NATIVE_EVENT && message.wParam == EXPLORER {
+        if events & EXPLORER != 0 {
             // Same window/id only: tolerate repeated broadcasts without duplicates.
             unsafe {
                 Shell_NotifyIconW(NIM_DELETE, &icon.data());
@@ -456,22 +473,136 @@ pub fn run_with_service_options(
         if ambiguous {
             projected.reason.push_str(" — Taskbar theme unknown; set foreground to light or dark in desktop-settings.json");
         }
-        if message.message == NATIVE_EVENT && message.wParam == MENU {
-            if let Some(id) = show_menu(
+        if events & MENU != 0
+            && let Some(id) = show_menu(
                 window.0,
                 &MenuProjection::from_view(&projected, &settings),
                 preferences_known,
-            ) && let Some(action) = id.action(settings.autostart)
-            {
-                let _ = controller.submit(action);
-            }
-        } else {
-            unsafe {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
+            )
+            && PENDING.with(|pending| pending.pending() & TEARDOWN == 0)
+            && let Some(action) = id.action(settings.autostart)
+        {
+            let _ = controller.submit(action);
         }
     };
     controller.shutdown()?;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    const FINISH_MODAL_TEST: u32 = WM_APP + 40;
+    thread_local! {
+        static CONFIRM_SESSION: Cell<bool> = const { Cell::new(false) };
+        static INSIDE_MODAL: Cell<bool> = const { Cell::new(false) };
+        static SEEN_EVENTS: Cell<u8> = const { Cell::new(0) };
+    }
+    unsafe extern "system" fn modal_test_proc(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if message == WM_ENTERMENULOOP {
+            INSIDE_MODAL.set(true);
+            // These queued messages run through the real TrackPopupMenu dispatcher.
+            unsafe {
+                PostMessageW(window, *TASKBAR_CREATED.get().unwrap(), 0, 0);
+                PostMessageW(window, WM_THEMECHANGED, 0, 0);
+                PostMessageW(window, WM_QUERYENDSESSION, 0, 0);
+                PostMessageW(window, WM_ENDSESSION, CONFIRM_SESSION.get() as usize, 0);
+                PostMessageW(window, FINISH_MODAL_TEST, 0, 0);
+            }
+            return 0;
+        }
+        if message == WM_TIMER {
+            // Bound a broken regression's modal wait; missing fixture events fail assertions.
+            unsafe {
+                EndMenu();
+            }
+            return 0;
+        }
+        if message == FINISH_MODAL_TEST {
+            // Consuming wakes via the window procedure cannot consume the event copy.
+            unsafe {
+                SendMessageW(window, WAKE, 0, 0);
+            }
+            SEEN_EVENTS.set(PENDING.with(PendingEvents::pending));
+            unsafe {
+                EndMenu();
+            }
+            return 0;
+        }
+        unsafe { window_proc(window, message, wparam, lparam) }
+    }
+    #[test]
+    #[ignore = "requires an interactive disposable Windows desktop; opens a fixture popup"]
+    fn native_modal_menu_retains_explorer_theme_and_confirmed_session_end() {
+        unsafe {
+            TASKBAR_CREATED.get_or_init(|| RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()));
+            assert_ne!(*TASKBAR_CREATED.get().unwrap(), 0);
+            let name = wide("HieronymusModalRegressionWindow");
+            let instance = GetModuleHandleW(ptr::null());
+            let mut class: WNDCLASSW = zeroed();
+            class.lpfnWndProc = Some(modal_test_proc);
+            class.hInstance = instance;
+            class.lpszClassName = name.as_ptr();
+            assert_ne!(RegisterClassW(&class), 0);
+            let window = Window(CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                name.as_ptr(),
+                name.as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                10,
+                10,
+                200,
+                100,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                instance,
+                ptr::null(),
+            ));
+            assert!(!window.0.is_null());
+            ShowWindow(window.0, SW_SHOWNORMAL);
+            let menu = CreatePopupMenu();
+            assert!(!menu.is_null());
+            assert_ne!(
+                AppendMenuW(menu, MF_STRING, 1, wide("Disposable regression").as_ptr()),
+                0
+            );
+            for confirmed in [false, true] {
+                PENDING.with(PendingEvents::take);
+                CONFIRM_SESSION.set(confirmed);
+                INSIDE_MODAL.set(false);
+                SEEN_EVENTS.set(0);
+                SetForegroundWindow(window.0);
+                assert_ne!(SetTimer(window.0, 1, 2000, None), 0);
+                TrackPopupMenu(
+                    menu,
+                    TPM_RETURNCMD | TPM_NONOTIFY,
+                    20,
+                    20,
+                    0,
+                    window.0,
+                    ptr::null(),
+                );
+                KillTimer(window.0, 1);
+                assert!(
+                    INSIDE_MODAL.get(),
+                    "the native modal loop must actually run"
+                );
+                let expected = EXPLORER | APPEARANCE | if confirmed { TEARDOWN } else { 0 };
+                if !confirmed {
+                    assert_eq!(SEEN_EVENTS.get(), expected);
+                }
+                assert_eq!(PENDING.with(PendingEvents::take), expected);
+                assert_eq!(PENDING.with(PendingEvents::pending), 0);
+            }
+            DestroyMenu(menu);
+            drop(window);
+            assert_ne!(UnregisterClassW(name.as_ptr(), instance), 0);
+        }
+    }
 }

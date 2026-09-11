@@ -97,6 +97,15 @@ pub fn render(
 /// inserted by Task Scheduler. Unknown elements, extra actions/principals/triggers,
 /// or changes to any explicit setting are refused.
 pub fn equivalent(actual: &str, expected: &str) -> Result<(), String> {
+    if same_definition(actual, expected)? {
+        Ok(())
+    } else {
+        Err("Task belongs to another installation or its definition was modified".into())
+    }
+}
+
+/// A mismatch is a value; malformed/oversized readback remains a distinct error.
+pub(super) fn same_definition(actual: &str, expected: &str) -> Result<bool, String> {
     fn tree(text: &str) -> Result<Vec<(String, String)>, String> {
         if text.len() > 65536 {
             return Err("Task definition is oversized".into());
@@ -147,10 +156,7 @@ pub fn equivalent(actual: &str, expected: &str) -> Result<(), String> {
         values.sort();
         Ok(values)
     }
-    if tree(actual)? != tree(expected)? {
-        return Err("Task belongs to another installation or its definition was modified".into());
-    }
-    Ok(())
+    Ok(tree(actual)? == tree(expected)?)
 }
 
 /// Preserve an explicitly selected registration directory through real logon.
@@ -166,4 +172,26 @@ pub fn render_login_in_directory(
         "</Arguments>",
         &format!(" --unit-dir {}</Arguments>", xml(&argument(directory)?)),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn invalid_readback_is_an_error_while_a_changed_definition_is_a_mismatch() {
+        let valid = r#"<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Settings><Enabled>true</Enabled></Settings></Task>"#;
+        assert_eq!(same_definition(valid, valid), Ok(true));
+        assert_eq!(
+            same_definition(&valid.replace("true", "false"), valid),
+            Ok(false)
+        );
+        assert_eq!(
+            same_definition("<invalid", valid),
+            Err("Invalid task XML".into())
+        );
+        assert_eq!(
+            same_definition(&"x".repeat(65537), valid),
+            Err("Task definition is oversized".into())
+        );
+    }
 }

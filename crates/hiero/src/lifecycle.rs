@@ -651,7 +651,7 @@ pub(crate) fn start_guarded(
 ) -> Result<Vec<String>, LifecycleError> {
     operation.check(config)?;
     operation.register_unit(options)?;
-    service::validate_unit_root(options)
+    service::validate_unit_root_guarded(options, operation)
         .map_err(|error| LifecycleError::Service(error.to_string()))?;
     let health = checked_probe(config)?;
     if health.is_live() {
@@ -702,7 +702,7 @@ pub(crate) fn stop_guarded(
 ) -> Result<Vec<String>, LifecycleError> {
     operation.check(config)?;
     operation.register_unit(options)?;
-    service::validate_unit_root(options)
+    service::validate_unit_root_guarded(options, operation)
         .map_err(|error| LifecycleError::Service(error.to_string()))?;
     let health = checked_probe(config)?;
     let Some(record) = health.record().cloned().filter(|_| health.is_live()) else {

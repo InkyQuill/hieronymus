@@ -376,7 +376,7 @@ fn run_update_guarded_impl(
         use_manager: true,
     };
     operation.register_unit(&service_options)?;
-    service::validate_unit_root(&service_options)
+    service::validate_unit_root_guarded(&service_options, operation)
         .map_err(|error| UpdateError::Refused(error.to_string()))?;
 
     let release = resolve_release(&options.release_dir)?;
@@ -804,7 +804,8 @@ fn rollback(
     operation
         .register_unit(&service_options)
         .map_err(|error| error.to_string())?;
-    service::validate_unit_root(&service_options).map_err(|error| error.to_string())?;
+    service::validate_unit_root_guarded(&service_options, operation)
+        .map_err(|error| error.to_string())?;
     manager
         .stop()
         .map_err(|error| format!("stop the candidate: {error}"))?;

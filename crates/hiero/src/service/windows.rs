@@ -144,6 +144,17 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, S
         .map_err(|_| "Invalid native registration state".into())
 }
 pub fn read_unit(options: &ServiceOptions) -> Result<Option<UnitDefinition>, String> {
+    let operation = LifecycleOperation::acquire(&HieronymusConfig::new(&options.data_root))
+        .map_err(|e| e.to_string())?;
+    read_unit_guarded(options, &operation)
+}
+pub(crate) fn read_unit_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Option<UnitDefinition>, String> {
+    operation
+        .register_unit(options)
+        .map_err(|e| e.to_string())?;
     let record = if options.use_manager {
         serde_json::from_value::<Option<TaskRecord>>(windows_broker::task(
             options,
@@ -159,14 +170,18 @@ pub fn read_unit(options: &ServiceOptions) -> Result<Option<UnitDefinition>, Str
         data_root: r.data_root,
     }))
 }
-pub(crate) fn validate_unit_root(options: &ServiceOptions) -> Result<(), ServiceError> {
+pub(crate) fn validate_unit_root_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<(), ServiceError> {
+    operation.register_unit(options)?;
     if let Some(record) = read_record(options, false).map_err(ServiceError::Invalid)? {
         record
             .owned(&TaskRecord::new(options, false).map_err(ServiceError::Invalid)?)
             .map_err(ServiceError::Invalid)?;
     }
     if options.use_manager {
-        read_unit(options).map_err(ServiceError::Invalid)?;
+        read_unit_guarded(options, operation).map_err(ServiceError::Invalid)?;
     }
     Ok(())
 }
@@ -175,7 +190,7 @@ pub(crate) fn install_guarded(
     operation: &LifecycleOperation,
 ) -> Result<Vec<String>, ServiceError> {
     operation.register_unit(options)?;
-    validate_unit_root(options)?;
+    validate_unit_root_guarded(options, operation)?;
     if !options.binary.is_file() {
         return Err(ServiceError::Invalid(
             "Service binary does not exist".into(),
@@ -201,7 +216,7 @@ pub(crate) fn uninstall_guarded(
     operation: &LifecycleOperation,
 ) -> Result<Vec<String>, ServiceError> {
     operation.register_unit(options)?;
-    validate_unit_root(options)?;
+    validate_unit_root_guarded(options, operation)?;
     if options.use_manager {
         windows_broker::task(options, TaskAction::Remove, false).map_err(ServiceError::Manager)?;
     } else if options.unit_path().exists() {
@@ -294,18 +309,20 @@ impl ServiceManager for SystemdManager<'_> {
             return Ok(());
         }
         self.operation.register_unit(&self.options)?;
-        validate_unit_root(&self.options)?;
+        validate_unit_root_guarded(&self.options, self.operation)?;
         crate::lifecycle::checked_probe(&HieronymusConfig::new(&self.options.data_root))
             .map_err(|e| ServiceError::Manager(e.to_string()))?;
         start_guarded(&self.options, self.operation).map(|_| ())
     }
 }
 struct Scheduler {
+    service: Option<ITaskService>,
     folder: Option<ITaskFolder>,
 }
 impl Drop for Scheduler {
     fn drop(&mut self) {
         drop(self.folder.take());
+        drop(self.service.take());
         unsafe {
             CoUninitialize();
         }
@@ -325,12 +342,14 @@ impl Scheduler {
                 service
                     .Connect(&empty, &empty, &empty, &empty)
                     .map_err(|_| "Could not connect to user Task Scheduler")?;
-                service
+                let folder = service
                     .GetFolder(&BSTR::from("\\"))
-                    .map_err(|_| "Could not open Task Scheduler folder")
+                    .map_err(|_| "Could not open Task Scheduler folder")?;
+                Ok::<_, &str>((service, folder))
             })();
             match result {
-                Ok(folder) => Ok(Self {
+                Ok((service, folder)) => Ok(Self {
+                    service: Some(service),
                     folder: Some(folder),
                 }),
                 Err(error) => {
@@ -400,12 +419,11 @@ fn save(path: &Path, record: &Option<TaskRecord>) -> Result<(), String> {
         },
     }
 }
-fn canonical_task_xml(xml: &str) -> Result<String, String> {
+fn canonical_task_xml(scheduler: &Scheduler, xml: &str) -> Result<String, String> {
     // Both documents pass through the SAME native schema/default serializer.
     // Complete tree comparison below still rejects extra security/execution fields.
     unsafe {
-        let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)
-            .map_err(|_| "Task definition parser is unavailable")?;
+        let service = scheduler.service.as_ref().expect("connected scheduler");
         let definition = service
             .NewTask(0)
             .map_err(|_| "Could not create task definition parser")?;
@@ -419,21 +437,23 @@ fn canonical_task_xml(xml: &str) -> Result<String, String> {
         Ok(canonical.to_string())
     }
 }
-fn matches(xml: &Option<String>, record: &Option<TaskRecord>) -> bool {
+fn matches(
+    scheduler: &Scheduler,
+    xml: &Option<String>,
+    record: &Option<TaskRecord>,
+) -> Result<bool, String> {
     match (xml, record) {
-        (None, None) => true,
-        (Some(xml), Some(record)) => record
-            .xml()
-            .and_then(|expected| {
-                super::windows_task::equivalent(
-                    &canonical_task_xml(xml)?,
-                    &canonical_task_xml(&expected)?,
-                )
-            })
-            .is_ok(),
-        _ => false,
+        (None, None) => Ok(true),
+        (Some(xml), Some(record)) => {
+            // API/schema failures are errors, never evidence of foreign ownership.
+            let actual = canonical_task_xml(scheduler, xml)?;
+            let expected = canonical_task_xml(scheduler, &record.xml()?)?;
+            super::windows_task::same_definition(&actual, &expected)
+        }
+        _ => Ok(false),
     }
 }
+
 fn rollback(
     scheduler: &Scheduler,
     expected: &TaskRecord,
@@ -444,19 +464,25 @@ fn rollback(
         record.owned(expected)?;
     }
     let actual = scheduler.xml(&expected.name())?;
-    if !matches(&actual, &journal.before) && !matches(&actual, &journal.after) {
+    if !matches(scheduler, &actual, &journal.before)?
+        && !matches(scheduler, &actual, &journal.after)?
+    {
         return Err(
             "Pending task transaction conflicts with external changes; no task was overwritten"
                 .into(),
         );
     }
-    if !matches(&actual, &journal.before) {
+    if !matches(scheduler, &actual, &journal.before)? {
         match &journal.before {
             Some(record) => scheduler.put(record, actual.is_some())?,
             None => scheduler.remove(&expected.name())?,
         }
     }
-    if !matches(&scheduler.xml(&expected.name())?, &journal.before) {
+    if !matches(
+        scheduler,
+        &scheduler.xml(&expected.name())?,
+        &journal.before,
+    )? {
         return Err("Native registration rollback readback failed".into());
     }
     save(path, &journal.before)
@@ -478,9 +504,9 @@ pub(crate) fn execute(
                 record.owned(&expected)?;
             }
             let actual = scheduler.xml(&expected.name())?;
-            let active = if matches(&actual, &journal.before) {
+            let active = if matches(&scheduler, &actual, &journal.before)? {
                 &journal.before
-            } else if matches(&actual, &journal.after) {
+            } else if matches(&scheduler, &actual, &journal.after)? {
                 &journal.after
             } else {
                 return Err("Pending task transaction conflicts with external changes".into());
@@ -510,7 +536,7 @@ pub(crate) fn execute(
             _ => return Err("Native task has invalid enabled state".into()),
         };
     }
-    if !matches(&xml, &before) {
+    if !matches(&scheduler, &xml, &before)? {
         return Err(
             "Native task is foreign, missing or modified; registration was not changed".into(),
         );
@@ -562,7 +588,11 @@ pub(crate) fn execute(
             Some(record) => scheduler.put(record, xml.is_some())?,
             None => scheduler.remove(&expected.name())?,
         }
-        if !matches(&scheduler.xml(&expected.name())?, &journal.after) {
+        if !matches(
+            &scheduler,
+            &scheduler.xml(&expected.name())?,
+            &journal.after,
+        )? {
             return Err("Native task registration readback failed".into());
         }
         save(&path, &journal.after)
@@ -589,6 +619,90 @@ pub(crate) fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_reads_reject_common_guard_contention_before_broker_spawn() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = ServiceOptions {
+            data_root: temp.path().join("root"),
+            unit_dir: temp.path().join("units"),
+            binary: std::env::current_exe().unwrap(),
+            use_manager: true,
+        };
+        let assert_blocked = |reason: &str| {
+            let attempts = windows_broker::SPAWN_ATTEMPTS.get();
+            assert!(read_unit(&options).unwrap_err().contains(reason));
+            assert!(
+                super::super::status(&options)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(reason)
+            );
+            assert!(
+                matches!(super::super::check_unit(&options, &options.binary),
+                UnitVerdict::Broken(message) if message.contains(reason))
+            );
+            assert!(
+                windows_broker::inspect(&options, false)
+                    .unwrap_err()
+                    .contains(reason)
+            );
+            assert_eq!(windows_broker::SPAWN_ATTEMPTS.get(), attempts);
+        };
+        let held = LifecycleOperation::acquire(&HieronymusConfig::new(&options.data_root)).unwrap();
+        assert_blocked("another lifecycle operation");
+        drop(held);
+        // A different root can still contend for the same registration directory.
+        let other = ServiceOptions {
+            data_root: temp.path().join("other-root"),
+            ..options.clone()
+        };
+        let held = LifecycleOperation::acquire(&HieronymusConfig::new(&other.data_root)).unwrap();
+        held.register_unit(&other).unwrap();
+        assert_blocked("another operation holds this service registration");
+        drop(held);
+        let local = ServiceOptions {
+            use_manager: false,
+            ..options
+        };
+        let held = LifecycleOperation::acquire(&HieronymusConfig::new(&local.data_root)).unwrap();
+        assert_eq!(read_unit_guarded(&local, &held).unwrap(), None);
+        assert_eq!(read_unit_guarded(&local, &held).unwrap(), None);
+        validate_unit_root_guarded(&local, &held).unwrap();
+    }
+    #[test]
+    fn native_connected_normalization_distinguishes_invalid_xml_from_foreign_definition() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = ServiceOptions {
+            data_root: temp.path().to_path_buf(),
+            unit_dir: temp.path().to_path_buf(),
+            binary: std::env::current_exe().unwrap(),
+            use_manager: true,
+        };
+        let record = TaskRecord::new(&options, false).unwrap();
+        let scheduler = Scheduler::connect().unwrap();
+        assert!(
+            matches(
+                &scheduler,
+                &Some(record.xml().unwrap()),
+                &Some(record.clone())
+            )
+            .unwrap()
+        );
+        let mut changed = record.clone();
+        changed.recovery = false;
+        assert!(
+            !matches(
+                &scheduler,
+                &Some(changed.xml().unwrap()),
+                &Some(record.clone())
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            matches(&scheduler, &Some("<invalid".into()), &Some(record)).unwrap_err(),
+            "Native task XML is invalid"
+        );
+    }
     struct DisposableTask {
         record: TaskRecord,
     }
@@ -637,10 +751,14 @@ mod tests {
         )
         .unwrap();
         scheduler.put(&after, true).unwrap();
-        assert!(matches(
-            &scheduler.xml(&before.name()).unwrap(),
-            &Some(after)
-        ));
+        assert!(
+            matches(
+                &scheduler,
+                &scheduler.xml(&before.name()).unwrap(),
+                &Some(after)
+            )
+            .unwrap()
+        );
         // Production interrupted-registration recovery performs real scheduler rollback.
         let pending_readback = execute(&options, TaskAction::Inspect, false).unwrap();
         assert_eq!(pending_readback["enabled"], false);
@@ -650,19 +768,27 @@ mod tests {
             serde_json::from_value::<TaskRecord>(readback).unwrap(),
             before
         );
-        assert!(matches(
-            &scheduler.xml(&before.name()).unwrap(),
-            &Some(before.clone())
-        ));
+        assert!(
+            matches(
+                &scheduler,
+                &scheduler.xml(&before.name()).unwrap(),
+                &Some(before.clone())
+            )
+            .unwrap()
+        );
         assert!(!path.with_extension("pending.json").exists());
         let mut foreign = before.clone();
         foreign.binary = temp.path().join("foreign.exe");
         std::fs::write(&foreign.binary, b"fixture").unwrap();
         scheduler.put(&foreign, true).unwrap();
         assert!(execute(&options, TaskAction::Install, false).is_err());
-        assert!(matches(
-            &scheduler.xml(&before.name()).unwrap(),
-            &Some(foreign)
-        ));
+        assert!(
+            matches(
+                &scheduler,
+                &scheduler.xml(&before.name()).unwrap(),
+                &Some(foreign)
+            )
+            .unwrap()
+        );
     }
 }

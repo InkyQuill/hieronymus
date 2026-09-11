@@ -17,6 +17,10 @@ use windows_sys::Win32::{
     System::{Pipes::PeekNamedPipe, Threading::CREATE_NO_WINDOW},
     UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
 };
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SPAWN_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 const MAX_REQUEST: usize = 2048;
 const MAX_RESPONSE: usize = 65536;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -119,6 +123,8 @@ fn call(
         return Err("Native operation request exceeds its bound".into());
     }
     let executable = crate::desktop::launch::selected_cli(&options.binary)?;
+    #[cfg(test)]
+    SPAWN_ATTEMPTS.set(SPAWN_ATTEMPTS.get() + 1);
     let mut child = Command::new(executable)
         .arg("__windows-native-broker")
         .creation_flags(CREATE_NO_WINDOW)
