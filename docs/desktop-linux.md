@@ -10,7 +10,9 @@ GTK 3 runtime libraries and either `libayatana-appindicator3.so.1` or
 `libappindicator3.so.1`. The build uses GTK bindings 0.18.2. The unused libxdo
 feature is disabled. A working graphical session and user D-Bus session are
 required. KDE supplies a StatusNotifier host; GNOME requires a compatible,
-enabled AppIndicator extension. The helper reports a missing host and waits
+enabled [AppIndicator Support extension](https://extensions.gnome.org/extension/615/appindicator-support/).
+On Debian/Ubuntu, install the runtime libraries with
+`sudo apt install libgtk-3-0 libayatana-appindicator3-1`. The helper reports a missing host and waits
 for it to return. AppIndicator performs registration again when the watcher
 owner changes; the helper retains its existing icon and menu.
 
@@ -25,12 +27,13 @@ Quit, in that order. Status is always text and remains meaningful without
 color. Actions are disabled while another action is pending. Open console uses
 the existing one-time browser grant flow.
 
-The concrete Linux login-registration adapter is a subsequent integration
-step. At this stage Start at login is marked unavailable and disabled; the
-helper does not claim a successful registration. Preference reconciliation
-and readback run on the controller worker, including after a failed toggle.
-A registration state that was actually read remains distinct from a settings
-persistence failure.
+The Linux login-registration adapter is available through `hiero desktop install`
+and `hiero desktop autostart on|off|status`. Install registers the application
+launcher and defaults future-login startup on; reinstall preserves opt-out.
+The checkbox uses actual XDG registration readback on the controller worker,
+including after failed toggles. Registration state remains distinct from a
+settings persistence failure. See [desktop installation](desktop-tray.md) for
+ownership, headless-mode switching, disposable overrides and uninstall behavior.
 
 ## Foreground ink
 

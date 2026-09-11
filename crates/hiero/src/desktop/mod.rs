@@ -1,5 +1,8 @@
 mod controller;
 pub mod launch;
+pub mod linux_cli;
+pub mod linux_entry;
+pub mod linux_registration;
 mod settings;
 mod singleton;
 mod state;

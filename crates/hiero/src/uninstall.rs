@@ -149,11 +149,20 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
             "the service registration directory is inside a directory being removed; move the registration outside before uninstalling so its coordination lock is preserved".into(),
         ));
     }
+    let desktop_registration =
+        crate::desktop::linux_registration::for_uninstall(&service_options, layout.root())
+            .map_err(UninstallError::Refused)?;
     lifecycle::stop_guarded(&config, &service_options, &operation)
         .map_err(|error| UninstallError::Refused(error.to_string()))?;
     // Keep daemon ownership throughout every offline removal. Neither held
     // coordination inode is ever unlinked, even with --delete-data.
     let _ownership = RootOwnership::acquire(&config, "uninstall")?;
+    if let Some(registration) = desktop_registration {
+        registration
+            .uninstall_guarded(&operation)
+            .map_err(UninstallError::Refused)?;
+        removed.push("owned desktop login entry, launcher, icon and registration record".into());
+    }
     let lines = service::uninstall_guarded(&service_options, &operation)?;
     removed.extend(lines);
 

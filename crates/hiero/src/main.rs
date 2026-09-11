@@ -19,7 +19,7 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|start|stop|restart|status|tray|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|start|stop|restart|status|tray|desktop|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (opens the authenticated web console in your browser; starts the local daemon if needed)";
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
@@ -382,6 +382,9 @@ fn parse_arguments(
 }
 
 fn run(arguments: &[String]) -> Result<ExitCode, String> {
+    if argv0_command().is_none() && arguments.first().map(String::as_str) == Some("desktop") {
+        return hiero::desktop::linux_cli::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
+    }
     let parsed = parse_arguments(arguments, argv0_command())?;
     let data_root = parsed.data_root.as_deref().map(std::path::Path::new);
     match parsed.command.as_deref() {

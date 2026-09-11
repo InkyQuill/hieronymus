@@ -9,8 +9,7 @@ use std::sync::{
 
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const PATH: &str = "/StatusNotifierWatcher";
-pub const MISSING: &str =
-    "Waiting for a tray host; GNOME requires an enabled AppIndicator extension";
+pub const MISSING: &str = "Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/";
 type Subscription = Option<(gio::DBusConnection, gio::SignalSubscriptionId)>;
 pub struct HostObserver {
     unwatch: Option<Box<dyn FnOnce()>>,

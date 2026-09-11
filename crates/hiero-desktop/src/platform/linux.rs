@@ -11,7 +11,7 @@ use gtk::glib;
 use hiero::{
     desktop::{
         Accent, Action, Controller, DesktopSettings, DesktopState, Event, LifecycleBackend,
-        PollSchedule, SettingsStore, SingletonOutcome, TraySingleton, UnsupportedAutostart, View,
+        PollSchedule, SettingsStore, SingletonOutcome, TraySingleton, View,
     },
     service,
 };
@@ -188,7 +188,7 @@ pub fn run(config: HieronymusConfig) -> Result<(), String> {
     let icon_directory = config.data_root().join("tray-icons");
     std::fs::create_dir_all(&icon_directory)
         .map_err(|_| "Could not create the tray icon directory")?;
-    let tray = TrayIconBuilder::new().with_id(format!("hieronymus-{}", std::process::id())).with_menu(Box::new(native.menu.clone())).with_temp_dir_path(&icon_directory).with_icon(icon([245,245,245], [229,167,43])?).build().map_err(|error| format!("Could not create AppIndicator: {error}; install the desktop native library prerequisites"))?;
+    let tray = TrayIconBuilder::new().with_id(format!("hieronymus-{}", std::process::id())).with_menu(Box::new(native.menu.clone())).with_temp_dir_path(&icon_directory).with_icon(icon([245,245,245], [229,167,43])?).build().map_err(|error| format!("Could not create AppIndicator: {error}; install GTK 3 and Ayatana AppIndicator runtime libraries (Debian/Ubuntu: sudo apt install libgtk-3-0 libayatana-appindicator3-1); see docs/desktop-linux.md"))?;
     let settings = SettingsStore::new(&config).load().unwrap_or_default();
     let host_error = Arc::new(Mutex::new(Some(host::MISSING.into())));
     let appearance = Arc::new(Mutex::new(theme::Appearance::default()));
@@ -200,9 +200,10 @@ pub fn run(config: HieronymusConfig) -> Result<(), String> {
         binary: cli,
         use_manager: true,
     };
+    let registration = hiero::desktop::linux_registration::LinuxRegistration::new(options.clone());
     let wake = sender.clone();
     let controller = Rc::new(Controller::spawn_with_notifier(
-        LifecycleBackend::with_service_options(config, options, UnsupportedAutostart),
+        LifecycleBackend::with_service_options(config, options, registration),
         PollSchedule::default(),
         move || wake.wake(),
     ));
