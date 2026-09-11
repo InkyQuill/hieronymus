@@ -4,7 +4,9 @@ use std::{
     io,
     path::Path,
 };
+#[cfg(not(target_os = "macos"))]
 pub const MANAGER_GATE: &str = ".windows-native.lock";
+#[cfg(not(target_os = "macos"))]
 pub const BROWSER_GATE: &str = ".windows-browser.lock";
 pub fn acquire(directory: &Path, name: &str) -> io::Result<File> {
     let file = OpenOptions::new()
@@ -26,3 +28,8 @@ pub fn check(directory: &Path) -> io::Result<()> {
     drop(acquire(directory, MANAGER_GATE)?);
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+pub const MANAGER_GATE: &str = ".macos-native.lock";
+#[cfg(target_os = "macos")]
+pub const BROWSER_GATE: &str = ".macos-browser.lock";

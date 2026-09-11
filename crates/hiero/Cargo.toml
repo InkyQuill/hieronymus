@@ -59,3 +59,6 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Secu
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "=1.1.4", features = ["fs"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "=0.2.189"

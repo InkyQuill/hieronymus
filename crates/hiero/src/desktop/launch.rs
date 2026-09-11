@@ -21,16 +21,16 @@ pub fn sibling_binary(executable: &Path, name: &str) -> Result<PathBuf, String> 
 }
 
 pub fn launch(config: &HieronymusConfig) -> Result<(), String> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         let options = crate::lifecycle::default_service_options(config)
             .map_err(|_| "Could not resolve native service options")?;
         launch_with_options(config, &options)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     launch_impl(config)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn launch_with_options(
     config: &HieronymusConfig,
     options: &crate::service::ServiceOptions,
@@ -38,9 +38,12 @@ pub fn launch_with_options(
     let cli = selected_cli(&options.binary)?;
     let helper = sibling_binary(&cli, "hiero-desktop")?;
     let mut command = Command::new(helper);
-    use std::os::windows::process::CommandExt;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
     let status = command
-        .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
         .arg("--data-root")
         .arg(config.data_root())
         .arg("--unit-dir")
@@ -55,7 +58,7 @@ pub fn launch_with_options(
         Err("Native helper failed".into())
     }
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn launch_impl(config: &HieronymusConfig) -> Result<(), String> {
     let executable =
         std::env::current_exe().map_err(|_| "Could not locate the Hieronymus installation")?;
@@ -125,4 +128,30 @@ pub fn selected_cli(cli: &Path) -> Result<PathBuf, String> {
         return Err("Installed CLI is missing or not absolute".into());
     }
     Ok(cli.to_path_buf())
+}
+
+/// Resolve the stable Unix selection endpoint; direct CLI fixtures are explicit.
+#[cfg(target_os = "macos")]
+pub fn stable_cli(executable: &Path) -> Result<PathBuf, String> {
+    let parent = executable.parent().ok_or("Missing executable directory")?;
+    if let Some(versions) = parent
+        .parent()
+        .filter(|p| p.file_name().is_some_and(|n| n == "versions"))
+    {
+        let stable = versions
+            .parent()
+            .ok_or("Missing app directory")?
+            .join("bin/hiero");
+        selected_cli(&stable)?;
+        return Ok(stable);
+    }
+    sibling_binary(executable, "hiero")
+}
+#[cfg(target_os = "macos")]
+pub fn selected_cli(cli: &Path) -> Result<PathBuf, String> {
+    if !cli.is_absolute() || !cli.is_file() {
+        return Err("Installed CLI is missing or not absolute".into());
+    }
+    cli.canonicalize()
+        .map_err(|_| "Installed CLI selection is unavailable".into())
 }

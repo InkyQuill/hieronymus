@@ -1,21 +1,25 @@
 //! Opens only the already-minted grant URL, with fixed secret-free errors.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use std::process::{Command, Stdio};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use std::time::{Duration, Instant};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 const OPENER_ENV: &str = "HIERO_CONSOLE_BROWSER";
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 const DEFAULT_OPENER: &str = "xdg-open";
 /// Invoke the platform opener with `url`, discarding its streams so the URL
 /// (which carries the grant) cannot be echoed anywhere. Returns `Err` when the
 /// opener cannot be spawned, exits non-zero, or exceeds its ten-second budget.
 pub fn open(options: &crate::service::ServiceOptions, url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::platform::macos_broker::browser(options, url)
+    }
     #[cfg(windows)]
     {
         crate::platform::windows_broker::browser(options, url)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = options;
         let opener = std::env::var(OPENER_ENV)
@@ -26,7 +30,7 @@ pub fn open(options: &crate::service::ServiceOptions, url: &str) -> Result<(), S
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn open_with_command(opener: &str, url: &str, timeout: Duration) -> Result<(), String> {
     let mut command = Command::new(opener);
     #[cfg(windows)]

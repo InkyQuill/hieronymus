@@ -166,12 +166,17 @@ fn parse_logind_session(output: &str) -> io::Result<String> {
 fn trusted_session() -> io::Result<String> {
     crate::platform::windows_identity::session()
 }
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 fn trusted_session() -> io::Result<String> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Trusted desktop session lookup is not implemented for this platform",
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn trusted_session() -> io::Result<String> {
+    crate::platform::macos_identity::session()
 }
 
 #[cfg(test)]

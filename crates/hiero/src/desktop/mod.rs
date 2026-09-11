@@ -16,3 +16,6 @@ pub use state::{Accent, Action, DesktopState, Event, View};
 
 #[cfg(windows)]
 pub mod windows_registration;
+
+#[cfg(target_os = "macos")]
+pub mod macos_registration;

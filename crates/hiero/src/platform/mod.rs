@@ -10,3 +10,8 @@ pub mod native_protocol;
 pub mod windows_broker;
 #[cfg(windows)]
 pub mod windows_identity;
+
+#[cfg(target_os = "macos")]
+pub mod macos_broker;
+#[cfg(target_os = "macos")]
+pub mod macos_identity;

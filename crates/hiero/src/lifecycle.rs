@@ -563,12 +563,12 @@ pub fn default_service_options(config: &HieronymusConfig) -> std::io::Result<Ser
         data_root: config.data_root().to_path_buf(),
         unit_dir: service::default_unit_dir(),
         binary: {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             {
                 crate::desktop::launch::stable_cli(&std::env::current_exe()?)
                     .map_err(std::io::Error::other)?
             }
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             {
                 std::env::current_exe()?
             }
@@ -658,6 +658,9 @@ pub(crate) fn start_guarded(
         #[cfg(windows)]
         service::windows::rearm_guarded(options, operation)
             .map_err(|error| LifecycleError::Service(error.to_string()))?;
+        #[cfg(target_os = "macos")]
+        service::macos::rearm_guarded(options, operation)
+            .map_err(|error| LifecycleError::Service(error.to_string()))?;
         return Ok(vec![health.detail()]);
     }
     // An unavailable endpoint does not prove ownership is free. Repair only
@@ -721,7 +724,7 @@ pub(crate) fn stop_guarded(
         }
         return Ok(lines);
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     if options.use_manager {
         // Suppression must finish and read back before the shutdown request.
         // Failure/indeterminate timeout aborts without signalling the daemon.

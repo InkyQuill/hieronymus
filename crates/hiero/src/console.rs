@@ -10,7 +10,7 @@
 //! 1. The shared guarded lifecycle connection discovers (and, if absent, starts) the local
 //!    daemon and yields a bearer-authenticated `lifecycle::DaemonClient`.
 //! 2. `POST /auth/launch-grant` mints a 60-second, single-use grant.
-//! 3. The platform opener (`xdg-open`; Linux is the only cutover target) is
+//! 3. The platform browser adapter is
 //!    handed `http://<addr>/<page>#launch_grant=<grant>`. The grant rides in
 //!    the URL *fragment*: fragments are never sent to a server and never land
 //!    in server logs. The 2026-09-03 amendment prohibits query-string secrets
@@ -25,9 +25,9 @@
 //! and page path plus the opener's own (secret-free) cause — never the
 //! fragment or the grant.
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 use crate::platform::browser::open_with_command;
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -102,7 +102,7 @@ pub fn launch_with_options(
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn browser_timeout_is_bounded_reaped_and_secret_free() {
         use std::os::unix::fs::PermissionsExt;

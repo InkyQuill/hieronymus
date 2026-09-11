@@ -1,9 +1,9 @@
 //! Compile-time native service backend; public lifecycle APIs remain stable.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 mod linux;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use linux::*;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) use linux::{
     disable_login_guarded, install_guarded, owned_login_link, start_guarded, stop_guarded,
     uninstall_guarded, validate_unit_root,
@@ -76,7 +76,19 @@ pub enum UnitVerdict {
 
 impl ServiceOptions {
     pub fn unit_path(&self) -> PathBuf {
-        self.unit_dir.join(SERVICE_UNIT_NAME)
+        {
+            #[cfg(target_os = "macos")]
+            {
+                self.unit_dir.join(format!(
+                    "{}.plist",
+                    macos_agent::label(&self.data_root, false)
+                ))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                self.unit_dir.join(SERVICE_UNIT_NAME)
+            }
+        }
     }
 }
 
@@ -206,11 +218,11 @@ pub fn check_unit(options: &ServiceOptions, current_binary: &Path) -> UnitVerdic
             unit_root: definition.data_root.clone(),
         };
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let selected = crate::desktop::launch::selected_cli(&definition.binary).ok();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let registered_binary = selected.as_deref().unwrap_or(&definition.binary);
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     let registered_binary = &definition.binary;
     let same_binary = match (
         registered_binary.canonicalize(),
@@ -244,7 +256,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn validate_unit_root_guarded(
     options: &ServiceOptions,
     operation: &LifecycleOperation,
@@ -252,3 +264,15 @@ pub(crate) fn validate_unit_root_guarded(
     operation.register_unit(options)?;
     validate_unit_root(options)
 }
+
+pub mod macos_agent;
+
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::*;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::{
+    disable_login_guarded, install_guarded, owned_login_link, start_guarded, stop_guarded,
+    uninstall_guarded, validate_unit_root_guarded,
+};

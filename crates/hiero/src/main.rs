@@ -382,6 +382,10 @@ fn parse_arguments(
 }
 
 fn run(arguments: &[String]) -> Result<ExitCode, String> {
+    #[cfg(target_os = "macos")]
+    if arguments.as_slice() == ["__macos-native-broker"] {
+        return hiero::platform::macos_broker::run().map(|_| ExitCode::SUCCESS);
+    }
     #[cfg(windows)]
     if arguments.as_slice() == ["__windows-native-broker"] {
         return hiero::platform::windows_broker::run().map(|_| ExitCode::SUCCESS);
@@ -390,7 +394,9 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         #[cfg(windows)]
         return hiero::desktop::windows_registration::run(&arguments[1..])
             .map(|_| ExitCode::SUCCESS);
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        return hiero::desktop::macos_registration::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
+        #[cfg(not(any(windows, target_os = "macos")))]
         return hiero::desktop::linux_cli::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
     }
     let parsed = parse_arguments(arguments, argv0_command())?;
@@ -480,12 +486,12 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             if parsed.port.is_some() || parsed.start_daemon || parsed.json || parsed.dry_run {
                 return Err("usage: hiero tray [--data-root <path>]".into());
             }
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             hiero::desktop::launch::launch_with_options(
                 &load_config(data_root),
                 &service_options(&parsed, data_root)?,
             )?;
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             hiero::desktop::launch::launch(&load_config(data_root))?;
             Ok(ExitCode::SUCCESS)
         }
@@ -1403,7 +1409,7 @@ fn service_options(
         None => std::env::current_exe()
             .map_err(|error| format!("could not locate the running binary: {error}"))?,
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let binary = if parsed.binary.is_none() {
         hiero::desktop::launch::stable_cli(&binary)?
     } else {

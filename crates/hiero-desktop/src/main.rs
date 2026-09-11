@@ -9,7 +9,7 @@ fn main() -> ExitCode {
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn run() -> Result<(), String> {
     let mut root = None;
     let mut unit = None;
@@ -52,7 +52,7 @@ fn run() -> Result<(), String> {
         options,
     )
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn run() -> Result<(), String> {
     let mut arguments = std::env::args_os().skip(1);
     let root = match arguments.next().as_deref() {
