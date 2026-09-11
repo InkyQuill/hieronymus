@@ -29,7 +29,9 @@ use std::time::{Duration, Instant};
 use hieronymus::data_root::{HieronymusConfig, load_config};
 use hieronymus::ownership::RootOwnership;
 
-use crate::app::{AppLayout, LINK_NAMES, TARGET_TRIPLE, compare_versions};
+#[cfg(unix)]
+use crate::app::LINK_NAMES;
+use crate::app::{AppLayout, TARGET_TRIPLE, compare_versions};
 #[cfg(test)]
 use crate::daemon::discovery;
 use crate::daemon::registry::PROTOCOL_REVISION;
@@ -439,10 +441,12 @@ fn run_update_guarded_impl(
         return Err(refused(reason));
     }
 
-    let candidate = match candidate_identity(&staging.join("hiero")) {
-        Ok(identity) => identity,
-        Err(error) => return Err(refused(error.to_string())),
-    };
+    let candidate =
+        match candidate_identity(&staging.join(crate::platform::install::executable_name("hiero")))
+        {
+            Ok(identity) => identity,
+            Err(error) => return Err(refused(error.to_string())),
+        };
     if candidate.version != release.version {
         return Err(refused(format!(
             "archive binary reports version {} but the release metadata says {}",
@@ -558,7 +562,8 @@ fn run_update_guarded_impl(
         // The unit execs an absolute path: re-render it so a start launches
         // the new binary, never the old one.
         if unit_installed {
-            service_options.binary = version_dir.join("hiero");
+            service_options.binary =
+                version_dir.join(crate::platform::install::executable_name("hiero"));
             service::install_guarded(&service_options, operation)
                 .map_err(|error| format!("service unit update failed ({error})"))?;
             lines.push("service unit updated to the new binary".to_string());
@@ -588,15 +593,16 @@ fn run_update_guarded_impl(
         // Health gate: the candidate's non-mutating doctor. A `Command` that
         // will not even spawn (missing/non-executable candidate) is a failure
         // like any other here — it cannot escape this closure as a bare `?`.
-        let doctor_code = Command::new(version_dir.join("hiero"))
-            .arg("doctor")
-            .arg("--data-root")
-            .arg(config.data_root())
-            .output()
-            .map(|output| output.status.code())
-            .map_err(|error| {
-                format!("health check failed (could not run the candidate's doctor: {error})")
-            })?;
+        let doctor_code =
+            Command::new(version_dir.join(crate::platform::install::executable_name("hiero")))
+                .arg("doctor")
+                .arg("--data-root")
+                .arg(config.data_root())
+                .output()
+                .map(|output| output.status.code())
+                .map_err(|error| {
+                    format!("health check failed (could not run the candidate's doctor: {error})")
+                })?;
         let degraded = accepted_doctor_exit(doctor_code)
             .map_err(|reason| format!("health check failed ({reason})"))?;
 
@@ -846,10 +852,8 @@ fn restore_links_and_unit(layout: &AppLayout, snapshot: &RestoreSnapshot) -> Res
             }
         }
         None => {
-            for name in LINK_NAMES {
-                remove_if_present(&layout.stable_link(name))
-                    .map_err(|error| format!("remove stale link {name}: {error}"))?;
-            }
+            crate::platform::install::clear_selection(layout)
+                .map_err(|error| format!("clear selection: {error}"))?;
         }
     }
     match &snapshot.unit_before {
@@ -864,21 +868,7 @@ fn restore_links_and_unit(layout: &AppLayout, snapshot: &RestoreSnapshot) -> Res
 /// Whether every stable command link (`switch_stable_links` renames the four
 /// one at a time) resolves to `../versions/<version>/<name>`.
 fn all_links_point_at(layout: &AppLayout, version: &str) -> Result<(), String> {
-    for name in LINK_NAMES {
-        let want = PathBuf::from(format!("../versions/{version}/{name}"));
-        match std::fs::read_link(layout.stable_link(name)) {
-            Ok(target) if target == want => {}
-            Ok(target) => {
-                return Err(format!(
-                    "link {name} points at {} instead of {}",
-                    target.display(),
-                    want.display()
-                ));
-            }
-            Err(error) => return Err(format!("link {name} is unreadable: {error}")),
-        }
-    }
-    Ok(())
+    crate::platform::install::verify_selection(layout, version)
 }
 
 fn remove_if_present(path: &Path) -> std::io::Result<()> {
@@ -1092,13 +1082,14 @@ fn failed(message: impl Into<String>) -> UpdateError {
 /// The staged payload must look exactly like the release layout: an
 /// executable `hiero` plus the three relative argv[0] links.
 fn validate_payload(staging: &Path) -> Result<(), String> {
-    let binary = staging.join("hiero");
+    let binary = staging.join(crate::platform::install::executable_name("hiero"));
     if !binary.is_file() {
         return Err(format!(
             "staged release has no hiero binary: {}",
             binary.display()
         ));
     }
+    #[cfg(unix)]
     for name in LINK_NAMES.iter().skip(1) {
         let link = staging.join(name);
         match std::fs::read_link(&link) {
@@ -1109,6 +1100,10 @@ fn validate_payload(staging: &Path) -> Result<(), String> {
                 ));
             }
         }
+    }
+    #[cfg(windows)]
+    if !staging.join("hiero-launcher.exe").is_file() {
+        return Err("staged release lacks native launcher".into());
     }
     if staging.join("assets.json").exists() || cfg!(feature = "console-embed") {
         let output = Command::new(&binary)
@@ -1175,7 +1170,7 @@ pub fn candidate_identity(binary: &Path) -> Result<CandidateIdentity, String> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

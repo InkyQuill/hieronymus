@@ -2574,6 +2574,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2608,6 +2609,7 @@ dependencies = [
  "quick-xml",
  "rcgen",
  "rusqlite",
+ "rustix",
  "rustls",
  "serde",
  "serde_json",
@@ -2621,6 +2623,7 @@ dependencies = [
  "toml_edit 0.22.27",
  "url",
  "webpki-roots 0.26.11",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

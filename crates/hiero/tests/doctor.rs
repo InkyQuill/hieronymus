@@ -169,6 +169,7 @@ fn invalid_dream_conf_is_degraded() {
     assert_eq!(report.status, Health::Degraded);
 }
 
+#[cfg(unix)]
 #[test]
 fn loose_token_permissions_are_degraded() {
     let root = tempfile::tempdir().unwrap();

@@ -66,40 +66,45 @@ fn read_state_file(path: &Path) -> Option<DreamCycleState> {
     serde_json::from_str(&text).ok()
 }
 
-/// A recorded state with a dead pid is cleaned conservatively: the state file
-/// is only removed when it still holds exactly the state we inspected.
-fn is_pid_running(pid: i32) -> bool {
-    if pid <= 0 {
-        return false;
-    }
-    let proc_root = Path::new("/proc");
-    if !proc_root.is_dir() {
-        // Cannot tell on this platform; never treat a recorded owner as dead.
-        return true;
-    }
-    proc_root.join(pid.to_string()).exists()
-}
-
-/// Read the current dream-cycle state, or `None` when no live cycle is
-/// recorded. Stale state (dead pid) is removed when unchanged.
+/// Probe the kernel lock before deciding whether a recorded run is stale.
+/// An inaccessible/contended lock is conservative evidence: keep the record.
 pub fn read_dream_cycle_state(config: &HieronymusConfig) -> Option<DreamCycleState> {
     let paths = dream_cycle_paths(config);
     let state = read_state_file(&paths.state_json)?;
-    if is_pid_running(state.pid) {
+    let Ok(lock) = open_lock(&paths.lock_file) else {
+        return Some(state);
+    };
+    if lock.try_lock().is_err() {
         return Some(state);
     }
-    remove_state_if_unchanged(config, &state);
+    remove_record(&paths.state_json, &state);
     None
 }
 
-/// Remove the state file only when it still holds `expected` (token + pid).
+/// Cleanup holds kernel ownership across comparing the complete run identity
+/// and deleting its record. PIDs are diagnostic and never authorize cleanup.
 pub fn remove_state_if_unchanged(config: &HieronymusConfig, expected: &DreamCycleState) {
     let paths = dream_cycle_paths(config);
-    if let Some(current) = read_state_file(&paths.state_json)
-        && current.token == expected.token
-        && current.pid == expected.pid
-    {
-        let _ = std::fs::remove_file(&paths.state_json);
+    let Ok(lock) = open_lock(&paths.lock_file) else {
+        return;
+    };
+    if lock.try_lock().is_ok() {
+        remove_record(&paths.state_json, expected);
+    }
+}
+
+fn open_lock(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+}
+
+fn remove_record(path: &Path, expected: &DreamCycleState) {
+    if read_state_file(path).as_ref() == Some(expected) {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -141,7 +146,7 @@ pub fn dream_cycle_lock(
         Ok(()) => {}
         Err(std::fs::TryLockError::WouldBlock) => {
             return Err(DreamLockError::AlreadyRunning {
-                state: read_dream_cycle_state(config),
+                state: read_state_file(&paths.state_json),
             });
         }
         Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
@@ -180,12 +185,7 @@ impl DreamCycleLock {
 
 impl Drop for DreamCycleLock {
     fn drop(&mut self) {
-        if let Some(current) = read_state_file(&self.state_json)
-            && current.token == self.state.token
-            && current.pid == self.state.pid
-        {
-            let _ = std::fs::remove_file(&self.state_json);
-        }
+        remove_record(&self.state_json, &self.state);
         let _ = self.lock_file.unlock();
     }
 }

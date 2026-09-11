@@ -3,11 +3,14 @@ use std::path::Path;
 
 /// Write `contents` to `path` atomically: create parent directories, write a
 /// sibling temporary file, fsync it, then rename it over the destination.
-/// A crash never leaves a half-written authoritative file.
+/// A crash never leaves a half-written authoritative file. A directory-sync
+/// error after replacement means publication occurred but durability is uncertain.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -16,16 +19,40 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
         .prefix(&format!(".{name}."))
         .suffix(".tmp")
         .rand_bytes(8)
-        .tempfile_in(path.parent().unwrap_or(Path::new(".")))?;
+        .tempfile_in(parent)?;
     temporary.write_all(contents)?;
     temporary.as_file().sync_all()?;
-    temporary.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    replace_file(temporary.path(), path)?;
+    sync_directory(parent)
 }
 
 /// Convenience wrapper for UTF-8 text payloads.
 pub fn atomic_write_text(path: &Path, text: &str) -> std::io::Result<()> {
     atomic_write(path, text.as_bytes())
+}
+
+/// Atomically replace a directory entry on the same filesystem.
+pub fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::rename(source, destination)
+    }
+    #[cfg(windows)]
+    {
+        crate::windows_file::move_file(source, destination, true)
+    }
+}
+
+/// Request directory metadata durability, propagating unsupported operations.
+pub fn sync_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(path)?.sync_all()
+    }
+    #[cfg(windows)]
+    {
+        crate::windows_file::open_directory_for_sync(path)?.sync_all()
+    }
 }
 
 #[cfg(test)]

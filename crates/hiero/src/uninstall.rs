@@ -18,7 +18,9 @@ use crate::lifecycle::{
 use hieronymus::data_root::load_config;
 use hieronymus::ownership::{OWNER_LOCK_FILE, RootOwnership};
 
-use crate::app::{AppLayout, LINK_NAMES};
+use crate::app::AppLayout;
+#[cfg(unix)]
+use crate::app::LINK_NAMES;
 use crate::service::{self, ServiceOptions};
 
 #[derive(Debug, Clone)]
@@ -179,6 +181,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     // PATH links owned by the bootstrap installer, but only when they point
     // into the application directory being removed: a foreign `hiero` on PATH
     // is host configuration and is preserved.
+    #[cfg(unix)]
     if let Some(bin_dir) = home::home_dir().map(|home| home.join(".local").join("bin")) {
         for name in LINK_NAMES {
             let link = bin_dir.join(name);
@@ -250,6 +253,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
 
 /// Whether `link` (a symlink at `link_path` with raw `target`) eventually
 /// resolves under `root`.
+#[cfg(unix)]
 fn resolve_into(link_path: &Path, target: &Path, root: &Path) -> bool {
     let base = if target.is_absolute() {
         target.to_path_buf()

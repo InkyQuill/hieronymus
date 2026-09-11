@@ -104,14 +104,10 @@ max_records_per_pass = 20
 ";
 
 fn write_legacy_configs(root: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(root).unwrap();
-    std::fs::write(root.join("dream.conf"), DREAM_CONF_LEGACY).unwrap();
-    // The legacy payload carries an api key, so the file must be user-only
-    // for the credential-permission preflight to accept it.
-    std::fs::set_permissions(
-        root.join("dream.conf"),
-        std::fs::Permissions::from_mode(0o600),
+    hieronymus::private_file::replace_private(
+        &root.join("dream.conf"),
+        DREAM_CONF_LEGACY.as_bytes(),
     )
     .unwrap();
     std::fs::write(
@@ -495,6 +491,7 @@ fn upgrade_fails_closed_on_invalid_config_before_any_mutation() {
     assert_eq!(journal_state(root.path()), None);
 }
 
+#[cfg(unix)]
 #[test]
 fn upgrade_fails_closed_on_unsafe_credential_permissions() {
     let root = tempfile::tempdir().unwrap();
@@ -527,8 +524,11 @@ fn upgrade_fails_closed_on_provider_collision() {
         "[openai]\nname = \"Openai\"\ntype = \"openai\"\nurl = \"https://other.example/v1\"\nkey = \"x\"\ntimeout_seconds = 30\n",
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&provider_conf, std::fs::Permissions::from_mode(0o600)).unwrap();
+    hieronymus::private_file::replace_private(
+        &provider_conf,
+        &std::fs::read(&provider_conf).unwrap(),
+    )
+    .unwrap();
     let before = file_tree_digest(root.path());
     let error = run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap_err();
     assert!(matches!(error, MigrateError::ConfigInvalid(_)), "{error}");
@@ -972,8 +972,11 @@ fn sentinels_never_reach_reports_journals_receipts_or_errors() {
         format!("[openai]\nname = \"O\"\ntype = \"openai\"\nurl = \"https://x.example\"\nkey = \"{PROVIDER_SENTINEL}\"\ntimeout_seconds = 5\n[openai.broken]\nnope = true\n"),
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&provider_conf, std::fs::Permissions::from_mode(0o600)).unwrap();
+    hieronymus::private_file::replace_private(
+        &provider_conf,
+        &std::fs::read(&provider_conf).unwrap(),
+    )
+    .unwrap();
     let error = run_upgrade(&config(root.path()), false, &UpgradeOptions::default())
         .unwrap_err()
         .to_string();
@@ -1011,13 +1014,8 @@ fn staging_preserves_existing_provider_entries_and_formats() {
     assert!(after.contains("[openai]"), "{after}");
     assert!(after.contains(PROVIDER_SENTINEL));
     assert_ne!(before, after);
-    // Secret-bearing staged file lands with user-only permissions.
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(root.path().join("provider.conf"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o077, 0, "provider.conf must be user-only: {mode:o}");
+    // Uses the same mode/DACL validation as daemon credentials on this OS.
+    assert!(hieronymus::private_file::read_private(&root.path().join("provider.conf")).is_ok());
 }
 
 #[test]

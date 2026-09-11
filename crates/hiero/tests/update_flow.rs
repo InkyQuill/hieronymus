@@ -5,6 +5,9 @@
 //! directory; the systemd user manager is never contacted (`--unit-dir`
 //! override disables manager integration by design).
 
+// Shell-script candidate and systemd fixture flow; native helper coordination has its own qualification.
+#![cfg(unix)]
+
 mod common;
 
 use std::io::Read as _;

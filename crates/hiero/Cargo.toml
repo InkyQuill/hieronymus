@@ -1,5 +1,6 @@
 [package]
 name = "hiero"
+default-run = "hiero"
 description = "Hieronymus command-line binary and local daemon."
 edition.workspace = true
 rust-version.workspace = true
@@ -32,7 +33,6 @@ home.workspace = true
 # Temporary files for local tooling and tests.
 tempfile.workspace = true
 # Descriptor-relative export publication; version already present in Cargo.lock.
-rustix = { version = "=1.1.4", features = ["fs"] }
 # Release archive verification (`hiero update`, byte-for-byte parity with the
 # bootstrap installer's sha256sum check).
 sha2.workspace = true
@@ -50,3 +50,9 @@ rustls.workspace = true
 rcgen.workspace = true
 rusqlite.workspace = true
 # `tempfile` is a normal dependency (see above), so tests inherit it.
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_System_SystemServices", "Wdk_Foundation", "Wdk_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }

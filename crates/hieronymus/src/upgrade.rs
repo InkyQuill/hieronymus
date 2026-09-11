@@ -311,16 +311,7 @@ fn write_journal(
 // ---------------------------------------------------------------------------
 
 fn fsync_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let file = std::fs::File::open(path)?;
-        file.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
+    crate::atomic::sync_directory(path)
 }
 
 fn copy_and_sync(source: &Path, destination: &Path) -> std::io::Result<()> {
@@ -330,41 +321,17 @@ fn copy_and_sync(source: &Path, destination: &Path) -> std::io::Result<()> {
 }
 
 fn write_with_mode(path: &Path, text: &str, user_only: bool) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        if user_only {
-            options.mode(0o600);
-        }
-        let mut file = options.open(path)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        crate::atomic::atomic_write_text(path, text)?;
-        Ok(())
+    if user_only {
+        crate::private_file::replace_private(path, text.as_bytes())
+    } else {
+        crate::atomic::atomic_write_text(path, text)
     }
 }
 
-#[cfg(unix)]
 fn require_user_only(path: &Path) -> Result<(), MigrateError> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(path)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        return Err(MigrateError::UnsafeCredentialPermissions(
-            path.to_path_buf(),
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn require_user_only(_path: &Path) -> Result<(), MigrateError> {
-    Ok(())
+    crate::private_file::read_private(path)
+        .map(|_| ())
+        .map_err(|_| MigrateError::UnsafeCredentialPermissions(path.to_path_buf()))
 }
 
 /// Take the shared data-root ownership guard for a maintenance run (ADR
@@ -1689,7 +1656,7 @@ pub fn run_recovery(
     for sidecar in ["hieronymus.sqlite-wal", "hieronymus.sqlite-shm"] {
         std::fs::remove_file(root.join(sidecar)).ok();
     }
-    std::fs::rename(&staging_path, &live)?;
+    crate::atomic::replace_file(&staging_path, &live)?;
     fsync_dir(root)?;
     fsync_dir(&backups_dir)?;
 

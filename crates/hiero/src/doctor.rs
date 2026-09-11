@@ -330,40 +330,20 @@ fn check_credential_permissions(config: &HieronymusConfig, report: &mut DoctorRe
         );
         return;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        match std::fs::metadata(&token_path) {
-            Ok(metadata) => {
-                let mode = metadata.permissions().mode() & 0o777;
-                if mode == 0o600 {
-                    report.push(
-                        Level::Ok,
-                        "token-permissions",
-                        "bearer token is user-only (0600)".to_string(),
-                    );
-                } else {
-                    report.push(
-                        Level::Warning,
-                        "token-permissions",
-                        format!(
-                            "bearer token at {} is readable beyond its owner (mode {:o}); expected 600",
-                            token_path.display(),
-                            mode
-                        ),
-                    );
-                }
-            }
-            Err(error) => report.push(
-                Level::Warning,
-                "token-permissions",
-                format!("could not stat {}: {error}", token_path.display()),
+    match crate::platform::credentials::read_private(&token_path) {
+        Ok(_) => report.push(
+            Level::Ok,
+            "token-permissions",
+            "bearer token is user-only".into(),
+        ),
+        Err(error) => report.push(
+            Level::Warning,
+            "token-permissions",
+            format!(
+                "unsafe or unreadable bearer token at {}: {error}",
+                token_path.display()
             ),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = report;
+        ),
     }
 }
 

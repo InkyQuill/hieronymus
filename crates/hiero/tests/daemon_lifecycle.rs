@@ -10,7 +10,6 @@ use hieronymus::data_root::HieronymusConfig;
 use hieronymus::ownership::RootOwnership;
 use serde_json::{Value, json};
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -68,12 +67,7 @@ fn discovery_record_is_atomic_non_secret_and_token_is_separate_with_0600() {
         "the discovery record must never contain the bearer token"
     );
 
-    let mode = std::fs::metadata(&token_path).unwrap().permissions().mode();
-    assert_eq!(
-        mode & 0o777,
-        0o600,
-        "the bearer token file must be user-only"
-    );
+    assert!(hiero::platform::credentials::read_private(&token_path).is_ok());
 
     // A fresh data root gets its database created at the supported Rust
     // schema; classification must agree.
