@@ -4,6 +4,7 @@ use crate::platform::{
     macos_broker::{self, TaskAction},
     macos_identity,
 };
+use macos_agent::{DaemonMode, LoadedState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -20,7 +21,14 @@ pub fn manager_enabled(options: &ServiceOptions) -> bool {
     options.use_manager
 }
 pub fn render_unit(binary: &Path, root: &Path) -> Result<String, ServiceError> {
-    macos_agent::render(binary, root, &default_unit_dir(), false).map_err(ServiceError::Invalid)
+    macos_agent::render_mode(
+        binary,
+        root,
+        &default_unit_dir(),
+        false,
+        DaemonMode::Headless,
+    )
+    .map_err(ServiceError::Invalid)
 }
 pub fn parse_unit(text: &str) -> Result<UnitDefinition, String> {
     let (binary, data_root) = macos_agent::parse(text)?;
@@ -91,7 +99,7 @@ pub(crate) fn install_guarded(
         )?;
     }
     Ok(vec![
-        "macOS daemon LaunchAgent installed for on-demand startup".into(),
+        "macOS daemon LaunchAgent installed; owned login mode retained".into(),
     ])
 }
 pub(crate) fn uninstall_guarded(
@@ -140,21 +148,60 @@ pub(crate) fn stop_guarded(
         macos_broker::task(options, TaskAction::Suppress, false).map_err(ServiceError::Manager)?;
     }
     Ok(vec![
-        "macOS daemon disabled until explicit Start; tray login preference preserved".into(),
+        "macOS daemon has no automatic recovery; login preference preserved".into(),
     ])
 }
-pub(crate) fn owned_login_link(_: &ServiceOptions) -> Result<Option<PathBuf>, ServiceError> {
-    Err(ServiceError::Invalid(
-        "macOS login uses a separate tray LaunchAgent".into(),
-    ))
+/// The owned plist is the persisted daemon-login declaration, not an XDG link.
+pub(crate) fn owned_login_link(options: &ServiceOptions) -> Result<Option<PathBuf>, ServiceError> {
+    match read_file(&options.unit_path()).map_err(ServiceError::Invalid)? {
+        Some(text)
+            if owned_mode(options, &text).map_err(ServiceError::Invalid)?
+                == DaemonMode::Headless =>
+        {
+            Ok(Some(options.unit_path()))
+        }
+        _ => Ok(None),
+    }
 }
 pub(crate) fn disable_login_guarded(
-    _: &ServiceOptions,
-    _: &LifecycleOperation,
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
 ) -> Result<(), ServiceError> {
-    Err(ServiceError::Invalid(
-        "macOS login uses a separate tray LaunchAgent".into(),
-    ))
+    operation.register_unit(options)?;
+    if options.use_manager {
+        macos_broker::task(options, TaskAction::DesktopMode, false)
+            .map_err(ServiceError::Manager)?;
+    } else {
+        validate_unit_root_guarded(options, operation)?;
+        hieronymus::atomic::atomic_write_text(
+            &options.unit_path(),
+            &definition_mode(options, false, DaemonMode::Desktop).map_err(ServiceError::Invalid)?,
+        )?;
+    }
+    Ok(())
+}
+/// Caller retains offline root ownership after authenticated shutdown/release.
+pub(crate) fn finish_stop_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<(), ServiceError> {
+    operation.register_unit(options)?;
+    if options.use_manager {
+        macos_broker::task(options, TaskAction::FinishStop, false)
+            .map_err(ServiceError::Manager)?;
+    }
+    Ok(())
+}
+/// Actual future-login preference, read with the ordinary operation guards.
+pub fn daemon_login_enabled(options: &ServiceOptions) -> Result<bool, String> {
+    let state = macos_broker::inspect(options, false)?;
+    if state.is_null() {
+        return Ok(false);
+    }
+    state
+        .get("login_enabled")
+        .and_then(Value::as_bool)
+        .ok_or("Invalid daemon login readback".into())
 }
 /// Compatibility name for the updater's existing guarded manager interface.
 pub struct SystemdManager<'a> {
@@ -192,7 +239,7 @@ impl ServiceManager for SystemdManager<'_> {
         start_guarded(&self.options, self.operation).map(|_| ())
     }
 }
-fn definition(options: &ServiceOptions, tray: bool) -> Result<String, String> {
+fn owned_mode(options: &ServiceOptions, text: &str) -> Result<DaemonMode, String> {
     let root = options
         .data_root
         .canonicalize()
@@ -201,7 +248,33 @@ fn definition(options: &ServiceOptions, tray: bool) -> Result<String, String> {
         .unit_dir
         .canonicalize()
         .map_err(|_| "LaunchAgent directory is unavailable")?;
-    macos_agent::render(&options.binary, &root, &directory, tray)
+    macos_agent::owned_mode(text, &options.binary, &root, &directory)
+}
+fn definition(options: &ServiceOptions, tray: bool) -> Result<String, String> {
+    let mode = if tray {
+        DaemonMode::Desktop
+    } else {
+        read_file(&path(options, false))?
+            .map(|text| owned_mode(options, &text))
+            .transpose()?
+            .unwrap_or(DaemonMode::Headless)
+    };
+    definition_mode(options, tray, mode)
+}
+fn definition_mode(
+    options: &ServiceOptions,
+    tray: bool,
+    mode: DaemonMode,
+) -> Result<String, String> {
+    let root = options
+        .data_root
+        .canonicalize()
+        .map_err(|_| "LaunchAgent root is unavailable")?;
+    let directory = options
+        .unit_dir
+        .canonicalize()
+        .map_err(|_| "LaunchAgent directory is unavailable")?;
+    macos_agent::render_mode(&options.binary, &root, &directory, tray, mode)
 }
 fn path(options: &ServiceOptions, tray: bool) -> PathBuf {
     options.unit_dir.join(format!(
@@ -304,11 +377,10 @@ impl<'a> Agent<'a> {
     fn target(&self) -> String {
         format!("{}/{}", self.domain, self.label)
     }
-    fn loaded(&self) -> Result<Option<String>, String> {
+    fn loaded(&self) -> Result<Option<LoadedState>, String> {
         let (status, text) = command(&["print", &self.target()])?;
         if status.success() {
-            self.validate_loaded(&text)?;
-            return Ok(Some(text));
+            return self.validate_loaded(&text).map(Some);
         }
         // ESRCH=3 is the documented underlying missing-service result; current
         // launchctl also reports 113 for an absent service. Domain existence is
@@ -320,8 +392,8 @@ impl<'a> Agent<'a> {
             Err("Could not inspect LaunchAgent".into())
         }
     }
-    fn validate_loaded(&self, text: &str) -> Result<(), String> {
-        macos_agent::validate_loaded(
+    fn validate_loaded(&self, text: &str) -> Result<LoadedState, String> {
+        let loaded = macos_agent::loaded_state(
             text,
             &self.path,
             &macos_agent::arguments(
@@ -330,7 +402,27 @@ impl<'a> Agent<'a> {
                 &self.options.unit_dir,
                 self.tray,
             )?,
-        )
+        )?;
+        if loaded.target != self.target() {
+            return Err("Loaded LaunchAgent target differs".into());
+        }
+        let current = read_file(&self.path)?.ok_or("Loaded LaunchAgent has no owned definition")?;
+        self.validate_definition(&current)?;
+        let run_at_load = self.tray || owned_mode(self.options, &current)? == DaemonMode::Headless;
+        if loaded.run_at_load != run_at_load {
+            return Err("Loaded LaunchAgent login mode differs".into());
+        }
+        Ok(loaded)
+    }
+    fn validate_definition(&self, text: &str) -> Result<(), String> {
+        if self.tray {
+            if text != definition_mode(self.options, true, DaemonMode::Desktop)? {
+                return Err("Foreign tray LaunchAgent".into());
+            }
+        } else {
+            owned_mode(self.options, text)?;
+        }
+        Ok(())
     }
     fn disabled(&self) -> Result<bool, String> {
         let (status, text) = command(&["print-disabled", &self.domain])?;
@@ -348,8 +440,8 @@ impl<'a> Agent<'a> {
         Ok(())
     }
     fn bootout_idle(&self) -> Result<(), String> {
-        if let Some(text) = self.loaded()? {
-            if text.lines().any(|l| l.trim().starts_with("pid = ")) {
+        if let Some(loaded) = self.loaded()? {
+            if loaded.pid.is_some() || !loaded.idle {
                 return Err(
                     "LaunchAgent still has a process; graceful exit must complete before bootout"
                         .into(),
@@ -364,8 +456,8 @@ impl<'a> Agent<'a> {
     }
     fn snapshot(&self) -> Result<Snapshot, String> {
         let definition = read_file(&self.path)?;
-        if definition.as_ref().is_some_and(|s| s != &self.expected) {
-            return Err("LaunchAgent definition is foreign or modified".into());
+        if let Some(text) = &definition {
+            self.validate_definition(text)?;
         }
         let loaded = self.loaded()?.is_some();
         if loaded && definition.is_none() {
@@ -382,9 +474,7 @@ impl<'a> Agent<'a> {
             .into_iter()
             .flatten()
         {
-            if text != &self.expected {
-                return Err("Pending LaunchAgent belongs to another installation".into());
-            }
+            self.validate_definition(text)?;
         }
         let actual = read_file(&self.path)?;
         if actual != journal.before.definition && actual != journal.after {
@@ -392,6 +482,10 @@ impl<'a> Agent<'a> {
         }
         if !journal.before.loaded {
             self.bootout_idle()?;
+        } else if actual != journal.before.definition {
+            return Err(
+                "Cannot restore changed login mode of a previously loaded LaunchAgent".into(),
+            );
         }
         macos_agent::restore_definition(
             &self.path,
@@ -399,6 +493,17 @@ impl<'a> Agent<'a> {
         )?;
         self.toggle(journal.before.disabled)?;
         if journal.before.loaded && self.loaded()?.is_none() {
+            if self.tray
+                || journal
+                    .before
+                    .definition
+                    .as_deref()
+                    .map(|text| owned_mode(self.options, text))
+                    .transpose()?
+                    == Some(DaemonMode::Headless)
+            {
+                return Err("Restoring this loaded login agent would start a process; rollback remains pending".into());
+            }
             run(&[
                 "bootstrap",
                 &self.domain,
@@ -416,12 +521,12 @@ impl<'a> Agent<'a> {
     }
 }
 /// Called only by the committed broker with both continuation gates held.
-pub(crate) fn execute(
+fn execute_agent(
     options: &ServiceOptions,
     action: TaskAction,
     tray: bool,
 ) -> Result<Value, String> {
-    let agent = Agent::new(options, tray)?;
+    let mut agent = Agent::new(options, tray)?;
     let pending = agent.path.with_extension("pending.json");
     if let Some(text) = read_file(&pending)? {
         let journal: Journal =
@@ -434,15 +539,13 @@ pub(crate) fn execute(
                 .into_iter()
                 .flatten()
             {
-                if text != &agent.expected {
-                    return Err("Pending LaunchAgent belongs to another installation".into());
-                }
+                agent.validate_definition(text)?;
             }
             let actual = agent.snapshot()?;
             return Ok(if actual.definition.is_none() {
                 Value::Null
             } else {
-                json!({"enabled": !actual.disabled,"loaded":actual.loaded,"pending":true})
+                readback(&agent, &actual, true)?
             });
         }
         agent.restore(&journal)?;
@@ -454,8 +557,36 @@ pub(crate) fn execute(
         return Ok(if before.definition.is_none() {
             Value::Null
         } else {
-            json!({"enabled":!before.disabled,"loaded":before.loaded})
+            readback(&agent, &before, false)?
         });
+    }
+    if matches!(action, TaskAction::Reconcile) {
+        return readback(&agent, &before, false);
+    }
+    if matches!(action, TaskAction::FinishStop) {
+        agent.bootout_idle()?;
+        return readback(&agent, &agent.snapshot()?, false);
+    }
+    if matches!(action, TaskAction::Suppress) {
+        // The owned no-KeepAlive policy already suppresses recovery. Preserve
+        // native enablement so a future headless login still starts its daemon.
+        return readback(&agent, &before, false);
+    }
+    if matches!(action, TaskAction::DesktopMode) {
+        if tray {
+            return Err("Daemon mode operation requires daemon registration".into());
+        }
+        let desired = definition_mode(options, false, DaemonMode::Desktop)?;
+        macos_agent::check_mode_change(
+            before
+                .definition
+                .as_deref()
+                .map(|text| owned_mode(options, text))
+                .transpose()?,
+            before.loaded,
+            DaemonMode::Desktop,
+        )?;
+        agent.expected = desired;
     }
     if matches!(action, TaskAction::Remove | TaskAction::Suppress) && before.definition.is_none() {
         return Ok(Value::Null);
@@ -476,6 +607,11 @@ pub(crate) fn execute(
     .map_err(|_| "Could not persist LaunchAgent transaction")?;
     let result = macos_agent::publish_with_rollback(
         || {
+            #[cfg(test)]
+            if tray && matches!(action, TaskAction::Install) && FAIL_TRAY_PUBLICATION.replace(false)
+            {
+                return Err("Injected tray publication failure".into());
+            }
             if matches!(action, TaskAction::Remove) {
                 agent.toggle(true)?;
                 agent.bootout_idle()?;
@@ -490,10 +626,15 @@ pub(crate) fn execute(
                 _ => journal.before.disabled,
             };
             agent.toggle(disabled)?;
-            // Publishing tray preference never starts a second helper in this login.
-            // launchd loads its RunAtLoad plist at the next Aqua login. Daemon is
-            // bootstrapped without RunAtLoad and explicitly kickstarted on Start only.
-            if !tray && !disabled && agent.loaded()?.is_none() {
+            // Login publication never starts a process while the caller retains
+            // offline ownership. Only Desktop mode can bootstrap here (RunAtLoad
+            // false); Headless startup is deferred until explicit Start/login.
+            if !tray
+                && !disabled
+                && !matches!(action, TaskAction::Start)
+                && owned_mode(options, &agent.expected)? == DaemonMode::Desktop
+                && agent.loaded()?.is_none()
+            {
                 run(&[
                     "bootstrap",
                     &agent.domain,
@@ -504,7 +645,7 @@ pub(crate) fn execute(
             if actual.definition != journal.after || actual.disabled != disabled {
                 return Err("LaunchAgent registration readback failed".into());
             }
-            Ok(json!({"enabled":!actual.disabled,"loaded":actual.loaded}))
+            readback(&agent, &actual, false)
         },
         || agent.restore(&journal),
     );
@@ -522,14 +663,139 @@ pub(crate) fn execute(
     std::fs::remove_file(&pending)
         .map_err(|_| "LaunchAgent registered but transaction journal remains")?;
     if matches!(action, TaskAction::Start) {
-        run(&["kickstart", &agent.target()])?;
+        // Launch only after registration commit: a startup error must not leave
+        // a journal whose repair requires stopping the just-started daemon.
+        if agent.loaded()?.is_none() {
+            run(&[
+                "bootstrap",
+                &agent.domain,
+                agent.path.to_str().ok_or("Invalid LaunchAgent path")?,
+            ])?;
+        }
+        if agent.loaded()?.is_some_and(|loaded| loaded.idle) {
+            run(&["kickstart", &agent.target()])?;
+        }
     }
     Ok(value)
 }
 
+fn readback(agent: &Agent<'_>, snapshot: &Snapshot, pending: bool) -> Result<Value, String> {
+    let Some(text) = &snapshot.definition else {
+        return Ok(Value::Null);
+    };
+    let mode = if agent.tray {
+        DaemonMode::Desktop
+    } else {
+        owned_mode(agent.options, text)?
+    };
+    Ok(
+        json!({"enabled":!snapshot.disabled,"loaded":snapshot.loaded,"pending":pending,"mode":mode,"login_enabled":!snapshot.disabled&&(agent.tray||mode==DaemonMode::Headless)}),
+    )
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesktopJournal {
+    daemon: Snapshot,
+    tray: Snapshot,
+}
+fn restore_desktop(options: &ServiceOptions, journal: &DesktopJournal) -> Result<(), String> {
+    // Finish any interrupted inner publication before restoring the complete
+    // prior pair. No nested pending journal may replay a later partial mode.
+    execute_agent(options, TaskAction::Reconcile, true)?;
+    execute_agent(options, TaskAction::Reconcile, false)?;
+    let tray = Agent::new(options, true)?;
+    tray.restore(&Journal {
+        before: journal.tray.clone(),
+        after: Some(definition_mode(options, true, DaemonMode::Desktop)?),
+    })?;
+    let daemon = Agent::new(options, false)?;
+    daemon.restore(&Journal {
+        before: journal.daemon.clone(),
+        after: Some(definition_mode(options, false, DaemonMode::Desktop)?),
+    })?;
+    Ok(())
+}
+/// Composite desktop installation keeps prior daemon mode/native preference in
+/// one continuing broker transaction, including failure after daemon conversion.
+pub(crate) fn execute(
+    options: &ServiceOptions,
+    action: TaskAction,
+    tray: bool,
+) -> Result<Value, String> {
+    let pending = path(options, false).with_extension("desktop-pending.json");
+    if let Some(text) = read_file(&pending)? {
+        let journal: DesktopJournal =
+            serde_json::from_str(&text).map_err(|_| "Invalid desktop transaction")?;
+        for (is_tray, snapshot) in [(false, &journal.daemon), (true, &journal.tray)] {
+            if let Some(text) = &snapshot.definition {
+                Agent::new(options, is_tray)?.validate_definition(text)?;
+            }
+        }
+        if matches!(action, TaskAction::Inspect) {
+            let mut result = execute_agent(options, action, tray)?;
+            if let Some(object) = result.as_object_mut() {
+                object.insert("pending".into(), Value::Bool(true));
+            }
+            return Ok(result);
+        }
+        restore_desktop(options, &journal)?;
+        std::fs::remove_file(&pending)
+            .map_err(|_| "Could not clear recovered desktop transaction")?;
+    }
+    if !matches!(action, TaskAction::InstallDesktop) {
+        return execute_agent(options, action, tray);
+    }
+    if !tray {
+        return Err("Desktop installation requires tray registration".into());
+    }
+    execute_agent(options, TaskAction::Reconcile, true)?;
+    execute_agent(options, TaskAction::Reconcile, false)?;
+    let daemon = Agent::new(options, false)?;
+    let tray = Agent::new(options, true)?;
+    let before = DesktopJournal {
+        daemon: daemon.snapshot()?,
+        tray: tray.snapshot()?,
+    };
+    macos_agent::check_mode_change(
+        before
+            .daemon
+            .definition
+            .as_deref()
+            .map(|text| owned_mode(options, text))
+            .transpose()?,
+        before.daemon.loaded,
+        DaemonMode::Desktop,
+    )?;
+    hieronymus::atomic::atomic_write(
+        &pending,
+        &serde_json::to_vec(&before).map_err(|_| "Could not encode desktop transaction")?,
+    )
+    .map_err(|_| "Could not persist desktop transaction")?;
+    let result = macos_agent::publish_with_rollback(
+        || {
+            execute_agent(options, TaskAction::DesktopMode, false)?;
+            execute_agent(options, TaskAction::Install, true)
+        },
+        || restore_desktop(options, &before),
+    );
+    if result
+        .as_ref()
+        .is_err_and(|error| error == "LaunchAgent registration failed; rollback remains pending")
+    {
+        return result;
+    }
+    std::fs::remove_file(&pending)
+        .map_err(|_| "Desktop transaction completed but journal remains")?;
+    result
+}
+
+#[cfg(test)]
+thread_local! { static FAIL_TRAY_PUBLICATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use macos_agent::DaemonMode;
     #[test]
     fn public_reads_reject_common_guard_contention_before_broker_spawn() {
         let temp = tempfile::tempdir().unwrap();
@@ -575,7 +841,8 @@ mod tests {
         };
         std::fs::create_dir_all(&options.data_root).unwrap();
         std::fs::create_dir_all(&options.unit_dir).unwrap();
-        let agent = Agent::new(&options, false).unwrap();
+        let mut agent = Agent::new(&options, false).unwrap();
+        agent.expected = definition_mode(&options, false, DaemonMode::Desktop).unwrap();
         let before = agent.snapshot().unwrap();
         assert!(before.definition.is_none());
         assert!(!before.loaded);
@@ -595,5 +862,82 @@ mod tests {
         assert!(agent.restore(&journal).is_err());
         assert_eq!(std::fs::read_to_string(&agent.path).unwrap(), "foreign");
         std::fs::remove_file(&agent.path).unwrap();
+    }
+    #[test]
+    #[ignore = "Requires an Aqua login; only unique disposable jobs running /usr/bin/true"]
+    fn native_headless_stop_conversion_and_failed_tray_restores_prior_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = ServiceOptions {
+            data_root: temp.path().join("root"),
+            unit_dir: temp.path().join("agents"),
+            binary: PathBuf::from("/usr/bin/true"),
+            use_manager: true,
+        };
+        std::fs::create_dir_all(&options.data_root).unwrap();
+        std::fs::create_dir_all(&options.unit_dir).unwrap();
+        execute(&options, TaskAction::Install, false).unwrap();
+        let agent = Agent::new(&options, false).unwrap();
+        let headless = agent.snapshot().unwrap();
+        assert!(!headless.loaded);
+        assert!(!headless.disabled);
+        assert_eq!(
+            owned_mode(&options, headless.definition.as_deref().unwrap()).unwrap(),
+            DaemonMode::Headless
+        );
+        // A benign native fixture process executes once and exits; no daemon,
+        // model, browser or real user service is started by this test.
+        run(&["bootstrap", &agent.domain, agent.path.to_str().unwrap()]).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !agent.loaded().unwrap().is_some_and(|job| job.idle)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(agent.loaded().unwrap().unwrap().idle);
+        assert!(
+            execute(&options, TaskAction::InstallDesktop, true)
+                .unwrap_err()
+                .contains("Stop the daemon")
+        );
+        assert_eq!(read_file(&agent.path).unwrap(), headless.definition);
+        assert!(!agent.disabled().unwrap());
+        assert!(agent.loaded().unwrap().is_some());
+        let operation =
+            LifecycleOperation::acquire(&HieronymusConfig::new(&options.data_root)).unwrap();
+        operation.register_unit(&options).unwrap();
+        let _owner = RootOwnership::acquire(
+            &HieronymusConfig::new(&options.data_root),
+            "native-fixture-post-stop",
+        )
+        .unwrap();
+        execute(&options, TaskAction::Suppress, false).unwrap();
+        execute(&options, TaskAction::FinishStop, false).unwrap();
+        let stopped = agent.snapshot().unwrap();
+        assert!(!stopped.loaded);
+        assert_eq!(stopped.disabled, headless.disabled);
+        assert_eq!(stopped.definition, headless.definition);
+        FAIL_TRAY_PUBLICATION.set(true);
+        assert!(
+            execute(&options, TaskAction::InstallDesktop, true)
+                .unwrap_err()
+                .contains("Injected tray publication")
+        );
+        let restored = agent.snapshot().unwrap();
+        assert_eq!(restored.definition, headless.definition);
+        assert_eq!(restored.disabled, headless.disabled);
+        assert!(!restored.loaded);
+        assert!(read_file(&path(&options, true)).unwrap().is_none());
+        execute(&options, TaskAction::InstallDesktop, true).unwrap();
+        assert_eq!(
+            owned_mode(&options, &read_file(&agent.path).unwrap().unwrap()).unwrap(),
+            DaemonMode::Desktop
+        );
+        execute(&options, TaskAction::Install, false).unwrap();
+        assert_eq!(
+            owned_mode(&options, &read_file(&agent.path).unwrap().unwrap()).unwrap(),
+            DaemonMode::Desktop
+        );
+        execute(&options, TaskAction::Remove, true).unwrap();
+        execute(&options, TaskAction::Remove, false).unwrap();
     }
 }

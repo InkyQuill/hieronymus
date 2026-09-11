@@ -721,6 +721,9 @@ pub(crate) fn stop_guarded(
                 service::stop_guarded(options, operation)
                     .map_err(|error| LifecycleError::Service(error.to_string()))?,
             );
+            #[cfg(target_os = "macos")]
+            service::macos::finish_stop_guarded(options, operation)
+                .map_err(|error| LifecycleError::Service(error.to_string()))?;
         }
         return Ok(lines);
     };
@@ -758,6 +761,14 @@ pub(crate) fn stop_guarded(
         record.host, record.port, record.instance_id, record.pid,
     )];
     wait_until_stopped(config, &record)?;
+    #[cfg(target_os = "macos")]
+    if options.use_manager {
+        // Reacquire offline authority: a prior release observation cannot
+        // authorize bootout against a replacement daemon owner.
+        let _ownership = RootOwnership::acquire(config, "macos-post-stop")?;
+        service::macos::finish_stop_guarded(options, operation)
+            .map_err(|error| LifecycleError::Service(error.to_string()))?;
+    }
     lines.push(
         "daemon stopped and released its discovery record and data-root ownership".to_string(),
     );

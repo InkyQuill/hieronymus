@@ -23,6 +23,10 @@ const MAX_RESPONSE: usize = 65536;
 pub(crate) enum TaskAction {
     Inspect,
     Install,
+    InstallDesktop,
+    DesktopMode,
+    FinishStop,
+    Reconcile,
     Remove,
     Start,
     Rearm,

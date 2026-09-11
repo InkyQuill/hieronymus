@@ -132,7 +132,7 @@ fn loaded_readback_refuses_foreign_paths_arguments_recovery_and_unknown_formats(
         "--data-root".into(),
         "/tmp/root".into(),
     ];
-    let text = "gui/501/fixture = {\npath = /tmp/owned.plist\nprogram = /app/bin/hiero\narguments = {\n/app/bin/hiero\ndaemon\n--data-root\n/tmp/root\n}\nproperties = inferred program\n}";
+    let text = "gui/501/fixture = {\nstate = not running\npath = /tmp/owned.plist\nprogram = /app/bin/hiero\narguments = {\n/app/bin/hiero\ndaemon\n--data-root\n/tmp/root\n}\nproperties = inferred program\n}";
     macos_agent::validate_loaded(text, path, &args).unwrap();
     let mut named_args = args.clone();
     named_args[3] = "/tmp/keepalive-book".into();
@@ -166,4 +166,148 @@ fn loaded_readback_refuses_foreign_paths_arguments_recovery_and_unknown_formats(
         )
         .is_err()
     );
+}
+
+#[test]
+fn readback_never_confuses_malformed_authority_with_absence() {
+    for text in [
+        "disabled services = {\n\"fixture\"=> true\n}",
+        "disabled services = {\n\"fixture\" => true\n\"fixture\"=> false\n}",
+        "disabled services = {\n\"fixture\" : true\n}",
+        "disabled services = {\n\"fixture\" => true\n}\n}",
+        "disabled services = {\nother malformed entry\n}",
+    ] {
+        assert!(
+            macos_agent::disabled_state(text, "fixture").is_err(),
+            "accepted {text}"
+        );
+    }
+    let args = vec![
+        "/app/hiero".into(),
+        "daemon".into(),
+        "--data-root".into(),
+        "/tmp/root".into(),
+    ];
+    let valid = "gui/501/fixture = {\nstate = not running\npath = /tmp/owned.plist\nprogram = /app/hiero\narguments = {\n/app/hiero\ndaemon\n--data-root\n/tmp/root\n}\nproperties = inferred program\n}";
+    for text in [
+        valid.replace("\n}\nproperties = inferred program\n}", ""),
+        valid.trim_end_matches('}').to_owned(),
+        valid.replace(
+            "properties = inferred program",
+            "pid=> 123\nproperties = inferred program",
+        ),
+        valid.replace(
+            "properties = inferred program",
+            "pid = invalid\nproperties = inferred program",
+        ),
+        valid.replace(
+            "properties = inferred program",
+            "pid = 123\npid= 456\nproperties = inferred program",
+        ),
+        valid.replace(
+            "properties = inferred program",
+            "keepalive=> true\nproperties = inferred program",
+        ),
+    ] {
+        assert!(
+            macos_agent::validate_loaded(&text, std::path::Path::new("/tmp/owned.plist"), &args)
+                .is_err(),
+            "accepted {text}"
+        );
+    }
+}
+
+#[test]
+fn headless_login_mode_is_owned_persisted_and_restored_after_failed_transition() {
+    use macos_agent::DaemonMode::{Desktop, Headless};
+    let root = tempfile::tempdir().unwrap();
+    let binary = root.path().join("hiero");
+    let directory = root.path().join("agents");
+    let headless =
+        macos_agent::render_mode(&binary, root.path(), &directory, false, Headless).unwrap();
+    assert!(headless.contains("<key>RunAtLoad</key><true/>"));
+    let desktop =
+        macos_agent::render_mode(&binary, root.path(), &directory, false, Desktop).unwrap();
+    assert!(desktop.contains("<key>RunAtLoad</key><false/>"));
+    for text in [&headless, &desktop] {
+        assert!(text.contains("<key>KeepAlive</key><false/>"));
+    }
+    let path = root.path().join("mode.plist");
+    std::fs::write(&path, &headless).unwrap();
+    let identify = || {
+        macos_agent::owned_mode(
+            &std::fs::read_to_string(&path).unwrap(),
+            &binary,
+            root.path(),
+            &directory,
+        )
+        .unwrap()
+    };
+    assert_eq!(identify(), Headless);
+    let result: Result<(), String> = macos_agent::publish_with_rollback(
+        || {
+            std::fs::write(&path, &desktop).unwrap();
+            assert_eq!(identify(), Desktop);
+            Err("tray registration failed".into())
+        },
+        || macos_agent::restore_definition(&path, Some(headless.as_bytes())),
+    );
+    assert_eq!(result.unwrap_err(), "tray registration failed");
+    assert_eq!(identify(), Headless);
+    let foreign = headless.replace(
+        "<key>KeepAlive</key><false/>",
+        "<key>KeepAlive</key><true/>",
+    );
+    assert!(macos_agent::owned_mode(&foreign, &binary, root.path(), &directory).is_err());
+}
+
+#[test]
+fn loaded_process_state_requires_explicit_idle_and_preserves_argument_spaces() {
+    let path = std::path::Path::new("/tmp/owned.plist");
+    let args = vec![
+        "/app/hiero".to_string(),
+        "daemon".into(),
+        "--data-root".into(),
+        "/tmp/root  ".into(),
+    ];
+    let text = "gui/501/fixture = {\n\tstate = not running\n\tpath = /tmp/owned.plist\n\tprogram = /app/hiero\n\targuments = {\n\t\t/app/hiero\n\t\tdaemon\n\t\t--data-root\n\t\t/tmp/root  \n\t}\n\tproperties = inferred program | runatload\n}";
+    let loaded = macos_agent::loaded_state(text, path, &args).unwrap();
+    assert!(loaded.idle);
+    assert_eq!(loaded.pid, None);
+    assert!(loaded.run_at_load);
+    assert!(
+        macos_agent::loaded_state(&text.replace("/tmp/root  ", "/tmp/root"), path, &args).is_err()
+    );
+    let live = text.replace("state = not running", "state = running\n\tpid = 42");
+    let loaded = macos_agent::loaded_state(&live, path, &args).unwrap();
+    assert_eq!(loaded.pid, Some(42));
+    assert!(!loaded.idle);
+    for malformed in [
+        text.replace("state = not running", "state = running"),
+        text.replace("state = not running", "state = not running\n\tpid = 42"),
+        text.replace("state = not running", "state = not running\n\tpid = 0"),
+        text.replace(
+            "state = not running",
+            "state = not running\n\tprocess id = 42",
+        ),
+        text.replace(
+            "inferred program | runatload",
+            "inferred program | runatload | runatload",
+        ),
+    ] {
+        assert!(macos_agent::loaded_state(&malformed, path, &args).is_err());
+    }
+}
+
+#[test]
+fn mode_conversion_requires_unloaded_prior_job_and_preserves_explicit_mode() {
+    use macos_agent::{
+        DaemonMode::{Desktop, Headless},
+        check_mode_change,
+    };
+    assert!(check_mode_change(Some(Headless), true, Desktop).is_err());
+    check_mode_change(Some(Headless), false, Desktop).unwrap();
+    check_mode_change(Some(Desktop), true, Desktop).unwrap();
+    check_mode_change(None, false, Desktop).unwrap();
+    assert!(check_mode_change(None, true, Desktop).is_err());
 }

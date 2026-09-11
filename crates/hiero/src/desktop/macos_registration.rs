@@ -39,6 +39,17 @@ impl MacosRegistration {
                 )
             }
         };
+        if !matches!(action, TaskAction::Inspect) {
+            let daemon = macos_broker::task(&self.service, TaskAction::Inspect, false)?;
+            let tray = macos_broker::task(&self.service, TaskAction::Inspect, true)?;
+            if daemon.get("mode").and_then(|value| value.as_str()) != Some("desktop")
+                || tray.is_null()
+            {
+                return Err(
+                    "Desktop registration is missing; run hiero desktop install first".into(),
+                );
+            }
+        }
         macos_broker::task(&self.service, action, true)
     }
     pub fn install(&mut self) -> Result<(), String> {
@@ -59,20 +70,7 @@ impl MacosRegistration {
                     .map_err(|e| e.to_string())?,
             )
         };
-        // Validate both existing tasks before publishing either registration.
-        let before_daemon = macos_broker::task(&self.service, TaskAction::Inspect, false)?;
-        macos_broker::task(&self.service, TaskAction::Inspect, true)?;
-        service::install_guarded(&self.service, &operation).map_err(|e| e.to_string())?;
-        if let Err(error) = macos_broker::task(&self.service, TaskAction::Install, true) {
-            // An indeterminate broker keeps the gate: rollback then refuses, with
-            // no competing mutation. A normal failure removes only our new task.
-            if before_daemon.is_null() {
-                service::uninstall_guarded(&self.service, &operation).map_err(
-                    |_| "Tray registration failed; daemon registration rollback is pending",
-                )?;
-            }
-            return Err(error);
-        }
+        macos_broker::task(&self.service, TaskAction::InstallDesktop, true)?;
         Ok(())
     }
     pub fn uninstall(&mut self) -> Result<(), String> {
