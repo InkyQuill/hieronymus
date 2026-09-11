@@ -1236,3 +1236,159 @@ fn scheduled_deterministic_work_ignores_a_small_crystallization_backlog() {
     assert_eq!(controller.status().last.unwrap().batches, Some(2));
     workers.stop_and_join().unwrap();
 }
+
+// Real production resolver: both manual and scheduled work must publish health.
+#[test]
+fn production_manual_and_scheduled_generations_publish_readiness() {
+    use hiero::readiness::ProviderCondition;
+    for scheduled in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let config = config(root.path());
+        seed_backlog(&config, 1, 1);
+        let llm = LoopbackLlm::start();
+        wire_lane(&config, &llm.url(), scheduled, 1, 4, 5.0);
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut workers = WorkerGroup::new(Arc::clone(&stop));
+        let controller = DreamController::start(config, &mut workers).unwrap();
+        if scheduled {
+            wait_for(
+                || {
+                    controller
+                        .readiness()
+                        .snapshot()
+                        .providers
+                        .iter()
+                        .any(|p| p.condition == ProviderCondition::Healthy)
+                },
+                PASS_TIMEOUT,
+            );
+        } else {
+            assert_eq!(
+                controller.readiness().snapshot().providers[0].condition,
+                ProviderCondition::Untested
+            );
+            controller
+                .request_and_wait(DreamRequest {
+                    all: true,
+                    manual: true,
+                })
+                .unwrap();
+        }
+        let snapshot = controller.readiness().snapshot();
+        assert_eq!(snapshot.providers.len(), 1);
+        assert_eq!(snapshot.providers[0].condition, ProviderCondition::Healthy);
+        assert_eq!(
+            snapshot.providers[0].capabilities,
+            ["knowledge_crystals", "coverage_audit"]
+        );
+        stop.store(true, Ordering::Release);
+        workers.stop_and_join().unwrap();
+    }
+}
+
+#[test]
+fn production_generation_failure_is_observed_for_manual_and_scheduled_paths() {
+    use hiero::readiness::ProviderCondition;
+    for scheduled in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let config = config(root.path());
+        seed_backlog(&config, 1, 1);
+        let llm = LoopbackLlm::start_failing_after(0);
+        wire_lane(&config, &llm.url(), scheduled, 1, 4, 5.0);
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut workers = WorkerGroup::new(Arc::clone(&stop));
+        let controller = DreamController::start(config, &mut workers).unwrap();
+        if scheduled {
+            wait_for(
+                || {
+                    controller
+                        .readiness()
+                        .snapshot()
+                        .providers
+                        .iter()
+                        .any(|p| p.condition == ProviderCondition::Failed)
+                },
+                PASS_TIMEOUT,
+            );
+        } else {
+            assert!(
+                controller
+                    .request_and_wait(DreamRequest {
+                        all: true,
+                        manual: true
+                    })
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            controller.readiness().snapshot().providers[0].condition,
+            ProviderCondition::Failed
+        );
+        stop.store(true, Ordering::Release);
+        workers.stop_and_join().unwrap();
+    }
+}
+
+#[test]
+fn production_resolver_maps_unchanged_provider_revision_after_another_profile_edit() {
+    use hiero::daemon::readiness::RuntimeReadiness;
+    use hiero::readiness::ProviderCondition;
+    use hieronymus::dream_workflows::WorkflowChoice;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    let llm = LoopbackLlm::start();
+    wire_lane(&config, &llm.url(), false, 1, 4, 5.0);
+    let mut catalog = load_provider_catalog(&config).unwrap();
+    catalog.providers.insert(
+        "secondary".into(),
+        ProviderProfile::new(
+            "Secondary",
+            "openai",
+            "http://127.0.0.1:1",
+            "secondary-key",
+            1.0,
+        ),
+    );
+    save_provider_catalog(&config, &catalog).unwrap();
+    let mut dream = hieronymus::dream_config::load_dream_config(&config).unwrap();
+    let assignment = dream.workflows.get_mut("knowledge_crystals").unwrap();
+    assignment.provider = "secondary".into();
+    save_dream_config(&config, &dream).unwrap();
+    let runtime = Arc::new(RuntimeReadiness::for_config(
+        config.clone(),
+        Arc::new(AtomicBool::new(false)),
+    ));
+    let first = runtime.snapshot().providers[0].clone();
+    catalog.providers.insert(
+        "secondary".into(),
+        ProviderProfile::new(
+            "Secondary",
+            "openai",
+            "http://127.0.0.1:2",
+            "secondary-key",
+            1.0,
+        ),
+    );
+    save_provider_catalog(&config, &catalog).unwrap();
+    let resolver = runtime.resolver();
+    assert_eq!(runtime.snapshot().providers[0].revision, first.revision);
+    let provider = resolver
+        .provider(&WorkflowChoice {
+            name: "coverage_audit".into(),
+            enabled: true,
+            provider: "loopback-lane".into(),
+            model: "test-model".into(),
+        })
+        .unwrap();
+    provider
+        .run_pass(
+            "coverage_audit",
+            &hieronymus::memory_models::TranslationContext::new("book", "ja", "ru", "translate"),
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        runtime.snapshot().providers[0].condition,
+        ProviderCondition::Healthy
+    );
+}

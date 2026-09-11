@@ -19,6 +19,8 @@ pub enum ProviderCondition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ProviderReadiness {
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     pub provider: String,
     pub model: String,
     pub revision: u64,

@@ -234,6 +234,7 @@ struct ControllerInner {
     source: ProviderSource,
     clock: RetryClock,
     retry_storage_failed: AtomicBool,
+    readiness: Arc<super::readiness::RuntimeReadiness>,
 }
 
 /// A cloneable handle to the dream controller. The worker is admitted to
@@ -263,17 +264,23 @@ impl DreamController {
         config: HieronymusConfig,
         workers: &mut super::workers::WorkerGroup,
     ) -> Result<Self, String> {
-        let catalog_config = config.clone();
-        Self::start_with_provider_source(
+        let readiness = Arc::new(super::readiness::RuntimeReadiness::for_config(
+            config.clone(),
+            Arc::clone(workers.stop_flag()),
+        ));
+        let observed = Arc::clone(&readiness);
+        Self::start_observed(
             config,
             workers,
-            Arc::new(move || {
-                WorkflowResolver::from_catalog(
-                    hieronymus::provider_config::load_provider_catalog(&catalog_config)
-                        .unwrap_or_default(),
-                )
-            }),
+            Arc::new(move || observed.resolver()),
+            Arc::new(chrono::Utc::now),
+            readiness,
         )
+    }
+
+    /// The same state is consumed by authenticated status and every real run.
+    pub fn readiness(&self) -> &Arc<super::readiness::RuntimeReadiness> {
+        &self.inner.readiness
     }
 
     /// The test injection seam: construct the controller over an explicit
@@ -301,6 +308,17 @@ impl DreamController {
         source: ProviderSource,
         clock: RetryClock,
     ) -> Result<Self, String> {
+        let readiness = Arc::new(super::readiness::RuntimeReadiness::default());
+        Self::start_observed(config, workers, source, clock, readiness)
+    }
+
+    fn start_observed(
+        config: HieronymusConfig,
+        workers: &mut super::workers::WorkerGroup,
+        source: ProviderSource,
+        clock: RetryClock,
+        readiness: Arc<super::readiness::RuntimeReadiness>,
+    ) -> Result<Self, String> {
         let events = Arc::new(AdminEventHub::default());
         let inner = Arc::new(ControllerInner {
             state: Mutex::new(ControllerState {
@@ -316,6 +334,7 @@ impl DreamController {
             source,
             clock,
             retry_storage_failed: AtomicBool::new(false),
+            readiness,
         });
         let controller = DreamController { inner };
         let worker = controller.clone();

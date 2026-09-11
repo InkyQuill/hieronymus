@@ -70,3 +70,5 @@ pub mod corrections;
 pub mod authority_producers;
 
 pub mod ollama_embeddings;
+
+pub mod provider_observation;
