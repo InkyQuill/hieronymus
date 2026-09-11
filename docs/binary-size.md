@@ -174,10 +174,10 @@ The historical Task 12 Linux package receipt is [desktop-task12-linux-receipt.js
 The platform archive is 97,753,102 bytes (93.22 MiB); the one unchanged model archive is 435,109,879 bytes (414.95 MiB). No model payload appears in the platform archive. The mandatory upstream runtime is unchanged at its pinned digest. Linux keeps separate diagnostic symbol files keyed by the original executable digest. The release profile remains Cargo defaults; this task measured native stripping, not LTO or panic-mode changes. The CLI dynamic dependencies are libc, libm, libgcc and the ELF loader; native GTK dependencies remain in the helper.
 
 
-## Final Task 14 local Linux candidate — 2026-09-11
+## Historical Task 14 local Linux candidate — 2026-09-11
 
-[The final receipt](desktop-task14-linux-receipt.json) replaces Task 12 bytes for
-current qualification. This deliberate rebuild includes the Task 13 embedded
+[The Task 14 receipt](desktop-task14-linux-receipt.json) replaced Task 12 bytes for
+that qualification. It does not qualify the later final-review fixes. This deliberate rebuild includes the Task 13 embedded
 console and Task 14 ownership correction. It is an unpublished `dev` candidate;
 there is no remote candidate-run or release-promotion claim.
 
@@ -202,3 +202,33 @@ offline installation, genuine stopped 0.8.0→0.9.0 upgrade, rollback and uninst
 Native manager and interactive panel/session checks remain unavailable. The
 published 0.8.0 measurement above, the historical Task 12 candidate, this final
 candidate and separate diagnostic files are distinct measurements.
+
+
+## Final review fixes: current local Linux candidate — 2026-09-11
+
+[The new exact-byte receipt](desktop-final-fixes-linux-receipt.json) binds source
+commit `1da8c61a72c370ba68917aac93aa7c44a088e92a` and the separate immutable
+`qualification/.artifacts/desktop-final-fixes/final-release/` output. The Task 14
+archive above remains unchanged and is historical evidence.
+
+| Executable | Before strip | Shipped | Saving |
+|---|---:|---:|---:|
+| hiero | 280,830,112 B | 223,520,296 B | 54.65 MiB (20.41%) |
+| hiero-desktop | 21,298,432 B | 13,013,064 B | 7.90 MiB (38.90%) |
+
+The platform archive is **97,765,062 bytes (93.24 MiB)**, SHA256
+`f075fd95fd125fd796c825c49b726c5eb6e1a57f5ed2d63e469ea945faee8b1e`. The canonical common model
+remains **435,109,879 bytes**, SHA256
+`4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0`. No model payload is present
+in the platform archive. The pinned ONNX runtime is unchanged. Separate diagnostic
+files are **41,851,952 bytes** for the CLI and **4,915,048 bytes** for the
+helper; the receipt binds their hashes and ELF Build IDs. Cargo release defaults,
+no-LTO, unwind policy and upstream dependencies remain unchanged.
+
+These final stripped bytes passed real model inference, authenticated MCP status
+and shutdown, plus disposable fresh installation, genuine stopped 0.8.0 upgrade,
+rollback and uninstall. Receipt verification rehashed 38 logs, all 10 release files,
+4 installed members and 344 source-input records. This partial source inventory
+is not a toolchain/dependency closure. Native interactive and native-manager
+acceptance on Linux, Windows and both macOS targets remain separate unavailable
+gates; these local results do not authorize release promotion.

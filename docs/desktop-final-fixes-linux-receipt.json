@@ -1,0 +1,279 @@
+{
+  "version": "0.9.0",
+  "target": "x86_64-unknown-linux-gnu",
+  "signing": "unsigned; no signing identity or notarization supplied",
+  "metadata_sha256": "eb2bddad03f9e2a465bf0f1cba4e5015c352b06d3f568fa63ccc249131cb8cb2",
+  "platform_sha256": "f075fd95fd125fd796c825c49b726c5eb6e1a57f5ed2d63e469ea945faee8b1e",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "assets_sha256": "7322c77e0f8d24146439faca583710f7bfc2c6bc905c195668e45b26d99c2533",
+  "symbols": [
+    {
+      "binary": "hiero",
+      "original_sha256": "5a429d99f616f1e967dec4468a62dd340c9a58fd5a8c6b08db125c68a4fd6b81",
+      "debug": "hiero-5a429d99f616f1e967dec4468a62dd340c9a58fd5a8c6b08db125c68a4fd6b81.debug",
+      "before": 280830112,
+      "after": 223520296,
+      "debug_sha256": "691a03ce2ad1027a241720b472e783caafc7312f89bd8f702f6dbaf73f319fb0",
+      "debug_bytes": 41851952,
+      "build_id": "29371e53c9c2254da9e2edf1bd900ab020cc7bb6"
+    },
+    {
+      "binary": "hiero-desktop",
+      "original_sha256": "3f82158356e522a7660fd925b646a1e8bdb50b34a88338f308a943294bbddc5f",
+      "debug": "hiero-desktop-3f82158356e522a7660fd925b646a1e8bdb50b34a88338f308a943294bbddc5f.debug",
+      "before": 21298432,
+      "after": 13013064,
+      "debug_sha256": "a8a5b4ff5551cc3217323005c2e23b4de712ef20244f092bd1a3d613ca8706c9",
+      "debug_bytes": 4915048,
+      "build_id": "1ae411eef19b6c8f6091f04b378dc97c0908ff14"
+    }
+  ],
+  "source_base": "69d05fe1482a5232cb1231e0ce3c68aa59ac8dc9",
+  "source_commit": "1da8c61a72c370ba68917aac93aa7c44a088e92a",
+  "source_inputs_sha256": "8f96b446f04c39d9bd538216fd21f177728139971d44029e3172987e57991bc9",
+  "source_inputs_recipe": "Partial build/source inventory, not toolchain/dependency closure: SHA256 of sorted relative path + NUL + file SHA256 + LF. Includes Cargo.toml, Cargo.lock, rust-toolchain.toml, qualification/prerequisites.json and regular files under crates, assets, frontend/dist, scripts, .github/workflows. Final fixes source committed before artifact build; no candidate-run provenance or publication authority is claimed. Model/runtime are separately bound.",
+  "build_command": "bash qualification/.artifacts/desktop-final-fixes/build-final.sh",
+  "qualification_command": "bash qualification/.artifacts/desktop-final-fixes/qualify-final.sh",
+  "rust": "1.96.0",
+  "bun": "1.4.0",
+  "profile": "Cargo release defaults opt3/no-LTO/16 codegen units/unwind; private copied executable objcopy --only-keep-debug then strip --strip-unneeded; upstream runtime unchanged",
+  "native_host": {
+    "system": "Linux",
+    "release": "7.2.3-1-cachyos",
+    "version": "#1 SMP PREEMPT_DYNAMIC Sun, 06 Sep 2026 22:01:30 +0000",
+    "machine": "x86_64"
+  },
+  "archive_bytes": {
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": 97765062,
+    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": 435109879
+  },
+  "packaged_members": {
+    "hiero": {
+      "bytes": 223520296,
+      "sha256": "d56e582fc90c127b7906f3028da18349fec8a7f89843384ecdf6aafa101d86fc"
+    },
+    "hiero-desktop": {
+      "bytes": 13013064,
+      "sha256": "9c7a5f6643ddb3524d1b3b1ff8edac17600dd2e671cc47623dda36b1e1e95b18"
+    },
+    "assets.json": {
+      "bytes": 1190,
+      "sha256": "7322c77e0f8d24146439faca583710f7bfc2c6bc905c195668e45b26d99c2533"
+    },
+    "lib/libonnxruntime.so": {
+      "bytes": 24268848,
+      "sha256": "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab"
+    }
+  },
+  "logs": {
+    "qualification/.artifacts/desktop-final-fixes/logs/cargo-test.log": {
+      "sha256": "a9a5909048d1d1a0d3d49d00746b9b3f3b7c00ce783a3df043da545a8b833548",
+      "bytes": 130491
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/clippy.log": {
+      "sha256": "cc325df1835c7624698a3097c71cff910d3ec884d94f55e06b97d74e94987fdb",
+      "bytes": 167
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/final-assembly.log": {
+      "sha256": "a564d13080192d68422cdafc24579ae07aeec90049f4454731cfdd9bedad8d09",
+      "bytes": 56
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/final-build.log": {
+      "sha256": "9d0a8c24269595f32ba9f2ab8003f82c4f382dc0f23cd7e473465b8d1bb33f17",
+      "bytes": 1558
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/final-cli-ldd.log": {
+      "sha256": "f62b0578e9ae31c109dd98e766af6cda147eeb9abb4732d52db2918b87b8b362",
+      "bytes": 293
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/final-helper-ldd.log": {
+      "sha256": "895eababfae717f59b620ddd8eeb3a83949ef7f4a77bffea5123acc33682759b",
+      "bytes": 4735
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/final-release-check.log": {
+      "sha256": "245e1a3399d7a2075e97e1b15b72c1e75c0c50eb8726f379afc665292d80a532",
+      "bytes": 187
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fmt.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr1-fr4-unit-green.log": {
+      "sha256": "a38a3d8e4de5ebb0f0bfbed27f16d3c638ee9712d92b31c0ed978479b725cef7",
+      "bytes": 13874
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr1-green.log": {
+      "sha256": "79be15115845b8cfa7bfb7f76d62af6d6eae415857381292049ea0c609382d2a",
+      "bytes": 758
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr1-red-deletion.log": {
+      "sha256": "bf0e4234266145fb3dd61119cb93b1dbbbb61b85e58ce1124ef5ff3ac8bfbe9f",
+      "bytes": 1283
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr1-red.log": {
+      "sha256": "8e54abd5375f5c9bcdf9883c7426cd6ab820b5700dd552bd33a4d746bf87fa10",
+      "bytes": 986
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr2-fr3-green.log": {
+      "sha256": "ddccdbf69a63f305659d8efaa9bd1866ed94fdd6d875fb56b7c27355458f70f5",
+      "bytes": 3076
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr2-red.log": {
+      "sha256": "d690c2ee2f3ac214d0c0d19a65a54aa11826cd31ace67c787cd3ab43f114d811",
+      "bytes": 1265
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr3-red.log": {
+      "sha256": "0d7470d44e8976bbcffbff974d2ba62da8d0655a18217f438ad55b79675214b1",
+      "bytes": 1248
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr4-green.log": {
+      "sha256": "dffeb661bd7a8493acb2dd65a21ec63581afee3fc8d0a38b0c0656833270fb88",
+      "bytes": 1161
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/fr4-red.log": {
+      "sha256": "a716341a601a6ac4a7bb83af793131664af9c976006b045992d546656b7782f3",
+      "bytes": 1070
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/frontend-build.log": {
+      "sha256": "5d87767d5749147270409a7345517eaa77f5d0b3e49e2de9dc9c377c1c837009",
+      "bytes": 534
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/frontend-format-cleanup.log": {
+      "sha256": "937cd715286b3ac9ff1d6bc09356242c0f13afcd51d82f2187cb46428768ff00",
+      "bytes": 39
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/frontend-format-initial.log": {
+      "sha256": "12a372ac9bf19fad6915e6d52b6d86c8850cac5e4243368f863859b4a288941e",
+      "bytes": 204
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/frontend-format.log": {
+      "sha256": "824f9651861d8c37cb53d9dbac7dcd6138e69a3d700c1fe084ab7362a1e8f571",
+      "bytes": 89
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/frontend-test.log": {
+      "sha256": "62622012073439af231ddac1ac00f3f6b2410bcc7ab7dd407d0e8ebf945e5e6b",
+      "bytes": 277
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/frontend-typecheck.log": {
+      "sha256": "7f96aaabe6df7a354a3e4d7514375171e219ae2de91268b52d91875e0a026aa4",
+      "bytes": 70
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/headless-graph.log": {
+      "sha256": "57d4a24d18ad4115b1a661df789220669e2d28c2fda796b0cb55c3d5181a64e5",
+      "bytes": 57
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/helper-clippy.log": {
+      "sha256": "8f949c922f0ef28513ab4ae5d5731cd72884c8002f5dcec980e15a5c060f16c7",
+      "bytes": 288
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/helper-rustdoc.log": {
+      "sha256": "34728e71030b2803b8574b08b1c611c34ddcfacf40a86a827e5a9fc1c045b0ae",
+      "bytes": 511
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/helper-test.log": {
+      "sha256": "fef5364aa6b7f35099c7a77ca9be0cf9a9130cf69ceb09bf62b0fbec726216dc",
+      "bytes": 2847
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/macos-source-clippy.log": {
+      "sha256": "27e2077c6e49c9fcb4fc5ade801d30a9e2cc78a692967f21ed53a59d6c32d309",
+      "bytes": 229
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/macos-source-initial.log": {
+      "sha256": "1853b051eb3f0e532a5759a686c9ddf32a3b20c2ed9ce2f2744e32a1e191ac8d",
+      "bytes": 779
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/macos-source.log": {
+      "sha256": "293b97dca3557e7a548591044350f71019c418cee1e6543f1de462ba2466d501",
+      "bytes": 229
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/native-final.log": {
+      "sha256": "525bbc51f1b49c4e7185056a86d6b18d9ad9b41d78d8914f99086945e0f03a55",
+      "bytes": 375
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/native-missing-fixture.log": {
+      "sha256": "4939b41ddfc50ecd9746f1b0c3adfa643d44b5cc864afc0ce6eb2622a77f8f6d",
+      "bytes": 907
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/offline-final.log": {
+      "sha256": "a8c074c0d018c0f8a0ab77ae767c6592e0da54095d7b45af596e32e8eb76aa38",
+      "bytes": 541
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/rustdoc.log": {
+      "sha256": "df0e7c577a694ccb78f0c5e735bedef6b5667f92af0d5957c72cd68dabe0ae32",
+      "bytes": 365
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/scripts-format.log": {
+      "sha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "bytes": 66
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/scripts.log": {
+      "sha256": "632982307a841f44387d95013a7e429f43cea6320a2fe945860c5d5d2f721d7c",
+      "bytes": 6341
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/windows-source-clippy.log": {
+      "sha256": "73a42bf8eaf16e1e221d8a1fa1dc7a386b61870db6f6b6f3e58584383c04ad84",
+      "bytes": 232
+    },
+    "qualification/.artifacts/desktop-final-fixes/logs/windows-source.log": {
+      "sha256": "73a42bf8eaf16e1e221d8a1fa1dc7a386b61870db6f6b6f3e58584383c04ad84",
+      "bytes": 232
+    }
+  },
+  "qualification": {
+    "native_final_payload": "passed real pinned inference, authenticated MCP status and authenticated shutdown; no native manager",
+    "offline_install_upgrade_rollback_uninstall": "passed final split archive with genuine complete published0.8.0 baseline; custom registration definition only; settings preserved",
+    "interactive_linux": "unavailable for final candidate; earlier private watcher fixture is historical",
+    "windows_macos_native": "unavailable locally; source workflows are not execution",
+    "intel_runtime": "source-build-required; unpromoted; release blocked",
+    "signing": "unsigned-waiver",
+    "promotion": "blocked: incomplete four-target/native evidence; local artifact has no successful candidate-run provenance"
+  },
+  "platform_has_model_payload": false,
+  "release_files": {
+    "assets-x86_64-unknown-linux-gnu.json": {
+      "sha256": "7322c77e0f8d24146439faca583710f7bfc2c6bc905c195668e45b26d99c2533",
+      "bytes": 1190
+    },
+    "desktop-metadata.awk": {
+      "sha256": "0784453e458c898627c93d37715cd903c8991422d2ba82a3038fea578caa6639",
+      "bytes": 2802
+    },
+    "evidence-x86_64-unknown-linux-gnu.json": {
+      "sha256": "4429b9674ebe0186acc4db2c17594616e787b843f9d3289b7163d050a603592f",
+      "bytes": 1076
+    },
+    "hiero-5a429d99f616f1e967dec4468a62dd340c9a58fd5a8c6b08db125c68a4fd6b81.debug": {
+      "sha256": "691a03ce2ad1027a241720b472e783caafc7312f89bd8f702f6dbaf73f319fb0",
+      "bytes": 41851952
+    },
+    "hiero-desktop-3f82158356e522a7660fd925b646a1e8bdb50b34a88338f308a943294bbddc5f.debug": {
+      "sha256": "a8a5b4ff5551cc3217323005c2e23b4de712ef20244f092bd1a3d613ca8706c9",
+      "bytes": 4915048
+    },
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": {
+      "sha256": "f075fd95fd125fd796c825c49b726c5eb6e1a57f5ed2d63e469ea945faee8b1e",
+      "bytes": 97765062
+    },
+    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": {
+      "sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+      "bytes": 435109879
+    },
+    "install-desktop-x86_64-unknown-linux-gnu.sh": {
+      "sha256": "9ecc914582a22e77ff92215cb73a5c8965b0a4cf5db4b4bdcc8c65534ccf9c31",
+      "bytes": 4497
+    },
+    "install.sh": {
+      "sha256": "7c1a6e70847fe5740c7fdfb6154e451eded28a71d3308684c46eebdec165cac5",
+      "bytes": 17916
+    },
+    "release-x86_64-unknown-linux-gnu.json": {
+      "sha256": "eb2bddad03f9e2a465bf0f1cba4e5015c352b06d3f568fa63ccc249131cb8cb2",
+      "bytes": 1062
+    }
+  },
+  "disposable_fixture": {
+    "original_path": "/tmp/hiero-real-desktop-1mrGlk",
+    "durable_copy": "qualification/.artifacts/desktop-final-fixes/disposable-offline",
+    "note": "Complete retained test tree copied after successful test; historical absolute paths inside fixture files refer to original disposable location. No process is left running. This snapshot is evidence, not an active installation."
+  }
+}
