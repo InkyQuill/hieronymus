@@ -1,4 +1,4 @@
-//! Verify two bounded archives through retained file handles before assembly.
+//! Verify two bounded archives through authenticated anonymous snapshots before assembly.
 use crate::release_manifest::{ReleaseV2, metadata_name, model_members};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -64,19 +64,73 @@ fn regular_file(path: &Path, limit: u64) -> Result<File, String> {
     }
     Ok(file)
 }
-fn verified_file(path: &Path, expected: &str) -> Result<File, String> {
-    let mut file = regular_file(path, MAX_ARCHIVE)?;
+/// An owned anonymous spool containing only the authenticated byte stream.
+/// Inspection receives Read+Seek, never a pathname or writable file capability.
+struct AuthenticatedArchive(File);
+struct SnapshotReader<'a>(&'a mut File);
+impl Read for SnapshotReader<'_> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(bytes)
+    }
+}
+impl Seek for SnapshotReader<'_> {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        self.0.seek(position)
+    }
+}
+impl AuthenticatedArchive {
+    fn reader(&mut self) -> SnapshotReader<'_> {
+        SnapshotReader(&mut self.0)
+    }
+}
+fn verified_file(path: &Path, expected: &str) -> Result<AuthenticatedArchive, String> {
+    let mut source = regular_file(path, MAX_ARCHIVE)?;
+    // tempfile 3.27: Unix O_TMPFILE or unlink-before-return; Windows create_new,
+    // share_mode(0), DELETE_ON_CLOSE. No source-directory files are created.
+    let mut snapshot =
+        tempfile::tempfile().map_err(|e| format!("cannot create release snapshot: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // Fail closed if the crate's named fallback could not unlink its empty file.
+        if snapshot.metadata().map_err(|e| e.to_string())?.nlink() != 0 {
+            return Err("release snapshot must be anonymous".into());
+        }
+        snapshot
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
     let mut hash = Sha256::new();
-    let mut limited = (&mut file).take(MAX_ARCHIVE + 1);
-    let count = std::io::copy(&mut limited, &mut hash).map_err(|e| e.to_string())?;
-    if count > MAX_ARCHIVE || format!("{:x}", hash.finalize()) != expected {
+    let mut count = 0u64;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let size = source.read(&mut buffer).map_err(|e| e.to_string())?;
+        if size == 0 {
+            break;
+        }
+        count = count
+            .checked_add(size as u64)
+            .ok_or("release snapshot size overflow")?;
+        if count > MAX_ARCHIVE {
+            return Err("release archive exceeds snapshot size bound".into());
+        }
+        // The digest authenticates exactly the bytes successfully copied into our spool.
+        snapshot
+            .write_all(&buffer[..size])
+            .map_err(|e| format!("release snapshot write failed: {e}"))?;
+        hash.update(&buffer[..size]);
+    }
+    if format!("{:x}", hash.finalize()) != expected {
         return Err(format!(
             "release archive checksum mismatch: {}",
             path.display()
         ));
     }
-    file.rewind().map_err(|e| e.to_string())?;
-    Ok(file)
+    snapshot
+        .sync_all()
+        .map_err(|e| format!("release snapshot sync failed: {e}"))?;
+    snapshot.rewind().map_err(|e| e.to_string())?;
+    Ok(AuthenticatedArchive(snapshot))
 }
 #[derive(Default)]
 struct Inspection {
@@ -208,8 +262,8 @@ fn record(
     }
     Ok(())
 }
-fn inspect(
-    file: &mut File,
+fn inspect<R: Read + Seek>(
+    file: &mut R,
     zip: bool,
     policy: Policy,
     target: &str,
@@ -354,13 +408,13 @@ fn verify_pair(
     let mut platform = verified_file(&platform_archive, &manifest.platform.sha256)?;
     let mut model = verified_file(&model_archive, &manifest.model.sha256)?;
     let p = inspect(
-        &mut platform,
+        &mut platform.reader(),
         target.contains("windows"),
         Policy::Platform,
         target,
         None,
     )?;
-    let m = inspect(&mut model, false, Policy::Model, target, None)?;
+    let m = inspect(&mut model.reader(), false, Policy::Model, target, None)?;
     if p.bytes
         .checked_add(m.bytes)
         .ok_or("combined archive overflow")?
@@ -404,15 +458,21 @@ fn verify_pair(
         {
             return Err("assembly destination must be an empty directory".into());
         }
-        // Retained, authenticated handles are replayed; paths are never reopened for extraction.
+        // Every pass reads the same immutable authenticated snapshots; source files are never reread.
         let written_platform = inspect(
-            &mut platform,
+            &mut platform.reader(),
             target.contains("windows"),
             Policy::Platform,
             target,
             Some(root),
         )?;
-        let written_model = inspect(&mut model, false, Policy::Model, target, Some(root))?;
+        let written_model = inspect(
+            &mut model.reader(),
+            false,
+            Policy::Model,
+            target,
+            Some(root),
+        )?;
         let mut written = written_platform.hashes;
         written.remove("assets.json");
         written.extend(written_model.hashes);
@@ -453,10 +513,15 @@ pub fn extract_split_directory(
 ) -> Result<VerifiedSplitRelease, String> {
     std::fs::create_dir(destination).map_err(|e| e.to_string())?;
     let result = verify_pair(directory, target, Some(destination));
-    if result.is_err() {
-        let _ = std::fs::remove_dir_all(destination);
+    match result {
+        Ok(verified) => Ok(verified),
+        Err(error) => {
+            std::fs::remove_dir_all(destination).map_err(|cleanup| {
+                format!("{error}; failed to remove incomplete release assembly: {cleanup}")
+            })?;
+            Err(error)
+        }
     }
-    result
 }
 
 #[cfg(test)]
@@ -552,6 +617,86 @@ mod tests {
             .unwrap()
             .contains("unaccounted")
         );
+    }
+    fn executable_tar(value: &[u8]) -> Vec<u8> {
+        let gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(gzip);
+        let mut header = tar::Header::new_ustar();
+        header.set_size(value.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive.append_data(&mut header, "hiero", value).unwrap();
+        archive.into_inner().unwrap().finish().unwrap()
+    }
+    #[test]
+    fn inspection_uses_authenticated_bytes_after_source_is_rewritten() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("platform.tar.gz");
+        let original = executable_tar(b"authenticated executable");
+        std::fs::write(&path, &original).unwrap();
+        let mut snapshot =
+            verified_file(&path, &format!("{:x}", Sha256::digest(&original))).unwrap();
+        // Deterministic replacement in place, after authentication and before first inspection.
+        std::fs::write(&path, executable_tar(b"replacement executable")).unwrap();
+        let mut archive = tar::Archive::new(flate2::read::MultiGzDecoder::new(snapshot.reader()));
+        let mut inspected = Vec::new();
+        archive
+            .entries()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .read_to_end(&mut inspected)
+            .unwrap();
+        assert_eq!(inspected, b"authenticated executable");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn authenticated_snapshot_is_anonymous_and_private() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        std::fs::write(&source, b"original").unwrap();
+        let snapshot =
+            verified_file(&source, &format!("{:x}", Sha256::digest(b"original"))).unwrap();
+        let metadata = snapshot.0.metadata().unwrap();
+        assert_eq!(metadata.nlink(), 0);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        drop(snapshot);
+        assert_eq!(std::fs::read(&source).unwrap(), b"original");
+    }
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_denies_reopening_and_is_deleted_on_close() {
+        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        std::fs::write(&source, b"original").unwrap();
+        let snapshot =
+            verified_file(&source, &format!("{:x}", Sha256::digest(b"original"))).unwrap();
+        let handle = snapshot.0.as_raw_handle();
+        // Test-only inspection of our live handle; production never exposes this pathname.
+        let size = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+        assert_ne!(size, 0, "{}", std::io::Error::last_os_error());
+        let mut wide = vec![0u16; size as usize + 1];
+        let written =
+            unsafe { GetFinalPathNameByHandleW(handle, wide.as_mut_ptr(), wide.len() as u32, 0) };
+        assert!(written > 0 && written < wide.len() as u32);
+        let path = PathBuf::from(std::ffi::OsString::from_wide(&wide[..written as usize]));
+        let error = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap_err();
+        assert_eq!(
+            error.raw_os_error(),
+            Some(windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION as i32)
+        );
+        drop(snapshot);
+        assert!(!path.try_exists().unwrap());
+        assert_eq!(std::fs::read(source).unwrap(), b"original");
     }
     #[test]
     fn rejects_compressed_overflow_before_hashing() {

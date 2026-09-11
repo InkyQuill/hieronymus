@@ -1,8 +1,7 @@
 //! Strict ZIP32 framing before the ZIP library (which coalesces duplicate names).
 use std::collections::HashSet;
-use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-fn read(file: &mut File, offset: u64, size: usize) -> Result<Vec<u8>, String> {
+fn read<R: Read + Seek>(file: &mut R, offset: u64, size: usize) -> Result<Vec<u8>, String> {
     file.seek(SeekFrom::Start(offset))
         .map_err(|e| e.to_string())?;
     let mut bytes = vec![0; size];
@@ -15,8 +14,8 @@ fn u16b(b: &[u8], p: usize) -> u16 {
 fn u32b(b: &[u8], p: usize) -> u32 {
     u32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]])
 }
-pub(crate) fn validate(file: &mut File) -> Result<(), String> {
-    let length = file.metadata().map_err(|e| e.to_string())?.len();
+pub(crate) fn validate<R: Read + Seek>(file: &mut R) -> Result<(), String> {
+    let length = file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
     if length < 22 {
         return Err("truncated ZIP".into());
     }

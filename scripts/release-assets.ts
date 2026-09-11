@@ -17,7 +17,8 @@ import {
   readdirSync,
   fstatSync,
 } from "node:fs";
-import { dirname, join, resolve, sep, posix } from "node:path";
+import { dirname, join, resolve, posix } from "node:path";
+import * as nativePath from "node:path";
 import {
   desktopTarget,
   MODEL_PINS,
@@ -128,12 +129,35 @@ export async function download(
     return;
   }
 }
+export function directoryPrefixes(
+  path: string,
+  paths: Pick<
+    typeof nativePath,
+    "resolve" | "parse" | "sep" | "join"
+  > = nativePath,
+): string[] {
+  const absolute = paths.resolve(path);
+  const root = paths.parse(absolute).root;
+  if (!root) throw new Error("artifact path needs a filesystem root");
+  let current = root;
+  const prefixes: string[] = [root];
+  for (const component of absolute
+    .slice(root.length)
+    .split(paths.sep)
+    .filter(Boolean)) {
+    current = paths.join(current, component);
+    prefixes.push(current);
+  }
+  return prefixes;
+}
 export function trustedDirectory(path: string): void {
   const absolute = resolve(path);
-  let current = sep;
-  for (const component of absolute.split(sep).filter(Boolean)) {
-    current = join(current, component);
-    if (!existsSync(current)) mkdirSync(current, { mode: 0o700 });
+  for (const current of directoryPrefixes(absolute)) {
+    if (!existsSync(current)) {
+      if (current === nativePath.parse(absolute).root)
+        throw new Error("artifact filesystem root must exist");
+      mkdirSync(current, { mode: 0o700 });
+    }
     const stat = lstatSync(current);
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw new Error("artifact directory must not be a symlink");

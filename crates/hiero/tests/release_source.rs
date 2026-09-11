@@ -561,3 +561,37 @@ fn split_metadata_cannot_masquerade_as_legacy_release_json() {
     );
     assert!(!destination.exists());
 }
+
+#[test]
+fn authenticated_snapshot_inspection_failure_cleans_assembly_and_preserves_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("release");
+    std::fs::create_dir(&directory).unwrap();
+    let platform = archive(Some(("undeclared", tar::EntryType::Regular, "")));
+    let model = b"model transport fixture";
+    let payload = split_metadata(&platform, model);
+    let metadata_path = directory.join(hiero::release_manifest::metadata_name(
+        hiero::app::TARGET_TRIPLE,
+    ));
+    let platform_path = directory.join(payload["platform"]["archive"].as_str().unwrap());
+    let model_path = directory.join(payload["model"]["archive"].as_str().unwrap());
+    std::fs::write(&metadata_path, payload.to_string()).unwrap();
+    std::fs::write(&platform_path, &platform).unwrap();
+    std::fs::write(&model_path, model).unwrap();
+    let output = root.path().join("assembled");
+    let error = hiero::release_archive::extract_split_directory(
+        &directory,
+        hiero::app::TARGET_TRIPLE,
+        &output,
+    )
+    .unwrap_err();
+    assert!(error.contains("unsafe"), "{error}");
+    assert!(!output.exists());
+    assert_eq!(std::fs::read(&platform_path).unwrap(), platform);
+    assert_eq!(std::fs::read(&model_path).unwrap(), model);
+    assert_eq!(
+        std::fs::read_to_string(&metadata_path).unwrap(),
+        payload.to_string()
+    );
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), 3);
+}

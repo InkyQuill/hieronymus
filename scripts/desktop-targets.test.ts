@@ -229,3 +229,22 @@ test("source checker verifies both artifacts from the exact target manifest", as
     rmSync(dir, { recursive: true, force: true });
   }
 });
+import { directoryPrefixes } from "./release-assets";
+import { win32, posix } from "node:path";
+test("trusted directory traversal preserves Windows drive and UNC roots", () => {
+  expect(directoryPrefixes("C:\\work\\cache", win32)).toEqual([
+    "C:\\",
+    "C:\\work",
+    "C:\\work\\cache",
+  ]);
+  expect(directoryPrefixes("\\\\server\\share\\work\\cache", win32)).toEqual([
+    "\\\\server\\share\\",
+    "\\\\server\\share\\work",
+    "\\\\server\\share\\work\\cache",
+  ]);
+  expect(directoryPrefixes("/work/cache", posix)).toEqual([
+    "/",
+    "/work",
+    "/work/cache",
+  ]);
+});
