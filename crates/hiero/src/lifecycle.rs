@@ -39,6 +39,7 @@ use crate::daemon::discovery::{
     self, CredentialError, DiscoveryError, DiscoveryRecord, read_discovery, read_token,
 };
 use crate::daemon::registry::PROTOCOL_REVISION;
+use crate::readiness::{ProviderCondition, ReadinessLevel, ReadinessSummary};
 use crate::service::{self, ServiceOptions};
 
 /// Per-probe deadline. Short on purpose: a probe runs in interactive commands
@@ -940,6 +941,7 @@ impl LifecycleStatus {
             text.push_str(&format!("  instance: {}\n", field("instance_id")));
             text.push_str(&format!("  started at: {}\n", field("started_at")));
             text.push_str(&format!("  data root: {}\n", field("data_root")));
+            render_readiness(&mut text, status.get("readiness"));
         } else {
             text.push_str(&format!(
                 "  this binary serves protocol revision {PROTOCOL_REVISION}\n"
@@ -947,6 +949,59 @@ impl LifecycleStatus {
         }
         text
     }
+}
+
+fn render_readiness(text: &mut String, value: Option<&Value>) {
+    let Some(summary) = value.and_then(parse_readiness) else {
+        text.push_str("  readiness: Unknown (not available from this daemon)\n");
+        return;
+    };
+    let level = match summary.level {
+        ReadinessLevel::Ready => "Ready",
+        ReadinessLevel::Degraded => "Degraded",
+        ReadinessLevel::Starting => "Starting",
+    };
+    text.push_str(&format!("  readiness: {level}\n"));
+    for reason in summary.reasons {
+        text.push_str(&format!("    reason: {}\n", safe_line(&reason)));
+    }
+    for provider in summary.providers {
+        let condition = match provider.condition {
+            ProviderCondition::Untested => "Untested",
+            ProviderCondition::Healthy => "Healthy",
+            ProviderCondition::Failed => "Failed",
+        };
+        text.push_str(&format!(
+            "    {} / {}: {condition}",
+            safe_line(&provider.provider),
+            safe_line(&provider.model)
+        ));
+        if let Some(reason) = provider.reason {
+            text.push_str(&format!(" ({})", safe_line(&reason)));
+        }
+        text.push('\n');
+    }
+}
+
+fn parse_readiness(value: &Value) -> Option<ReadinessSummary> {
+    let object = value.as_object()?;
+    if object.contains_key("schema_version") {
+        return None;
+    }
+    serde_json::from_value(value.clone()).ok()
+}
+
+fn safe_line(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 pub fn status(config: &HieronymusConfig) -> LifecycleStatus {

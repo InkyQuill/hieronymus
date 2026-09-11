@@ -516,6 +516,12 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
     assert_eq!(response.content_type, JSON_CONTENT_TYPE);
     let body = response.body();
 
+    // Runtime readiness is an additive Rust dashboard field. Its source is
+    // the same daemon-owned summary as authenticated `/status`, so the frozen
+    // historical payload remains the oracle for every pre-existing field.
+    expected["readiness"] = body["readiness"].clone();
+    assert!(body["readiness"]["level"].is_string());
+
     // Shape: the exact top-level key set of the frozen oracle.
     let expected_keys: Vec<String> = expected.as_object().unwrap().keys().cloned().collect();
     let actual_keys: Vec<String> = body.as_object().unwrap().keys().cloned().collect();

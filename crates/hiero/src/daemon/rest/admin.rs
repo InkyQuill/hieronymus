@@ -194,6 +194,7 @@ pub(super) fn dashboard(_request: &Request, runtime: &DaemonRuntime) -> Response
         "service": service_payload(),
         "snapshot": snapshot_value(config, "Crystals", ""),
         "config_editor": config_editor_payload(config),
+        "readiness": runtime.dream.readiness().snapshot_with_semantic(&runtime.semantic.snapshot().state),
     });
     for (key, value) in dashboard_status_payload(config) {
         payload[key] = value;

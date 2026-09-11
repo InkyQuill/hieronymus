@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AdminDashboard } from "../lib/types";
+  import { formatReadiness } from "../lib/readiness";
 
   type Props = { dashboard: AdminDashboard; error?: string; onDream: () => void };
   let { dashboard, error = "", onDream }: Props = $props();
@@ -25,6 +26,7 @@
   ] as const;
   const currentPhase = $derived(String(dashboard.dream_status.current_phase ?? ""));
   const currentPhaseIndex = $derived(workflow.findIndex(([phase]) => phase === currentPhase));
+  const readiness = $derived(formatReadiness(dashboard.readiness));
 
   function workflowState(index: number): "complete" | "active" | "pending" {
     if (currentPhaseIndex < 0) return "pending";
@@ -69,7 +71,31 @@
           <p class="mt-3 text-caption text-secondary">Ready for the next run.</p>
         {/if}
     </section>
-    <section class="mt-4 rounded-md border border-default bg-surface p-5"><h3 class="mb-4 text-h3">Local service</h3><dl class="flex flex-wrap gap-x-12 gap-y-4"><div><dt class="text-caption text-secondary">Dreaming</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.state ?? "unknown")}</dd></div>{#if dashboard.dream_status.current_phase}<div><dt class="text-caption text-secondary">Phase</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.current_phase)} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</dd></div>{/if}<div><dt class="text-caption text-secondary">Short-term memory</dt><dd class="mt-1 text-body">{String(dashboard.short_term_status.state ?? "unknown")}</dd></div></dl></section>
+    <section class="mt-4 rounded-md border border-default bg-surface p-5" aria-label="Local service status">
+      <h3 class="mb-4 text-h3">Local service</h3>
+      <dl class="flex flex-wrap gap-x-12 gap-y-4">
+        <div><dt class="text-caption text-secondary">Readiness</dt><dd class="mt-1 text-body">{readiness.level}</dd></div>
+        <div><dt class="text-caption text-secondary">Dreaming</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.state ?? "unknown")}</dd></div>
+        {#if dashboard.dream_status.current_phase}<div><dt class="text-caption text-secondary">Phase</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.current_phase)} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</dd></div>{/if}
+        <div><dt class="text-caption text-secondary">Short-term memory</dt><dd class="mt-1 text-body">{String(dashboard.short_term_status.state ?? "unknown")}</dd></div>
+      </dl>
+      {#if readiness.reasons.length > 0}
+        <ul class="mt-4 space-y-1 text-body-sm text-secondary" aria-label="Readiness reasons">
+          {#each readiness.reasons as reason (reason)}<li>{reason}</li>{/each}
+        </ul>
+      {/if}
+      {#if readiness.providers.length > 0}
+        <ul class="mt-4 grid gap-2" aria-label="Provider readiness">
+          {#each readiness.providers as provider (`${provider.provider}:${provider.model}`)}
+            <li class="rounded-sm border border-default bg-raised px-3 py-2 text-body-sm">
+              <span class="font-medium">{provider.provider} / {provider.model}</span>
+              <span class="ml-2 text-secondary">{provider.condition}</span>
+              {#if provider.reason}<span class="mt-1 block text-caption text-secondary">{provider.reason}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
     {#if error}<p class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
   </div>
 </section>

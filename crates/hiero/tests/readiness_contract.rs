@@ -311,6 +311,133 @@ fn authenticated_status_is_additive_and_excludes_secret_diagnostics() {
 }
 
 #[test]
+fn authenticated_console_dashboard_carries_daemon_readiness() {
+    let (fixture, _root, daemon) = common::start_daemon_with_browser_session();
+    let browser = common::send_request(
+        fixture.port,
+        "GET",
+        "/api/admin/dashboard",
+        &common::browser_headers(&fixture, &[("Origin", common::same_origin(fixture.port))]),
+        &[],
+    );
+    assert_eq!(browser.status, 200);
+    let dashboard = browser.body();
+    assert!(dashboard["readiness"].is_object());
+
+    let native = common::send_request(
+        fixture.port,
+        "GET",
+        "/status",
+        &[(
+            "Authorization".into(),
+            format!("Bearer {}", daemon.bearer().expose_secret()),
+        )],
+        &[],
+    );
+    assert_eq!(dashboard["readiness"], native.body()["readiness"]);
+
+    let unauthorized = common::send_request(fixture.port, "GET", "/api/admin/dashboard", &[], &[]);
+    assert_eq!(unauthorized.status, 401);
+    assert!(unauthorized.body().get("readiness").is_none());
+    daemon.shutdown().unwrap();
+}
+
+#[test]
+fn lifecycle_human_status_shows_only_valid_readiness_fields() {
+    let report = hiero::lifecycle::LifecycleStatus {
+        running: true,
+        detail: "authenticated live instance".into(),
+        record: None,
+        status: Some(serde_json::json!({
+            "version": "0.8.0",
+            "protocol_revision": "2026-07-28",
+            "instance_id": "fixture-instance",
+            "started_at": "2026-09-11T00:00:00Z",
+            "data_root": "/fixture",
+            "readiness": {
+                "level": "degraded",
+                "reasons": ["Semantic index rebuilding"],
+                "providers": [{
+                    "capabilities": ["coverage_audit"],
+                    "provider": "primary",
+                    "model": "translator-v1",
+                    "revision": 7,
+                    "condition": "untested",
+                    "observed_at": null,
+                    "reason": "External provider not yet verified",
+                    "opaque_secret": "SENTINEL-PROVIDER-SECRET"
+                }],
+                "opaque_secret": "SENTINEL-SUMMARY-SECRET"
+            }
+        })),
+    };
+
+    let human = report.render_human();
+    assert!(human.contains("readiness: Degraded"), "{human}");
+    assert!(human.contains("Semantic index rebuilding"), "{human}");
+    assert!(
+        human.contains("primary / translator-v1: Untested"),
+        "{human}"
+    );
+    assert!(
+        human.contains("External provider not yet verified"),
+        "{human}"
+    );
+    assert!(!human.contains("SENTINEL"), "{human}");
+
+    let json = report.to_json();
+    assert_eq!(
+        json["status"]["readiness"]["opaque_secret"],
+        "SENTINEL-SUMMARY-SECRET"
+    );
+    assert_eq!(
+        json["status"]["readiness"]["providers"][0]["opaque_secret"],
+        "SENTINEL-PROVIDER-SECRET"
+    );
+}
+
+#[test]
+fn lifecycle_human_status_fails_closed_for_unknown_readiness() {
+    for readiness in [
+        serde_json::Value::Null,
+        serde_json::json!({"level": "ready", "providers": []}),
+        serde_json::json!({"level": "excellent", "reasons": [], "providers": []}),
+        serde_json::json!({
+            "schema_version": 2,
+            "level": "ready",
+            "reasons": [],
+            "providers": []
+        }),
+    ] {
+        let report = hiero::lifecycle::LifecycleStatus {
+            running: true,
+            detail: "authenticated live instance".into(),
+            record: None,
+            status: Some(serde_json::json!({
+                "readiness": readiness,
+                "opaque_secret": "SENTINEL-STATUS-SECRET"
+            })),
+        };
+        let human = report.render_human();
+        assert!(human.contains("readiness: Unknown"), "{human}");
+        assert!(!human.contains("readiness: Ready"), "{human}");
+        assert!(!human.contains("SENTINEL"), "{human}");
+    }
+
+    let missing = hiero::lifecycle::LifecycleStatus {
+        running: true,
+        detail: "authenticated older instance".into(),
+        record: None,
+        status: Some(serde_json::json!({})),
+    };
+    assert!(
+        missing
+            .render_human()
+            .contains("readiness: Unknown (not available from this daemon)")
+    );
+}
+
+#[test]
 fn editing_another_active_provider_preserves_failure_and_rotated_keys_reject_old_results() {
     let (_root, config, runtime, mut catalog) = configured();
     catalog.providers.insert(
