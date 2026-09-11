@@ -120,6 +120,13 @@ pub(super) fn create_new(path: &Path) -> io::Result<File> {
     }
 }
 pub(super) fn open_private(path: &Path) -> io::Result<File> {
+    let (file, private) = open_owned(path)?;
+    if !private {
+        return Err(unsafe_credential());
+    }
+    Ok(file)
+}
+pub(super) fn open_owned(path: &Path) -> io::Result<(File, bool)> {
     let path = wide(path.as_os_str())?;
     // Deny concurrent writes and ACL/path mutation via a conflicting write handle;
     // replacement may happen, but validation and bytes always use this same handle.
@@ -163,29 +170,34 @@ pub(super) fn open_private(path: &Path) -> io::Result<File> {
     let _allocation = SecurityDescriptor(descriptor);
     let mut control = 0;
     let mut revision = 0;
+    let mut private;
     // SAFETY: descriptor and subordinate owner/ACL pointers live in allocation.
     unsafe {
         if GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) == 0 {
             return Err(io::Error::last_os_error());
         }
-        if control & SE_DACL_PROTECTED == 0
-            || dacl.is_null()
-            || owner.is_null()
-            || EqualSid(owner, sid(&user)) == 0
-        {
+        if owner.is_null() || EqualSid(owner, sid(&user)) == 0 {
             return Err(unsafe_credential());
         }
+        if dacl.is_null() {
+            return Ok((file, false));
+        }
+        private = control & SE_DACL_PROTECTED != 0;
         for index in 0..(*dacl).AceCount {
             let mut ace = ptr::null_mut();
             if GetAce(dacl, u32::from(index), &mut ace) == 0 {
                 return Err(io::Error::last_os_error());
             }
             let header = &*ace.cast::<ACE_HEADER>();
-            if usize::from(header.AceSize) < size_of::<ACCESS_ALLOWED_ACE>()
-                || header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
-                || header.AceFlags & INHERITED_ACE as u8 != 0
-            {
+            if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
+                private = false;
+                continue;
+            }
+            if usize::from(header.AceSize) < size_of::<ACCESS_ALLOWED_ACE>() {
                 return Err(unsafe_credential());
+            }
+            if header.AceFlags & INHERITED_ACE as u8 != 0 {
+                private = false;
             }
             let allowed = &*ace.cast::<ACCESS_ALLOWED_ACE>();
             let ace_sid = (&allowed.SidStart as *const u32).cast::<u8>();
@@ -198,13 +210,15 @@ pub(super) fn open_private(path: &Path) -> io::Result<File> {
             let sid_length = 8 + usize::from(*ace_sid.add(1)) * 4;
             if sid_offset + sid_length > usize::from(header.AceSize)
                 || IsValidSid(ace_sid.cast_mut().cast()) == 0
-                || EqualSid(ace_sid.cast_mut().cast(), sid(&user)) == 0
             {
                 return Err(unsafe_credential());
             }
+            if EqualSid(ace_sid.cast_mut().cast(), sid(&user)) == 0 {
+                private = false;
+            }
         }
     }
-    Ok(file)
+    Ok((file, private))
 }
 fn unsafe_credential() -> io::Error {
     io::Error::new(

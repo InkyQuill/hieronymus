@@ -15,6 +15,7 @@ cargo check -p hiero --all-targets --all-features --locked
 cargo test -p hiero -p hieronymus --all-features --locked --test platform_filesystem --test export_safety --test dream_locks_port --test upgrade_port
 cargo test -p hiero -p hieronymus --all-features --locked --lib private_file
 cargo test -p hiero -p hieronymus --all-features --locked --lib atomic::
+cargo test -p hiero -p hieronymus --all-features --locked --lib upgrade::copy
 cargo test -p hiero --all-features --locked --lib platform::export
 cargo test -p hiero --all-features --locked --lib publication_tests
 ```
@@ -24,7 +25,10 @@ The Windows suite uses native `icacls.exe` to add an Everyone-read ACE to a
 junction**. Fixture failures are failures, not skipped acceptance. Tests cover
 creation-time protected owner DACL, inherited/permissive ACL refusal, hardlink
 aliases, exclusive publication, immutable launcher selection, directory
-replacement, and junction refusal. Unix tests retain descriptor-relative export
+replacement, and junction refusal. The upgrade copy tests also put an Everyone-readable inheritable ACE on a
+disposable parent and validate both backup and recovery-work secret copies; an
+ordinary readonly-source test verifies copy flushing through the retained write
+handle and preservation of the final readonly permission. Unix tests retain descriptor-relative export
 and symbolic/hardlink regressions. The dream suite creates one child test process
 that exits without dropping its guard, then proves a successor can own the lock.
 

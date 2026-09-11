@@ -10,6 +10,16 @@ pub(super) fn create_new(path: &Path) -> io::Result<File> {
     )?))
 }
 pub(super) fn open_private(path: &Path) -> io::Result<File> {
+    let (file, private) = open_owned(path)?;
+    if !private {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "credential is readable beyond its owner; run chmod 600 or recreate it",
+        ));
+    }
+    Ok(file)
+}
+pub(super) fn open_owned(path: &Path) -> io::Result<(File, bool)> {
     let file = File::from(open(
         path,
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
@@ -17,16 +27,13 @@ pub(super) fn open_private(path: &Path) -> io::Result<File> {
     )?);
     validate_regular(&file)?;
     let metadata = file.metadata()?;
-    if metadata.mode() & 0o077 != 0
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.nlink() != 1
-    {
+    if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.nlink() != 1 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "credential is readable beyond its owner or has aliases; run chmod 600 or recreate it",
         ));
     }
-    Ok(file)
+    Ok((file, metadata.mode() & 0o077 == 0))
 }
 pub(super) fn publish_new(source: &Path, destination: &Path) -> io::Result<()> {
     rustix::fs::renameat_with(

@@ -23,6 +23,17 @@ pub fn read_private(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Read one regular, current-user-owned, non-alias file and report whether
+/// that same handle has owner-only mode/DACL protection. Nonprivate snapshots
+/// are for callers that prove the exact returned bytes contain no credentials;
+/// object identity, ownership and I/O errors are never downgraded to a flag.
+pub fn read_owned_snapshot(path: &Path) -> io::Result<(Vec<u8>, bool)> {
+    let (mut file, private) = native::open_owned(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok((bytes, private))
+}
+
 /// Publish a completely written owner-only file, refusing any existing name.
 pub fn create_private_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     publish(path, bytes, false)

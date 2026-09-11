@@ -314,10 +314,44 @@ fn fsync_dir(path: &Path) -> std::io::Result<()> {
     crate::atomic::sync_directory(path)
 }
 
-fn copy_and_sync(source: &Path, destination: &Path) -> std::io::Result<()> {
-    std::fs::copy(source, destination)?;
-    let file = std::fs::File::open(destination)?;
-    file.sync_all()
+#[path = "upgrade/copy.rs"]
+mod copy;
+use copy::copy_and_sync;
+
+/// Config files capable of containing credentials are always published with
+/// owner-only protection. Permissive keyless originals remain valid, but their
+/// inspected bytes must contain no secrets before we copy that exact snapshot.
+fn copy_config_and_sync(source: &Path, destination: &Path) -> Result<(), MigrateError> {
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    if !matches!(name, "provider.conf" | "dream.conf") {
+        return Ok(copy_and_sync(source, destination)?);
+    }
+    let (bytes, private) = crate::private_file::read_owned_snapshot(source)?;
+    if !private {
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| MigrateError::ConfigInvalid(format!("{name} is not UTF-8")))?;
+        let has_key = if name == "provider.conf" {
+            let catalog = provider_catalog_from_text(text)
+                .map_err(|error| MigrateError::ConfigInvalid(error.to_string()))?;
+            catalog_has_key(&catalog)
+        } else {
+            let payload = parse_toml_table(text, name)?;
+            payload
+                .get("providers")
+                .and_then(toml::Value::as_table)
+                .is_some_and(legacy_payload_has_key)
+        };
+        if has_key {
+            return Err(MigrateError::UnsafeCredentialPermissions(
+                source.to_path_buf(),
+            ));
+        }
+    }
+    crate::private_file::create_private_new(destination, &bytes)?;
+    Ok(())
 }
 
 fn write_with_mode(path: &Path, text: &str, user_only: bool) -> std::io::Result<()> {
@@ -706,7 +740,7 @@ fn create_backup_set(config: &HieronymusConfig) -> Result<BackupSet, MigrateErro
     for file in CONFIG_FILE_NAMES {
         let source = config.data_root().join(file);
         if source.exists() {
-            copy_and_sync(&source, &set.join(file))?;
+            copy_config_and_sync(&source, &set.join(file))?;
             config_checksums.insert(file.to_string(), sha256_file(&set.join(file))?);
         }
     }
@@ -1551,15 +1585,7 @@ pub fn run_recovery(
     let work = tempfile::tempdir()?;
     let work_root = work.path().join("rebuild");
     std::fs::create_dir_all(&work_root)?;
-    std::fs::copy(
-        source.join("hieronymus.sqlite"),
-        work_root.join("hieronymus.sqlite"),
-    )?;
-    for file in CONFIG_FILE_NAMES {
-        if source.join(file).exists() {
-            std::fs::copy(source.join(file), work_root.join(file))?;
-        }
-    }
+    populate_recovery_work(&source, &work_root)?;
     let work_config = HieronymusConfig::new(&work_root);
     let preflight = run_preflight(&work_config, false)?;
     if let Some(code) = preflight.refusal_code.clone() {
@@ -1670,4 +1696,138 @@ pub fn run_recovery(
             .map(|conversion| conversion.converted)
             .unwrap_or(0),
     })
+}
+
+/// Populate disposable recovery work with the same protected copy policy as
+/// pre-upgrade backups; later config staging/promotion preserves those objects.
+fn populate_recovery_work(source: &Path, work_root: &Path) -> Result<(), MigrateError> {
+    copy_and_sync(
+        &source.join("hieronymus.sqlite"),
+        &work_root.join("hieronymus.sqlite"),
+    )?;
+    for file in CONFIG_FILE_NAMES {
+        if source.join(file).exists() {
+            copy_config_and_sync(&source.join(file), &work_root.join(file))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    #[test]
+    fn backup_revalidates_secret_source_before_copying() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        Connection::open(config.database_path())
+            .unwrap()
+            .execute_batch("create table fixture(value text)")
+            .unwrap();
+        let provider = root.path().join("provider.conf");
+        crate::private_file::create_private_new(&provider,
+            b"[openai]\nname = \"O\"\ntype = \"openai\"\nurl = \"https://example.com\"\nkey = \"secret\"\ntimeout_seconds = 5\n").unwrap();
+        // A new alias after preflight invalidates source credential protection.
+        std::fs::hard_link(&provider, root.path().join("alias")).unwrap();
+        assert!(create_backup_set(&config).is_err());
+    }
+
+    #[test]
+    fn backup_and_recovery_work_keep_credential_copies_private() {
+        let root = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("icacls.exe")
+                .arg(root.path())
+                .args(["/grant", "*S-1-1-0:(OI)(CI)(RX)", "/Q"])
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "Everyone-readable inheritable parent fixture must succeed"
+            );
+        }
+        let config = HieronymusConfig::new(root.path().join("data"));
+        std::fs::create_dir_all(config.data_root()).unwrap();
+        Connection::open(config.database_path())
+            .unwrap()
+            .execute_batch("create table fixture(value text)")
+            .unwrap();
+        for (name, bytes) in [
+            ("provider.conf", b"[openai]\nkey = \"secret\"\n".as_slice()),
+            (
+                "dream.conf",
+                b"[providers.openai]\napi_key = \"secret\"\n".as_slice(),
+            ),
+        ] {
+            crate::private_file::create_private_new(&config.data_root().join(name), bytes).unwrap();
+        }
+        let backup = create_backup_set(&config).unwrap();
+        let source = config.data_root().join(backup.relative_dir);
+        let work = root.path().join("recovery-work");
+        std::fs::create_dir(&work).unwrap();
+        populate_recovery_work(&source, &work).unwrap();
+        for name in ["provider.conf", "dream.conf"] {
+            let original =
+                crate::private_file::read_private(&config.data_root().join(name)).unwrap();
+            assert_eq!(
+                crate::private_file::read_private(&source.join(name)).unwrap(),
+                original
+            );
+            assert_eq!(
+                crate::private_file::read_private(&work.join(name)).unwrap(),
+                original
+            );
+            assert!(
+                copy_config_and_sync(&source.join(name), &work.join(name)).is_err(),
+                "secret copies are exclusive"
+            );
+        }
+    }
+
+    #[test]
+    fn keyless_public_config_snapshot_is_allowed_but_aliases_are_not() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("provider.conf");
+        let target = root.path().join("copy");
+        let bytes = b"[ollama]\nname = \"Local\"\ntype = \"ollama\"\nurl = \"http://localhost:11434\"\nkey = \"\"\ntimeout_seconds = 5\n";
+        std::fs::write(&source, bytes).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        copy_config_and_sync(&source, &target).unwrap();
+        assert_eq!(crate::private_file::read_private(&target).unwrap(), bytes);
+        std::fs::hard_link(&source, root.path().join("alias")).unwrap();
+        assert!(copy_config_and_sync(&source, &root.path().join("refused")).is_err());
+        assert!(!root.path().join("refused").exists());
+    }
+
+    #[test]
+    fn permissive_secret_snapshots_are_refused_without_creating_copies() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, text) in [
+            (
+                "provider.conf",
+                "[openai]\nname = \"O\"\ntype = \"openai\"\nurl = \"https://example.com\"\nkey = \"secret\"\ntimeout_seconds = 5\n",
+            ),
+            ("dream.conf", "[providers.openai]\napi_key = \"secret\"\n"),
+        ] {
+            let source = root.path().join(name);
+            std::fs::write(&source, text).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            let target = root.path().join(format!("copy-{name}"));
+            assert!(matches!(
+                copy_config_and_sync(&source, &target),
+                Err(MigrateError::UnsafeCredentialPermissions(_))
+            ));
+            assert!(!target.exists());
+        }
+    }
 }
