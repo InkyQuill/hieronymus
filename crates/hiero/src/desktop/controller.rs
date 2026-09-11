@@ -21,6 +21,10 @@ use hieronymus::data_root::HieronymusConfig;
 /// production implementation preserves the existing longer lifecycle deadlines.
 pub trait DesktopBackend: Send + 'static {
     fn probe(&mut self) -> Event;
+    /// Worker-only readback. None means this backend has no preference adapter.
+    fn preferences(&mut self) -> Option<Event> {
+        None
+    }
     fn perform(&mut self, action: &Action) -> Result<(), String>;
 }
 
@@ -94,13 +98,32 @@ impl Controller {
         Self::spawn_with_schedule(backend, PollSchedule::default())
     }
     /// Inject short polling intervals for tests; zero intervals are clamped.
-    pub fn spawn_with_schedule(mut backend: impl DesktopBackend, schedule: PollSchedule) -> Self {
+    pub fn spawn_with_schedule(backend: impl DesktopBackend, schedule: PollSchedule) -> Self {
+        Self::spawn_with_notifier(backend, schedule, || {})
+    }
+    /// Wake the native loop after delivery; the callback must be nonblocking.
+    /// Notifications carry no events: consumers must drain try_event in order.
+    pub fn spawn_with_notifier(
+        mut backend: impl DesktopBackend,
+        schedule: PollSchedule,
+        notify: impl Fn() + Send + 'static,
+    ) -> Self {
         let (commands, receiver) = mpsc::sync_channel::<Option<Action>>(1);
         let delivery = Arc::new(Mutex::new(Delivery::default()));
         let output = delivery.clone();
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
         let worker = std::thread::spawn(move || {
+            let publish = |event| {
+                output
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(event);
+                notify();
+            };
+            if let Some(event) = backend.preferences() {
+                publish(event);
+            }
             let interval = schedule.poll_interval.max(Duration::from_millis(1));
             let mut next_probe = Instant::now();
             let mut startup_deadline: Option<Instant> = None;
@@ -109,11 +132,13 @@ impl Controller {
                     startup_deadline.map_or(next_probe, |deadline| deadline.min(next_probe));
                 match receiver.recv_timeout(wake_at.saturating_duration_since(Instant::now())) {
                     Ok(Some(action)) => {
-                        output
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push(Event::Begin(action.clone()));
+                        publish(Event::Begin(action.clone()));
                         let error = backend.perform(&action).err();
+                        if matches!(action, Action::SetAutostart(_))
+                            && let Some(event) = backend.preferences()
+                        {
+                            publish(event);
+                        }
                         match action {
                             Action::Start | Action::Restart => {
                                 startup_deadline = error
@@ -127,10 +152,7 @@ impl Controller {
                         if quit {
                             stop.store(true, Ordering::Release);
                         }
-                        output
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push(Event::Finished { action, error });
+                        publish(Event::Finished { action, error });
                         if quit {
                             break;
                         }
@@ -139,10 +161,7 @@ impl Controller {
                     Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         if startup_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                            output
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .push(Event::StartupDeadlineExpired);
+                            publish(Event::StartupDeadlineExpired);
                             startup_deadline = None;
                         }
                         if Instant::now() >= next_probe {
@@ -151,10 +170,7 @@ impl Controller {
                             if matches!(event, Event::Snapshot(_) | Event::InvalidIdentity) {
                                 startup_deadline = None;
                             }
-                            output
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .push(event);
+                            publish(event);
                             next_probe = probe_started + interval;
                         }
                     }
@@ -245,6 +261,33 @@ impl<R: AutostartRegistration> LifecycleBackend<R> {
     }
 }
 impl<R: AutostartRegistration> DesktopBackend for LifecycleBackend<R> {
+    fn preferences(&mut self) -> Option<Event> {
+        // Reconciliation may fail after registration changed. Read actual state
+        // independently so a persistence failure cannot leave a false checkbox.
+        let error = self.settings.reconcile(&mut self.registration).err();
+        match self.registration.is_enabled() {
+            Ok(actual) => match self.settings.load() {
+                Ok(mut settings) => {
+                    settings.autostart = actual;
+                    Some(Event::Preferences {
+                        settings: Some(settings),
+                        error,
+                    })
+                }
+                Err(error) => Some(Event::Preferences {
+                    settings: Some(super::DesktopSettings {
+                        autostart: actual,
+                        ..Default::default()
+                    }),
+                    error: Some(error),
+                }),
+            },
+            Err(error) => Some(Event::Preferences {
+                settings: None,
+                error: Some(error),
+            }),
+        }
+    }
     fn probe(&mut self) -> Event {
         match lifecycle::probe_with_deadline(&self.config, Instant::now() + Duration::from_secs(2))
         {

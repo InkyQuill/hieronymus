@@ -29,6 +29,10 @@ pub struct View {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    Preferences {
+        settings: Option<super::DesktopSettings>,
+        error: Option<String>,
+    },
     Snapshot(ReadinessSummary),
     ProbeTimeout,
     StartupDeadlineExpired,
@@ -81,6 +85,7 @@ impl DesktopState {
 
     pub fn apply(&mut self, event: Event) -> &View {
         match event {
+            Event::Preferences { .. } => {}
             Event::Snapshot(summary) => self.apply_snapshot(summary),
             Event::ProbeTimeout => self.apply_probe_timeout(),
             Event::StartupDeadlineExpired => self.apply_startup_deadline_expired(),

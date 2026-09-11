@@ -514,3 +514,123 @@ fn failed_preference_and_browser_actions_keep_restart_deadline_and_error_reason(
         restart_then_followup(action, true);
     }
 }
+
+#[test]
+fn notifier_wakes_for_begin_before_blocking_action_and_finished_after_release() {
+    let (entered, began) = mpsc::channel();
+    let (release, gate) = mpsc::channel();
+    let (wake, woken) = mpsc::channel();
+    let controller = Controller::spawn_with_notifier(
+        Fake {
+            calls: Arc::new(Mutex::new(vec![])),
+            probes: Arc::new(AtomicUsize::new(0)),
+            entered,
+            release: Some(gate),
+            error: None,
+        },
+        PollSchedule {
+            poll_interval: Duration::from_secs(60),
+            ..schedule()
+        },
+        move || {
+            let _ = wake.send(());
+        },
+    );
+    controller.submit(Action::Quit).unwrap();
+    began.recv_timeout(Duration::from_secs(1)).unwrap();
+    woken.recv_timeout(Duration::from_secs(1)).unwrap();
+    let mut events = vec![];
+    while let Some(event) = controller.try_event() {
+        events.push(event);
+    }
+    assert!(events.contains(&Event::Begin(Action::Quit)));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Finished { .. }))
+    );
+    release.send(()).unwrap();
+    woken.recv_timeout(Duration::from_secs(1)).unwrap();
+    wait_event(&controller, |event| {
+        matches!(
+            event,
+            Event::Finished {
+                action: Action::Quit,
+                error: None
+            }
+        )
+    });
+    controller.shutdown().unwrap();
+}
+
+#[test]
+fn actual_registration_survives_preference_persistence_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(directory.path());
+    std::fs::create_dir(directory.path().join("desktop-settings.json")).unwrap();
+    let mut backend = LifecycleBackend::new(
+        config,
+        Registration {
+            actual: true,
+            fail: false,
+            lie: false,
+            calls: vec![],
+        },
+    )
+    .unwrap();
+    // Actual registration is known even though preferences cannot be persisted/read.
+    assert!(
+        matches!(backend.preferences(), Some(Event::Preferences { settings: Some(settings), error: Some(_) }) if settings.autostart)
+    );
+}
+
+#[test]
+fn preferences_event_does_not_change_lifecycle_state() {
+    let mut state = DesktopState::new();
+    let before = state.apply(Event::Begin(Action::Restart)).clone();
+    let after = state.apply(Event::Preferences {
+        settings: None,
+        error: Some("Unavailable".into()),
+    });
+    assert_eq!(after, &before);
+}
+
+#[test]
+fn failed_toggle_delivers_actual_registration_before_completion() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(directory.path());
+    let backend = LifecycleBackend::new(
+        config,
+        Registration {
+            actual: false,
+            fail: true,
+            lie: false,
+            calls: vec![],
+        },
+    )
+    .unwrap();
+    let controller = Controller::spawn(backend);
+    wait_event(
+        &controller,
+        |event| matches!(event, Event::Preferences { settings: Some(settings), error: None } if !settings.autostart),
+    );
+    controller.submit(Action::SetAutostart(true)).unwrap();
+    wait_event(&controller, |event| {
+        matches!(event, Event::Begin(Action::SetAutostart(true)))
+    });
+    let readback = wait_event(&controller, |event| {
+        matches!(event, Event::Preferences { .. } | Event::Finished { .. })
+    });
+    assert!(
+        matches!(readback, Event::Preferences { settings: Some(settings), error: None } if settings.autostart)
+    );
+    let finished = wait_event(&controller, |event| matches!(event, Event::Finished { .. }));
+    assert!(matches!(
+        finished,
+        Event::Finished {
+            action: Action::SetAutostart(true),
+            error: Some(_)
+        }
+    ));
+    controller.shutdown().unwrap();
+}

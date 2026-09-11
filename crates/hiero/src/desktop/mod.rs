@@ -1,4 +1,5 @@
 mod controller;
+pub mod launch;
 mod settings;
 mod singleton;
 mod state;

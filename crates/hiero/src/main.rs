@@ -19,7 +19,7 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|start|stop|restart|status|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|start|stop|restart|status|tray|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (opens the authenticated web console in your browser; starts the local daemon if needed)";
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
@@ -462,9 +462,18 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some(command @ ("start" | "stop" | "restart" | "status")) => {
             run_lifecycle(command, &parsed, data_root)
         }
-        // The authenticated web console launchers (plan W1): mint a one-time
-        // launch grant through the local daemon and open the browser at the
-        // requested page. Never print the grant, the bearer, or the URL.
+        Some("tray") => {
+            reject_subcommand(&parsed, "tray")?;
+            reject_feedback_flags(&parsed, "tray")?;
+            reject_headless_flags(&parsed, "tray")?;
+            if parsed.port.is_some() || parsed.start_daemon || parsed.json || parsed.dry_run {
+                return Err("usage: hiero tray [--data-root <path>]".into());
+            }
+            hiero::desktop::launch::launch(&load_config(data_root))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        // The authenticated web console launchers mint a one-time launch grant.
+        // Never print the grant, the bearer, or the URL.
         Some(page @ ("admin" | "config")) => run_console(page, &parsed, data_root),
         Some("doctor") => run_doctor(&parsed, data_root),
         Some("semantic") => run_semantic(&parsed, data_root),

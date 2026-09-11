@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+hiero = { path = "../hiero" }
+hieronymus = { path = "../hieronymus" }
 ico = "=0.5.0"
 png = "=0.18.1"
 resvg = { version = "=0.48.1", default-features = false }
@@ -17,3 +19,11 @@ tempfile.workspace = true
 [[bin]]
 name = "build-icons"
 path = "src/bin/build-icons.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "=0.18.2"
+tray-icon = { version = "=0.24.2", default-features = false, features = ["gtk"] }
+
+[[bin]]
+name = "hiero-desktop"
+path = "src/main.rs"
