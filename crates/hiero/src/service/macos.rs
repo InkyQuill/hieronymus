@@ -299,7 +299,17 @@ fn read_file(path: &Path) -> Result<Option<String>, String> {
 }
 // Broker owns continuation gates for this entire call, even if launchctl stalls.
 // Output is drained concurrently with a hard memory bound; no native diagnostics escape.
+#[cfg(test)]
+type CommandOverride = fn(&[&str]) -> Result<(std::process::ExitStatus, String), String>;
+#[cfg(test)]
+thread_local! {
+    pub(super) static COMMAND_OVERRIDE: std::cell::Cell<Option<CommandOverride>> = const { std::cell::Cell::new(None) };
+}
 fn command(args: &[&str]) -> Result<(std::process::ExitStatus, String), String> {
+    #[cfg(test)]
+    if let Some(command) = COMMAND_OVERRIDE.get() {
+        return command(args);
+    }
     let mut child = Command::new("/bin/launchctl")
         .args(args)
         .stdin(Stdio::null())
@@ -549,6 +559,10 @@ fn execute_agent(
             });
         }
         agent.restore(&journal)?;
+        // Recovery changes the owned definition. Ordinary Install/Start must
+        // derive their desired mode from that restored state, not the candidate
+        // cached before recovery; DesktopMode selects its explicit mode below.
+        agent = Agent::new(options, tray)?;
         std::fs::remove_file(&pending)
             .map_err(|_| "Could not clear recovered LaunchAgent transaction")?;
     }
@@ -792,7 +806,7 @@ pub(crate) fn execute(
 #[cfg(test)]
 thread_local! { static FAIL_TRAY_PUBLICATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use macos_agent::DaemonMode;
