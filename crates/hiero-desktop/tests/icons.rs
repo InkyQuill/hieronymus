@@ -91,6 +91,8 @@ fn asset_builder_writes_status_app_ico_and_iconset_images() {
 
     let ready_light = read_png(&output.path().join("status/light/ready-24.png"));
     let ready_dark = read_png(&output.path().join("status/dark/ready-24.png"));
+    let warning_light = read_png(&output.path().join("status/light/warning-24.png"));
+    let error_dark = read_png(&output.path().join("status/dark/error-24.png"));
     assert_eq!((ready_light.0, ready_light.1), (24, 24));
     assert!(
         ready_light
@@ -110,12 +112,29 @@ fn asset_builder_writes_status_app_ico_and_iconset_images() {
             .chunks_exact(4)
             .any(|p| p == [240, 240, 240, 255])
     );
+    assert!(
+        warning_light
+            .2
+            .chunks_exact(4)
+            .any(|p| p == [229, 167, 43, 255])
+    );
+    assert!(
+        error_dark
+            .2
+            .chunks_exact(4)
+            .any(|p| p == [217, 74, 72, 255])
+    );
     assert_eq!(
         ready_light.2,
         render_icon([16, 33, 52], [46, 173, 104], 24).unwrap(),
         "PNG encoding must preserve straight-alpha edge pixels byte-for-byte"
     );
     assert_eq!(alpha_channel(&ready_light.2), alpha_channel(&ready_dark.2));
+    assert_eq!(
+        alpha_channel(&ready_light.2),
+        alpha_channel(&warning_light.2)
+    );
+    assert_eq!(alpha_channel(&ready_dark.2), alpha_channel(&error_dark.2));
 
     for size in STATUS_SIZES {
         for appearance in ["light", "dark"] {
