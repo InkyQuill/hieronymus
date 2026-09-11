@@ -168,14 +168,15 @@ pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
 /// Verify the qualified payload and execute real native document/query
 /// inference. Used by the release builder and bootstrap before activation.
 pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> {
-    use hieronymus::semantic_arming::{RUNTIME_SHA256, RUNTIME_VERSION, verify_runtime_library};
+    use hieronymus::semantic_arming::{
+        RUNTIME_VERSION, runtime_member_pins, verify_runtime_library,
+    };
     use hieronymus::semantic_embeddings::{EmbeddingProvider, OnnxEmbeddingProvider};
     use hieronymus::semantic_model::{MODEL_NAME, MODEL_REVISION, MODEL_SHA256, TOKENIZER_SHA256};
     let runtime = root.join(crate::platform::install::RUNTIME_LIBRARY);
     verify_runtime_library(&runtime)?;
     let mut hashes = serde_json::Map::new();
     for (file, expected) in [
-        (crate::platform::install::RUNTIME_LIBRARY, RUNTIME_SHA256),
         ("models/minilm/model.onnx", MODEL_SHA256),
         ("models/minilm/tokenizer.json", TOKENIZER_SHA256),
         (
@@ -200,20 +201,40 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
         }
         hashes.insert(file.into(), serde_json::json!(digest));
     }
-    for file in ["LICENSE", "ThirdPartyNotices.txt", "VERSION_NUMBER"] {
-        let name = format!("licenses/runtime/{file}");
+    for (name, expected) in runtime_member_pins(TARGET_TRIPLE)? {
         let path = root.join(&name);
         if !std::fs::symlink_metadata(&path)
             .map_err(|e| e.to_string())?
             .is_file()
-            || std::fs::metadata(&path).map_err(|e| e.to_string())?.len() == 0
         {
-            return Err(format!("required runtime notice is missing: {name}"));
+            return Err(format!(
+                "required regular runtime member is missing: {name}"
+            ));
         }
-        hashes.insert(
-            name,
-            serde_json::json!(crate::update::sha256_file(&path).map_err(|e| e.to_string())?),
-        );
+        let digest = crate::update::sha256_file(&path).map_err(|e| e.to_string())?;
+        if digest != expected {
+            return Err(format!("runtime member checksum mismatch: {name}"));
+        }
+        hashes.insert(name, serde_json::json!(digest));
+    }
+    for file in if cfg!(windows) {
+        &["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"][..]
+    } else {
+        &["hiero", "hiero-desktop"][..]
+    } {
+        let path = root.join(file);
+        if path.try_exists().map_err(|e| e.to_string())? {
+            if !std::fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())?
+                .is_file()
+            {
+                return Err(format!("executable asset must be regular: {file}"));
+            }
+            hashes.insert(
+                (*file).into(),
+                serde_json::json!(crate::update::sha256_file(&path).map_err(|e| e.to_string())?),
+            );
+        }
     }
     if std::fs::read_to_string(root.join("licenses/runtime/VERSION_NUMBER"))
         .map_err(|e| e.to_string())?

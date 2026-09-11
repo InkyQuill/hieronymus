@@ -22,7 +22,10 @@ pub mod stdio;
 pub mod uninstall;
 pub mod update;
 
+pub mod release_archive;
+pub mod release_manifest;
 pub mod release_source;
+mod release_zip;
 
 pub mod platform;
 pub mod trusted_ingress;

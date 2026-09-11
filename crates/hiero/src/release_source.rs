@@ -34,7 +34,19 @@ pub fn validate_channel(channel: &str) -> Result<(), String> {
 
 /// Typed decoding rejects duplicate security-sensitive metadata fields.
 pub fn parse_metadata(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    if bytes.len() > 65536 {
+        return Err("release metadata exceeds byte bound".into());
+    }
+    let shape: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if shape.get("format_version").is_some() {
+        return serde_json::to_value(crate::release_manifest::ReleaseV2::parse(
+            bytes,
+            TARGET_TRIPLE,
+        )?)
+        .map_err(|e| e.to_string());
+    }
     #[derive(serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
     struct Metadata {
         version: String,
         archive: String,
@@ -52,6 +64,13 @@ pub fn parse_metadata(bytes: &[u8]) -> Result<serde_json::Value, String> {
 
 /// Validate metadata before constructing a download or filesystem path.
 pub fn validate_metadata(payload: &serde_json::Value) -> Result<(), String> {
+    if payload.get("format_version").is_some() {
+        return crate::release_manifest::ReleaseV2::parse(
+            &serde_json::to_vec(payload).map_err(|e| e.to_string())?,
+            TARGET_TRIPLE,
+        )
+        .map(|_| ());
+    }
     let field = |name| {
         payload
             .get(name)
@@ -117,18 +136,63 @@ pub fn stage_remote_with_roots(
         .map_err(|e| e.to_string())?;
     let transport = HttpModelTransport::new(Duration::from_secs(60)).with_tls_roots(roots);
     let base = format!("{}/{channel}", base_url.trim_end_matches('/'));
+    let target_name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
+    let target_metadata = temporary.path().join(&target_name);
+    match transport.download_to(
+        &format!("{base}/{target_name}"),
+        &target_metadata,
+        64 * 1024,
+    ) {
+        Ok(_) => {
+            let manifest = crate::release_manifest::ReleaseV2::parse(
+                &std::fs::read(&target_metadata).map_err(|e| e.to_string())?,
+                TARGET_TRIPLE,
+            )?;
+            if manifest.channel != channel {
+                return Err("release metadata channel mismatch".into());
+            }
+            for name in [&manifest.platform.archive, &manifest.model.archive] {
+                transport
+                    .download_to(
+                        &format!("{base}/{name}"),
+                        &temporary.path().join(name),
+                        MAX_ARCHIVE,
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            crate::release_archive::verify_split_directory(temporary.path(), TARGET_TRIPLE)?;
+            std::fs::rename(temporary.path(), destination).map_err(|e| e.to_string())?;
+            return Ok(destination.to_path_buf());
+        }
+        Err(error)
+            if error
+                .to_string()
+                .ends_with("server answered with status 404") =>
+        {
+            if target_metadata.exists() {
+                std::fs::remove_file(target_metadata).map_err(|e| e.to_string())?;
+            }
+        }
+        Err(error) => return Err(error.to_string()),
+    }
     let metadata = temporary.path().join("release.json");
     transport
         .download_to(&format!("{base}/release.json"), &metadata, 64 * 1024)
         .map_err(|e| e.to_string())?;
     let payload = parse_metadata(&std::fs::read(&metadata).map_err(|e| e.to_string())?)?;
+    if payload.get("format_version").is_some() {
+        return Err("split metadata must use its exact-target filename".into());
+    }
     validate_metadata(&payload)?;
     if payload.get("channel").and_then(serde_json::Value::as_str) != Some(channel) {
         return Err(format!(
             "release metadata does not declare requested channel {channel}"
         ));
     }
-    let archive_name = payload["archive"].as_str().unwrap();
+    let archive_name = payload
+        .get("archive")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("legacy metadata needs an archive")?;
     let archive = temporary.path().join(archive_name);
     transport
         .download_to(&format!("{base}/{archive_name}"), &archive, MAX_ARCHIVE)

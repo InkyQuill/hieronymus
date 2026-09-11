@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
 /** Bind release metadata to workspace sources, an exact tag, and archive bytes. */
 import { createHash } from "node:crypto";
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream, readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  desktopTarget,
+  readReleaseV2,
+  type DesktopTarget,
+} from "./desktop-targets";
+import { verify } from "./release-assets";
 import { parseArgs } from "node:util";
 
 export const TARGET = "x86_64-unknown-linux-gnu";
@@ -58,9 +64,29 @@ export async function checkMetadata(
   directory: string,
   version: string,
   channel: string,
+  target: DesktopTarget = TARGET,
 ): Promise<string> {
   if (!["stable", "dev"].includes(channel))
     throw new Error("unsupported release channel");
+  const split = resolve(directory, desktopTarget(target).metadata);
+  if (existsSync(split)) {
+    const metadata = readReleaseV2(split, target);
+    if (metadata.version !== version || metadata.channel !== channel)
+      throw new Error("release metadata does not match source/channel");
+    await verify(
+      resolve(directory, metadata.platform.archive),
+      metadata.platform.sha256,
+      1024 * 1024 * 1024,
+    );
+    await verify(
+      resolve(directory, metadata.model.archive),
+      metadata.model.sha256,
+      1024 * 1024 * 1024,
+    );
+    return metadata.platform.archive;
+  }
+  if (target !== TARGET)
+    throw new Error("native release needs exact-target v2 manifest");
   const metadata = JSON.parse(
     readFileSync(resolve(directory, "release.json"), "utf8"),
   );
@@ -89,6 +115,7 @@ if (import.meta.main) {
         ref: { type: "string" },
         "allow-untagged": { type: "boolean" },
         "release-dir": { type: "string" },
+        target: { type: "string", default: TARGET },
         channel: { type: "string", default: "stable" },
       },
     });
@@ -98,12 +125,32 @@ if (import.meta.main) {
       values["allow-untagged"],
     );
     const archive = values["release-dir"]
-      ? await checkMetadata(values["release-dir"], version, values.channel!)
+      ? await checkMetadata(
+          values["release-dir"],
+          version,
+          values.channel!,
+          desktopTarget(values.target!).target,
+        )
       : null;
     console.log(
       JSON.stringify({
         version,
         archive,
+        metadata_sha256: values["release-dir"]
+          ? await digest(
+              resolve(
+                values["release-dir"],
+                existsSync(
+                  resolve(
+                    values["release-dir"],
+                    desktopTarget(values.target!).metadata,
+                  ),
+                )
+                  ? desktopTarget(values.target!).metadata
+                  : "release.json",
+              ),
+            )
+          : null,
         tag_verified: values.ref !== undefined,
       }),
     );

@@ -519,6 +519,32 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
                     .as_deref()
                     .ok_or("release-verify requires --release-dir")?,
             );
+            if directory
+                .join(hiero::release_manifest::metadata_name(
+                    hiero::app::TARGET_TRIPLE,
+                ))
+                .try_exists()
+                .map_err(|e| e.to_string())?
+            {
+                let release = if let Some(output) = &parsed.output {
+                    hiero::release_archive::extract_split_directory(
+                        &directory,
+                        hiero::app::TARGET_TRIPLE,
+                        &absolute_path(output),
+                    )?
+                } else {
+                    hiero::release_archive::verify_split_directory(
+                        &directory,
+                        hiero::app::TARGET_TRIPLE,
+                    )?
+                };
+                println!(
+                    "verified split release {} ({})",
+                    release.manifest.version,
+                    hiero::app::TARGET_TRIPLE
+                );
+                return Ok(ExitCode::SUCCESS);
+            }
             let release = hiero::release_source::verify_directory(&directory)?;
             if let Some(output) = &parsed.output {
                 hiero::release_source::extract_archive(&release.archive, &absolute_path(output))?;

@@ -19,6 +19,7 @@ console-embed = ["dep:rust-embed"]
 url = "2"
 flate2 = "1"
 tar = "0.4"
+zip.workspace = true
 hieronymus = { path = "../hieronymus" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true

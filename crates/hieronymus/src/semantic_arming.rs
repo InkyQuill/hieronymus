@@ -154,9 +154,83 @@ pub fn configuration_revision(config: &HieronymusConfig) -> Result<u64, Semantic
     Ok(load_configuration(config)?.map_or(0, |settings| settings.configuration_revision))
 }
 
-/// Qualified native runtime identity for the current release line.
-pub const RUNTIME_SHA256: &str = "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab";
+/// Exact pinned runtime version. Native Intel output is not yet qualified.
 pub const RUNTIME_VERSION: &str = "1.28.0";
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+pub const RUNTIME_SHA256: &str = "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab";
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+pub const RUNTIME_SHA256: &str = "18370c375f07357fa5874344a9d9ac17e6b6fe1eb18b1dd209d79483b4470257";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub const RUNTIME_SHA256: &str = "dc19bbcb2f5c9fb3c68b4f9248aa0a35065ff702c5dbeae75eac54a74da97b6d";
+
+pub fn runtime_target() -> Result<&'static str, String> {
+    if cfg!(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "gnu"
+    )) {
+        Ok("x86_64-unknown-linux-gnu")
+    } else if cfg!(all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc"
+    )) {
+        Ok("x86_64-pc-windows-msvc")
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Ok("aarch64-apple-darwin")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Ok("x86_64-apple-darwin")
+    } else {
+        Err("unsupported native ONNX target".into())
+    }
+}
+/// Pinned regular runtime members relative to the assembled version root.
+/// This shared source contains measured official bytes, never host guesses.
+pub fn runtime_member_pins(
+    target: &str,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let pins: serde_json::Value =
+        serde_json::from_str(include_str!("../../../scripts/onnxruntime-targets.json"))
+            .map_err(|e| e.to_string())?;
+    let descriptor = pins.get(target).ok_or("unsupported native ONNX target")?;
+    if descriptor["origin"] != "official" {
+        return Err("Intel ONNX 1.28.0 needs the pinned native source build, measured output hashes and approved provenance; no qualified runtime is available".into());
+    }
+    descriptor["members"]
+        .as_object()
+        .ok_or("invalid compiled runtime pins")?
+        .iter()
+        .map(|(name, pin)| {
+            let destination = if name.starts_with("lib/") {
+                name.clone()
+            } else {
+                format!("licenses/runtime/{name}")
+            };
+            Ok((
+                destination,
+                pin["sha256"]
+                    .as_str()
+                    .ok_or("invalid compiled runtime digest")?
+                    .to_owned(),
+            ))
+        })
+        .collect()
+}
+pub fn runtime_library_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "onnxruntime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else {
+        "libonnxruntime.so"
+    }
+}
+pub fn expected_runtime_sha256() -> Result<String, String> {
+    runtime_member_pins(runtime_target()?)?
+        .remove(&format!("lib/{}", runtime_library_name()))
+        .ok_or("missing runtime pin".into())
+}
 
 /// Resolve from the canonical executable, never a stable link or cwd. A
 /// managed version with missing assets remains a broken bundle, not a cue to
@@ -170,9 +244,10 @@ pub fn bundled_asset_root() -> Option<PathBuf> {
 
 pub fn verify_runtime_library(runtime: &Path) -> Result<(), String> {
     let digest = crate::semantic_model::sha256_file(runtime).map_err(|e| e.to_string())?;
-    if digest != RUNTIME_SHA256 {
+    let expected = expected_runtime_sha256()?;
+    if digest != expected {
         return Err(format!(
-            "ONNX runtime {} checksum mismatch; expected qualified runtime {RUNTIME_VERSION} ({RUNTIME_SHA256}), got {digest}",
+            "ONNX runtime {} checksum mismatch; expected qualified runtime {RUNTIME_VERSION} ({expected}), got {digest}",
             runtime.display()
         ));
     }
@@ -185,7 +260,7 @@ pub fn load_runtime_library(
 ) -> Result<Option<PathBuf>, SemanticConfigError> {
     match load_configuration(config)? {
         Some(settings) => Ok(settings.runtime_library),
-        None => Ok(bundled_asset_root().map(|root| root.join("lib/libonnxruntime.so"))),
+        None => Ok(bundled_asset_root().map(|root| root.join("lib").join(runtime_library_name()))),
     }
 }
 

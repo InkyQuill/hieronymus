@@ -18,6 +18,13 @@ import {
   fstatSync,
 } from "node:fs";
 import { dirname, join, resolve, sep, posix } from "node:path";
+import {
+  desktopTarget,
+  MODEL_PINS,
+  type DesktopTarget,
+} from "./desktop-targets";
+import { zipMembers } from "./runtime-zip";
+export { MODEL_PINS } from "./desktop-targets";
 import { createGunzip } from "node:zlib";
 import { createHash } from "node:crypto";
 
@@ -42,15 +49,6 @@ export const RUNTIME_ARCHIVE_SHA =
   "a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407";
 export const RUNTIME_SHA =
   "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab";
-export const MODEL_PINS = {
-  "model.onnx":
-    "10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a",
-  "tokenizer.json":
-    "2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8",
-  LICENSE: "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-  "README.md":
-    "1e98ea05b0de579fcaad3d625b62ea55647142ed674d5f5ebf1440e4bbbb6f23",
-};
 export function safeUrl(value: string, hosts: Set<string>): URL {
   let url: URL;
   try {
@@ -141,7 +139,10 @@ export function trustedDirectory(path: string): void {
       throw new Error("artifact directory must not be a symlink");
   }
   const stat = lstatSync(absolute);
-  if (stat.uid !== process.getuid?.() || stat.mode & 0o022)
+  if (
+    process.platform !== "win32" &&
+    (stat.uid !== process.getuid?.() || stat.mode & 0o022)
+  )
     throw new Error(
       "artifact directory must be owned and not writable by others",
     );
@@ -238,7 +239,11 @@ function safeName(name: string, top: string): string {
   if (
     !trimmed ||
     trimmed.includes("\\") ||
-    trimmed.split("/").some((p) => !p || p === "." || p === "..") ||
+    trimmed
+      .split("/")
+      .some(
+        (p) => !p || p === "." || p === ".." || /[:\x00-\x1f]|[. ]$/.test(p),
+      ) ||
     (trimmed !== top && !trimmed.startsWith(`${top}/`))
   )
     throw new Error("unsafe tar path");
@@ -355,7 +360,19 @@ export async function unpackRuntime(
   destination: string,
   signal: AbortSignal,
   limit = MAX_EXTRACTED,
+  target: DesktopTarget = "x86_64-unknown-linux-gnu",
 ): Promise<void> {
+  const descriptor = desktopTarget(target).runtime;
+  if (descriptor.origin !== "official")
+    throw new Error(
+      "Intel ONNX 1.28.0 requires a pinned native source build and measured provenance; no official artifact exists",
+    );
+  if (lstatSync(archive).size > MAX_BYTES)
+    throw new Error("archive exceeds compressed bound");
+  if (descriptor.archive.endsWith(".zip")) {
+    extractZip(readFileSync(archive), destination, descriptor.top, limit);
+    return;
+  }
   const chunks: Buffer[] = [];
   let size = 0;
   const input = createReadStream(archive);
@@ -373,67 +390,87 @@ export async function unpackRuntime(
       if (size > limit) throw new Error("archive exceeds extraction bound");
       chunks.push(chunk);
     }
-    extractTar(Buffer.concat(chunks), destination);
+    extractTar(Buffer.concat(chunks), destination, descriptor.top, limit);
   } finally {
     signal.removeEventListener("abort", abort);
     input.destroy();
     gzip.destroy();
   }
 }
-export async function stage(root: string): Promise<Record<string, string>> {
+export async function stage(
+  root: string,
+  target: DesktopTarget = "x86_64-unknown-linux-gnu",
+  inputs?: { runtimeArchive?: string; modelDirectory?: string },
+): Promise<Record<string, string>> {
+  const descriptor = desktopTarget(target).runtime;
+  if (descriptor.origin !== "official")
+    throw new Error(
+      "Intel ONNX 1.28.0 requires a pinned native source build and measured provenance; no official artifact exists",
+    );
   root = realpathSync(root);
   const signal = AbortSignal.timeout(300_000);
   const cache = join(root, "qualification/.artifacts/models");
   trustedDirectory(cache);
-  const model = join(cache, "paraphrase-multilingual-MiniLM-L12-v2");
-  await acquireFile(
-    join(model, "model.onnx"),
-    MODEL_PINS["model.onnx"],
-    `${MODEL_BASE}onnx/model.onnx`,
-    MODEL_HOSTS,
-    MAX_BYTES,
-    signal,
-  );
-  for (const [asset, source] of Object.entries({
-    "tokenizer.json": "multilingual-minilm-tokenizer.json",
-    LICENSE: "multilingual-minilm-tokenizer.LICENSE",
-  })) {
-    const pin = MODEL_PINS[asset as keyof typeof MODEL_PINS];
-    const fixture = join(root, "crates/hieronymus/tests/fixtures", source);
-    await verify(fixture, pin);
-    const destination = join(model, asset);
-    if (!existsSync(destination))
-      writeFileSync(destination, readFileSync(fixture), {
-        flag: "wx",
-        mode: 0o600,
-      });
-    await verify(destination, pin);
+  const model =
+    inputs?.modelDirectory ??
+    join(cache, "paraphrase-multilingual-MiniLM-L12-v2");
+  if (inputs?.modelDirectory) {
+    for (const [name, pin] of Object.entries(MODEL_PINS))
+      await verify(join(model, name), pin);
+  } else {
+    await acquireFile(
+      join(model, "model.onnx"),
+      MODEL_PINS["model.onnx"],
+      `${MODEL_BASE}onnx/model.onnx`,
+      MODEL_HOSTS,
+      MAX_BYTES,
+      signal,
+    );
+    for (const [asset, source] of Object.entries({
+      "tokenizer.json": "multilingual-minilm-tokenizer.json",
+      LICENSE: "multilingual-minilm-tokenizer.LICENSE",
+    })) {
+      const pin = MODEL_PINS[asset as keyof typeof MODEL_PINS];
+      const fixture = join(root, "crates/hieronymus/tests/fixtures", source);
+      await verify(fixture, pin);
+      const destination = join(model, asset);
+      if (!existsSync(destination))
+        writeFileSync(destination, readFileSync(fixture), {
+          flag: "wx",
+          mode: 0o600,
+        });
+      await verify(destination, pin);
+    }
+    await acquireFile(
+      join(model, "README.md"),
+      MODEL_PINS["README.md"],
+      `${MODEL_BASE}README.md`,
+      MODEL_HOSTS,
+      65536,
+      signal,
+    );
   }
-  await acquireFile(
-    join(model, "README.md"),
-    MODEL_PINS["README.md"],
-    `${MODEL_BASE}README.md`,
-    MODEL_HOSTS,
-    65536,
-    signal,
-  );
-  const archive = join(cache, "onnxruntime-linux-x64-1.28.0.tgz");
-  await acquireFile(
-    archive,
-    RUNTIME_ARCHIVE_SHA,
-    RUNTIME_URL,
-    RUNTIME_HOSTS,
-    MAX_BYTES,
-    signal,
-  );
+  const archive = inputs?.runtimeArchive ?? join(cache, descriptor.archive);
+  if (inputs?.runtimeArchive)
+    await verify(archive, descriptor.sha256, descriptor.size);
+  else
+    await acquireFile(
+      archive,
+      descriptor.sha256,
+      descriptor.url,
+      RUNTIME_HOSTS,
+      MAX_BYTES,
+      signal,
+    );
   // Always extract the hash-verified archive into a fresh directory. Cached runtime
   // trees cannot supply unverified notices or a changed library via symlinks.
   const extraction = mkdtempSync(join(cache, ".release-runtime-"));
   try {
-    await unpackRuntime(archive, extraction, signal);
-    const runtime = join(extraction, "onnxruntime-linux-x64-1.28.0");
-    const library = join(runtime, "lib/libonnxruntime.so");
-    await verify(library, RUNTIME_SHA);
+    await unpackRuntime(archive, extraction, signal, MAX_EXTRACTED, target);
+    const runtime = join(extraction, descriptor.top);
+    const library = join(runtime, descriptor.member);
+    for (const [name, pin] of Object.entries(descriptor.members))
+      await verify(join(runtime, name), pin.sha256, pin.size);
     for (const notice of [
       "LICENSE",
       "ThirdPartyNotices.txt",
@@ -450,11 +487,35 @@ export async function stage(root: string): Promise<Record<string, string>> {
     signal.throwIfAborted();
     return {
       HIERO_RELEASE_ONNX_RUNTIME: library,
-      HIERO_RELEASE_ONNX_SHA256: RUNTIME_SHA,
+      HIERO_RELEASE_ONNX_SHA256: descriptor.members[descriptor.member].sha256,
+      HIERO_RELEASE_RUNTIME_DIR: runtime,
+      HIERO_RELEASE_TARGET: target,
       HIERO_RELEASE_MODEL_DIR: model,
     };
   } catch (error) {
     rmSync(extraction, { recursive: true, force: true });
     throw error;
+  }
+}
+
+export function extractZip(
+  bytes: Buffer,
+  destination: string,
+  top: string,
+  limit = MAX_EXTRACTED,
+): void {
+  if (bytes.length > MAX_BYTES) throw new Error("ZIP exceeds compressed bound");
+  const entries = zipMembers(bytes, limit);
+  for (const name of entries.keys()) safeName(name, top);
+  trustedDirectory(destination);
+  if (readdirSync(destination).length)
+    throw new Error("extraction directory must be empty");
+  for (const [name, data] of entries) {
+    const path = join(destination, name);
+    if (data === null) mkdirSync(path, { recursive: true, mode: 0o700 });
+    else {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(path, data, { flag: "wx", mode: 0o600 });
+    }
   }
 }
