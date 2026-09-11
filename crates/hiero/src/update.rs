@@ -1013,8 +1013,26 @@ fn activation_failed(
     }
 }
 
+/// Registration authority used by the outer rollback state machine.
+trait RollbackRegistration {
+    fn restore(&self, operation: &LifecycleOperation) -> Result<(), String>;
+    fn restores_manager_state(&self) -> bool;
+    fn commit(&self, operation: &LifecycleOperation) -> Result<(), String>;
+}
+impl RollbackRegistration for crate::desktop::installation::Snapshot {
+    fn restore(&self, operation: &LifecycleOperation) -> Result<(), String> {
+        self.restore(operation)
+    }
+    fn restores_manager_state(&self) -> bool {
+        cfg!(any(windows, target_os = "macos"))
+    }
+    fn commit(&self, operation: &LifecycleOperation) -> Result<(), String> {
+        self.commit(operation)
+    }
+}
+
 /// The ordered rollback: stop the candidate, restore the links and unit,
-/// reload the manager, and — only when the update had stopped a running
+/// reload file-based managers, and — only when the update had stopped a running
 /// daemon — restart the previous version and confirm it is authentically
 /// back. Each step propagates its error as a `String`; NO artifact is deleted
 /// here, so a rollback that fails midway leaves everything on disk.
@@ -1024,6 +1042,29 @@ fn rollback(
     config: &HieronymusConfig,
     snapshot: &RestoreSnapshot,
     operation: &LifecycleOperation,
+) -> Result<(), String> {
+    rollback_with_registration(
+        manager,
+        layout,
+        config,
+        snapshot,
+        operation,
+        snapshot
+            .desktop_registration
+            .as_ref()
+            .map(|registration| registration as &dyn RollbackRegistration),
+    )
+}
+
+/// One outer rollback composition, with registration restoration substitutable
+/// independently from the native manager for state-transition fault tests.
+fn rollback_with_registration(
+    manager: &dyn ServiceManager,
+    layout: &AppLayout,
+    config: &HieronymusConfig,
+    snapshot: &RestoreSnapshot,
+    operation: &LifecycleOperation,
+    registration: Option<&dyn RollbackRegistration>,
 ) -> Result<(), String> {
     operation.check(config).map_err(|error| error.to_string())?;
     let service_options = ServiceOptions {
@@ -1053,12 +1094,17 @@ fn rollback(
     let ownership = RootOwnership::acquire(config, "update-rollback")
         .map_err(|error| format!("acquire data-root ownership for rollback: {error}"))?;
     restore_links_and_unit(layout, snapshot)?;
-    if let Some(registration) = &snapshot.desktop_registration {
+    if let Some(registration) = registration {
         registration.restore(operation)?;
     }
-    manager
-        .reload()
-        .map_err(|error| format!("reload the service manager: {error}"))?;
+    // Native package restore already reconciles and validates manager state.
+    // A generic native reload may bootstrap an originally unloaded agent.
+    // Linux restores files only, so its manager must still reload those files.
+    if !registration.is_some_and(|registration| registration.restores_manager_state()) {
+        manager
+            .reload()
+            .map_err(|error| format!("reload the service manager: {error}"))?;
+    }
     if snapshot.daemon_was_running
         && !crate::desktop::control::quit_requested(config.data_root())
             .map_err(|e| e.to_string())?
@@ -1082,7 +1128,7 @@ fn rollback(
         )
         .map_err(|e| e.to_string())?;
     }
-    if let Some(registration) = &snapshot.desktop_registration {
+    if let Some(registration) = registration {
         registration.commit(operation)?;
     }
     Ok(())
@@ -1790,6 +1836,87 @@ mod tests {
             candidate_version: "2.0.0".to_string(),
             helper_was_running: false,
             desktop_registration: None,
+        }
+    }
+
+    #[test]
+    fn outer_native_rollback_preserves_unloaded_enabled_state_through_commit() {
+        use std::cell::{Cell, RefCell};
+        struct NativeState {
+            loaded: Cell<bool>,
+            enabled: Cell<bool>,
+            journal_pending: Cell<bool>,
+            events: RefCell<Vec<&'static str>>,
+        }
+        impl ServiceManager for NativeState {
+            fn stop(&self) -> Result<(), service::ServiceError> {
+                self.events.borrow_mut().push("stop");
+                self.loaded.set(false);
+                Ok(())
+            }
+            fn reload(&self) -> Result<(), service::ServiceError> {
+                self.events.borrow_mut().push("reload");
+                // macOS Install bootstraps enabled, unloaded Desktop agents.
+                self.loaded.set(self.enabled.get());
+                Ok(())
+            }
+            fn start(&self) -> Result<(), service::ServiceError> {
+                self.events.borrow_mut().push("start");
+                Err(service::ServiceError::Manager("unexpected startup".into()))
+            }
+        }
+        impl RollbackRegistration for NativeState {
+            fn restore(&self, _: &LifecycleOperation) -> Result<(), String> {
+                self.events.borrow_mut().push("restore");
+                self.loaded.set(false);
+                self.enabled.set(true);
+                Ok(())
+            }
+            fn restores_manager_state(&self) -> bool {
+                true
+            }
+            fn commit(&self, _: &LifecycleOperation) -> Result<(), String> {
+                self.events.borrow_mut().push("commit");
+                if self.loaded.get() || !self.enabled.get() {
+                    return Err("outer rollback changed restored unloaded/enabled state".into());
+                }
+                self.journal_pending.set(false);
+                Ok(())
+            }
+        }
+        for quit in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+            let config = HieronymusConfig::new(temp.path().join("data"));
+            let operation = LifecycleOperation::acquire(&config).unwrap();
+            if quit {
+                crate::desktop::control::record_quit(config.data_root()).unwrap();
+            }
+            let snapshot = snapshot_for(
+                temp.path().join("units/hieronymus.service"),
+                Some("1.0.0"),
+                quit,
+            );
+            let native = NativeState {
+                loaded: Cell::new(true),
+                enabled: Cell::new(false),
+                journal_pending: Cell::new(true),
+                events: RefCell::new(Vec::new()),
+            };
+            rollback_with_registration(
+                &native,
+                &layout,
+                &config,
+                &snapshot,
+                &operation,
+                Some(&native),
+            )
+            .unwrap();
+            assert_eq!(*native.events.borrow(), ["stop", "restore", "commit"]);
+            assert!(!native.loaded.get());
+            assert!(native.enabled.get());
+            assert!(!native.journal_pending.get());
+            assert_eq!(layout.current_version().as_deref(), Some("1.0.0"));
         }
     }
 
