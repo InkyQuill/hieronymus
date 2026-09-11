@@ -21,6 +21,8 @@ pub struct LifecycleOperation {
     file: File,
     root: PathBuf,
     registration: Mutex<Option<UnitRegistration>>,
+    #[cfg(any(windows, target_os = "macos", test))]
+    broker: Mutex<Option<(PathBuf, PathBuf)>>,
 }
 
 impl LifecycleOperation {
@@ -52,6 +54,8 @@ impl LifecycleOperation {
             file,
             root,
             registration: Mutex::new(None),
+            #[cfg(any(windows, target_os = "macos", test))]
+            broker: Mutex::new(None),
         })
     }
 
@@ -98,6 +102,50 @@ impl LifecycleOperation {
         Ok(())
     }
 
+    /// Pin the executing CLI for a verified install transaction. Registration
+    /// identity remains the exact stable endpoint, which may not exist yet.
+    #[cfg(any(windows, target_os = "macos", test))]
+    pub(crate) fn bind_native_broker(&self, options: &ServiceOptions) -> io::Result<()> {
+        self.register_unit(options)?;
+        if !options.binary.is_absolute() {
+            return Err(io::Error::other(
+                "broker registration endpoint must be absolute",
+            ));
+        }
+        let mut binding = self
+            .broker
+            .lock()
+            .map_err(|_| io::Error::other("broker binding poisoned"))?;
+        if binding.is_some() {
+            return Err(io::Error::other(
+                "broker execution is already bound for this operation",
+            ));
+        }
+        *binding = Some((
+            options.binary.clone(),
+            std::env::current_exe()?.canonicalize()?,
+        ));
+        Ok(())
+    }
+    #[cfg(any(windows, target_os = "macos", test))]
+    pub(crate) fn native_broker_executable(
+        &self,
+        options: &ServiceOptions,
+    ) -> io::Result<Option<PathBuf>> {
+        self.register_unit(options)?;
+        let binding = self
+            .broker
+            .lock()
+            .map_err(|_| io::Error::other("broker binding poisoned"))?;
+        match binding.as_ref() {
+            Some((stable, executable)) if *stable == options.binary => Ok(Some(executable.clone())),
+            Some(_) => Err(io::Error::other(
+                "broker binding belongs to a different stable endpoint",
+            )),
+            None => Ok(None),
+        }
+    }
+
     /// Prevent accidentally using a guard acquired for a different root.
     pub(crate) fn check(&self, config: &HieronymusConfig) -> io::Result<()> {
         if config.data_root().canonicalize()? != self.root {
@@ -133,5 +181,57 @@ struct UnitRegistration {
 impl Drop for UnitRegistration {
     fn drop(&mut self) {
         let _ = self.file.unlock();
+    }
+}
+
+#[cfg(test)]
+mod broker_tests {
+    use super::*;
+    #[test]
+    fn broker_binding_survives_absent_selection_and_refuses_other_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let options = ServiceOptions {
+            data_root: root.path().join("data"),
+            unit_dir: root.path().join("units"),
+            binary: root.path().join("app/bin/hiero"),
+            use_manager: true,
+        };
+        let operation =
+            LifecycleOperation::acquire(&HieronymusConfig::new(&options.data_root)).unwrap();
+        assert!(
+            operation
+                .native_broker_executable(&options)
+                .unwrap()
+                .is_none()
+        );
+        operation.bind_native_broker(&options).unwrap();
+        assert!(!options.binary.exists());
+        assert_eq!(
+            operation
+                .native_broker_executable(&options)
+                .unwrap()
+                .unwrap(),
+            std::env::current_exe().unwrap().canonicalize().unwrap()
+        );
+        assert!(operation.bind_native_broker(&options).is_err());
+        for altered in [
+            ServiceOptions {
+                binary: root.path().join("other"),
+                ..options.clone()
+            },
+            ServiceOptions {
+                data_root: root.path().to_path_buf(),
+                ..options.clone()
+            },
+            ServiceOptions {
+                unit_dir: root.path().join("other-units"),
+                ..options.clone()
+            },
+        ] {
+            assert!(operation.native_broker_executable(&altered).is_err());
+        }
+        drop(operation);
+        let next = LifecycleOperation::acquire(&HieronymusConfig::new(&options.data_root)).unwrap();
+        assert!(next.native_broker_executable(&options).unwrap().is_none());
     }
 }

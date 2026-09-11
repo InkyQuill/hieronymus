@@ -13,6 +13,17 @@ impl Snapshot {
         op: &LifecycleOperation,
     ) -> Result<Self, String> {
         op.register_unit(service).map_err(|e| e.to_string())?;
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            crate::platform::native_gate::check(&service.data_root).map_err(|e| e.to_string())?;
+            drop(
+                crate::platform::native_gate::acquire(
+                    &service.data_root,
+                    crate::platform::native_gate::BROWSER_GATE,
+                )
+                .map_err(|e| e.to_string())?,
+            );
+        }
         #[cfg(target_os = "linux")]
         {
             let r = super::linux_registration::LinuxRegistration::new(service.clone());
@@ -55,7 +66,7 @@ impl Snapshot {
         }
         #[cfg(any(windows, target_os = "macos"))]
         {
-            native(service, NativeAction::Capture)?;
+            native(service, NativeAction::Capture, op)?;
             Ok(Self {
                 service: service.clone(),
             })
@@ -70,10 +81,11 @@ impl Snapshot {
         #[cfg(target_os = "macos")]
         {
             op.register_unit(&self.service).map_err(|e| e.to_string())?;
-            crate::platform::macos_broker::task(
+            crate::platform::macos_broker::task_guarded(
                 &self.service,
                 crate::platform::macos_broker::TaskAction::InstallDesktop,
                 true,
+                op,
             )
             .map(|_| ())
         }
@@ -81,15 +93,17 @@ impl Snapshot {
         {
             op.register_unit(&self.service).map_err(|e| e.to_string())?;
             crate::service::install_guarded(&self.service, op).map_err(|e| e.to_string())?;
-            crate::platform::windows_broker::task(
+            crate::platform::windows_broker::task_guarded(
                 &self.service,
                 crate::platform::windows_broker::TaskAction::Install,
                 true,
+                op,
             )
             .map(|_| ())
         }
     }
-    pub(crate) fn restore(&self) -> Result<(), String> {
+    pub(crate) fn restore(&self, op: &LifecycleOperation) -> Result<(), String> {
+        op.register_unit(&self.service).map_err(|e| e.to_string())?;
         #[cfg(target_os = "linux")]
         {
             for (path, bytes, link) in &self.files {
@@ -110,17 +124,18 @@ impl Snapshot {
         }
         #[cfg(any(windows, target_os = "macos"))]
         {
-            native(&self.service, NativeAction::Restore)
+            native(&self.service, NativeAction::Restore, op)
         }
     }
-    pub(crate) fn commit(&self) -> Result<(), String> {
+    pub(crate) fn commit(&self, op: &LifecycleOperation) -> Result<(), String> {
+        op.register_unit(&self.service).map_err(|e| e.to_string())?;
         #[cfg(target_os = "linux")]
         {
             Ok(())
         }
         #[cfg(any(windows, target_os = "macos"))]
         {
-            native(&self.service, NativeAction::Commit)
+            native(&self.service, NativeAction::Commit, op)
         }
     }
 }
@@ -131,12 +146,16 @@ enum NativeAction {
     Commit,
 }
 #[cfg(any(windows, target_os = "macos"))]
-fn native(options: &ServiceOptions, action: NativeAction) -> Result<(), String> {
+fn native(
+    options: &ServiceOptions,
+    action: NativeAction,
+    op: &LifecycleOperation,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     use crate::platform::macos_broker as broker;
     #[cfg(windows)]
     use crate::platform::windows_broker as broker;
-    broker::task(
+    broker::task_guarded(
         options,
         match action {
             NativeAction::Capture => broker::TaskAction::PackageCapture,
@@ -144,6 +163,26 @@ fn native(options: &ServiceOptions, action: NativeAction) -> Result<(), String> 
             NativeAction::Commit => broker::TaskAction::PackageCommit,
         },
         true,
+        op,
     )
     .map(|_| ())
+}
+
+/// Both native registrations are checked under the caller's lifecycle authority.
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn validate_native(
+    options: &ServiceOptions,
+    op: &LifecycleOperation,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    use crate::platform::macos_broker as broker;
+    #[cfg(windows)]
+    use crate::platform::windows_broker as broker;
+    for tray in [false, true] {
+        let value = broker::task_guarded(options, broker::TaskAction::Inspect, tray, op)?;
+        if value.get("pending").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Err("Native registration continuation is pending".into());
+        }
+    }
+    Ok(())
 }

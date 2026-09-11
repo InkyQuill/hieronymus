@@ -495,3 +495,29 @@ fn binary_doctor_json_is_parseable() {
     assert_eq!(parsed["status"], "healthy");
     assert!(parsed["findings"].is_array());
 }
+
+#[test]
+fn independent_candidate_check_retains_parent_lock_and_reports_its_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(temp.path());
+    let _parent = hiero::lifecycle::operation::LifecycleOperation::acquire(&config).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .args(["doctor", "--skip-registration", "--json", "--data-root"])
+        .arg(temp.path())
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["scope"], "payload-config-without-registration");
+    assert!(
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| !finding["code"]
+                .as_str()
+                .unwrap()
+                .starts_with("service-unit"))
+    );
+    assert!(hiero::lifecycle::operation::LifecycleOperation::acquire(&config).is_err());
+    assert_eq!(doctor::run(&config).to_json()["scope"], "full");
+}

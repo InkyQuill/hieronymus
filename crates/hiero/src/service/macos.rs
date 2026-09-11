@@ -47,7 +47,7 @@ pub(crate) fn read_unit_guarded(
         .register_unit(options)
         .map_err(|e| e.to_string())?;
     if options.use_manager {
-        let result = macos_broker::task(options, TaskAction::Inspect, false)?;
+        let result = macos_broker::task_guarded(options, TaskAction::Inspect, false, operation)?;
         if result.is_null() {
             return Ok(None);
         }
@@ -91,7 +91,8 @@ pub(crate) fn install_guarded(
         ));
     }
     if options.use_manager {
-        macos_broker::task(options, TaskAction::Install, false).map_err(ServiceError::Manager)?;
+        macos_broker::task_guarded(options, TaskAction::Install, false, operation)
+            .map_err(ServiceError::Manager)?;
     } else {
         hieronymus::atomic::atomic_write_text(
             &options.unit_path(),
@@ -109,7 +110,8 @@ pub(crate) fn uninstall_guarded(
     operation.register_unit(options)?;
     validate_unit_root_guarded(options, operation)?;
     if options.use_manager {
-        macos_broker::task(options, TaskAction::Remove, false).map_err(ServiceError::Manager)?;
+        macos_broker::task_guarded(options, TaskAction::Remove, false, operation)
+            .map_err(ServiceError::Manager)?;
     } else {
         macos_agent::restore_definition(&options.unit_path(), None)
             .map_err(ServiceError::Invalid)?;
@@ -126,7 +128,8 @@ pub(crate) fn start_guarded(
             "Native manager integration is disabled".into(),
         ));
     }
-    macos_broker::task(options, TaskAction::Start, false).map_err(ServiceError::Manager)?;
+    macos_broker::task_guarded(options, TaskAction::Start, false, operation)
+        .map_err(ServiceError::Manager)?;
     Ok(vec!["macOS daemon LaunchAgent started".into()])
 }
 pub(crate) fn rearm_guarded(
@@ -135,7 +138,8 @@ pub(crate) fn rearm_guarded(
 ) -> Result<(), ServiceError> {
     operation.register_unit(options)?;
     if options.use_manager {
-        macos_broker::task(options, TaskAction::Rearm, false).map_err(ServiceError::Manager)?;
+        macos_broker::task_guarded(options, TaskAction::Rearm, false, operation)
+            .map_err(ServiceError::Manager)?;
     }
     Ok(())
 }
@@ -145,7 +149,8 @@ pub(crate) fn stop_guarded(
 ) -> Result<Vec<String>, ServiceError> {
     operation.register_unit(options)?;
     if options.use_manager {
-        macos_broker::task(options, TaskAction::Suppress, false).map_err(ServiceError::Manager)?;
+        macos_broker::task_guarded(options, TaskAction::Suppress, false, operation)
+            .map_err(ServiceError::Manager)?;
     }
     Ok(vec![
         "macOS daemon has no automatic recovery; login preference preserved".into(),
@@ -169,7 +174,7 @@ pub(crate) fn disable_login_guarded(
 ) -> Result<(), ServiceError> {
     operation.register_unit(options)?;
     if options.use_manager {
-        macos_broker::task(options, TaskAction::DesktopMode, false)
+        macos_broker::task_guarded(options, TaskAction::DesktopMode, false, operation)
             .map_err(ServiceError::Manager)?;
     } else {
         validate_unit_root_guarded(options, operation)?;
@@ -187,7 +192,7 @@ pub(crate) fn finish_stop_guarded(
 ) -> Result<(), ServiceError> {
     operation.register_unit(options)?;
     if options.use_manager {
-        macos_broker::task(options, TaskAction::FinishStop, false)
+        macos_broker::task_guarded(options, TaskAction::FinishStop, false, operation)
             .map_err(ServiceError::Manager)?;
     }
     Ok(())
@@ -742,8 +747,18 @@ pub(crate) fn execute(
             if package.exists() {
                 return Err("A prior package registration rollback is pending".into());
             }
-            execute(options, TaskAction::Reconcile, true)?;
-            execute(options, TaskAction::Reconcile, false)?;
+            for tray in [false, true] {
+                let state = execute(options, TaskAction::Inspect, tray)?;
+                if state.get("pending").and_then(Value::as_bool) == Some(true) {
+                    return Err("Native registration recovery is pending; complete it before package replacement".into());
+                }
+            }
+            let daemon = Agent::new(options, false)?;
+            if daemon.loaded()?.is_some_and(|loaded| loaded.pid.is_none())
+                && owned_mode(options, &daemon.expected)? == DaemonMode::Headless
+            {
+                return Err("Loaded idle Headless agent cannot be restored without RunAtLoad startup; unload it explicitly before package replacement".into());
+            }
             let snapshot = DesktopJournal {
                 daemon: Agent::new(options, false)?.snapshot()?,
                 tray: Agent::new(options, true)?.snapshot()?,
@@ -760,8 +775,23 @@ pub(crate) fn execute(
                 &hieronymus::private_file::read_private(&package).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
-            restore_desktop(options, &snapshot)?;
-            std::fs::remove_file(package).map_err(|e| e.to_string())?;
+            // Headless RunAtLoad is process startup, owned by the outer explicit
+            // restart phase after data-root release and durable Quit validation.
+            // Stable tray registration stays loaded throughout helper retirement.
+            let mut registration = snapshot;
+            if registration.daemon.loaded
+                && registration
+                    .daemon
+                    .definition
+                    .as_deref()
+                    .map(|text| owned_mode(options, text))
+                    .transpose()?
+                    == Some(DaemonMode::Headless)
+            {
+                registration.daemon.loaded = false;
+            }
+            restore_desktop(options, &registration)?;
+            // Keep journal until the outer restore/restart phase commits.
             return Ok(Value::Null);
         }
         TaskAction::PackageCommit => {

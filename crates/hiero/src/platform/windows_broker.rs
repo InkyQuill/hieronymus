@@ -52,6 +52,29 @@ pub(crate) fn task(
     action: TaskAction,
     tray: bool,
 ) -> Result<Value, String> {
+    task_with_executable(options, action, tray, None)
+}
+pub(crate) fn task_guarded(
+    options: &ServiceOptions,
+    action: TaskAction,
+    tray: bool,
+    operation: &crate::lifecycle::operation::LifecycleOperation,
+) -> Result<Value, String> {
+    task_with_executable(
+        options,
+        action,
+        tray,
+        operation
+            .native_broker_executable(options)
+            .map_err(|e| e.to_string())?,
+    )
+}
+fn task_with_executable(
+    options: &ServiceOptions,
+    action: TaskAction,
+    tray: bool,
+    executable: Option<PathBuf>,
+) -> Result<Value, String> {
     call(
         options,
         Request {
@@ -63,6 +86,7 @@ pub(crate) fn task(
             url: None,
         },
         Duration::from_secs(30),
+        executable,
     )
 }
 /// Read-only native task inspection with common lifecycle/registration authority.
@@ -88,6 +112,7 @@ pub fn browser(options: &ServiceOptions, url: &str) -> Result<(), String> {
             url: Some(url.into()),
         },
         Duration::from_secs(10),
+        None,
     )
     .map(|_| ())
 }
@@ -95,6 +120,7 @@ fn call(
     options: &ServiceOptions,
     mut request: Request,
     timeout: Duration,
+    executable: Option<PathBuf>,
 ) -> Result<Value, String> {
     let deadline = Instant::now() + timeout;
     request.root = request
@@ -125,7 +151,10 @@ fn call(
     if bytes.len() > MAX_REQUEST {
         return Err("Native operation request exceeds its bound".into());
     }
-    let executable = crate::desktop::launch::selected_cli(&options.binary)?;
+    let executable = match executable {
+        Some(executable) => executable,
+        None => crate::desktop::launch::selected_cli(&options.binary)?,
+    };
     #[cfg(test)]
     SPAWN_ATTEMPTS.set(SPAWN_ATTEMPTS.get() + 1);
     let mut child = Command::new(executable)
@@ -346,14 +375,20 @@ mod tests {
             tray: false,
             url: None,
         };
-        let error = call(&options, request(&options), Duration::from_millis(100)).unwrap_err();
+        let error = call(
+            &options,
+            request(&options),
+            Duration::from_millis(100),
+            None,
+        )
+        .unwrap_err();
         assert!(error.contains("no native operation was committed"));
         assert!(!temp.path().join("committed").exists());
         native_gate::check(&root).unwrap();
         native_gate::check(&units).unwrap();
         options.binary = fixture;
         let began = Instant::now();
-        let error = call(&options, request(&options), Duration::from_secs(2)).unwrap_err();
+        let error = call(&options, request(&options), Duration::from_secs(2), None).unwrap_err();
         assert!(error.contains("indeterminate"));
         assert!(began.elapsed() < Duration::from_secs(3));
         assert!(temp.path().join("committed").exists());

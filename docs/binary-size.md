@@ -168,7 +168,7 @@ The final Linux package receipt is [desktop-task12-linux-receipt.json](desktop-t
 
 | Executable | Before strip | Shipped | Saving |
 |---|---:|---:|---:|
-| hiero | 280,779,680 B | 223,467,944 B | 54.66 MiB (20.41%) |
-| hiero-desktop | 21,292,032 B | 13,011,744 B | 7.90 MiB (38.89%) |
+| hiero | 280,788,280 B | 223,469,960 B | 54.66 MiB (20.41%) |
+| hiero-desktop | 21,291,560 B | 13,009,480 B | 7.90 MiB (38.90%) |
 
-The platform archive is 97,751,248 bytes (93.22 MiB); the one unchanged model archive is 435,109,879 bytes (414.95 MiB). No model payload appears in the platform archive. The mandatory upstream runtime is unchanged at its pinned digest. Linux keeps separate diagnostic symbol files keyed by the original executable digest. The release profile remains Cargo defaults; this task measured native stripping, not LTO or panic-mode changes. The CLI dynamic dependencies are libc, libm, libgcc and the ELF loader; native GTK dependencies remain in the helper.
+The platform archive is 97,758,019 bytes (93.23 MiB); the one unchanged model archive is 435,109,879 bytes (414.95 MiB). No model payload appears in the platform archive. The mandatory upstream runtime is unchanged at its pinned digest. Linux keeps separate diagnostic symbol files keyed by the original executable digest. The release profile remains Cargo defaults; this task measured native stripping, not LTO or panic-mode changes. The CLI dynamic dependencies are libc, libm, libgcc and the ELF loader; native GTK dependencies remain in the helper.

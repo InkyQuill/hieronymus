@@ -50,8 +50,7 @@ pub fn launch_with_options(
     config: &HieronymusConfig,
     options: &crate::service::ServiceOptions,
 ) -> Result<(), String> {
-    let cli = selected_cli(&options.binary)?;
-    let helper = sibling_binary(&cli, "hiero-desktop")?;
+    let helper = selected_helper(&options.binary)?;
     let mut command = Command::new(helper);
     #[cfg(windows)]
     {
@@ -175,4 +174,39 @@ pub fn selected_cli(cli: &Path) -> Result<PathBuf, String> {
     }
     cli.canonicalize()
         .map_err(|_| "Installed CLI selection is unavailable".into())
+}
+
+/// Resolve version selection before sibling lookup; callers retain `cli` as --binary.
+pub fn selected_helper(cli: &Path) -> Result<PathBuf, String> {
+    sibling_binary(&selected_cli(cli)?, "hiero-desktop")
+}
+
+#[cfg(all(test, windows))]
+mod selection_tests {
+    use super::*;
+    #[test]
+    fn regular_windows_launcher_selects_versioned_helper() {
+        let root = tempfile::tempdir().unwrap();
+        let layout = crate::app::AppLayout::new(root.path());
+        let version = layout.version_dir("0.9.0");
+        std::fs::create_dir_all(&version).unwrap();
+        for name in ["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"] {
+            std::fs::write(version.join(name), name).unwrap();
+        }
+        layout.switch_stable_links("0.9.0").unwrap();
+        let stable = layout.stable_link("hiero");
+        assert!(
+            !std::fs::symlink_metadata(&stable)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(root.path().join("selected-version.json").is_file());
+        assert_eq!(
+            selected_helper(&stable).unwrap().canonicalize().unwrap(),
+            version.join("hiero-desktop.exe").canonicalize().unwrap()
+        );
+        assert_eq!(stable, root.path().join("bin/hiero.exe"));
+        assert!(!root.path().join("bin/hiero-desktop.exe").exists());
+    }
 }

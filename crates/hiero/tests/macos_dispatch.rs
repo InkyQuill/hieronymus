@@ -10,7 +10,7 @@ impl LifecycleOperation {
         panic!("dispatcher test must not enter outer lifecycle guards")
     }
     fn register_unit(&self, _: &ServiceOptions) -> std::io::Result<()> {
-        panic!("dispatcher test must not enter outer registration guards")
+        Ok(())
     }
 }
 use std::{
@@ -67,6 +67,14 @@ mod platform {
         ) -> Result<serde_json::Value, String> {
             panic!("dispatcher test must not spawn a native broker")
         }
+        pub fn task_guarded(
+            options: &ServiceOptions,
+            action: TaskAction,
+            tray: bool,
+            _: &LifecycleOperation,
+        ) -> Result<serde_json::Value, String> {
+            task(options, action, tray)
+        }
         pub fn inspect(_: &ServiceOptions, _: bool) -> Result<serde_json::Value, String> {
             panic!("dispatcher test must not spawn a native broker")
         }
@@ -80,6 +88,7 @@ struct FakeLaunchd {
     disabled: bool,
     bootstrapped_modes: Vec<macos_agent::DaemonMode>,
     kickstarts: usize,
+    force_idle: bool,
 }
 thread_local! { static NATIVE: RefCell<Option<FakeLaunchd>> = const { RefCell::new(None) }; }
 struct CommandFixture;
@@ -98,12 +107,19 @@ fn fake_command(args: &[&str]) -> Result<(std::process::ExitStatus, String), Str
         let success = std::process::ExitStatus::from_raw(0);
         match args {
             ["print", "gui/501"] => Ok((success, String::new())),
+            ["print", requested] if *requested == format!("gui/501/{}", macos_agent::label(&native.options.data_root, true)) => Ok((std::process::ExitStatus::from_raw(113 << 8), String::new())),
+            ["enable" | "disable", requested] if *requested == format!("gui/501/{}", macos_agent::label(&native.options.data_root, true)) => Ok((success, String::new())),
+            ["bootout", requested] if *requested == target => {
+                native.loaded = false;
+                native.kickstarts = 0;
+                Ok((success, String::new()))
+            }
             ["print", requested] if *requested == target => {
                 if !native.loaded {
                     return Ok((std::process::ExitStatus::from_raw(113 << 8), String::new()));
                 }
                 let mode = *native.bootstrapped_modes.last().unwrap();
-                let state = if mode == macos_agent::DaemonMode::Headless || native.kickstarts > 0 {
+                let state = if !native.force_idle && (mode == macos_agent::DaemonMode::Headless || native.kickstarts > 0) {
                     "state = running\n\tpid = 1234"
                 } else {
                     "state = not running"
@@ -180,6 +196,7 @@ fn recover_then(action: TaskAction, desired: macos_agent::DaemonMode) {
             disabled: false,
             bootstrapped_modes: Vec::new(),
             kickstarts: 0,
+            force_idle: false,
         })
     });
     backend::COMMAND_OVERRIDE.set(Some(fake_command));
@@ -227,4 +244,118 @@ fn interrupted_desktop_conversion_then_start_preserves_recovered_headless() {
 #[test]
 fn interrupted_desktop_conversion_then_explicit_conversion_selects_desktop() {
     recover_then(TaskAction::DesktopMode, macos_agent::DaemonMode::Desktop);
+}
+
+fn package_rollback(mode: macos_agent::DaemonMode, running: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let options = ServiceOptions {
+        data_root: temp.path().join("root"),
+        unit_dir: temp.path().join("agents"),
+        binary: std::env::current_exe().unwrap(),
+        use_manager: true,
+    };
+    std::fs::create_dir_all(&options.data_root).unwrap();
+    std::fs::create_dir_all(&options.unit_dir).unwrap();
+    let path = options.unit_dir.join(format!(
+        "{}.plist",
+        macos_agent::label(&options.data_root, false)
+    ));
+    let original = macos_agent::render_mode(
+        &options.binary,
+        &options.data_root,
+        &options.unit_dir,
+        false,
+        mode,
+    )
+    .unwrap();
+    std::fs::write(&path, &original).unwrap();
+    NATIVE.with_borrow_mut(|native| {
+        *native = Some(FakeLaunchd {
+            options: options.clone(),
+            loaded: true,
+            disabled: false,
+            bootstrapped_modes: vec![mode],
+            kickstarts: 0,
+            force_idle: !running,
+        })
+    });
+    backend::COMMAND_OVERRIDE.set(Some(fake_command));
+    let _fixture = CommandFixture;
+    if mode == macos_agent::DaemonMode::Headless && !running {
+        assert!(
+            backend::execute(&options, TaskAction::PackageCapture, true)
+                .unwrap_err()
+                .contains("Loaded idle Headless")
+        );
+        assert!(!path.with_extension("package-pending.json").exists());
+        NATIVE.with_borrow(|native| assert!(native.as_ref().unwrap().loaded));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        return;
+    }
+    backend::execute(&options, TaskAction::PackageCapture, true).unwrap();
+    // Simulate the common authenticated daemon stop completing before FinishStop.
+    NATIVE.with_borrow_mut(|native| native.as_mut().unwrap().force_idle = true);
+    backend::execute(&options, TaskAction::FinishStop, false).unwrap();
+    NATIVE.with_borrow(|native| assert!(!native.as_ref().unwrap().loaded));
+    // Fault boundary: activation failed after daemon stop. Real package dispatcher restores.
+    backend::execute(&options, TaskAction::PackageRestore, true).unwrap();
+    NATIVE.with_borrow(|native| {
+        let native = native.as_ref().unwrap();
+        assert_eq!(native.loaded, mode == macos_agent::DaemonMode::Desktop);
+        assert!(!native.disabled);
+        assert_eq!(native.kickstarts, 0);
+        if mode == macos_agent::DaemonMode::Headless {
+            assert_eq!(
+                native.bootstrapped_modes.len(),
+                1,
+                "rollback must defer RunAtLoad to explicit Start"
+            );
+        }
+    });
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    assert!(path.with_extension("package-pending.json").exists());
+    backend::execute(&options, TaskAction::PackageCommit, true).unwrap();
+    assert!(!path.with_extension("package-pending.json").exists());
+}
+
+#[test]
+fn native_registration_read_uses_existing_parent_authority() {
+    let temp = tempfile::tempdir().unwrap();
+    let options = ServiceOptions {
+        data_root: temp.path().join("root"),
+        unit_dir: temp.path().join("agents"),
+        binary: std::env::current_exe().unwrap(),
+        use_manager: false,
+    };
+    std::fs::create_dir_all(&options.data_root).unwrap();
+    std::fs::create_dir_all(&options.unit_dir).unwrap();
+    let text = macos_agent::render_mode(
+        &options.binary,
+        &options.data_root,
+        &options.unit_dir,
+        false,
+        macos_agent::DaemonMode::Headless,
+    )
+    .unwrap();
+    std::fs::write(options.unit_path(), text).unwrap();
+    let parent = LifecycleOperation;
+    // Public read_unit would enter acquire() above and panic. Guarded read must not.
+    let definition = backend::read_unit_guarded(&options, &parent)
+        .unwrap()
+        .unwrap();
+    assert_eq!(definition.binary, options.binary);
+    assert_eq!(definition.data_root, options.data_root);
+}
+
+#[test]
+fn package_failure_restores_loaded_idle_desktop_without_starting_daemon() {
+    package_rollback(macos_agent::DaemonMode::Desktop, false);
+}
+#[test]
+fn package_preflight_refuses_loaded_idle_headless_before_mutation() {
+    package_rollback(macos_agent::DaemonMode::Headless, false);
+}
+#[test]
+fn package_failure_defers_active_headless_reload_to_explicit_restart() {
+    package_rollback(macos_agent::DaemonMode::Headless, true);
 }

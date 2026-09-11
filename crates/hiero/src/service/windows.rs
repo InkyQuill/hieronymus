@@ -156,10 +156,11 @@ pub(crate) fn read_unit_guarded(
         .register_unit(options)
         .map_err(|e| e.to_string())?;
     let record = if options.use_manager {
-        serde_json::from_value::<Option<TaskRecord>>(windows_broker::task(
+        serde_json::from_value::<Option<TaskRecord>>(windows_broker::task_guarded(
             options,
             TaskAction::Inspect,
             false,
+            operation,
         )?)
         .map_err(|_| "Invalid task readback")?
     } else {
@@ -197,7 +198,8 @@ pub(crate) fn install_guarded(
         ));
     }
     if options.use_manager {
-        windows_broker::task(options, TaskAction::Install, false).map_err(ServiceError::Manager)?;
+        windows_broker::task_guarded(options, TaskAction::Install, false, operation)
+            .map_err(ServiceError::Manager)?;
     } else {
         hieronymus::atomic::atomic_write_text(
             &options.unit_path(),
@@ -218,7 +220,8 @@ pub(crate) fn uninstall_guarded(
     operation.register_unit(options)?;
     validate_unit_root_guarded(options, operation)?;
     if options.use_manager {
-        windows_broker::task(options, TaskAction::Remove, false).map_err(ServiceError::Manager)?;
+        windows_broker::task_guarded(options, TaskAction::Remove, false, operation)
+            .map_err(ServiceError::Manager)?;
     } else if options.unit_path().exists() {
         std::fs::remove_file(options.unit_path())?;
     }
@@ -234,7 +237,8 @@ pub(crate) fn start_guarded(
             "Native manager integration is disabled".into(),
         ));
     }
-    windows_broker::task(options, TaskAction::Start, false).map_err(ServiceError::Manager)?;
+    windows_broker::task_guarded(options, TaskAction::Start, false, operation)
+        .map_err(ServiceError::Manager)?;
     Ok(vec!["Windows daemon task started".into()])
 }
 pub(crate) fn rearm_guarded(
@@ -243,7 +247,8 @@ pub(crate) fn rearm_guarded(
 ) -> Result<(), ServiceError> {
     operation.register_unit(options)?;
     if options.use_manager {
-        windows_broker::task(options, TaskAction::Rearm, false).map_err(ServiceError::Manager)?;
+        windows_broker::task_guarded(options, TaskAction::Rearm, false, operation)
+            .map_err(ServiceError::Manager)?;
     }
     Ok(())
 }
@@ -253,7 +258,7 @@ pub(crate) fn stop_guarded(
 ) -> Result<Vec<String>, ServiceError> {
     operation.register_unit(options)?;
     if options.use_manager {
-        windows_broker::task(options, TaskAction::Suppress, false)
+        windows_broker::task_guarded(options, TaskAction::Suppress, false, operation)
             .map_err(ServiceError::Manager)?;
     }
     Ok(vec![
@@ -528,7 +533,7 @@ pub(crate) fn execute(
                     &Journal { before, after },
                 )?;
             }
-            std::fs::remove_file(package).map_err(|e| e.to_string())?;
+            // Outer rollback commits only after explicit prior-active restart.
             return Ok(Value::Null);
         }
         TaskAction::PackageCommit => {
@@ -785,6 +790,72 @@ mod tests {
         scheduler.put(&before, false).unwrap();
         let path = record_path(&options, false);
         save(&path, &Some(before.clone())).unwrap();
+        {
+            let mut read_options = options.clone();
+            read_options.use_manager = false;
+            let parent =
+                LifecycleOperation::acquire(&HieronymusConfig::new(&options.data_root)).unwrap();
+            assert!(
+                read_unit(&read_options).is_err(),
+                "public path must not reacquire the held parent"
+            );
+            assert!(read_unit_guarded(&read_options, &parent).unwrap().is_some());
+        }
+        // Successful offline replacement never suppresses an already stopped task.
+        // Native Install preserves its enabled/recovery state without starting it.
+        execute(&options, TaskAction::PackageCapture, true).unwrap();
+        execute(&options, TaskAction::Install, false).unwrap();
+        execute(&options, TaskAction::PackageCommit, true).unwrap();
+        assert_eq!(read_record(&options, false).unwrap().unwrap(), before);
+        assert_ne!(
+            unsafe {
+                scheduler
+                    .task(&before.name())
+                    .unwrap()
+                    .unwrap()
+                    .State()
+                    .unwrap()
+            },
+            TASK_STATE_RUNNING
+        );
+        // Package rollback starts from an idle but enabled authoritative task.
+        // Suppress mutates both native XML and the record; capture must precede it.
+        assert_ne!(
+            unsafe {
+                scheduler
+                    .task(&before.name())
+                    .unwrap()
+                    .unwrap()
+                    .State()
+                    .unwrap()
+            },
+            TASK_STATE_RUNNING
+        );
+        execute(&options, TaskAction::PackageCapture, true).unwrap();
+        execute(&options, TaskAction::Suppress, false).unwrap();
+        assert!(!read_record(&options, false).unwrap().unwrap().enabled);
+        execute(&options, TaskAction::PackageRestore, true).unwrap();
+        assert_eq!(read_record(&options, false).unwrap().unwrap(), before);
+        assert!(
+            matches(
+                &scheduler,
+                &scheduler.xml(&before.name()).unwrap(),
+                &Some(before.clone())
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            unsafe {
+                scheduler
+                    .task(&before.name())
+                    .unwrap()
+                    .unwrap()
+                    .State()
+                    .unwrap()
+            },
+            TASK_STATE_RUNNING
+        );
+        execute(&options, TaskAction::PackageCommit, true).unwrap();
         let mut after = before.clone();
         after.enabled = false;
         after.recovery = false;

@@ -2,28 +2,28 @@
   "version": "0.9.0",
   "target": "x86_64-unknown-linux-gnu",
   "signing": "unsigned; no signing identity or notarization supplied",
-  "metadata_sha256": "202194ce9c72bcd78da7139793bab21de560a052c925056813a76f65590cfb71",
-  "platform_sha256": "b609a56de6f1e9dcdb88102cf6b5df25f4ff136a1116c1f3b58d9ecf7b1909c1",
+  "metadata_sha256": "f0256bed1e1fa9a993ac929cc981a49037903b1e620131792f0c867bbe221506",
+  "platform_sha256": "9ef18a38ac5782f1193df6a70201e77b4116f7517674fc1cc525469c97d7e7ea",
   "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
-  "assets_sha256": "71639e21e3f615d33f53d1498f0b0b12e38815986cf0508718858368b4b106e4",
+  "assets_sha256": "31fe6a64fc171087d4fd1768700eaca56443339a7813bcdd3f9a44970b2ea686",
   "symbols": [
     {
       "binary": "hiero",
-      "original_sha256": "de2a48407fe9b4722757d75d9f98539f0e3560cbac4d4e204c793005756d43c9",
-      "debug": "hiero-de2a48407fe9b4722757d75d9f98539f0e3560cbac4d4e204c793005756d43c9.debug",
-      "before": 280779680,
-      "after": 223467944
+      "original_sha256": "0627c386048294103929a5b9027f71298b560961cb96a05b0d02625cc42589e7",
+      "debug": "hiero-0627c386048294103929a5b9027f71298b560961cb96a05b0d02625cc42589e7.debug",
+      "before": 280788280,
+      "after": 223469960
     },
     {
       "binary": "hiero-desktop",
-      "original_sha256": "30a183511ed2e55a26a764312f1b47f5558ddce357c4740380542a52b0b50123",
-      "debug": "hiero-desktop-30a183511ed2e55a26a764312f1b47f5558ddce357c4740380542a52b0b50123.debug",
-      "before": 21292032,
-      "after": 13011744
+      "original_sha256": "edb767e53ee9570c3edd3382a36217f12575cd7b52e64d227d67a70825b91d51",
+      "debug": "hiero-desktop-edb767e53ee9570c3edd3382a36217f12575cd7b52e64d227d67a70825b91d51.debug",
+      "before": 21291560,
+      "after": 13009480
     }
   ],
-  "git_base": "d471b7ef45ee330a56eb17fd284e9e7a57a82db9",
-  "source_inputs_sha256": "da17ebe8c19d2612297fae971d1e4c4de180770dca3a30fdeab5e6e98fe3ba1f",
+  "git_base": "1c98bd8f500b7de2a8797d671dd2e09a546e9f86",
+  "source_inputs_sha256": "3d9b455559644dc23f2650004965cedf8f3b6b2c1a8f15d8d30d37f8f4880d17",
   "source_inputs_recipe": "Partial source/build-input inventory, not a complete toolchain/dependency closure: SHA256 of sorted relative path + NUL + file SHA256 + LF; Cargo.toml, Cargo.lock, rust-toolchain.toml, qualification/prerequisites.json; all regular files recursively in crates, assets, frontend/dist and scripts (including scripts/onnxruntime-targets.json). Runtime/model bytes are bound separately by release manifests.",
   "build_command": "source .superpowers/sdd/2026-09-11-desktop-tray/environment.sh; cargo build --release --locked --target x86_64-unknown-linux-gnu -p hiero -p hiero-desktop --features hiero/console-embed --bin hiero --bin hiero-desktop",
   "profile": "Cargo release defaults: opt-level3, no LTO, codegen-units16, unwind; native objcopy --only-keep-debug then strip --strip-unneeded on copied Hieronymus executables",
@@ -36,21 +36,21 @@
     "machine": "x86_64"
   },
   "archive_bytes": {
-    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": 97751248,
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": 97758019,
     "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": 435109879
   },
   "packaged_members": {
     "hiero": {
-      "bytes": 223467944,
-      "sha256": "86012c8e738970566c12add5e9a62634b58e2b1e29f16a1b412a5f96134aa0a5"
+      "bytes": 223469960,
+      "sha256": "494d8106a6c7adb7a2b23eb7cfe21cde808645b0c2a0c6d88d95664bf7701751"
     },
     "hiero-desktop": {
-      "bytes": 13011744,
-      "sha256": "a059f77d8a8a4d5a28bbd55e349263d20133f3f1ad533a0a34090b6286fa38a0"
+      "bytes": 13009480,
+      "sha256": "92403c43f6032a6ca5f4e457eeef0669bc8a8f476bacb06180cf343577c60697"
     },
     "assets.json": {
       "bytes": 1190,
-      "sha256": "71639e21e3f615d33f53d1498f0b0b12e38815986cf0508718858368b4b106e4"
+      "sha256": "31fe6a64fc171087d4fd1768700eaca56443339a7813bcdd3f9a44970b2ea686"
     },
     "lib/libonnxruntime.so": {
       "bytes": 24268848,
@@ -59,12 +59,12 @@
   },
   "platform_has_model_payload": false,
   "qualification": {
-    "offline_install_upgrade_rollback_uninstall": "passed: final artifact, actual 0.8.0 baseline, 55.42s",
+    "offline_install_upgrade_rollback_uninstall": "passed: final artifact, actual 0.8.0 baseline, 56.11s",
     "real_disposable_daemon": "semantic readiness and authenticated stop",
     "native_active_manager_helper": "not executed",
     "windows_macos_native": "not executed",
     "signing": "unsigned",
-    "fixture": "/tmp/hiero-real-desktop-XCqaxg",
-    "cache": "platform-only cache reuse and corrupt-cache refusal; see task12-cache-probe.json"
+    "fixture": "/tmp/hiero-real-desktop-j9r2aX",
+    "cache": "platform-only cache reuse and corrupt-cache refusal; see task12-fix1-cache-probe.json"
   }
 }

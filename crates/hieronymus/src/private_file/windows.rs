@@ -143,6 +143,9 @@ pub(super) fn open_owned(path: &Path) -> io::Result<(File, bool)> {
             )
         })
     }?;
+    validate_owned(file)
+}
+fn validate_owned(file: File) -> io::Result<(File, bool)> {
     validate_regular(&file)?;
     if information(&file)?.nNumberOfLinks != 1 {
         return Err(unsafe_credential());
@@ -235,4 +238,27 @@ impl SecurityDescriptor {
     pub fn as_raw(&self) -> *mut std::ffi::c_void {
         self.0
     }
+}
+
+/// Unlike credential snapshots, coordination permits other writable lock handles.
+/// Validate the very handle that will be locked; deny aliases and inherited ACLs.
+pub(super) fn open_coordination(path: &Path) -> io::Result<File> {
+    let path = wide(path.as_os_str())?;
+    // SAFETY: live NUL-terminated path; returned handle gets RAII ownership.
+    let file = unsafe {
+        file_from_handle(CreateFileW(
+            path.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE | READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        ))
+    }?;
+    let (file, private) = validate_owned(file)?;
+    if !private {
+        return Err(unsafe_credential());
+    }
+    Ok(file)
 }

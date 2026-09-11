@@ -4,7 +4,7 @@ use super::controller::RetirementHandle;
 use hieronymus::{data_root::HieronymusConfig, private_file};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{File, OpenOptions, TryLockError},
+    fs::{File, TryLockError},
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -45,8 +45,7 @@ pub fn lock(path: &Path) -> io::Result<File> {
             Err(e) => return Err(e),
         }
     }
-    private_file::read_private(path)?;
-    let f = OpenOptions::new().read(true).write(true).open(path)?;
+    let f = private_file::open_coordination(path)?;
     f.try_lock().map_err(|e| match e {
         TryLockError::WouldBlock => io::Error::new(
             io::ErrorKind::WouldBlock,
@@ -280,7 +279,7 @@ impl Retirement {
                 ));
             }
             if let Some(cli) = expected_cli {
-                let expected = super::launch::sibling_binary(cli, "hiero-desktop")
+                let expected = super::launch::selected_helper(cli)
                     .map_err(error)?
                     .canonicalize()?;
                 if active.iter().any(|(_, r)| r.executable != expected) {
@@ -342,7 +341,7 @@ pub fn restart(config: &HieronymusConfig, cli: &Path, unit_dir: &Path) -> io::Re
     if quit_requested(config.data_root())? {
         return Ok(());
     }
-    let helper = super::launch::sibling_binary(cli, "hiero-desktop").map_err(error)?;
+    let helper = super::launch::selected_helper(cli).map_err(error)?;
     let mut command = std::process::Command::new(&helper);
     command
         .arg("--data-root")

@@ -1,7 +1,7 @@
 //! Session-scoped OS ownership. Persistent lock files are never unlinked.
 use hieronymus::data_root::HieronymusConfig;
 use sha2::{Digest, Sha256};
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::File;
 use std::io;
 
 #[derive(Debug)]
@@ -66,26 +66,11 @@ impl TraySingleton {
                 e
             }
         })?;
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options.open(&path)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Self {
-                file,
-                path,
-                startup_gate: Some(startup_gate),
-            }),
-            Err(TryLockError::WouldBlock) => Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "Desktop helper is already running in this session",
-            )),
-            Err(TryLockError::Error(error)) => Err(error),
-        }
+        Ok(Self {
+            file: super::control::lock(&path)?,
+            path,
+            startup_gate: Some(startup_gate),
+        })
     }
 }
 impl Drop for TraySingleton {

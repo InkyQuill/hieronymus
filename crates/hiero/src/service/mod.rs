@@ -203,7 +203,30 @@ pub fn stop(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
 }
 
 pub fn check_unit(options: &ServiceOptions, current_binary: &Path) -> UnitVerdict {
-    let definition = match read_unit(options) {
+    check_definition(options, current_binary, read_unit(options))
+}
+
+/// Validate registration under the parent transaction; never reacquire lifecycle.
+pub(crate) fn check_unit_guarded(
+    options: &ServiceOptions,
+    current_binary: &Path,
+    operation: &LifecycleOperation,
+) -> UnitVerdict {
+    if let Err(error) = operation.register_unit(options) {
+        return UnitVerdict::Broken(error.to_string());
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    let definition = read_unit_guarded(options, operation);
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let definition = read_unit(options);
+    check_definition(options, current_binary, definition)
+}
+fn check_definition(
+    options: &ServiceOptions,
+    current_binary: &Path,
+    result: Result<Option<UnitDefinition>, String>,
+) -> UnitVerdict {
+    let definition = match result {
         Ok(Some(definition)) => definition,
         Ok(None) => return UnitVerdict::Absent,
         Err(reason) => return UnitVerdict::Broken(reason),

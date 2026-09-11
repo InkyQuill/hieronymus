@@ -28,7 +28,8 @@ const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--force] [--jso
 const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
-const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>] [--unit-dir <path>]";
+const DOCTOR_USAGE: &str =
+    "usage: hiero doctor [--json] [--data-root <path>] [--unit-dir <path>] [--skip-registration]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable|configure> [--json] [--data-root <path>] (configure: --provider ollama --base-url <origin> --model <installed-model>) (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
 
@@ -84,6 +85,7 @@ struct ParsedArguments {
     unit_dir: Option<String>,
     binary: Option<String>,
     no_activate: bool,
+    skip_registration: bool,
     release_dir: Option<String>,
     release_url: Option<String>,
     channel: Option<String>,
@@ -126,6 +128,7 @@ fn parse_arguments(
         unit_dir: None,
         binary: None,
         no_activate: false,
+        skip_registration: false,
         release_dir: None,
         release_url: None,
         channel: None,
@@ -142,6 +145,7 @@ fn parse_arguments(
         let argument = &arguments[index];
         match argument.as_str() {
             "--json" => parsed.json = true,
+            "--skip-registration" => parsed.skip_registration = true,
             "--host" | "--delivery-id" => {
                 index += 1;
                 let value = arguments
@@ -358,6 +362,9 @@ fn parse_arguments(
         Some(command) => Some(command.to_string()),
         None => positionals.next(),
     };
+    if parsed.skip_registration && parsed.command.as_deref() != Some("doctor") {
+        return Err("--skip-registration is only supported by doctor".into());
+    }
     if parsed.command.is_none() {
         return Err(format!("missing command; {USAGE}"));
     }
@@ -718,7 +725,11 @@ fn run_doctor(
     reject_headless_flags(parsed, "doctor")?;
     let config = load_config(data_root);
     let unit_dir = parsed.unit_dir.as_deref().map(absolute_path);
-    let report = doctor::run_with_service(&config, unit_dir.as_deref());
+    let report = if parsed.skip_registration {
+        doctor::run_without_registration(&config)
+    } else {
+        doctor::run_with_service(&config, unit_dir.as_deref())
+    };
     if parsed.json {
         let text =
             serde_json::to_string_pretty(&report.to_json()).map_err(|error| error.to_string())?;

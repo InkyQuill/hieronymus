@@ -425,6 +425,8 @@ fn run_update_guarded_impl(
         service_options.use_manager = false;
     }
     operation.register_unit(&service_options)?;
+    #[cfg(any(windows, target_os = "macos"))]
+    operation.bind_native_broker(&service_options)?;
     service::validate_unit_root_guarded(&service_options, operation)
         .map_err(|error| UpdateError::Refused(error.to_string()))?;
 
@@ -641,49 +643,57 @@ fn run_update_guarded_impl(
         )
         .map_err(&refused)?;
     }
-    let mut retirement = crate::desktop::control::Retirement::begin_owned(
+    // Capture authoritative manager state before retirement or stop can change it.
+    // Native ordinary updates need the same rollback journal as bootstrap.
+    let registration = if desktop_install.is_some() || cfg!(any(windows, target_os = "macos")) {
+        Some(
+            crate::desktop::installation::Snapshot::capture(&service_options, operation)
+                .map_err(&refused)?,
+        )
+    } else {
+        None
+    };
+    let retirement_result = crate::desktop::control::Retirement::begin_owned(
         &config,
         desktop_install != Some(true),
         Some(&layout.stable_link("hiero")),
-    )
-    .map_err(|e| refused(e.to_string()))?;
-    let daemon_was_running = daemon_was_running
-        && !crate::desktop::control::quit_requested(config.data_root())
-            .map_err(|e| refused(e.to_string()))?;
-    let mut snapshot = RestoreSnapshot {
+    );
+    let mut retirement = match retirement_result {
+        Ok(value) => value,
+        Err(error) => {
+            if let Some(registration) = &registration {
+                registration.commit(operation).map_err(&refused)?;
+            }
+            return Err(refused(error.to_string()));
+        }
+    };
+    let snapshot = RestoreSnapshot {
         previous_version: previous_version.clone(),
         unit_before,
         unit_path: service_options.unit_path(),
         daemon_was_running,
         candidate_version: release.version.clone(),
         helper_was_running: retirement.was_running,
-        desktop_registration: None,
+        desktop_registration: registration,
     };
 
-    // Pre-switch: a `stop` that cannot stop the running service means nothing
-    // on disk changed, so it is a plain failure — there is no rollback to run.
-    if desktop_install.is_some()
-        || lifecycle::checked_probe(&config)
-            .map_err(|e| refused(e.to_string()))?
-            .is_live()
+    // Stop can partially suppress native recovery even if it fails. Restore
+    // through the same snapshot/ownership protocol; never assume no mutation.
+    if lifecycle::checked_probe(&config)
+        .map_err(|e| refused(e.to_string()))?
+        .is_live()
     {
         if let Err(error) = manager.stop() {
             retirement.allow_launch();
-            if snapshot.helper_was_running {
-                crate::desktop::control::restart(
-                    &config,
-                    &layout.stable_link("hiero"),
-                    &service_options.unit_dir,
-                )
-                .map_err(|e| UpdateError::Failed {
-                    message: format!("stop failed ({error}); helper restoration failed ({e})"),
-                    steps: lines.clone(),
-                })?;
-            }
-            return Err(UpdateError::Failed {
-                message: format!("could not stop the running service: {error}"),
-                steps: lines.clone(),
-            });
+            return Err(activation_failed(
+                manager,
+                &layout,
+                &config,
+                &snapshot,
+                &lines,
+                format!("could not stop the running service: {error}"),
+                operation,
+            ));
         }
         lines.push("running daemon stopped".to_string());
     }
@@ -694,12 +704,6 @@ fn run_update_guarded_impl(
     let prepared = (|| -> Result<_, String> {
         let ownership = RootOwnership::acquire(&config, "update").map_err(|e| e.to_string())?;
         let migration_required = schema_gate(&config, &candidate).map_err(|e| e.to_string())?;
-        if desktop_install.is_some() {
-            snapshot.desktop_registration = Some(crate::desktop::installation::Snapshot::capture(
-                &service_options,
-                operation,
-            )?);
-        }
         Ok((ownership, migration_required))
     })();
     let (owner, migration_required) = match prepared {
@@ -750,7 +754,9 @@ fn run_update_guarded_impl(
             lines.push("service unit updated to the new binary".to_string());
         }
 
-        if let Some(registration) = &snapshot.desktop_registration {
+        if desktop_install.is_some()
+            && let Some(registration) = &snapshot.desktop_registration
+        {
             registration.install(operation)?;
         }
         if migration_required {
@@ -764,13 +770,15 @@ fn run_update_guarded_impl(
                 .map_err(|e| e.to_string())?;
             }
             if let Some(registration) = &snapshot.desktop_registration {
-                registration.commit()?;
+                registration.commit(operation)?;
             }
             return Ok(PostSwitch::MigrationPending);
         }
 
-        let daemon_started = if daemon_was_running
-            || (desktop_install == Some(false) && previous_version.is_none())
+        let daemon_started = if (daemon_was_running
+            || (desktop_install == Some(false) && previous_version.is_none()))
+            && !crate::desktop::control::quit_requested(config.data_root())
+                .map_err(|e| e.to_string())?
         {
             drop(ownership.take());
             manager
@@ -791,20 +799,38 @@ fn run_update_guarded_impl(
         // Health gate: the candidate's non-mutating doctor. A `Command` that
         // will not even spawn (missing/non-executable candidate) is a failure
         // like any other here — it cannot escape this closure as a bare `?`.
-        let doctor_code =
+        match service::check_unit_guarded(
+            &service_options,
+            &version_dir.join(crate::platform::install::executable_name("hiero")),
+            operation,
+        ) {
+            service::UnitVerdict::Consistent => {}
+            service::UnitVerdict::Absent if desktop_install.is_none() && !unit_installed => {}
+            verdict => {
+                return Err(format!(
+                    "guarded native registration health failed: {verdict:?}"
+                ));
+            }
+        }
+        #[cfg(any(windows, target_os = "macos"))]
+        crate::desktop::installation::validate_native(&service_options, operation)?;
+        let doctor_output =
             Command::new(version_dir.join(crate::platform::install::executable_name("hiero")))
                 .arg("doctor")
+                .args(["--skip-registration", "--json"])
                 .arg("--unit-dir")
                 .arg(&service_options.unit_dir)
                 .arg("--data-root")
                 .arg(config.data_root())
                 .output()
-                .map(|output| output.status.code())
                 .map_err(|error| {
                     format!("health check failed (could not run the candidate's doctor: {error})")
                 })?;
-        let degraded = accepted_doctor_exit(doctor_code)
+        let degraded = accepted_doctor_exit(doctor_output.status.code())
             .map_err(|reason| format!("health check failed ({reason})"))?;
+        let doctor_report: serde_json::Value = serde_json::from_slice(&doctor_output.stdout)
+            .map_err(|error| format!("candidate doctor report is invalid: {error}"))?;
+        require_independent_doctor_scope(&doctor_report)?;
 
         // Doctor exit 0/1 is necessary but never sufficient. A started
         // candidate must publish a live, authenticated endpoint that reports
@@ -825,7 +851,7 @@ fn run_update_guarded_impl(
             require_semantic_ready(&config)
                 .map_err(|reason| format!("candidate semantic lane not ready ({reason})"))?;
         } else if degraded {
-            require_offline_doctor(&version_dir, &config, &service_options.unit_dir)?;
+            require_offline_doctor(&version_dir, &doctor_report)?;
             lines.push("candidate installed offline; native assets verified, authenticated daemon readiness deferred until explicit Start".into());
         }
         retirement.allow_launch();
@@ -839,7 +865,7 @@ fn run_update_guarded_impl(
         }
 
         if let Some(registration) = &snapshot.desktop_registration {
-            registration.commit()?;
+            registration.commit(operation)?;
         }
         Ok(PostSwitch::Activated {
             daemon_started,
@@ -1028,7 +1054,7 @@ fn rollback(
         .map_err(|error| format!("acquire data-root ownership for rollback: {error}"))?;
     restore_links_and_unit(layout, snapshot)?;
     if let Some(registration) = &snapshot.desktop_registration {
-        registration.restore()?;
+        registration.restore(operation)?;
     }
     manager
         .reload()
@@ -1055,6 +1081,9 @@ fn rollback(
             &service_options.unit_dir,
         )
         .map_err(|e| e.to_string())?;
+    }
+    if let Some(registration) = &snapshot.desktop_registration {
+        registration.commit(operation)?;
     }
     Ok(())
 }
@@ -1086,6 +1115,9 @@ fn restore_links_and_unit(layout: &AppLayout, snapshot: &RestoreSnapshot) -> Res
             crate::platform::install::clear_selection(layout)
                 .map_err(|error| format!("clear selection: {error}"))?;
         }
+    }
+    if cfg!(any(windows, target_os = "macos")) && snapshot.desktop_registration.is_some() {
+        return Ok(()); // Native snapshot restores coherent record + manager state.
     }
     match &snapshot.unit_before {
         Some(content) => hieronymus::atomic::atomic_write_text(&snapshot.unit_path, content)
@@ -1324,23 +1356,16 @@ fn failed(message: impl Into<String>) -> UpdateError {
 
 /// The staged payload must look exactly like the release layout: an
 /// executable `hiero` plus the three relative argv[0] links.
-fn require_offline_doctor(
-    version: &Path,
-    config: &HieronymusConfig,
-    unit_dir: &Path,
-) -> Result<(), String> {
+fn require_independent_doctor_scope(report: &serde_json::Value) -> Result<(), String> {
+    if report.get("scope").and_then(|v| v.as_str()) != Some("payload-config-without-registration") {
+        return Err("candidate doctor did not report the required independent scope".into());
+    }
+    Ok(())
+}
+fn require_offline_doctor(version: &Path, report: &serde_json::Value) -> Result<(), String> {
     if !version.join("assets.json").is_file() {
         return Err("offline doctor warnings require a complete verified semantic payload".into());
     }
-    let output = Command::new(version.join(crate::platform::install::executable_name("hiero")))
-        .args(["doctor", "--json", "--unit-dir"])
-        .arg(unit_dir)
-        .arg("--data-root")
-        .arg(config.data_root())
-        .output()
-        .map_err(|e| e.to_string())?;
-    let report: serde_json::Value =
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
     let findings = report
         .get("findings")
         .and_then(|v| v.as_array())
@@ -1655,6 +1680,30 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn scoped_candidate_health_rejects_full_scope_and_service_warnings() {
+        assert!(
+            require_independent_doctor_scope(
+                &serde_json::json!({"scope":"full","status":"healthy"})
+            )
+            .is_err()
+        );
+        let version = tempfile::tempdir().unwrap();
+        std::fs::write(version.path().join("assets.json"), b"verified separately").unwrap();
+        for code in ["service-unit-broken", "semantic-model-invalid"] {
+            let report = serde_json::json!({"scope":"payload-config-without-registration","findings":[{"level":"warning","code":code}]});
+            require_independent_doctor_scope(&report).unwrap();
+            assert!(require_offline_doctor(version.path(), &report).is_err());
+        }
+        assert!(
+            require_offline_doctor(
+                version.path(),
+                &serde_json::json!({"findings":[{"level":"warning","code":"config-root-missing"}]})
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn unexpected_doctor_exit_is_not_healthy() {
         assert!(super::accepted_doctor_exit(Some(42)).is_err());
         assert!(super::accepted_doctor_exit(None).is_err());
@@ -1904,7 +1953,7 @@ mod tests {
         );
         let script = format!(
             "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  \
-             release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
+             release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) printf '%s\\n' '{{\"scope\":\"payload-config-without-registration\",\"findings\":[]}}'; exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
         );
         std::fs::write(path, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
