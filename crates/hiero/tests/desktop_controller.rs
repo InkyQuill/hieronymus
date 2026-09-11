@@ -364,3 +364,153 @@ fn preference_action_does_not_cancel_outstanding_startup_deadline() {
     wait_event(&controller, |e| matches!(e, Event::StartupDeadlineExpired));
     controller.shutdown().unwrap();
 }
+
+// Exercise the actual worker's Begin/Finished/poll/deadline ordering through
+// the reducer, including an already-ready daemon before restart.
+struct RestartThenAction {
+    restarted: bool,
+    followup_error: bool,
+    recovered: Arc<std::sync::atomic::AtomicBool>,
+}
+impl DesktopBackend for RestartThenAction {
+    fn probe(&mut self) -> Event {
+        if !self.restarted || self.recovered.load(Ordering::SeqCst) {
+            Event::Snapshot(hiero::readiness::ReadinessSummary {
+                level: hiero::readiness::ReadinessLevel::Ready,
+                reasons: vec![],
+                providers: vec![],
+            })
+        } else {
+            Event::ProbeTimeout
+        }
+    }
+    fn perform(&mut self, action: &Action) -> Result<(), String> {
+        if *action == Action::Restart {
+            self.restarted = true;
+            Ok(())
+        } else if self.followup_error {
+            Err("Desktop action failed".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+fn apply_until(
+    controller: &Controller,
+    state: &mut DesktopState,
+    wanted: impl Fn(&Event) -> bool,
+) -> hiero::desktop::View {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(event) = controller.try_event() {
+            let found = wanted(&event);
+            let view = state.apply(event).clone();
+            if found {
+                return view;
+            }
+        }
+        assert!(Instant::now() < deadline, "controller event did not arrive");
+        std::thread::yield_now();
+    }
+}
+fn restart_then_followup(action: Action, error: bool) {
+    use hiero::desktop::Accent;
+    let recovered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let controller = Controller::spawn_with_schedule(
+        RestartThenAction {
+            restarted: false,
+            followup_error: error,
+            recovered: recovered.clone(),
+        },
+        PollSchedule {
+            poll_interval: Duration::from_millis(200),
+            startup_timeout: Duration::from_millis(100),
+        },
+    );
+    let mut state = DesktopState::new();
+    assert_eq!(
+        apply_until(&controller, &mut state, |event| matches!(
+            event,
+            Event::Snapshot(_)
+        ))
+        .accent,
+        Accent::Green
+    );
+    controller.submit(Action::Restart).unwrap();
+    assert_eq!(
+        apply_until(&controller, &mut state, |event| matches!(
+            event,
+            Event::Finished { .. }
+        ))
+        .accent,
+        Accent::Amber
+    );
+    controller.submit(action).unwrap();
+    let pending = apply_until(&controller, &mut state, |event| {
+        matches!(event, Event::Begin(_))
+    });
+    assert_eq!(
+        pending.accent,
+        Accent::Amber,
+        "follow-up action must not reuse pre-restart readiness"
+    );
+    assert!(pending.busy);
+    let completed = apply_until(&controller, &mut state, |event| {
+        matches!(event, Event::Finished { .. })
+    });
+    assert_eq!(completed.accent, Accent::Amber);
+    assert!(!completed.busy);
+    assert!(!completed.can_start);
+    assert_eq!(
+        completed.reason,
+        if error {
+            "Desktop action failed"
+        } else {
+            "Starting"
+        }
+    );
+    let checking = apply_until(&controller, &mut state, |event| {
+        *event == Event::ProbeTimeout
+    });
+    assert_eq!(checking.accent, Accent::Amber);
+    assert_eq!(checking.reason, completed.reason);
+    let expired = apply_until(&controller, &mut state, |event| {
+        *event == Event::StartupDeadlineExpired
+    });
+    assert_eq!(expired.accent, Accent::Red);
+    assert_eq!(
+        expired.reason,
+        if error {
+            "Desktop action failed"
+        } else {
+            "Server unavailable"
+        }
+    );
+    assert!(!expired.can_start);
+    recovered.store(true, Ordering::SeqCst);
+    let healthy = apply_until(&controller, &mut state, |event| {
+        matches!(event, Event::Snapshot(_))
+    });
+    assert_eq!(healthy.accent, Accent::Green);
+    assert_eq!(
+        healthy.reason,
+        if error {
+            "Desktop action failed"
+        } else {
+            "Ready"
+        }
+    );
+    controller.shutdown().unwrap();
+}
+#[test]
+fn successful_preference_and_browser_actions_preserve_pending_restart_health() {
+    for action in [Action::SetAutostart(true), Action::OpenConsole] {
+        restart_then_followup(action, false);
+    }
+}
+#[test]
+fn failed_preference_and_browser_actions_keep_restart_deadline_and_error_reason() {
+    for action in [Action::SetAutostart(true), Action::OpenConsole] {
+        restart_then_followup(action, true);
+    }
+}

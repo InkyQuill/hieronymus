@@ -311,3 +311,79 @@ fn browser_error_reason_tracks_changing_health_accent() {
     assert_eq!(view.accent, Accent::Amber);
     assert_eq!(view.reason, "Browser failed");
 }
+
+#[test]
+fn startup_deadline_preserves_pending_desktop_action_and_failure_overlay() {
+    for action in [Action::SetAutostart(true), Action::OpenConsole] {
+        let mut state = DesktopState::new();
+        state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+        state.apply(Event::Begin(Action::Restart));
+        state.apply(Event::Finished {
+            action: Action::Restart,
+            error: None,
+        });
+        let progress = state.apply(Event::Begin(action.clone())).reason.clone();
+        let expired = state.apply(Event::StartupDeadlineExpired);
+        assert_eq!(expired.accent, Accent::Red);
+        assert!(expired.busy);
+        assert_eq!(expired.reason, progress);
+        let failed = state.apply(Event::Finished {
+            action,
+            error: Some("Desktop action failed".into()),
+        });
+        assert_eq!(failed.accent, Accent::Red);
+        assert!(!failed.busy);
+        assert_eq!(failed.reason, "Desktop action failed");
+    }
+}
+
+#[test]
+fn failed_desktop_action_retains_reason_through_startup_timeout_and_absence() {
+    for action in [Action::SetAutostart(true), Action::OpenConsole] {
+        let mut state = DesktopState::new();
+        state.apply(Event::Begin(Action::Start));
+        state.apply(Event::Finished {
+            action: Action::Start,
+            error: None,
+        });
+        state.apply(Event::Begin(action.clone()));
+        state.apply(Event::Finished {
+            action,
+            error: Some("Desktop action failed".into()),
+        });
+        for event in [Event::ProbeTimeout, Event::Stopped] {
+            let view = state.apply(event);
+            assert_eq!(view.accent, Accent::Amber);
+            assert_eq!(view.reason, "Desktop action failed");
+            assert!(!view.can_start);
+        }
+        let expired = state.apply(Event::StartupDeadlineExpired);
+        assert_eq!(expired.accent, Accent::Red);
+        assert_eq!(expired.reason, "Desktop action failed");
+    }
+}
+
+#[test]
+fn fresh_snapshot_during_desktop_action_updates_health_without_losing_progress() {
+    for action in [Action::SetAutostart(true), Action::OpenConsole] {
+        let mut state = DesktopState::new();
+        state.apply(Event::Begin(Action::Restart));
+        state.apply(Event::Finished {
+            action: Action::Restart,
+            error: None,
+        });
+        let progress = state.apply(Event::Begin(action.clone())).reason.clone();
+        let recovered = state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+        assert_eq!(recovered.accent, Accent::Green);
+        assert!(recovered.busy);
+        assert_eq!(recovered.reason, progress);
+        state.apply(Event::Finished {
+            action,
+            error: None,
+        });
+        let view = state.apply(Event::StartupDeadlineExpired);
+        assert_eq!(view.accent, Accent::Green);
+        assert_eq!(view.reason, "Ready");
+        assert!(!view.busy);
+    }
+}

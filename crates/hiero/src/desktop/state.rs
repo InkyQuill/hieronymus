@@ -113,15 +113,8 @@ impl DesktopState {
             matches!(self.pending_action, Some(Action::Start | Action::Restart));
         if self.awaiting_startup || pending_lifecycle {
             self.snapshot_observed_during_lifecycle = false;
-            if self.pending_action.is_none() {
-                self.view = View {
-                    accent: Accent::Amber,
-                    reason: "Starting".to_owned(),
-                    busy: false,
-                    can_start: false,
-                    exit_requested: false,
-                };
-            }
+            self.status_view = starting_view();
+            self.show_status_when_unblocked();
             return;
         }
 
@@ -167,10 +160,13 @@ impl DesktopState {
             can_start: false,
             exit_requested: false,
         };
-        self.view = self.status_view.clone();
         if pending_lifecycle {
+            self.view = self.status_view.clone();
             self.view.busy = true;
-            self.view.can_start = false;
+        } else {
+            // Expiry changes underlying health, not the pending desktop
+            // action or a failure reason that must remain visible.
+            self.show_status_when_unblocked();
         }
     }
 
@@ -195,15 +191,8 @@ impl DesktopState {
             || matches!(self.pending_action, Some(Action::Start | Action::Restart));
         if starting {
             self.snapshot_observed_during_lifecycle = false;
-            if self.pending_action.is_none() && self.operation_failure.is_none() {
-                self.view = View {
-                    accent: Accent::Amber,
-                    reason: "Starting".to_owned(),
-                    busy: false,
-                    can_start: false,
-                    exit_requested: false,
-                };
-            }
+            self.status_view = starting_view();
+            self.show_status_when_unblocked();
             return;
         }
 
@@ -252,11 +241,13 @@ impl DesktopState {
         self.pending_action = None;
 
         if let Some(error) = error {
-            self.awaiting_startup = false;
-            self.snapshot_observed_during_lifecycle = false;
-            self.operation_failure = Some((action.clone(), error.clone()));
             let lifecycle_failure =
                 matches!(action, Action::Start | Action::Restart | Action::Quit);
+            if lifecycle_failure {
+                self.awaiting_startup = false;
+                self.snapshot_observed_during_lifecycle = false;
+            }
+            self.operation_failure = Some((action.clone(), error.clone()));
             self.view = View {
                 accent: if lifecycle_failure {
                     Accent::Red
@@ -286,13 +277,11 @@ impl DesktopState {
                     self.view = self.status_view.clone();
                 } else {
                     self.awaiting_startup = true;
-                    self.view = View {
-                        accent: Accent::Amber,
-                        reason: "Starting".to_owned(),
-                        busy: false,
-                        can_start: false,
-                        exit_requested: false,
-                    };
+                    // The previous instance's readiness no longer describes
+                    // current health. Keep the underlying status transitional
+                    // as well as its projection through later action overlays.
+                    self.status_view = starting_view();
+                    self.view = self.status_view.clone();
                 }
             }
             Action::OpenConsole | Action::SetAutostart(_) => {
@@ -302,12 +291,30 @@ impl DesktopState {
     }
 
     fn show_status_when_unblocked(&mut self) {
-        if self.pending_action.is_none() {
-            self.view = self.status_view.clone();
-            if let Some((_, reason)) = &self.operation_failure {
-                self.view.reason = reason.clone();
+        match self.pending_action {
+            Some(Action::OpenConsole | Action::SetAutostart(_)) => {
+                // These actions overlay their progress on current health;
+                // they do not own or end an outstanding startup transition.
+                self.view.accent = self.status_view.accent.clone();
             }
+            None => {
+                self.view = self.status_view.clone();
+                if let Some((_, reason)) = &self.operation_failure {
+                    self.view.reason = reason.clone();
+                }
+            }
+            Some(_) => {}
         }
+    }
+}
+
+fn starting_view() -> View {
+    View {
+        accent: Accent::Amber,
+        reason: "Starting".to_owned(),
+        busy: false,
+        can_start: false,
+        exit_requested: false,
     }
 }
 
