@@ -12,6 +12,8 @@
 //! which keeps tests away from the real user manager and makes custom
 //! locations usable on non-systemd setups.
 
+use crate::lifecycle::operation::LifecycleOperation;
+use hieronymus::data_root::HieronymusConfig;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -209,6 +211,20 @@ pub fn read_unit(options: &ServiceOptions) -> Result<Option<UnitDefinition>, Str
 /// **without starting it** — the start decision belongs to the caller after
 /// the schema check (bootstrap installer step 8).
 pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+    let config = HieronymusConfig::new(&options.data_root);
+    let operation = LifecycleOperation::acquire(&config)?;
+    operation.register_unit(options)?;
+    crate::lifecycle::checked_probe(&config)
+        .map_err(|error| ServiceError::Invalid(error.to_string()))?;
+    install_guarded(options, &operation)
+}
+
+pub(crate) fn install_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
     let mut lines = Vec::new();
     if !options.binary.is_file() {
         return Err(ServiceError::Invalid(format!(
@@ -238,9 +254,22 @@ pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
     Ok(lines)
 }
 
-/// Remove the unit file only; databases, configuration, models, backups, and
-/// audit data are never touched. Idempotent: a missing unit is a no-op.
+/// Gracefully stop the daemon, then remove its unit; databases, configuration,
+/// models, backups, and audit data are never touched. Idempotent: a missing unit is a no-op.
 pub fn uninstall(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+    let config = HieronymusConfig::new(&options.data_root);
+    let operation = LifecycleOperation::acquire(&config)?;
+    crate::lifecycle::stop_guarded(&config, options, &operation)
+        .map_err(|error| ServiceError::Invalid(error.to_string()))?;
+    uninstall_guarded(options, &operation)
+}
+
+pub(crate) fn uninstall_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
     let mut lines = Vec::new();
     let path = options.unit_path();
     if path.exists() {
@@ -333,11 +362,60 @@ pub fn status(options: &ServiceOptions) -> Result<ServiceStatus, ServiceError> {
 /// degrading) because an explicit lifecycle request that cannot be executed
 /// must fail loudly, with the manual command in the message.
 pub fn start(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
-    lifecycle(options, "start", &["start", SERVICE_UNIT_NAME])
+    let config = HieronymusConfig::new(&options.data_root);
+    let operation = LifecycleOperation::acquire(&config)?;
+    operation.register_unit(options)?;
+    if !options.unit_path().exists() {
+        return Err(ServiceError::Invalid(
+            "no service unit; install one with `hiero service install`".into(),
+        ));
+    }
+    crate::lifecycle::start_guarded(&config, options, &operation)
+        .map_err(|error| ServiceError::Manager(error.to_string()))
 }
 
 pub fn stop(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+    crate::lifecycle::stop(&HieronymusConfig::new(&options.data_root), options)
+        .map_err(|error| ServiceError::Manager(error.to_string()))
+}
+
+pub(crate) fn start_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    lifecycle(options, "start", &["start", SERVICE_UNIT_NAME])
+}
+
+pub(crate) fn stop_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
     lifecycle(options, "stop", &["stop", SERVICE_UNIT_NAME])
+}
+
+/// Refuse foreign or unparseable registration before any manager/file change.
+/// A same-root obsolete binary may be repaired by install or update.
+pub(crate) fn validate_unit_root(options: &ServiceOptions) -> Result<(), ServiceError> {
+    if let Some(definition) = read_unit(options).map_err(ServiceError::Invalid)? {
+        let unit_root = definition
+            .data_root
+            .canonicalize()
+            .unwrap_or(definition.data_root.clone());
+        let expected = options
+            .data_root
+            .canonicalize()
+            .unwrap_or(options.data_root.clone());
+        if unit_root != expected {
+            return Err(ServiceError::Invalid(format!(
+                "unit serves data root {} but this root is {}",
+                definition.data_root.display(),
+                options.data_root.display(),
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The three manager lifecycle operations `hiero update`'s rollback state
@@ -357,28 +435,39 @@ pub trait ServiceManager {
 
 /// The production [`ServiceManager`]: the systemd **user** manager, contacted
 /// only when [`manager_enabled`] holds for its options. A custom `--unit-dir`
-/// or a host without `systemctl` makes every call a silent `Ok` — the same
-/// rule the rest of this module follows, so the updater's rollback path does
+/// or a host without `systemctl` skips manager contact after ownership checks,
+/// so the updater's rollback path does
 /// link/unit restoration without ever touching a manager it must not touch.
-pub struct SystemdManager {
+pub struct SystemdManager<'a> {
     options: ServiceOptions,
+    operation: &'a LifecycleOperation,
 }
 
-impl SystemdManager {
-    pub fn new(options: ServiceOptions) -> Self {
-        Self { options }
+impl<'a> SystemdManager<'a> {
+    pub fn new(options: ServiceOptions, operation: &'a LifecycleOperation) -> Self {
+        Self { options, operation }
     }
 }
 
-impl ServiceManager for SystemdManager {
+impl ServiceManager for SystemdManager<'_> {
     fn stop(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
         if !manager_enabled(&self.options) {
             return Ok(());
         }
-        run_systemctl(&["stop", SERVICE_UNIT_NAME])
+        crate::lifecycle::stop_guarded(
+            &HieronymusConfig::new(&self.options.data_root),
+            &self.options,
+            self.operation,
+        )
+        .map(|_| ())
+        .map_err(|error| ServiceError::Manager(error.to_string()))
     }
 
     fn reload(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
         if !manager_enabled(&self.options) {
             return Ok(());
         }
@@ -386,9 +475,13 @@ impl ServiceManager for SystemdManager {
     }
 
     fn start(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
         if !manager_enabled(&self.options) {
             return Ok(());
         }
+        crate::lifecycle::checked_probe(&HieronymusConfig::new(&self.options.data_root))
+            .map_err(|error| ServiceError::Manager(error.to_string()))?;
         run_systemctl(&["start", SERVICE_UNIT_NAME])
     }
 }
@@ -451,6 +544,7 @@ fn lifecycle(
     action: &str,
     arguments: &[&str],
 ) -> Result<Vec<String>, ServiceError> {
+    validate_unit_root(options)?;
     if !options.unit_path().exists() {
         return Err(ServiceError::Manager(format!(
             "no service unit at {}; install one with `hiero service install`",
@@ -564,7 +658,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let options = options(&temp);
         std::fs::create_dir_all(&options.unit_dir).unwrap();
-        std::fs::write(options.unit_path(), "[Unit]\n").unwrap();
+        std::fs::write(
+            options.unit_path(),
+            render_unit(&options.binary, &options.data_root).unwrap(),
+        )
+        .unwrap();
 
         let lines = uninstall(&options).unwrap();
         assert!(lines[0].contains("removed"), "{lines:?}");
@@ -608,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_refuses_without_a_unit_and_without_manager_integration() {
+    fn lifecycle_refuses_without_a_unit_and_with_an_unverifiable_unit() {
         let temp = tempfile::tempdir().unwrap();
         let options = options(&temp);
         let error = start(&options).unwrap_err();
@@ -619,9 +717,7 @@ mod tests {
         let error = stop(&options).unwrap_err();
         // Custom unit dir: the manager is never contacted.
         assert!(
-            error
-                .to_string()
-                .contains("manager integration is disabled"),
+            error.to_string().contains("unit file has no ExecStart"),
             "{error}"
         );
     }
@@ -632,7 +728,9 @@ mod tests {
         // owns the manager, so `SystemdManager` never shells out to systemctl
         // and every lifecycle call is `Ok`.
         let temp = tempfile::tempdir().unwrap();
-        let manager = SystemdManager::new(options(&temp));
+        let config = HieronymusConfig::new(options(&temp).data_root);
+        let operation = LifecycleOperation::acquire(&config).unwrap();
+        let manager = SystemdManager::new(options(&temp), &operation);
         assert!(manager.stop().is_ok());
         assert!(manager.reload().is_ok());
         assert!(manager.start().is_ok());

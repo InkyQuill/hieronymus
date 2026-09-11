@@ -3,15 +3,20 @@
 //! command links), the owner's PATH links that point into it, and the
 //! generated agent-plugin entries — and nothing else. Databases,
 //! configuration, models, backups, and audit data are preserved by default;
-//! deleting the data root requires the separate explicit `--delete-data`
-//! action, which always names the exact root before removing it.
+//! clearing user contents requires the separate explicit `--delete-data`
+//! action. The root and its two coordination lock files remain.
 //!
 //! Confirmation is mandatory: either `--yes` or an interactive prompt owned
 //! by the CLI layer. The library refuses to run unconfirmed.
 
 use std::path::{Path, PathBuf};
 
+use crate::lifecycle::{
+    self,
+    operation::{LIFECYCLE_LOCK_FILE, LifecycleOperation},
+};
 use hieronymus::data_root::load_config;
+use hieronymus::ownership::{OWNER_LOCK_FILE, RootOwnership};
 
 use crate::app::{AppLayout, LINK_NAMES};
 use crate::service::{self, ServiceOptions};
@@ -52,7 +57,7 @@ impl UninstallReport {
         }
         if self.data_deleted {
             text.push_str(&format!(
-                "deleted data root: {}\n",
+                "deleted user data from: {} (coordination files retained)\n",
                 self.data_root.display()
             ));
         } else {
@@ -95,6 +100,33 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     let mut removed = Vec::new();
 
     let config = load_config(options.data_root.as_deref());
+    let operation = LifecycleOperation::acquire(&config)?;
+
+    // Managed application directory (versioned binaries + stable links).
+    let root = match &options.app_dir {
+        Some(directory) => directory.clone(),
+        None => AppLayout::detect_from_exe().map_err(UninstallError::Refused)?,
+    };
+    let layout = AppLayout::new(&root);
+    if layout.root().exists() {
+        if config
+            .data_root()
+            .canonicalize()?
+            .starts_with(layout.root().canonicalize()?)
+        {
+            return Err(UninstallError::Refused(
+                "the data root is inside the application directory; move it outside before uninstalling so coordination locks and user data are preserved".into(),
+            ));
+        }
+        // Safety: only remove a directory that has the managed layout.
+        if !layout.versions_dir().is_dir() && !layout.bin_dir().is_dir() {
+            return Err(UninstallError::Refused(format!(
+                "{} does not look like a managed Hieronymus application directory \
+                 (no versions/ or bin/); refusing to remove it",
+                layout.root().display()
+            )));
+        }
+    }
 
     // Service unit first, so nothing can restart the daemon mid-uninstall.
     let service_options = ServiceOptions {
@@ -106,29 +138,26 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
         binary: PathBuf::from("hiero"),
         use_manager: true,
     };
-    // Best-effort stop of a managed daemon; a stopped or absent daemon is a
-    // no-op in systemd terms.
-    if service_options.unit_path().exists() && service::manager_enabled(&service_options) {
-        let _ = service::stop(&service_options);
+    operation.register_unit(&service_options)?;
+    let registration_dir = service_options.unit_dir.canonicalize()?;
+    if (layout.root().exists() && registration_dir.starts_with(layout.root().canonicalize()?))
+        || (config.agent_plugins_root().exists()
+            && registration_dir.starts_with(config.agent_plugins_root().canonicalize()?))
+        || (options.delete_data && registration_dir.starts_with(config.data_root().canonicalize()?))
+    {
+        return Err(UninstallError::Refused(
+            "the service registration directory is inside a directory being removed; move the registration outside before uninstalling so its coordination lock is preserved".into(),
+        ));
     }
-    let lines = service::uninstall(&service_options)?;
+    lifecycle::stop_guarded(&config, &service_options, &operation)
+        .map_err(|error| UninstallError::Refused(error.to_string()))?;
+    // Keep daemon ownership throughout every offline removal. Neither held
+    // coordination inode is ever unlinked, even with --delete-data.
+    let _ownership = RootOwnership::acquire(&config, "uninstall")?;
+    let lines = service::uninstall_guarded(&service_options, &operation)?;
     removed.extend(lines);
 
-    // Managed application directory (versioned binaries + stable links).
-    let root = match &options.app_dir {
-        Some(directory) => directory.clone(),
-        None => AppLayout::detect_from_exe().map_err(UninstallError::Refused)?,
-    };
-    let layout = AppLayout::new(&root);
     if layout.root().exists() {
-        // Safety: only remove a directory that has the managed layout.
-        if !layout.versions_dir().is_dir() && !layout.bin_dir().is_dir() {
-            return Err(UninstallError::Refused(format!(
-                "{} does not look like a managed Hieronymus application directory \
-                 (no versions/ or bin/); refusing to remove it",
-                layout.root().display()
-            )));
-        }
         std::fs::remove_dir_all(layout.root())?;
         removed.push(format!(
             "application directory (binaries and command links): {}",
@@ -184,7 +213,21 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     // Data deletion is a separate explicit action that names the exact root.
     let mut data_deleted = false;
     if options.delete_data {
-        std::fs::remove_dir_all(config.data_root())?;
+        for entry in std::fs::read_dir(config.data_root())? {
+            let entry = entry?;
+            if entry.file_name() == OWNER_LOCK_FILE || entry.file_name() == LIFECYCLE_LOCK_FILE {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+        preserved.clear();
+        preserved.push(format!(
+            "coordination files: {OWNER_LOCK_FILE} and {LIFECYCLE_LOCK_FILE}"
+        ));
         data_deleted = true;
     }
 
@@ -304,7 +347,18 @@ mod tests {
         let report = run_uninstall(&options(&temp, true, true)).unwrap();
         assert!(report.data_deleted);
         assert_eq!(report.data_root, config.data_root());
-        assert!(!config.data_root().exists());
+        let mut retained: Vec<_> = std::fs::read_dir(config.data_root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        retained.sort();
+        assert_eq!(retained, [".lifecycle.lock", ".owner.lock"]);
+        assert!(
+            report
+                .preserved
+                .iter()
+                .any(|entry| entry.contains("coordination"))
+        );
         assert!(
             report
                 .render_human()

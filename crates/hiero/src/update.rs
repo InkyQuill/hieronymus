@@ -33,6 +33,7 @@ use crate::app::{AppLayout, LINK_NAMES, TARGET_TRIPLE, compare_versions};
 #[cfg(test)]
 use crate::daemon::discovery;
 use crate::daemon::registry::PROTOCOL_REVISION;
+use crate::lifecycle::operation::LifecycleOperation;
 use crate::lifecycle::{self, DiscoveryHealth};
 use crate::service::{self, ServiceManager, ServiceOptions, SystemdManager};
 
@@ -208,7 +209,9 @@ impl UpdateReport {
 /// fails, leaves every artifact in place and reports both causes without
 /// claiming a restoration that did not happen.
 pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> {
-    run_update_impl(options, None)
+    let config = load_config(options.data_root.as_deref());
+    let operation = LifecycleOperation::acquire(&config)?;
+    run_update_guarded(options, &operation)
 }
 
 /// Doctor exit-code contract for a started candidate: `0` is healthy, `1` is an
@@ -326,10 +329,32 @@ struct RestoreSnapshot {
     candidate_version: String,
 }
 
+/// Update using an existing operation guard, so CLI release acquisition is
+/// serialized with activation and rollback in the same critical section.
+pub fn run_update_guarded(
+    options: &UpdateOptions,
+    operation: &LifecycleOperation,
+) -> Result<UpdateReport, UpdateError> {
+    run_update_guarded_impl(options, None, operation)
+}
+
+#[cfg(test)]
 fn run_update_impl(
     options: &UpdateOptions,
-    manager_override: Option<&dyn ServiceManager>,
+    manager: Option<&dyn ServiceManager>,
 ) -> Result<UpdateReport, UpdateError> {
+    let config = load_config(options.data_root.as_deref());
+    let operation = LifecycleOperation::acquire(&config)?;
+    run_update_guarded_impl(options, manager, &operation)
+}
+
+fn run_update_guarded_impl(
+    options: &UpdateOptions,
+    manager_override: Option<&dyn ServiceManager>,
+    operation: &LifecycleOperation,
+) -> Result<UpdateReport, UpdateError> {
+    let config = load_config(options.data_root.as_deref());
+    operation.check(&config)?;
     let mut lines: Vec<String> = Vec::new();
 
     let root = match &options.app_dir {
@@ -338,6 +363,19 @@ fn run_update_impl(
     };
     let layout = AppLayout::new(root);
     let previous_version = layout.current_version();
+
+    let mut service_options = ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir: options
+            .unit_dir
+            .clone()
+            .unwrap_or_else(service::default_unit_dir),
+        binary: layout.stable_link("hiero"),
+        use_manager: true,
+    };
+    operation.register_unit(&service_options)?;
+    service::validate_unit_root(&service_options)
+        .map_err(|error| UpdateError::Refused(error.to_string()))?;
 
     let release = resolve_release(&options.release_dir)?;
     lines.push(format!(
@@ -423,20 +461,10 @@ fn run_update_impl(
         candidate.protocol_revision, candidate.supported_schema_version
     ));
 
-    let config = load_config(options.data_root.as_deref());
     // Refuse incompatible releases before stopping a live service. Recheck
     // after ownership acquisition to close the preflight/mutation race.
     schema_gate(&config, &candidate).map_err(|error| refused(error.to_string()))?;
 
-    let mut service_options = ServiceOptions {
-        data_root: config.data_root().to_path_buf(),
-        unit_dir: options
-            .unit_dir
-            .clone()
-            .unwrap_or_else(service::default_unit_dir),
-        binary: layout.stable_link("hiero"),
-        use_manager: true,
-    };
     let unit_installed = service_options.unit_path().exists();
     // An injected manager (tests) is by definition engaged; in production the
     // systemd user manager is engaged only for a default-location unit with
@@ -451,7 +479,9 @@ fn run_update_impl(
         None
     };
 
-    let daemon_was_running = crate::lifecycle::probe(&config).is_live();
+    let daemon_was_running = lifecycle::checked_probe(&config)
+        .map_err(|error| refused(error.to_string()))?
+        .is_live();
     if daemon_was_running && !manager_engaged {
         return Err(refused(
             "a daemon is currently running and the updater cannot stop it (no service \
@@ -463,7 +493,7 @@ fn run_update_impl(
     // Snapshot the restore target before ANY mutation, and pick the service
     // manager. Every rollback below drives this one `&dyn ServiceManager`, so
     // tests can assert the exact call sequence.
-    let systemd_manager = SystemdManager::new(service_options.clone());
+    let systemd_manager = SystemdManager::new(service_options.clone(), operation);
     let manager: &dyn ServiceManager = manager_override.unwrap_or(&systemd_manager);
     let snapshot = RestoreSnapshot {
         previous_version: previous_version.clone(),
@@ -529,7 +559,7 @@ fn run_update_impl(
         // the new binary, never the old one.
         if unit_installed {
             service_options.binary = version_dir.join("hiero");
-            service::install(&service_options)
+            service::install_guarded(&service_options, operation)
                 .map_err(|error| format!("service unit update failed ({error})"))?;
             lines.push("service unit updated to the new binary".to_string());
         }
@@ -608,7 +638,7 @@ fn run_update_impl(
             // Rollback reacquires ownership after stopping the candidate.
             drop(ownership.take());
             return Err(activation_failed(
-                manager, &layout, &config, &snapshot, &lines, cause,
+                manager, &layout, &config, &snapshot, &lines, cause, operation,
             ));
         }
         Ok(PostSwitch::MigrationPending) => {
@@ -719,8 +749,9 @@ fn activation_failed(
     snapshot: &RestoreSnapshot,
     steps: &[String],
     cause: String,
+    operation: &LifecycleOperation,
 ) -> UpdateError {
-    match rollback(manager, layout, config, snapshot) {
+    match rollback(manager, layout, config, snapshot, operation) {
         Ok(()) => {
             // Only now — after the rollback verified — may the candidate go.
             prune_candidate(layout, &snapshot.candidate_version);
@@ -751,7 +782,23 @@ fn rollback(
     layout: &AppLayout,
     config: &HieronymusConfig,
     snapshot: &RestoreSnapshot,
+    operation: &LifecycleOperation,
 ) -> Result<(), String> {
+    operation.check(config).map_err(|error| error.to_string())?;
+    let service_options = ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir: snapshot
+            .unit_path
+            .parent()
+            .ok_or("unit path has no parent")?
+            .to_path_buf(),
+        binary: layout.stable_link("hiero"),
+        use_manager: true,
+    };
+    operation
+        .register_unit(&service_options)
+        .map_err(|error| error.to_string())?;
+    service::validate_unit_root(&service_options).map_err(|error| error.to_string())?;
     manager
         .stop()
         .map_err(|error| format!("stop the candidate: {error}"))?;
@@ -1430,7 +1477,14 @@ mod tests {
             false,
         );
 
-        rollback(&manager, &layout, &config, &snapshot).unwrap();
+        rollback(
+            &manager,
+            &layout,
+            &config,
+            &snapshot,
+            &LifecycleOperation::acquire(&config).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(manager.calls(), vec!["stop", "reload"]);
         assert_eq!(layout.current_version().as_deref(), Some("1.0.0"));
@@ -1453,7 +1507,14 @@ mod tests {
 
         // No real daemon, so `poll_until_live` times out (short under
         // cfg(test)) and the rollback reports itself as incomplete.
-        let error = rollback(&manager, &layout, &config, &snapshot).unwrap_err();
+        let error = rollback(
+            &manager,
+            &layout,
+            &config,
+            &snapshot,
+            &LifecycleOperation::acquire(&config).unwrap(),
+        )
+        .unwrap_err();
         assert_eq!(manager.calls(), vec!["stop", "reload", "start"]);
         assert!(
             error.contains("restarted the previous version but")
@@ -1481,6 +1542,7 @@ mod tests {
             &snapshot,
             &["step one".to_string()],
             "health check failed (candidate doctor failed: Some(42))".to_string(),
+            &LifecycleOperation::acquire(&config).unwrap(),
         );
         assert_eq!(error.exit_code(), 1);
         match &error {
@@ -1523,6 +1585,7 @@ mod tests {
             &snapshot,
             &[],
             "boom".to_string(),
+            &LifecycleOperation::acquire(&config).unwrap(),
         );
         assert!(matches!(error, UpdateError::Failed { .. }));
         assert!(
@@ -1693,6 +1756,19 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn update_refuses_a_different_roots_registration_before_staging_or_manager_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
+        options.data_root = Some(temp.path().join("other-data"));
+        let manager = FakeManager::default();
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+        assert!(error.to_string().contains("unit serves data root"));
+        assert!(manager.calls().is_empty());
+        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
+        assert!(!layout.versions_dir().join(".staging-9.9.0").exists());
     }
 
     #[test]
@@ -1879,14 +1955,26 @@ mod tests {
         struct OwnershipManager<'a>(&'a HieronymusConfig);
         impl ServiceManager for OwnershipManager<'_> {
             fn stop(&self) -> Result<(), service::ServiceError> {
+                assert_eq!(
+                    LifecycleOperation::acquire(self.0).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock
+                );
                 Ok(())
             }
             fn reload(&self) -> Result<(), service::ServiceError> {
                 assert!(RootOwnership::acquire(self.0, "competing-writer").is_err());
+                assert_eq!(
+                    LifecycleOperation::acquire(self.0).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock
+                );
                 Ok(())
             }
             fn start(&self) -> Result<(), service::ServiceError> {
                 assert!(RootOwnership::acquire(self.0, "restarted-daemon").is_ok());
+                assert_eq!(
+                    LifecycleOperation::acquire(self.0).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock
+                );
                 Ok(())
             }
         }
@@ -1899,7 +1987,14 @@ mod tests {
             Some("1.0.0"),
             true,
         );
-        rollback(&OwnershipManager(&config), &layout, &config, &snapshot).unwrap();
+        rollback(
+            &OwnershipManager(&config),
+            &layout,
+            &config,
+            &snapshot,
+            &LifecycleOperation::acquire(&config).unwrap(),
+        )
+        .unwrap();
         assert!(all_links_point_at(&layout, "1.0.0").is_ok());
         assert!(RootOwnership::acquire(&config, "next-owner").is_ok());
     }

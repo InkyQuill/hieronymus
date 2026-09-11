@@ -169,7 +169,12 @@ Two interlocking flows share one on-disk layout
   application directory, owned PATH links that point into it, and the
   generated agent-plugin entries; preserves databases, configuration, models,
   backups, and audit data. Data deletion happens only through the explicit
-  `--delete-data`, which names the exact data root in its report.
+  `--delete-data`, which names the exact data root in its report. It clears user
+  contents while retaining `.owner.lock` and `.lifecycle.lock` in a small
+  coordination-only directory; held lock files must never be unlinked. The
+  persistent `.hieronymus.service.lock` beside the systemd unit also remains
+  to serialize registration across different data roots. Uninstall refuses
+  layouts that would delete a held coordination file through a parent directory.
 - Agent integrations keep referencing the stable `hiero`/`hieronymus*` link
   names, so after a healthy update the new binary serves existing entries
   without host-configuration edits; the Rust side has no host-config
@@ -242,7 +247,7 @@ cp target/release-dist/hieronymus-$VERSION-x86_64-unknown-linux-gnu.tar.gz* "$RE
       --app-dir "$APP" --data-root "$DATA" --unit-dir "$UNITS"`; expect the
       application directory, unit, and generated agent plugins removed while
       `$DATA/hieronymus.sqlite`, `backups/`, configs, and semantic state
-      survive; `--delete-data` (separate run) then removes exactly `$DATA`.
+      survive; `--delete-data` (separate run) then clears user contents from exactly `$DATA`, retaining only the two coordination lock files.
       A real-machine rehearsal also reruns this with the default unit dir so
       the manager paths are exercised once.
 

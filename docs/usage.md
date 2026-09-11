@@ -57,8 +57,10 @@ export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memo
 
 `hiero uninstall --yes` removes the owned application, service unit and generated
 integration entries; it preserves databases and configuration by default. Add
-`--delete-data` only to remove the explicitly configured data root, including its
-models, backups and audit data. Check `--data-root` or `HIERONYMUS_DATA_ROOT` before
+`--delete-data` only to clear user contents from the explicitly configured data
+root, including models, backups and audit data. A small coordination-only directory
+containing `.owner.lock` and `.lifecycle.lock` remains so concurrent processes
+continue sharing the same lock files. Check `--data-root` or `HIERONYMUS_DATA_ROOT` before
 using that option. A translation workspace should remain outside the application
 data root; owned-path cleanup does not remove unrelated book directories.
 

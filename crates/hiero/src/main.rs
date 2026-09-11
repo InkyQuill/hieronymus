@@ -1417,7 +1417,7 @@ fn run_lifecycle(
 }
 
 /// The `service` subcommand: install (idempotent unit render + optional
-/// manager enable), uninstall (unit removal only), status, start, stop. The
+/// manager enable), uninstall (graceful stop and unit removal), status, start, stop. The
 /// systemd user manager is only contacted for the default unit location;
 /// `--unit-dir` overrides are render/remove only, which keeps tests and
 /// custom setups away from the real manager.
@@ -1497,6 +1497,9 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     if local.is_some() && remote.is_some() {
         return Err("--release-dir and --release-url are mutually exclusive".into());
     }
+    let config = load_config(parsed.data_root.as_deref().map(std::path::Path::new));
+    let operation = lifecycle::operation::LifecycleOperation::acquire(&config)
+        .map_err(|error| error.to_string())?;
     let staging = tempfile::tempdir().map_err(|e| e.to_string())?;
     let channel = parsed
         .channel
@@ -1521,7 +1524,7 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
         data_root: parsed.data_root.as_deref().map(absolute_path),
         unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
     };
-    match update::run_update(&options) {
+    match update::run_update_guarded(&options, &operation) {
         Ok(report) => {
             if parsed.json {
                 let text = serde_json::to_string_pretty(&report.to_json())

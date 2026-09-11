@@ -764,7 +764,12 @@ fn update_refuses_an_owned_root_even_when_authenticated_discovery_fails() {
             &[],
         );
         assert_eq!(status.code(), Some(2), "{failure}: {stdout}\n{stderr}");
-        assert!(stderr.contains("owns this data root"), "{stderr}");
+        let expected = if failure == "credential" {
+            "rejected this installation's credential"
+        } else {
+            "owns this data root"
+        };
+        assert!(stderr.contains(expected), "{stderr}");
         assert_eq!(
             stable_target(&app, "hiero"),
             PathBuf::from("../versions/0.9.0/hiero")

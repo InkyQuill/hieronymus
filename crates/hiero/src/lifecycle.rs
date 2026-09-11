@@ -14,12 +14,17 @@
 //! - [`DaemonClient`] plus the four lifecycle commands. `stop` requests
 //!   authenticated graceful shutdown through the discovered endpoint (the ADR
 //!   0009 wording) and only falls back to the service manager when no daemon
-//!   answers. `start` installs/starts the per-user service; `hiero daemon`
+//!   answers and root ownership is free; identity failures never authorize
+//!   fallback. `start` installs/starts the per-user service; `hiero daemon`
 //!   stays the foreground role for supervisors and debugging.
 //!
 //! Nothing here ever prints, logs, or embeds the bearer token: errors carry
 //! paths and reasons only.
 
+pub mod operation;
+
+use hieronymus::ownership::RootOwnership;
+use operation::LifecycleOperation;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -490,8 +495,8 @@ impl DaemonClient {
 
 /// Connect to the discovered daemon. With `start_if_absent` the per-user
 /// service is installed/started first when no live daemon answers, and a
-/// discovery record the authenticated comparison proved stale is repaired
-/// (removed) before that — never on a bare PID or connect failure alone.
+/// unreachable discovery record is repaired only after acquiring root
+/// ownership. Authentication/instance mismatches fail without starting.
 pub fn connect(
     config: &HieronymusConfig,
     start_if_absent: bool,
@@ -503,29 +508,13 @@ pub fn connect(
     if !start_if_absent {
         return Err(health.into_client_error());
     }
-    // The authenticated comparison failed, so this record does not describe a
-    // live daemon: removing it is a repair, not a race. `remove_discovery`
-    // re-reads and only deletes a record that still carries this instance id,
-    // so a daemon that published in the meantime is never disturbed.
-    if health.is_stale_record()
-        && let Some(record) = health.record()
-    {
-        discovery::remove_discovery(config, &record.instance_id);
-    }
-    let options = default_service_options(config)
+    let operation = LifecycleOperation::acquire(config)?;
+    let options = default_service_options(config)?;
+    start_guarded(config, &options, &operation)
         .map_err(|error| ClientError::NotDiscovered(error.to_string()))?;
-    ensure_service_started(&options).map_err(ClientError::NotDiscovered)?;
-    let deadline = Instant::now() + START_WAIT;
-    loop {
-        if let DiscoveryHealth::Live { record, .. } = probe(config) {
-            return open(config, record);
-        }
-        if Instant::now() >= deadline {
-            return Err(ClientError::NotDiscovered(
-                "the local service was started but never published a live endpoint".to_string(),
-            ));
-        }
-        std::thread::sleep(POLL);
+    match probe(config) {
+        DiscoveryHealth::Live { record, .. } => open(config, record),
+        other => Err(other.into_client_error()),
     }
 }
 
@@ -555,7 +544,10 @@ pub fn default_service_options(config: &HieronymusConfig) -> std::io::Result<Ser
 /// steps that already succeeded in its message: an operator must be able to
 /// see that the unit *was* written even though the manager refused to start
 /// it.
-fn ensure_service_started(options: &ServiceOptions) -> Result<Vec<String>, String> {
+fn ensure_service_started(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     let fail = |lines: &[String], message: String| {
         let mut text = String::new();
@@ -567,12 +559,12 @@ fn ensure_service_started(options: &ServiceOptions) -> Result<Vec<String>, Strin
         text
     };
     if !options.unit_path().exists() {
-        match service::install(options) {
+        match service::install_guarded(options, operation) {
             Ok(installed) => lines.extend(installed),
             Err(error) => return Err(fail(&lines, error.to_string())),
         }
     }
-    match service::start(options) {
+    match service::start_guarded(options, operation) {
         Ok(started) => lines.extend(started),
         Err(error) => return Err(fail(&lines, error.to_string())),
     }
@@ -581,6 +573,8 @@ fn ensure_service_started(options: &ServiceOptions) -> Result<Vec<String>, Strin
 
 #[derive(Debug, thiserror::Error)]
 pub enum LifecycleError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error("{0}")]
     Service(String),
     #[error("{0}")]
@@ -592,34 +586,96 @@ pub enum LifecycleError {
 /// `hiero start`: install (idempotently) and start the per-user service.
 /// `hiero daemon` remains the foreground role.
 pub fn start(options: &ServiceOptions) -> Result<Vec<String>, LifecycleError> {
-    ensure_service_started(options).map_err(LifecycleError::Service)
+    let config = HieronymusConfig::new(&options.data_root);
+    let operation = LifecycleOperation::acquire(&config)?;
+    start_guarded(&config, options, &operation)
 }
 
-/// `hiero stop`: authenticated graceful shutdown through the discovered
-/// endpoint (ADR 0009). A daemon started in the foreground and a daemon under
-/// the service manager are both reached this way; the service manager is only
-/// asked when no daemon answers the authenticated probe.
+/// Re-probe under the operation guard. Identity/authentication failures never
+/// authorize a manager action or discovery repair.
+pub(crate) fn checked_probe(config: &HieronymusConfig) -> Result<DiscoveryHealth, LifecycleError> {
+    let health = probe(config);
+    match health {
+        DiscoveryHealth::Live { .. }
+        | DiscoveryHealth::NoRecord { .. }
+        | DiscoveryHealth::Unreachable { .. } => Ok(health),
+        other => Err(other.into_client_error().into()),
+    }
+}
+
+pub(crate) fn start_guarded(
+    config: &HieronymusConfig,
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, LifecycleError> {
+    operation.check(config)?;
+    operation.register_unit(options)?;
+    service::validate_unit_root(options)
+        .map_err(|error| LifecycleError::Service(error.to_string()))?;
+    let health = checked_probe(config)?;
+    if health.is_live() {
+        return Ok(vec![health.detail()]);
+    }
+    // An unavailable endpoint does not prove ownership is free. Repair only
+    // while the OS lock excludes a daemon publishing discovery concurrently.
+    {
+        let _ownership = RootOwnership::acquire(config, "lifecycle-start")?;
+        if let Some(record) = health.record() {
+            discovery::remove_discovery(config, &record.instance_id);
+        }
+    }
+    let mut lines = ensure_service_started(options, operation).map_err(LifecycleError::Service)?;
+    let deadline = Instant::now() + START_WAIT;
+    loop {
+        let health = checked_probe(config)?;
+        if health.is_live() {
+            lines.push(health.detail());
+            return Ok(lines);
+        }
+        if Instant::now() >= deadline {
+            return Err(LifecycleError::Service(
+                "the local service was started but never published a live endpoint".to_string(),
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Authenticated graceful shutdown, serialized with start/restart/update/uninstall.
+/// A successful managed daemon exit is intentionally not recovered by systemd's
+/// Restart=on-failure policy; login registration is retained.
 pub fn stop(
     config: &HieronymusConfig,
     options: &ServiceOptions,
 ) -> Result<Vec<String>, LifecycleError> {
-    let health = probe(config);
+    let operation = LifecycleOperation::acquire(config)?;
+    stop_guarded(config, options, &operation)
+}
+
+pub(crate) fn stop_guarded(
+    config: &HieronymusConfig,
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, LifecycleError> {
+    operation.check(config)?;
+    operation.register_unit(options)?;
+    service::validate_unit_root(options)
+        .map_err(|error| LifecycleError::Service(error.to_string()))?;
+    let health = checked_probe(config)?;
     let Some(record) = health.record().cloned().filter(|_| health.is_live()) else {
-        let mut lines = vec![format!(
-            "no running local daemon answered the authenticated probe: {}",
-            health.detail()
-        )];
-        if !options.unit_path().exists() {
-            lines.push(format!(
-                "no service unit at {}; nothing to stop",
-                options.unit_path().display()
-            ));
-            return Ok(lines);
+        // No authenticated daemon may be signalled. Prove resource release
+        // before cancelling pending manager recovery for this verified unit.
+        let _ownership = RootOwnership::acquire(config, "lifecycle-stop")?;
+        if let Some(record) = health.record() {
+            discovery::remove_discovery(config, &record.instance_id);
         }
-        lines.push("asking the service manager to stop the unit instead".to_string());
-        lines.extend(
-            service::stop(options).map_err(|error| LifecycleError::Service(error.to_string()))?,
-        );
+        let mut lines = vec![format!("daemon stopped: {}", health.detail())];
+        if options.unit_path().exists() && service::manager_enabled(options) {
+            lines.extend(
+                service::stop_guarded(options, operation)
+                    .map_err(|error| LifecycleError::Service(error.to_string()))?,
+            );
+        }
         return Ok(lines);
     };
     let client = open(config, record.clone())?;
@@ -649,7 +705,9 @@ pub fn stop(
         record.host, record.port, record.instance_id, record.pid,
     )];
     wait_until_stopped(config, &record)?;
-    lines.push("daemon stopped and released its discovery record".to_string());
+    lines.push(
+        "daemon stopped and released its discovery record and data-root ownership".to_string(),
+    );
     Ok(lines)
 }
 
@@ -675,24 +733,73 @@ fn disconnected_mid_shutdown(error: &ClientError) -> bool {
     }
 }
 
-/// The daemon removes its own record and releases data-root ownership as the
-/// last two shutdown steps, so a record that is gone (or now belongs to a
-/// different instance) is the completion signal.
-fn wait_until_stopped(
+/// Read-only, instantaneous resource-release check for passive status consumers.
+/// This never creates a root/lock, rewrites diagnostic bytes, or starts anything.
+/// It is a snapshot, not authority to mutate: lifecycle actions must acquire
+/// [`LifecycleOperation`] and re-probe before acting.
+pub fn root_is_released(config: &HieronymusConfig) -> std::io::Result<bool> {
+    use std::fs::{OpenOptions, TryLockError};
+    let file = match OpenOptions::new().read(true).write(true).open(
+        config
+            .data_root()
+            .join(hieronymus::ownership::OWNER_LOCK_FILE),
+    ) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error),
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            file.unlock()?;
+            Ok(true)
+        }
+        Err(TryLockError::WouldBlock) => Ok(false),
+        Err(TryLockError::Error(error)) => Err(error),
+    }
+}
+
+/// Require both discovery removal and resource release. A replacement instance
+/// is an error, never evidence that an explicit stop succeeded.
+pub(crate) fn wait_until_stopped(
     config: &HieronymusConfig,
     record: &DiscoveryRecord,
 ) -> Result<(), LifecycleError> {
-    let deadline = Instant::now() + SHUTDOWN_WAIT;
+    wait_until_stopped_with_timeout(config, record, SHUTDOWN_WAIT)
+}
+
+fn wait_until_stopped_with_timeout(
+    config: &HieronymusConfig,
+    record: &DiscoveryRecord,
+    timeout: Duration,
+) -> Result<(), LifecycleError> {
+    let deadline = Instant::now() + timeout;
     loop {
         match read_discovery(config) {
-            Err(_) => return Ok(()),
-            Ok(current) if current.instance_id != record.instance_id => return Ok(()),
+            Err(DiscoveryError::Missing { .. }) => {
+                match RootOwnership::acquire(config, "lifecycle-stopped") {
+                    Ok(_ownership) => {
+                        // Re-read while owning the root: discovery removal
+                        // precedes daemon ownership release.
+                        if matches!(read_discovery(config), Err(DiscoveryError::Missing { .. })) {
+                            return Ok(());
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(current) if current.instance_id != record.instance_id => {
+                return Err(LifecycleError::Service(
+                    "a different daemon instance appeared during shutdown; refusing to claim stopped".to_string(),
+                ));
+            }
+            Err(error) => return Err(LifecycleError::Service(error.to_string())),
             Ok(_) => {}
         }
         if Instant::now() >= deadline {
-            return Err(LifecycleError::ShutdownTimeout(SHUTDOWN_WAIT));
+            return Err(LifecycleError::ShutdownTimeout(timeout));
         }
-        std::thread::sleep(POLL);
+        std::thread::sleep(POLL.min(deadline.saturating_duration_since(Instant::now())));
     }
 }
 
@@ -705,13 +812,14 @@ pub fn restart(
     config: &HieronymusConfig,
     options: &ServiceOptions,
 ) -> Result<Vec<String>, LifecycleError> {
-    let mut lines = stop(config, options).map_err(|error| {
+    let operation = LifecycleOperation::acquire(config)?;
+    let mut lines = stop_guarded(config, options, &operation).map_err(|error| {
         LifecycleError::Service(format!(
             "{error}\nrestart stopped here so a second daemon is never started over a running \
              one; recover with `hiero service stop` and then `hiero start`"
         ))
     })?;
-    lines.extend(start(options)?);
+    lines.extend(start_guarded(config, options, &operation)?);
     Ok(lines)
 }
 
@@ -808,6 +916,54 @@ mod tests {
             instance_id: instance_id.to_string(),
             started_at: "2026-09-04T00:00:00+00:00".to_string(),
         }
+    }
+
+    #[test]
+    fn a_replaced_instance_is_not_a_successful_stop() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let old = seeded_record(1, &"ab".repeat(16));
+        discovery::write_discovery(&config, &seeded_record(2, &"cd".repeat(16))).unwrap();
+        let error =
+            wait_until_stopped_with_timeout(&config, &old, Duration::from_millis(10)).unwrap_err();
+        assert!(error.to_string().contains("different daemon instance"));
+    }
+
+    #[test]
+    fn missing_discovery_waits_for_owner_release_and_corrupt_discovery_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let record = seeded_record(1, &"ab".repeat(16));
+        let owner = RootOwnership::acquire(&config, "daemon").unwrap();
+        assert!(matches!(
+            wait_until_stopped_with_timeout(&config, &record, Duration::from_millis(10)),
+            Err(LifecycleError::ShutdownTimeout(_))
+        ));
+        drop(owner);
+        assert!(
+            wait_until_stopped_with_timeout(&config, &record, Duration::from_millis(10)).is_ok()
+        );
+        std::fs::write(config.data_root().join("daemon.json"), "corrupt").unwrap();
+        assert!(
+            wait_until_stopped_with_timeout(&config, &record, Duration::from_millis(10)).is_err()
+        );
+    }
+
+    #[test]
+    fn passive_owner_probe_never_creates_or_rewrites_coordination_files() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path().join("absent"));
+        assert!(root_is_released(&config).unwrap());
+        assert!(!config.data_root().exists());
+        let owner = RootOwnership::acquire(&config, "daemon").unwrap();
+        let path = config
+            .data_root()
+            .join(hieronymus::ownership::OWNER_LOCK_FILE);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!root_is_released(&config).unwrap());
+        drop(owner);
+        assert!(root_is_released(&config).unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
 
     #[test]

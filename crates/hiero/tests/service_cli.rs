@@ -151,10 +151,7 @@ fn lifecycle_commands_refuse_without_a_unit_or_with_a_custom_unit_dir() {
     std::fs::write(environment.unit_path(), "[Unit]\n").unwrap();
     let (_, stderr, status) = environment.run(&["stop"]);
     assert_eq!(status.code(), Some(2), "{stderr}");
-    assert!(
-        stderr.contains("manager integration is disabled"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("unit file has no ExecStart"), "{stderr}");
 }
 
 #[test]

@@ -738,7 +738,7 @@ fn hiero_stop_requests_authenticated_shutdown_through_the_discovered_endpoint() 
 }
 
 #[test]
-fn hiero_stop_without_a_daemon_explains_itself_and_falls_back_to_the_service() {
+fn hiero_stop_confirms_absence_and_refuses_an_unverifiable_unit() {
     let root = tempfile::tempdir().unwrap();
     let unit_dir = tempfile::tempdir().unwrap();
     let (stdout, stderr, status) = hiero(&[
@@ -752,13 +752,12 @@ fn hiero_stop_without_a_daemon_explains_itself_and_falls_back_to_the_service() {
     assert_ne!(status.code(), Some(101), "stderr: {stderr}");
     assert!(status.success(), "stdout: {stdout}\nstderr: {stderr}");
     assert!(
-        stdout.contains("no running local daemon answered the authenticated probe"),
+        stdout.contains("daemon stopped: no discovery record"),
         "{stdout}"
     );
-    assert!(stdout.contains("nothing to stop"), "{stdout}");
+    assert!(RootOwnership::acquire(&HieronymusConfig::new(root.path()), "stopped").is_ok());
 
-    // With a unit installed, the fallback reaches the service manager and
-    // reports its refusal instead of pretending to have stopped something.
+    // A broken unit cannot authorize any fallback manager action.
     std::fs::write(
         unit_dir.path().join("hieronymus.service"),
         "[Unit]\nDescription=Hieronymus\n",
@@ -773,7 +772,7 @@ fn hiero_stop_without_a_daemon_explains_itself_and_falls_back_to_the_service() {
     ]);
     assert_ne!(status.code(), Some(101), "stderr: {stderr}");
     assert!(
-        stderr.contains("manager integration is disabled") || stdout.contains("service stopped"),
+        !status.success() && stderr.contains("unit file has no ExecStart"),
         "stdout: {stdout}\nstderr: {stderr}"
     );
 }
