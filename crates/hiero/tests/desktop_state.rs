@@ -83,6 +83,59 @@ fn pending_restart_takes_precedence_over_snapshots_and_timeouts() {
 }
 
 #[test]
+fn probe_failures_during_non_lifecycle_action_surface_after_completion() {
+    for action in [Action::OpenConsole, Action::SetAutostart(true)] {
+        let mut state = DesktopState::new();
+        state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+        state.apply(Event::Begin(action.clone()));
+
+        assert!(state.apply(Event::ProbeTimeout).busy);
+        assert!(state.apply(Event::ProbeTimeout).busy);
+        let pending = state.apply(Event::ProbeTimeout);
+        assert!(pending.busy);
+        assert_eq!(
+            pending.reason,
+            match action {
+                Action::OpenConsole => "Opening console",
+                Action::SetAutostart(_) => "Updating start at login",
+                _ => unreachable!(),
+            }
+        );
+
+        let view = state.apply(Event::Finished {
+            action,
+            error: None,
+        });
+        assert_eq!(view.accent, Accent::Red);
+        assert_eq!(view.reason, "Server unavailable");
+        assert!(!view.busy);
+    }
+}
+
+#[test]
+fn probe_failures_during_quit_update_status_without_clearing_busy_state() {
+    let mut state = DesktopState::new();
+    state.apply(Event::Snapshot(snapshot(ReadinessLevel::Ready, &[])));
+    state.apply(Event::Begin(Action::Quit));
+
+    state.apply(Event::ProbeTimeout);
+    state.apply(Event::ProbeTimeout);
+    let pending = state.apply(Event::ProbeTimeout);
+    assert_eq!(pending.accent, Accent::Amber);
+    assert_eq!(pending.reason, "Stopping");
+    assert!(pending.busy);
+
+    let view = state.apply(Event::Finished {
+        action: Action::Quit,
+        error: None,
+    });
+    assert_eq!(view.accent, Accent::Red);
+    assert_eq!(view.reason, "Server unavailable");
+    assert!(!view.busy);
+    assert!(view.exit_requested);
+}
+
+#[test]
 fn stopped_server_enables_start() {
     let mut state = DesktopState::new();
     let view = state.apply(Event::Stopped);

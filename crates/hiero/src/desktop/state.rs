@@ -103,19 +103,23 @@ impl DesktopState {
     }
 
     fn apply_probe_timeout(&mut self) {
-        if self.pending_action.is_some() || self.operation_failure.is_some() {
-            self.snapshot_observed_during_lifecycle = false;
+        if self.operation_failure.is_some() {
             return;
         }
 
-        if self.awaiting_startup {
-            self.view = View {
-                accent: Accent::Amber,
-                reason: "Starting".to_owned(),
-                busy: false,
-                can_start: false,
-                exit_requested: false,
-            };
+        let pending_lifecycle =
+            matches!(self.pending_action, Some(Action::Start | Action::Restart));
+        if self.awaiting_startup || pending_lifecycle {
+            self.snapshot_observed_during_lifecycle = false;
+            if self.pending_action.is_none() {
+                self.view = View {
+                    accent: Accent::Amber,
+                    reason: "Starting".to_owned(),
+                    busy: false,
+                    can_start: false,
+                    exit_requested: false,
+                };
+            }
             return;
         }
 
@@ -141,7 +145,9 @@ impl DesktopState {
                 exit_requested: false,
             };
         }
-        self.view = self.status_view.clone();
+        if self.pending_action.is_none() {
+            self.view = self.status_view.clone();
+        }
     }
 
     fn apply_startup_deadline_expired(&mut self) {
@@ -268,7 +274,7 @@ impl DesktopState {
             Action::Quit => {
                 self.awaiting_startup = false;
                 self.snapshot_observed_during_lifecycle = false;
-                self.view.busy = false;
+                self.view = self.status_view.clone();
                 self.view.exit_requested = true;
             }
             Action::Start | Action::Restart => {
