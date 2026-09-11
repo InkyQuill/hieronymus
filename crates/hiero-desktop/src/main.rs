@@ -1,6 +1,14 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 use std::process::ExitCode;
 fn main() -> ExitCode {
+    if std::env::args().skip(1).collect::<Vec<_>>() == ["version", "--json"] {
+        println!(
+            "{{\"version\":\"{}\",\"target\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION"),
+            hiero::app::TARGET_TRIPLE
+        );
+        return ExitCode::SUCCESS;
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -9,13 +17,16 @@ fn main() -> ExitCode {
         }
     }
 }
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn run() -> Result<(), String> {
     let mut root = None;
     let mut unit = None;
     let mut binary = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(flag) = args.next() {
+        if flag == "--resume" {
+            continue;
+        }
         let target = match flag.to_str() {
             Some("--data-root") => &mut root,
             Some("--unit-dir") => &mut unit,
@@ -51,22 +62,4 @@ fn run() -> Result<(), String> {
         hieronymus::data_root::HieronymusConfig::new(root),
         options,
     )
-}
-#[cfg(not(any(windows, target_os = "macos")))]
-fn run() -> Result<(), String> {
-    let mut arguments = std::env::args_os().skip(1);
-    let root = match arguments.next().as_deref() {
-        Some(flag) if flag == "--data-root" => {
-            Some(arguments.next().ok_or("--data-root requires a path")?)
-        }
-        None => None,
-        _ => return Err("usage: hiero-desktop [--data-root <path>]".into()),
-    };
-    if arguments.next().is_some() {
-        return Err("usage: hiero-desktop [--data-root <path>]".into());
-    }
-    let config = hieronymus::data_root::load_config(root.as_deref().map(std::path::Path::new));
-    let root = std::path::absolute(config.data_root())
-        .map_err(|_| "Could not resolve the desktop data root")?;
-    hiero_desktop::platform::run(hieronymus::data_root::HieronymusConfig::new(root))
 }

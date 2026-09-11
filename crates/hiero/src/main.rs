@@ -28,7 +28,7 @@ const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--force] [--jso
 const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
-const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
+const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>] [--unit-dir <path>]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable|configure> [--json] [--data-root <path>] (configure: --provider ollama --base-url <origin> --model <installed-model>) (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
 
@@ -576,6 +576,28 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             );
             Ok(ExitCode::SUCCESS)
         }
+        Some("desktop-bootstrap") => {
+            let options = update::UpdateOptions {
+                release_dir: parsed
+                    .release_dir
+                    .as_deref()
+                    .map(absolute_path)
+                    .ok_or("desktop-bootstrap requires --release-dir")?,
+                app_dir: Some(
+                    parsed
+                        .app_dir
+                        .as_deref()
+                        .map(absolute_path)
+                        .unwrap_or_else(hiero::app::default_app_dir),
+                ),
+                data_root: parsed.data_root.as_deref().map(absolute_path),
+                unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
+            };
+            let report = update::run_desktop_install(&options, parsed.no_activate)
+                .map_err(|e| e.to_string())?;
+            println!("{}", report.render_human());
+            Ok(ExitCode::SUCCESS)
+        }
         Some("update") => run_update_command(&parsed),
         Some("uninstall") => run_uninstall_command(&parsed),
         Some(other) => Err(format!("unknown command: {other}; {USAGE}")),
@@ -695,7 +717,8 @@ fn run_doctor(
     reject_feedback_flags(parsed, "doctor")?;
     reject_headless_flags(parsed, "doctor")?;
     let config = load_config(data_root);
-    let report = doctor::run_with_service(&config, None);
+    let unit_dir = parsed.unit_dir.as_deref().map(absolute_path);
+    let report = doctor::run_with_service(&config, unit_dir.as_deref());
     if parsed.json {
         let text =
             serde_json::to_string_pretty(&report.to_json()).map_err(|error| error.to_string())?;
@@ -1573,9 +1596,18 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     hiero::release_source::validate_channel(&channel)?;
     let release_dir = match (local, remote) {
         (Some(directory), None) => absolute_path(&directory),
-        (None, Some(base)) => {
-            hiero::release_source::stage_remote(&base, &channel, &staging.path().join("verified"))?
-        }
+        (None, Some(base)) => hiero::release_source::stage_remote_cached_with_roots(
+            &base,
+            &channel,
+            &staging.path().join("verified"),
+            &parsed
+                .app_dir
+                .as_deref()
+                .map(absolute_path)
+                .unwrap_or_else(hiero::app::default_app_dir)
+                .join("cache/models"),
+            hieronymus::tls::TlsRoots::default(),
+        )?,
         _ => {
             return Err(format!(
                 "configure HIERONYMUS_RELEASE_URL or pass --release-url / --release-dir; {UPDATE_USAGE}"

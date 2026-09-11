@@ -21,6 +21,9 @@ const MAX_REQUEST: usize = 2048;
 const MAX_RESPONSE: usize = 65536;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(crate) enum TaskAction {
+    PackageCapture,
+    PackageRestore,
+    PackageCommit,
     Inspect,
     Install,
     InstallDesktop,

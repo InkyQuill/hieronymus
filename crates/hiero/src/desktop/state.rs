@@ -29,6 +29,7 @@ pub struct View {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    RetiredForUpdate,
     Preferences {
         settings: Option<super::DesktopSettings>,
         error: Option<String>,
@@ -85,6 +86,9 @@ impl DesktopState {
 
     pub fn apply(&mut self, event: Event) -> &View {
         match event {
+            Event::RetiredForUpdate => {
+                self.view.exit_requested = true;
+            }
             Event::Preferences { .. } => {}
             Event::Snapshot(summary) => self.apply_snapshot(summary),
             Event::ProbeTimeout => self.apply_probe_timeout(),

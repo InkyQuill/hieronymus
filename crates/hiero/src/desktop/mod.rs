@@ -19,3 +19,7 @@ pub mod windows_registration;
 
 #[cfg(target_os = "macos")]
 pub mod macos_registration;
+
+pub mod control;
+
+pub(crate) mod installation;

@@ -7,10 +7,25 @@ pub fn sibling_binary(executable: &Path, name: &str) -> Result<PathBuf, String> 
     if !executable.is_absolute() {
         return Err("Desktop executable location must be absolute".into());
     }
+    let resolved = executable.canonicalize().map_err(|e| e.to_string())?;
+    let executable = resolved.as_path();
     let parent = executable
         .parent()
         .ok_or("Could not locate the desktop installation")?;
-    let path = parent.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let path = if cfg!(target_os = "macos") && name == "hiero-desktop" {
+        parent.join("Hieronymus.app/Contents/MacOS/hiero-desktop")
+    } else if cfg!(target_os = "macos")
+        && name == "hiero"
+        && parent.ends_with("Hieronymus.app/Contents/MacOS")
+    {
+        parent
+            .ancestors()
+            .nth(3)
+            .ok_or("Invalid application bundle")?
+            .join("hiero")
+    } else {
+        parent.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+    };
     if !path.is_file() {
         return Err(format!(
             "Missing {}; install the matching Hieronymus desktop package",
@@ -131,8 +146,14 @@ pub fn selected_cli(cli: &Path) -> Result<PathBuf, String> {
 }
 
 /// Resolve the stable Unix selection endpoint; direct CLI fixtures are explicit.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 pub fn stable_cli(executable: &Path) -> Result<PathBuf, String> {
+    if executable
+        .parent()
+        .is_some_and(|p| p.ends_with("Hieronymus.app/Contents/MacOS"))
+    {
+        return stable_cli(&sibling_binary(executable, "hiero")?);
+    }
     let parent = executable.parent().ok_or("Missing executable directory")?;
     if let Some(versions) = parent
         .parent()
@@ -147,7 +168,7 @@ pub fn stable_cli(executable: &Path) -> Result<PathBuf, String> {
     }
     sibling_binary(executable, "hiero")
 }
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 pub fn selected_cli(cli: &Path) -> Result<PathBuf, String> {
     if !cli.is_absolute() || !cli.is_file() {
         return Err("Installed CLI is missing or not absolute".into());

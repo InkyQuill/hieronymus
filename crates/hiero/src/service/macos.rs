@@ -736,6 +736,40 @@ pub(crate) fn execute(
     action: TaskAction,
     tray: bool,
 ) -> Result<Value, String> {
+    let package = path(options, false).with_extension("package-pending.json");
+    match action {
+        TaskAction::PackageCapture => {
+            if package.exists() {
+                return Err("A prior package registration rollback is pending".into());
+            }
+            execute(options, TaskAction::Reconcile, true)?;
+            execute(options, TaskAction::Reconcile, false)?;
+            let snapshot = DesktopJournal {
+                daemon: Agent::new(options, false)?.snapshot()?,
+                tray: Agent::new(options, true)?.snapshot()?,
+            };
+            hieronymus::private_file::create_private_new(
+                &package,
+                &serde_json::to_vec(&snapshot).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        TaskAction::PackageRestore => {
+            let snapshot: DesktopJournal = serde_json::from_slice(
+                &hieronymus::private_file::read_private(&package).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            restore_desktop(options, &snapshot)?;
+            std::fs::remove_file(package).map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        TaskAction::PackageCommit => {
+            std::fs::remove_file(package).map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        _ => {}
+    }
     let pending = path(options, false).with_extension("desktop-pending.json");
     if let Some(text) = read_file(&pending)? {
         let journal: DesktopJournal =

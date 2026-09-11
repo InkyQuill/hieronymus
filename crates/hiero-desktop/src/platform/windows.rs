@@ -330,7 +330,7 @@ pub fn run_with_service_options(
     if options.data_root != config.data_root() {
         return Err("Desktop options belong to a different root".into());
     }
-    let _singleton = match TraySingleton::acquire_or_existing(&config, "native")
+    let mut singleton = match TraySingleton::acquire_or_existing(&config, "native")
         .map_err(|_| "Could not own the native desktop session")?
     {
         SingletonOutcome::AlreadyRunning => return Ok(()),
@@ -388,13 +388,14 @@ pub fn run_with_service_options(
     options.data_root = config.data_root().to_path_buf();
     let registration = WindowsRegistration::new(options.clone());
     let hwnd = window.0 as usize;
-    let controller = Controller::spawn_with_notifier(
-        LifecycleBackend::with_service_options(config, options, registration),
+    let mut controller = Controller::spawn_with_notifier(
+        LifecycleBackend::with_service_options(config.clone(), options, registration),
         PollSchedule::default(),
         move || unsafe {
             PostMessageW(hwnd as HWND, WAKE, 0, 0);
         },
     );
+    controller.attach_control(&config, &mut singleton)?;
     let mut state = DesktopState::new();
     let mut view = state
         .apply(Event::Preferences {
@@ -405,7 +406,9 @@ pub fn run_with_service_options(
     let mut preferences_known = false;
     let mut diagnostic = None;
     let mut last_icon = (ink, [229, 167, 43], size);
-    controller.submit(Action::Start)?;
+    if !std::env::args().any(|a| a == "--resume") {
+        controller.submit(Action::Start)?;
+    }
     let mut message: MSG = unsafe { zeroed() };
     let result = loop {
         // Modal menus can consume every posted wake, so consult persistent state

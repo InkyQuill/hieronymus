@@ -192,6 +192,7 @@ pub fn start(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
             "no service unit; install one with `hiero service install`".into(),
         ));
     }
+    crate::desktop::control::clear_quit(config.data_root())?;
     crate::lifecycle::start_guarded(&config, options, &operation)
         .map_err(|error| ServiceError::Manager(error.to_string()))
 }

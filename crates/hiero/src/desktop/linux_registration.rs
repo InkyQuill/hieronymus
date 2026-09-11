@@ -161,6 +161,16 @@ impl LinuxRegistration {
     pub fn install(&mut self) -> Result<(), String> {
         let op = self.operation()?;
         let _owner = self.ownership()?;
+        self.install_guarded(&op)?;
+        drop(_owner);
+        drop(op);
+        SettingsStore::new(&HieronymusConfig::new(&self.service.data_root))
+            .reconcile(self)
+            .map(|_| ())
+    }
+    pub(crate) fn install_guarded(&mut self, op: &LifecycleOperation) -> Result<(), String> {
+        self.validate()?;
+        op.register_unit(&self.service).map_err(|e| e.to_string())?;
         let existing = self.record()?;
         self.check_files(existing.is_some())?;
         self.check_unit()?;
@@ -205,8 +215,8 @@ impl LinuxRegistration {
             .map_err(|_| "Could not record desktop ownership")?;
         }
         // The record makes install_guarded retain on-demand desktop mode.
-        service::install_guarded(&self.service, &op).map_err(|e| e.to_string())?;
-        service::disable_login_guarded(&self.service, &op).map_err(|e| e.to_string())?;
+        service::install_guarded(&self.service, op).map_err(|e| e.to_string())?;
+        service::disable_login_guarded(&self.service, op).map_err(|e| e.to_string())?;
         atomic_write_text(&self.icon(), ICON).map_err(|_| "Could not install desktop icon")?;
         atomic_write_text(&self.entry(false), &self.text()?)
             .map_err(|_| "Could not install application launcher")?;
@@ -221,11 +231,7 @@ impl LinuxRegistration {
                 .map_err(|_| "Could not encode desktop ownership")?,
         )
         .map_err(|_| "Could not complete desktop ownership record")?;
-        drop(_owner);
-        drop(op);
-        SettingsStore::new(&HieronymusConfig::new(&self.service.data_root))
-            .reconcile(self)
-            .map(|_| ())
+        Ok(())
     }
     pub fn uninstall(&mut self) -> Result<(), String> {
         let op = self.operation()?;

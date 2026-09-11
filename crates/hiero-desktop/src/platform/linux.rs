@@ -169,15 +169,29 @@ fn icon(ink: [u8; 3], accent: [u8; 3]) -> Result<tray_icon::Icon, String> {
         .map_err(|error| error.to_string())
 }
 pub fn run(config: HieronymusConfig) -> Result<(), String> {
-    let _singleton = match TraySingleton::acquire_or_existing(&config, "native")
+    let options = service::ServiceOptions {
+        data_root: config.data_root().into(),
+        unit_dir: service::default_unit_dir(),
+        binary: hiero::desktop::launch::stable_cli(
+            &std::env::current_exe().map_err(|e| e.to_string())?,
+        )?,
+        use_manager: true,
+    };
+    run_with_service_options(config, options)
+}
+pub fn run_with_service_options(
+    config: HieronymusConfig,
+    options: service::ServiceOptions,
+) -> Result<(), String> {
+    if options.data_root != config.data_root() {
+        return Err("Desktop options belong to another root".into());
+    }
+    let mut singleton = match TraySingleton::acquire_or_existing(&config, "native")
         .map_err(|error| format!("Could not own the desktop session: {error}"))?
     {
         SingletonOutcome::AlreadyRunning => return Ok(()),
         SingletonOutcome::Acquired(guard) => guard,
     };
-    let executable =
-        std::env::current_exe().map_err(|_| "Could not locate the desktop installation")?;
-    let cli = hiero::desktop::launch::sibling_binary(&executable, "hiero")?;
     gtk::init().map_err(
         |_| "Could not connect to the graphical desktop; run hiero status for headless diagnostics",
     )?;
@@ -194,19 +208,15 @@ pub fn run(config: HieronymusConfig) -> Result<(), String> {
     let appearance = Arc::new(Mutex::new(theme::Appearance::default()));
     let _host = host::HostObserver::new(host_error.clone(), sender.clone());
     let _theme = theme::ThemeObserver::new(appearance.clone(), sender.clone());
-    let options = service::ServiceOptions {
-        data_root: config.data_root().to_path_buf(),
-        unit_dir: service::default_unit_dir(),
-        binary: cli,
-        use_manager: true,
-    };
     let registration = hiero::desktop::linux_registration::LinuxRegistration::new(options.clone());
     let wake = sender.clone();
-    let controller = Rc::new(Controller::spawn_with_notifier(
-        LifecycleBackend::with_service_options(config, options, registration),
+    let mut controller = Controller::spawn_with_notifier(
+        LifecycleBackend::with_service_options(config.clone(), options, registration),
         PollSchedule::default(),
         move || wake.wake(),
-    ));
+    );
+    controller.attach_control(&config, &mut singleton)?;
+    let controller = Rc::new(controller);
     let mut state = DesktopState::new();
     let view = state
         .apply(Event::Preferences {
@@ -229,8 +239,12 @@ pub fn run(config: HieronymusConfig) -> Result<(), String> {
     }));
     presentation.borrow_mut().update();
     let menu_sender = sender.clone();
+    let quit_intent = controller.quit_intent_handle();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         if let Some(id) = MenuId::parse(event.id.as_ref()) {
+            if id == MenuId::Quit {
+                quit_intent.store(true, std::sync::atomic::Ordering::Release);
+            }
             menu_sender.submit(id);
         }
     }));
@@ -262,7 +276,9 @@ pub fn run(config: HieronymusConfig) -> Result<(), String> {
         },
     );
     // Only a fresh, initialized helper requests startup. Polling stays passive.
-    controller.submit(Action::Start)?;
+    if !std::env::args().any(|a| a == "--resume") {
+        controller.submit(Action::Start)?;
+    }
     gtk::main();
     MenuEvent::set_event_handler(None::<fn(MenuEvent)>);
     source.remove();

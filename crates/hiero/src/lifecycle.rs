@@ -629,6 +629,7 @@ pub enum LifecycleError {
 pub fn start(options: &ServiceOptions) -> Result<Vec<String>, LifecycleError> {
     let config = HieronymusConfig::new(&options.data_root);
     let operation = LifecycleOperation::acquire(&config)?;
+    crate::desktop::control::clear_quit(config.data_root())?;
     start_guarded(&config, options, &operation)
 }
 
@@ -877,6 +878,7 @@ pub fn restart(
     options: &ServiceOptions,
 ) -> Result<Vec<String>, LifecycleError> {
     let operation = LifecycleOperation::acquire(config)?;
+    crate::desktop::control::clear_quit(config.data_root())?;
     let mut lines = stop_guarded(config, options, &operation).map_err(|error| {
         LifecycleError::Service(format!(
             "{error}\nrestart stopped here so a second daemon is never started over a running \

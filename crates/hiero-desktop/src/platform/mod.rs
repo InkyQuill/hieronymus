@@ -50,3 +50,11 @@ pub fn run_with_service_options(
 
 #[cfg(any(target_os = "macos", test))]
 mod macos_pixels;
+
+#[cfg(target_os = "linux")]
+pub fn run_with_service_options(
+    config: HieronymusConfig,
+    options: hiero::service::ServiceOptions,
+) -> Result<(), String> {
+    linux::run_with_service_options(config, options)
+}

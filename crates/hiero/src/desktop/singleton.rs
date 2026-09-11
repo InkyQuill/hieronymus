@@ -7,6 +7,8 @@ use std::io;
 #[derive(Debug)]
 pub struct TraySingleton {
     file: File,
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) startup_gate: Option<File>,
 }
 #[derive(Debug)]
 pub enum SingletonOutcome {
@@ -39,7 +41,15 @@ impl TraySingleton {
             Err(error) => Err(error),
         }
     }
-    fn acquire_trusted(config: &HieronymusConfig, session: &str) -> io::Result<Self> {
+    pub(crate) fn session_path(config: &HieronymusConfig) -> io::Result<std::path::PathBuf> {
+        let root = config.data_root().canonicalize()?;
+        let mut hash = Sha256::new();
+        hash.update(root.as_os_str().as_encoded_bytes());
+        hash.update([0]);
+        hash.update(trusted_session()?.as_bytes());
+        Ok(root.join(format!(".tray-{:x}.lock", hash.finalize())))
+    }
+    pub(crate) fn acquire_trusted(config: &HieronymusConfig, session: &str) -> io::Result<Self> {
         std::fs::create_dir_all(config.data_root())?;
         let root = config.data_root().canonicalize()?;
         let mut hash = Sha256::new();
@@ -47,6 +57,15 @@ impl TraySingleton {
         hash.update([0]);
         hash.update(session.as_bytes());
         let path = root.join(format!(".tray-{:x}.lock", hash.finalize()));
+        let startup_gate = super::control::launch_gate(config).map_err(|e| {
+            if e.kind() == io::ErrorKind::WouldBlock {
+                io::Error::other(
+                    "Desktop installation/update is in progress; retry after completion",
+                )
+            } else {
+                e
+            }
+        })?;
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -54,9 +73,13 @@ impl TraySingleton {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let file = options.open(path)?;
+        let file = options.open(&path)?;
         match file.try_lock() {
-            Ok(()) => Ok(Self { file }),
+            Ok(()) => Ok(Self {
+                file,
+                path,
+                startup_gate: Some(startup_gate),
+            }),
             Err(TryLockError::WouldBlock) => Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "Desktop helper is already running in this session",
@@ -186,9 +209,10 @@ mod tests {
     fn caller_hints_cannot_split_trusted_session_ownership() {
         let directory = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(directory.path());
-        let _held =
+        let mut held =
             TraySingleton::acquire_from_lookup(&config, "invented-one", || Ok("trusted".into()))
                 .unwrap();
+        held.startup_gate.take();
         assert_eq!(
             TraySingleton::acquire_from_lookup(&config, "invented-two", || Ok("trusted".into()))
                 .unwrap_err()
@@ -206,7 +230,8 @@ mod tests {
     fn same_root_alias_and_session_share_lock_and_inode_survives_drop() {
         let directory = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(directory.path());
-        let held = TraySingleton::acquire_trusted(&config, "trusted-session").unwrap();
+        let mut held = TraySingleton::acquire_trusted(&config, "trusted-session").unwrap();
+        held.startup_gate.take();
         let alias = HieronymusConfig::new(directory.path().join("."));
         assert_eq!(
             TraySingleton::acquire_trusted(&alias, "trusted-session")
@@ -217,7 +242,7 @@ mod tests {
         let other = TraySingleton::acquire_trusted(&config, "other-session").unwrap();
         drop(other);
         drop(held);
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 3);
         TraySingleton::acquire_trusted(&alias, "trusted-session").unwrap();
     }
     #[cfg(target_os = "linux")]

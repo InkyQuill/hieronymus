@@ -220,7 +220,16 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
     for file in if cfg!(windows) {
         &["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"][..]
     } else {
-        &["hiero", "hiero-desktop"][..]
+        if cfg!(target_os = "macos") {
+            &[
+                "hiero",
+                "Hieronymus.app/Contents/MacOS/hiero-desktop",
+                "Hieronymus.app/Contents/Info.plist",
+                "Hieronymus.app/Contents/Resources/hieronymus.icns",
+            ][..]
+        } else {
+            &["hiero", "hiero-desktop"][..]
+        }
     } {
         let path = root.join(file);
         if path.try_exists().map_err(|e| e.to_string())? {

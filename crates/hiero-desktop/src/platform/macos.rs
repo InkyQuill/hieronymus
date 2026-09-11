@@ -37,7 +37,7 @@ thread_local! {
  static LAUNCHED:Cell<bool>=const{Cell::new(false)};
  static TEARDOWN:Cell<bool>=const{Cell::new(false)};
  static UI:RefCell<Option<Runtime>>=const{RefCell::new(None)};
- static INITIAL:RefCell<Option<(HieronymusConfig,ServiceOptions)>>=const{RefCell::new(None)};
+ static INITIAL:RefCell<Option<(HieronymusConfig,ServiceOptions,TraySingleton)>>=const{RefCell::new(None)};
  static FAILURE:RefCell<Option<String>>=const{RefCell::new(None)};
 }
 define_class!(
@@ -114,6 +114,7 @@ impl NativeMenu {
 type IconKey = ([u8; 3], [u8; 3], [u8; 3], u32);
 struct Runtime {
     controller: Option<Controller>,
+    _singleton: TraySingleton,
     native: NativeMenu,
     tray: TrayIcon,
     state: DesktopState,
@@ -124,7 +125,11 @@ struct Runtime {
     last: Option<IconKey>,
 }
 impl Runtime {
-    fn new(config: HieronymusConfig, options: ServiceOptions) -> Result<Self, String> {
+    fn new(
+        config: HieronymusConfig,
+        options: ServiceOptions,
+        mut singleton: TraySingleton,
+    ) -> Result<Self, String> {
         let native = NativeMenu::new()?;
         // This function is called only by a running main-loop timer after AppKit's
         // applicationDidFinishLaunching notification, never before NSApplication.run.
@@ -135,10 +140,11 @@ impl Runtime {
             .map_err(|_| "Could not create macOS status item")?;
         let registration =
             hiero::desktop::macos_registration::MacosRegistration::new(options.clone());
-        let controller = Controller::spawn_with_schedule(
-            LifecycleBackend::with_service_options(config, options, registration),
+        let mut controller = Controller::spawn_with_schedule(
+            LifecycleBackend::with_service_options(config.clone(), options, registration),
             PollSchedule::default(),
         );
+        controller.attach_control(&config, &mut singleton)?;
         let mut state = DesktopState::new();
         let view = state
             .apply(Event::Preferences {
@@ -148,6 +154,7 @@ impl Runtime {
             .clone();
         let mut runtime = Self {
             controller: Some(controller),
+            _singleton: singleton,
             native,
             tray,
             state,
@@ -158,7 +165,9 @@ impl Runtime {
             last: None,
         };
         runtime.refresh()?;
-        runtime.controller.as_ref().unwrap().submit(Action::Start)?;
+        if !std::env::args().any(|a| a == "--resume") {
+            runtime.controller.as_ref().unwrap().submit(Action::Start)?;
+        }
         Ok(runtime)
     }
     fn refresh(&mut self) -> Result<(), String> {
@@ -309,10 +318,10 @@ fn tick() {
     }
     let result = UI.with_borrow_mut(|ui| {
         if ui.is_none() {
-            let (config, options) = INITIAL
+            let (config, options, singleton) = INITIAL
                 .with_borrow_mut(Option::take)
                 .ok_or("Missing desktop initialization")?;
-            *ui = Some(Runtime::new(config, options)?);
+            *ui = Some(Runtime::new(config, options, singleton)?);
         }
         let ui = ui.as_mut().unwrap();
         ui.refresh()?;
@@ -342,7 +351,7 @@ pub fn run_with_service_options(
     config: HieronymusConfig,
     options: ServiceOptions,
 ) -> Result<(), String> {
-    let _singleton = match TraySingleton::acquire_or_existing(&config, "native")
+    let singleton = match TraySingleton::acquire_or_existing(&config, "native")
         .map_err(|_| "Could not own the macOS graphical session")?
     {
         SingletonOutcome::AlreadyRunning => return Ok(()),
@@ -353,14 +362,23 @@ pub fn run_with_service_options(
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let delegate: Retained<Delegate> = unsafe { msg_send![Delegate::alloc(mtm), init] };
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-    INITIAL.with_borrow_mut(|initial| *initial = Some((config, options)));
+    INITIAL.with_borrow_mut(|initial| *initial = Some((config, options, singleton)));
     MenuEvent::set_event_handler(Some(|event: MenuEvent| {
         let bit = match MenuId::parse(event.id.as_ref()) {
             Some(MenuId::OpenConsole) => 1,
             Some(MenuId::Start) => 2,
             Some(MenuId::Restart) => 4,
             Some(MenuId::Autostart) => 8,
-            Some(MenuId::Quit) => 16,
+            Some(MenuId::Quit) => {
+                UI.with_borrow(|ui| {
+                    if let Some(controller) = ui.as_ref().and_then(|r| r.controller.as_ref()) {
+                        controller
+                            .quit_intent_handle()
+                            .store(true, Ordering::Release);
+                    }
+                });
+                16
+            }
             _ => 0,
         };
         MENU.fetch_or(bit, Ordering::Release);

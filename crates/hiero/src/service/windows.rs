@@ -493,6 +493,50 @@ pub(crate) fn execute(
     action: TaskAction,
     tray: bool,
 ) -> Result<Value, String> {
+    let package = options.unit_dir.join(".hieronymus-package-pending.json");
+    match action {
+        TaskAction::PackageCapture => {
+            if package.exists() {
+                return Err("A prior package registration rollback is pending".into());
+            }
+            let before = [
+                execute(options, TaskAction::Inspect, false)?,
+                execute(options, TaskAction::Inspect, true)?,
+            ];
+            hieronymus::private_file::create_private_new(
+                &package,
+                &serde_json::to_vec(&before).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        TaskAction::PackageRestore => {
+            let before: [Option<TaskRecord>; 2] = serde_json::from_slice(
+                &hieronymus::private_file::read_private(&package).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            let scheduler = Scheduler::connect()?;
+            for (tray, before) in [false, true].into_iter().zip(before) {
+                let expected = TaskRecord::new(options, tray)?;
+                let after: Option<TaskRecord> =
+                    serde_json::from_value(execute(options, TaskAction::Inspect, tray)?)
+                        .map_err(|e| e.to_string())?;
+                rollback(
+                    &scheduler,
+                    &expected,
+                    &record_path(options, tray),
+                    &Journal { before, after },
+                )?;
+            }
+            std::fs::remove_file(package).map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        TaskAction::PackageCommit => {
+            std::fs::remove_file(package).map_err(|e| e.to_string())?;
+            return Ok(Value::Null);
+        }
+        _ => {}
+    }
     let expected = TaskRecord::new(options, tray)?;
     let scheduler = Scheduler::connect()?;
     let path = record_path(options, tray);
@@ -568,6 +612,9 @@ pub(crate) fn execute(
             after.enabled = false;
         }
         TaskAction::Remove | TaskAction::Inspect => {}
+        TaskAction::PackageCapture | TaskAction::PackageRestore | TaskAction::PackageCommit => {
+            unreachable!()
+        }
     }
     if matches!(action, TaskAction::Remove | TaskAction::Suppress) && before.is_none() {
         return Ok(Value::Null);

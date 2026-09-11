@@ -82,3 +82,11 @@ Provider/model switches cannot reuse incompatible generations or pending jobs.
 No model is pulled implicitly. Native Claude/Codex/Pi acceptance matrix testing
 remains a separate deferred qualification; a local Ollama smoke establishes
 integration, not model quality or host-matrix acceptance.
+
+### 2026-09-11 split desktop release packaging
+
+Version-2 exact-target metadata binds one platform archive and one canonical common model archive. The common model/tokenizer/notices are packaged once and are absent from every platform archive; their semantic pins are unchanged. A content-addressed acquisition cache is reverified on every reuse. Installation assembles both archives into a complete immutable per-version tree, including its own model files, before activation. Whole-version rollback therefore has no mutable dependency on the cache.
+
+New metadata is named `release-<triple>.json`; there is no split `release.json` alias. Legacy monolithic input remains supported, while 0.8.0 users bootstrap split-release support with the current standalone installer. Final receipts bind platform/model archive hashes, exact-target metadata and assembled asset hashes. Linux release symbol stripping changes only Hieronymus executables; pinned upstream runtime bytes remain unchanged. macOS bundle contents are bound by an outside manifest, avoiding sealed-resource self-reference. Current candidates are unsigned and unnotarized.
+
+Linux x86_64, Windows x86_64 and Apple Silicon retain their separately pinned native runtime contracts. Intel macOS fails packaging until the source-built runtime is promoted. Native Windows/macOS install/update/rollback and in-use-image acceptance remain external qualification; cross-compilation and portable transaction tests cannot replace it. See `docs/desktop-tray.md`, `docs/desktop-platforms.md`, and the final target qualification records.

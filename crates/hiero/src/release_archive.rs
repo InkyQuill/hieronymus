@@ -17,7 +17,7 @@ pub struct VerifiedSplitRelease {
     pub assets_sha256: String,
 }
 /// Open without following symlinks/reparse points and verify the same handle used later.
-fn regular_file(path: &Path, limit: u64) -> Result<File, String> {
+pub(crate) fn regular_file(path: &Path, limit: u64) -> Result<File, String> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -151,7 +151,11 @@ fn executable_names(target: &str) -> Vec<&'static str> {
     if target.contains("windows") {
         vec!["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"]
     } else {
-        vec!["hiero", "hiero-desktop"]
+        if target.contains("apple") {
+            vec!["hiero", "Hieronymus.app/Contents/MacOS/hiero-desktop"]
+        } else {
+            vec!["hiero", "hiero-desktop"]
+        }
     }
 }
 fn permitted(name: &str, directory: bool, policy: Policy, target: &str) -> Result<bool, String> {
@@ -174,9 +178,23 @@ fn permitted(name: &str, directory: bool, policy: Policy, target: &str) -> Resul
         Policy::Platform => {
             if directory {
                 ["lib", "licenses", "licenses/runtime"].contains(&name)
+                    || (target.contains("apple")
+                        && [
+                            "Hieronymus.app",
+                            "Hieronymus.app/Contents",
+                            "Hieronymus.app/Contents/MacOS",
+                            "Hieronymus.app/Contents/Resources",
+                        ]
+                        .contains(&name))
             } else {
                 name == "assets.json"
                     || executable_names(target).contains(&name)
+                    || (target.contains("apple")
+                        && [
+                            "Hieronymus.app/Contents/Info.plist",
+                            "Hieronymus.app/Contents/Resources/hieronymus.icns",
+                        ]
+                        .contains(&name))
                     || runtime_pins(target)?.contains_key(name)
             }
         }
@@ -482,6 +500,12 @@ fn verify_pair(
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            for name in crate::app::LINK_NAMES.iter().skip(1) {
+                if !root.join(name).exists() {
+                    std::os::unix::fs::symlink("hiero", root.join(name))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
             for name in executable_names(target) {
                 let path = root.join(name);
                 if path.exists() {
@@ -522,6 +546,22 @@ pub fn extract_split_directory(
             Err(error)
         }
     }
+}
+
+/// Copy only authenticated bytes, never a mutable pathname after verification.
+pub(crate) fn copy_verified(
+    source: &Path,
+    expected: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    let mut snapshot = verified_file(source, expected)?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|e| e.to_string())?;
+    std::io::copy(&mut snapshot.reader(), &mut output).map_err(|e| e.to_string())?;
+    output.sync_all().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -44,6 +44,9 @@ mod platform {
         use super::super::*;
         #[derive(Clone, Copy)]
         pub enum TaskAction {
+            PackageCapture,
+            PackageRestore,
+            PackageCommit,
             Inspect,
             Install,
             InstallDesktop,

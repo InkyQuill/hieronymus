@@ -110,6 +110,14 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
         None => AppLayout::detect_from_exe().map_err(UninstallError::Refused)?,
     };
     let layout = AppLayout::new(&root);
+    #[cfg(windows)]
+    if layout.root().try_exists()?
+        && std::env::current_exe()?
+            .canonicalize()?
+            .starts_with(layout.root().canonicalize()?)
+    {
+        return Err(UninstallError::Refused("Windows cannot remove the executing installed CLI. Run install-desktop.ps1 -Uninstall from the verified release directory; it uses an external bootstrap executable".into()));
+    }
     if layout.root().exists() {
         if config
             .data_root()
@@ -137,7 +145,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
             .unit_dir
             .clone()
             .unwrap_or_else(service::default_unit_dir),
-        binary: PathBuf::from("hiero"),
+        binary: layout.stable_link("hiero"),
         use_manager: true,
     };
     operation.register_unit(&service_options)?;
@@ -151,20 +159,56 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
             "the service registration directory is inside a directory being removed; move the registration outside before uninstalling so its coordination lock is preserved".into(),
         ));
     }
+    #[cfg(target_os = "linux")]
     let desktop_registration =
         crate::desktop::linux_registration::for_uninstall(&service_options, layout.root())
             .map_err(UninstallError::Refused)?;
+    #[cfg(windows)]
+    crate::platform::windows_broker::task(
+        &service_options,
+        crate::platform::windows_broker::TaskAction::Inspect,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    #[cfg(target_os = "macos")]
+    crate::platform::macos_broker::task(
+        &service_options,
+        crate::platform::macos_broker::TaskAction::Inspect,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    let _retirement = crate::desktop::control::Retirement::begin_owned(
+        &config,
+        true,
+        Some(&layout.stable_link("hiero")),
+    )
+    .map_err(|e| UninstallError::Refused(e.to_string()))?;
     lifecycle::stop_guarded(&config, &service_options, &operation)
         .map_err(|error| UninstallError::Refused(error.to_string()))?;
     // Keep daemon ownership throughout every offline removal. Neither held
     // coordination inode is ever unlinked, even with --delete-data.
     let _ownership = RootOwnership::acquire(&config, "uninstall")?;
+    #[cfg(target_os = "linux")]
     if let Some(registration) = desktop_registration {
         registration
             .uninstall_guarded(&operation)
             .map_err(UninstallError::Refused)?;
         removed.push("owned desktop login entry, launcher, icon and registration record".into());
     }
+    #[cfg(windows)]
+    crate::platform::windows_broker::task(
+        &service_options,
+        crate::platform::windows_broker::TaskAction::Remove,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    #[cfg(target_os = "macos")]
+    crate::platform::macos_broker::task(
+        &service_options,
+        crate::platform::macos_broker::TaskAction::Remove,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
     let lines = service::uninstall_guarded(&service_options, &operation)?;
     removed.extend(lines);
 
@@ -227,7 +271,10 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     if options.delete_data {
         for entry in std::fs::read_dir(config.data_root())? {
             let entry = entry?;
-            if entry.file_name() == OWNER_LOCK_FILE || entry.file_name() == LIFECYCLE_LOCK_FILE {
+            if entry.file_name() == OWNER_LOCK_FILE
+                || entry.file_name() == LIFECYCLE_LOCK_FILE
+                || entry.file_name().to_string_lossy().ends_with(".lock")
+            {
                 continue;
             }
             if entry.file_type()?.is_dir() {
@@ -365,7 +412,10 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         retained.sort();
-        assert_eq!(retained, [".lifecycle.lock", ".owner.lock"]);
+        assert_eq!(
+            retained,
+            [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
+        );
         assert!(
             report
                 .preserved

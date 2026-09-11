@@ -121,6 +121,25 @@ pub fn stage_remote_with_roots(
     destination: &Path,
     roots: TlsRoots,
 ) -> Result<PathBuf, String> {
+    stage_remote_cached_with_roots(
+        base_url,
+        channel,
+        destination,
+        &destination
+            .parent()
+            .ok_or("missing cache parent")?
+            .join("model-cache"),
+        roots,
+    )
+}
+
+pub fn stage_remote_cached_with_roots(
+    base_url: &str,
+    channel: &str,
+    destination: &Path,
+    cache: &Path,
+    roots: TlsRoots,
+) -> Result<PathBuf, String> {
     validate_base_url(base_url)?;
     validate_channel(channel)?;
     if destination.exists() {
@@ -151,7 +170,8 @@ pub fn stage_remote_with_roots(
             if manifest.channel != channel {
                 return Err("release metadata channel mismatch".into());
             }
-            for name in [&manifest.platform.archive, &manifest.model.archive] {
+            {
+                let name = &manifest.platform.archive;
                 transport
                     .download_to(
                         &format!("{base}/{name}"),
@@ -160,6 +180,24 @@ pub fn stage_remote_with_roots(
                     )
                     .map_err(|e| e.to_string())?;
             }
+            let cached = cache.join(format!("{}.tar.gz", manifest.model.sha256));
+            if !cached.try_exists().map_err(|e| e.to_string())? {
+                let download = temporary.path().join("model-download");
+                transport
+                    .download_to(
+                        &format!("{base}/{}", manifest.model.archive),
+                        &download,
+                        MAX_ARCHIVE,
+                    )
+                    .map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+                crate::release_archive::copy_verified(&download, &manifest.model.sha256, &cached)?;
+            }
+            crate::release_archive::copy_verified(
+                &cached,
+                &manifest.model.sha256,
+                &temporary.path().join(&manifest.model.archive),
+            )?;
             crate::release_archive::verify_split_directory(temporary.path(), TARGET_TRIPLE)?;
             std::fs::rename(temporary.path(), destination).map_err(|e| e.to_string())?;
             return Ok(destination.to_path_buf());
@@ -208,7 +246,13 @@ pub fn verify_directory(directory: &Path) -> Result<crate::update::ResolvedRelea
     if crate::update::sha256_file(&release.archive).map_err(|e| e.to_string())? != release.sha256 {
         return Err("release archive checksum mismatch".into());
     }
-    inspect_archive(&release.archive)?;
+    if !directory
+        .join(crate::release_manifest::metadata_name(TARGET_TRIPLE))
+        .try_exists()
+        .map_err(|e| e.to_string())?
+    {
+        inspect_archive(&release.archive)?;
+    }
     Ok(release)
 }
 
@@ -299,4 +343,50 @@ pub fn extract_archive(path: &Path, destination: &Path) -> Result<(), String> {
     archive.set_preserve_permissions(false);
     archive.set_preserve_mtime(false);
     archive.unpack(destination).map_err(|e| e.to_string())
+}
+
+/// Assemble an offline acquisition directory with a reverified content-addressed model cache.
+/// The returned temporary directory owns copies; installed versions never depend on the cache.
+pub fn stage_local_pair(directory: &Path, cache: &Path) -> Result<tempfile::TempDir, String> {
+    use std::io::Read;
+    let name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
+    let mut metadata = Vec::new();
+    crate::release_archive::regular_file(&directory.join(&name), 65536)?
+        .take(65537)
+        .read_to_end(&mut metadata)
+        .map_err(|e| e.to_string())?;
+    let manifest = crate::release_manifest::ReleaseV2::parse(&metadata, TARGET_TRIPLE)?;
+    std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    std::fs::write(temp.path().join(name), metadata).map_err(|e| e.to_string())?;
+    crate::release_archive::copy_verified(
+        &directory.join(&manifest.platform.archive),
+        &manifest.platform.sha256,
+        &temp.path().join(&manifest.platform.archive),
+    )?;
+    let cached = cache.join(format!("{}.tar.gz", manifest.model.sha256));
+    if !cached.try_exists().map_err(|e| e.to_string())? {
+        crate::release_archive::copy_verified(
+            &directory.join(&manifest.model.archive),
+            &manifest.model.sha256,
+            &cached,
+        )?;
+    }
+    // If supplied, a corrupt release member is an error even when the cache is good.
+    let supplied = directory.join(&manifest.model.archive);
+    if supplied.try_exists().map_err(|e| e.to_string())? {
+        crate::release_archive::copy_verified(
+            &supplied,
+            &manifest.model.sha256,
+            &temp.path().join("supplied-model"),
+        )?;
+        std::fs::remove_file(temp.path().join("supplied-model")).map_err(|e| e.to_string())?;
+    }
+    crate::release_archive::copy_verified(
+        &cached,
+        &manifest.model.sha256,
+        &temp.path().join(&manifest.model.archive),
+    )?;
+    crate::release_archive::verify_split_directory(temp.path(), TARGET_TRIPLE)?;
+    Ok(temp)
 }
