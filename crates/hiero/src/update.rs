@@ -617,6 +617,16 @@ fn run_update_guarded_impl(
         ));
     }
 
+    // The lifecycle and registration claims are already held. An apparently
+    // offline root can still have an undiscovered owner: refuse before helper
+    // retirement or native snapshot mutations, and retain this same guard until
+    // activation. A live daemon instead follows the existing snapshot/stop path.
+    let offline_owner = if daemon_was_running {
+        None
+    } else {
+        Some(RootOwnership::acquire(&config, "update").map_err(|e| refused(e.to_string()))?)
+    };
+
     // Snapshot the restore target before ANY mutation, and pick the service
     // manager. Every rollback below drives this one `&dyn ServiceManager`, so
     // tests can assert the exact call sequence.
@@ -702,7 +712,10 @@ fn run_update_guarded_impl(
     // root. Only the OS lock admits mutation, including a migration-pending
     // install. Hold it until handing the root to the managed candidate.
     let prepared = (|| -> Result<_, String> {
-        let ownership = RootOwnership::acquire(&config, "update").map_err(|e| e.to_string())?;
+        let ownership = match offline_owner {
+            Some(owner) => owner,
+            None => RootOwnership::acquire(&config, "update").map_err(|e| e.to_string())?,
+        };
         let migration_required = schema_gate(&config, &candidate).map_err(|e| e.to_string())?;
         Ok((ownership, migration_required))
     })();
@@ -2224,6 +2237,41 @@ mod tests {
         assert!(manager.calls().is_empty());
         assert!(all_links_point_at(&layout, "1.0.0").is_ok());
         assert!(!layout.versions_dir().join(".staging-9.9.0").exists());
+    }
+
+    #[test]
+    fn undiscovered_owner_refuses_before_retirement_or_manager_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
+        let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+        let daemon = crate::daemon::Daemon::start(&crate::daemon::DaemonOptions {
+            data_root: options.data_root.clone(),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        std::fs::remove_file(config.daemon_discovery_path()).unwrap();
+        assert!(!lifecycle::checked_probe(&config).unwrap().is_live());
+        let manager = FakeManager::default();
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+        assert!(
+            manager.calls().is_empty(),
+            "refusal called manager: {:?}",
+            manager.calls()
+        );
+        assert_eq!(error.exit_code(), 2);
+        assert!(error.to_string().contains("owns this data root"));
+        assert!(
+            !config
+                .data_root()
+                .join(crate::desktop::control::LAUNCH_GATE)
+                .exists()
+        );
+        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
+        assert!(!layout.version_dir("9.9.0").exists());
+        assert!(!layout.versions_dir().join(".staging-9.9.0").exists());
+        assert!(RootOwnership::acquire(&config, "test").is_err());
+        daemon.shutdown().unwrap();
     }
 
     #[test]

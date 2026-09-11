@@ -1,37 +1,19 @@
-name: pr
-
+# Build retained candidates only. A matching v* tag promotes these exact bytes later.
+name: desktop-candidate
 on:
-  pull_request:
-    branches: [main]
-
+  workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
-  group: pr-${{ github.ref }}
-  cancel-in-progress: true
-
+  group: desktop-candidate-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  backend:
-    runs-on: ubuntu-latest
-    env:
-      # LanceDB/DataFusion debug symbols are repeated in every integration binary.
-      # Keep full test coverage and debug assertions within hosted-runner resources.
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-      CARGO_INCREMENTAL: "0"
-      CARGO_BUILD_JOBS: "2"
-      RUST_TEST_THREADS: "2"
-    permissions:
-      contents: read
+  common-model:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends protobuf-compiler libprotobuf-dev
-          protoc --version
-          ./scripts/check-protobuf.sh
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: "1.4.0"
@@ -39,43 +21,17 @@ jobs:
         with:
           toolchain: "1.96.0"
           components: clippy,rustfmt
+      - run: bun scripts/check-rust-release.ts --allow-untagged
       - run: bun test scripts/*.test.ts
-      - run: bun install --cwd frontend --frozen-lockfile
-      - run: bun run --cwd frontend build
-      - name: Verify headless dependency boundary
-        run: bun scripts/check-headless-graph.ts
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --all-features --locked
-      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
-      - name: Report build resource usage
-        if: always()
-        run: |
-          df -h
-          free -h
-          du -sh target 2>/dev/null || true
-
-  frontend:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - run: bun scripts/prepare-common-model.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          persist-credentials: false
-
-      # oven-sh/setup-bun v2 pinned to commit SHA for reproducibility.
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: "1.4.0"
-
-      - run: bun install --cwd frontend --frozen-lockfile
-      - run: bun run --cwd frontend format
-      - run: bun run --cwd frontend typecheck
-      - run: bun run --cwd frontend test
-      - run: bun run --cwd frontend build
-
-  desktop:
+          name: common-model
+          path: target/common-model/
+          if-no-files-found: error
+          retention-days: 90
+  native:
+    needs: common-model
     strategy:
       fail-fast: false
       matrix:
@@ -98,8 +54,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_BUILD_JOBS: "2"
       RUST_TEST_THREADS: "2"
-    permissions:
-      contents: read
+      HIERONYMUS_RELEASE_CHANNEL: stable
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -146,3 +101,47 @@ jobs:
           $env:RUSTDOCFLAGS = "-D warnings"
           cargo doc -p hiero-desktop --no-deps --all-features --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: common-model
+          path: target/common-model
+      - name: Native Intel runtime candidate (never promotes its own pins)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          git clone --no-checkout https://github.com/microsoft/onnxruntime.git "$RUNNER_TEMP/onnx-source"
+          git -C "$RUNNER_TEMP/onnx-source" checkout da9b5e364c465de65c49d91e696cd6485270757f
+          bun scripts/build-intel-runtime.ts --source "$RUNNER_TEMP/onnx-source" --out "$RUNNER_TEMP/intel-runtime"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && matrix.target == 'x86_64-apple-darwin'
+        with:
+          name: intel-runtime-review
+          path: |
+            ${{ runner.temp }}/intel-runtime/*.json
+            ${{ runner.temp }}/intel-runtime/*.txt
+            ${{ runner.temp }}/intel-runtime/*.log
+            ${{ runner.temp }}/intel-runtime/*.tgz
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Stage compiled-authority runtime and canonical model
+        run: bun scripts/prepare-target-assets.ts "${{ matrix.target }}"
+      - name: Final stripped native package
+        run: bun scripts/release-build.ts --target "${{ matrix.target }}"
+      - name: Verify final pair and assemble disposable payload
+        env:
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: bun scripts/qualify-desktop-native.ts
+      - name: Record immutable candidate inventory
+        run: bun scripts/desktop-ci.ts inventory target/release-dist "${{ matrix.target }}" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ matrix.target }}
+          path: target/release-dist/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-log-${{ matrix.target }}
+          path: target/native-qualification.log
+          if-no-files-found: warn
+          retention-days: 90

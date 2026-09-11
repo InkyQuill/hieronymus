@@ -274,6 +274,7 @@ export async function packageDesktop(o: Options) {
       target.metadata,
       platformArtifactName(version, o.target),
       `evidence-${o.target}.json`,
+      `assets-${o.target}.json`,
       `install-desktop-${o.target}.${o.target.includes("windows") ? "ps1" : "sh"}`,
     ]);
     work = mkdtempSync(join(o.out, ".package-"));
@@ -457,6 +458,11 @@ export async function packageDesktop(o: Options) {
           ? `install-desktop-${o.target}.ps1`
           : `install-desktop-${o.target}.sh`,
       ),
+      constants.COPYFILE_EXCL,
+    );
+    copyFileSync(
+      join(payload, "assets.json"),
+      join(o.out, `assets-${o.target}.json`),
       constants.COPYFILE_EXCL,
     );
     writeFileSync(

@@ -1,0 +1,212 @@
+{
+  "version": "0.9.0",
+  "target": "x86_64-unknown-linux-gnu",
+  "signing": "unsigned; no signing identity or notarization supplied",
+  "metadata_sha256": "fb8e0681758b6b157865251d68b48e7e2c97742a01a1b83cee5c2e616df5aa75",
+  "platform_sha256": "a889b5a31f01a0757e64f2eda96a8cb0d31989d610e681c5047413056817bdd4",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "assets_sha256": "0b6dadb9ef315b8a2d980dac5d4820be1812ac267e9bbc3a38da5aa9de7e5e41",
+  "symbols": [
+    {
+      "binary": "hiero",
+      "original_sha256": "b681a36b181f9d32b946eb3a508cdc832dad300a44bd03660ad8ca09db6f987d",
+      "debug": "hiero-b681a36b181f9d32b946eb3a508cdc832dad300a44bd03660ad8ca09db6f987d.debug",
+      "before": 280823064,
+      "after": 223518824,
+      "debug_sha256": "d674b4451f3b4dad90776b41c5a015432af6dd5c31c9817560122a78d365d05a",
+      "debug_bytes": 41846000,
+      "build_id": "f9727ff58228149804cf3414a1475c572bb8bbf5"
+    },
+    {
+      "binary": "hiero-desktop",
+      "original_sha256": "f7e1dc39eb5a03b8cb9b626cd7ed8fe7b644992fde91a10585c0147ef89139b6",
+      "debug": "hiero-desktop-f7e1dc39eb5a03b8cb9b626cd7ed8fe7b644992fde91a10585c0147ef89139b6.debug",
+      "before": 21295008,
+      "after": 13012840,
+      "debug_sha256": "7f92880b11ba90f0b3339558f506e99d0a46ce205868ad840d9a83a52e21d9fe",
+      "debug_bytes": 4912464,
+      "build_id": "3e6a4d887d087171fafbc528f19958f1ebd7af3d"
+    }
+  ],
+  "source_base": "077732f7b7a1b58239de9c1237f8ee64cf630afd",
+  "source_inputs_sha256": "241cd8ff2df19a78d6539e66e0d23090c75dc355f763c3ef6eb364f58d2b9783",
+  "source_inputs_recipe": "Partial build/source inventory, not toolchain/dependency closure: SHA256 of sorted relative path + NUL + file SHA256 + LF. Includes Cargo.toml, Cargo.lock, rust-toolchain.toml, qualification/prerequisites.json and regular files under crates, assets, frontend/dist, scripts, .github/workflows. Final local task edits precede commit; no candidate-run provenance or publication authority is claimed. Model/runtime are separately bound.",
+  "build_command": "bash qualification/.artifacts/desktop-task14/build-final.sh",
+  "qualification_command": "bash qualification/.artifacts/desktop-task14/qualify-final.sh",
+  "rust": "1.96.0",
+  "bun": "1.4.0",
+  "profile": "Cargo release defaults opt3/no-LTO/16 codegen units/unwind; private copied executable objcopy --only-keep-debug then strip --strip-unneeded; upstream runtime unchanged",
+  "native_host": {
+    "system": "Linux",
+    "release": "7.2.3-1-cachyos",
+    "version": "#1 SMP PREEMPT_DYNAMIC Sun, 06 Sep 2026 22:01:30 +0000",
+    "machine": "x86_64"
+  },
+  "archive_bytes": {
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": 97766207,
+    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": 435109879
+  },
+  "packaged_members": {
+    "hiero": {
+      "bytes": 223518824,
+      "sha256": "96565bdcd0a0a8ede2159258224ce1d02be45722d9d4ffe6ba68a3fd88dfb871"
+    },
+    "hiero-desktop": {
+      "bytes": 13012840,
+      "sha256": "aaaaeca9b6eb662a6430a274952eef477f43cb81d86ea2ce1d3e6d1126bd9204"
+    },
+    "assets.json": {
+      "bytes": 1190,
+      "sha256": "0b6dadb9ef315b8a2d980dac5d4820be1812ac267e9bbc3a38da5aa9de7e5e41"
+    },
+    "lib/libonnxruntime.so": {
+      "bytes": 24268848,
+      "sha256": "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab"
+    }
+  },
+  "logs": {
+    "qualification/.artifacts/desktop-task14/logs/actionlint.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "qualification/.artifacts/desktop-task14/logs/cargo-test-first-failure.log": {
+      "sha256": "32e971b2196a587e9973468018ffeacfee587e696cf04f0c80c57dd05c48a9ae",
+      "bytes": 70821
+    },
+    "qualification/.artifacts/desktop-task14/logs/cargo-test-second-failure.log": {
+      "sha256": "3766414461d24ca4b2e943cdbc93c833cd9c80d0df22cf1c5cd9d9409151126d",
+      "bytes": 76591
+    },
+    "qualification/.artifacts/desktop-task14/logs/cargo-test.log": {
+      "sha256": "6124b1a9e06336f98a29e319672bda53a8a9f36b72ef6d7b8401ed3e0378520a",
+      "bytes": 130003
+    },
+    "qualification/.artifacts/desktop-task14/logs/clippy.log": {
+      "sha256": "7d3f3b016224763100fff4c39d84e19531ac470e33c46df5c97e14aead786fe4",
+      "bytes": 167
+    },
+    "qualification/.artifacts/desktop-task14/logs/evidence-green.log": {
+      "sha256": "30251147754547df947e6d7a596c2b010f6ed52d0cb3489518109b518ef59424",
+      "bytes": 613
+    },
+    "qualification/.artifacts/desktop-task14/logs/evidence-red.log": {
+      "sha256": "a50928d2973f2fe4758711b9e3bcb5a4f77ab87ef8b64c92395a379a198e49e5",
+      "bytes": 14074
+    },
+    "qualification/.artifacts/desktop-task14/logs/final-assembly.log": {
+      "sha256": "a564d13080192d68422cdafc24579ae07aeec90049f4454731cfdd9bedad8d09",
+      "bytes": 56
+    },
+    "qualification/.artifacts/desktop-task14/logs/final-build.log": {
+      "sha256": "524752b9bc1623bc0fb297517117f1ba5053e820a4cbf4f1c87535f2037a62c9",
+      "bytes": 1559
+    },
+    "qualification/.artifacts/desktop-task14/logs/final-cli-ldd.log": {
+      "sha256": "2fb6ba7d01dfa094761f2e995747013e0267581117a9aca22f1c05e41ffa6c5d",
+      "bytes": 293
+    },
+    "qualification/.artifacts/desktop-task14/logs/final-helper-ldd.log": {
+      "sha256": "a6f40d87b90be4003c9c3fed2ad8f643d663b48ebdca927a758d85f2d4a5bcd9",
+      "bytes": 4735
+    },
+    "qualification/.artifacts/desktop-task14/logs/final-release-check.log": {
+      "sha256": "4744f275e87b3eaae46a6d6b1b310a7deb9431e92e640e35a873a368b54781f7",
+      "bytes": 187
+    },
+    "qualification/.artifacts/desktop-task14/logs/fmt.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "qualification/.artifacts/desktop-task14/logs/frontend-build.log": {
+      "sha256": "20307816a51142032dee2a3e6efc3678e7a24e7448fc71f52ba28827a72a6bab",
+      "bytes": 534
+    },
+    "qualification/.artifacts/desktop-task14/logs/frontend-test.log": {
+      "sha256": "d575f44de4202471c961f393f1cb422ee80aac28fb363884bec983225c2a88c6",
+      "bytes": 278
+    },
+    "qualification/.artifacts/desktop-task14/logs/frontend-typecheck.log": {
+      "sha256": "7f96aaabe6df7a354a3e4d7514375171e219ae2de91268b52d91875e0a026aa4",
+      "bytes": 70
+    },
+    "qualification/.artifacts/desktop-task14/logs/headless-graph.log": {
+      "sha256": "57d4a24d18ad4115b1a661df789220669e2d28c2fda796b0cb55c3d5181a64e5",
+      "bytes": 57
+    },
+    "qualification/.artifacts/desktop-task14/logs/helper-clippy.log": {
+      "sha256": "02b8d2e001884d22cec83645f8ed9d973c5992c2153b20456dd28ba358a05d8f",
+      "bytes": 288
+    },
+    "qualification/.artifacts/desktop-task14/logs/helper-rustdoc.log": {
+      "sha256": "05cdaefb038829db0c27f81ac47f21791a5af816acdaa1a59df553269f312364",
+      "bytes": 511
+    },
+    "qualification/.artifacts/desktop-task14/logs/helper-test.log": {
+      "sha256": "5c66dddcdc95c210141229911c961e8f8bd30d39df3afc16a8b120d7484b6a6a",
+      "bytes": 3468
+    },
+    "qualification/.artifacts/desktop-task14/logs/incomplete-matrix.log": {
+      "sha256": "e45a36d1f520e67010da10c904d8af597e649d90ffa164303805aca1c9f8f2e2",
+      "bytes": 684
+    },
+    "qualification/.artifacts/desktop-task14/logs/native-final.log": {
+      "sha256": "5c446721c2fe7be17050001d86da07e4b49dcc4ef4c29aafe506d5a263fb4294",
+      "bytes": 375
+    },
+    "qualification/.artifacts/desktop-task14/logs/native-missing-fixture.log": {
+      "sha256": "17b81dd555f966978e31454d8ba37ba9f6946deb0401569435269064f09f7533",
+      "bytes": 907
+    },
+    "qualification/.artifacts/desktop-task14/logs/offline-final.log": {
+      "sha256": "1412604e3d988cfffa04778283b44065653d1e36806f7ea721195d5718e61cb9",
+      "bytes": 541
+    },
+    "qualification/.artifacts/desktop-task14/logs/owner-green.log": {
+      "sha256": "796dec2ac27ca3e6e7047af2e80dc1ce12383c82a5ef518e5e6ea3e6f38292af",
+      "bytes": 2542
+    },
+    "qualification/.artifacts/desktop-task14/logs/owner-red.log": {
+      "sha256": "63442ad5823dcf94fdada28c10d96d18a39fc610fdc95c4d12f3d4436b1d8e1f",
+      "bytes": 1002
+    },
+    "qualification/.artifacts/desktop-task14/logs/rustdoc.log": {
+      "sha256": "b07352b72e8b37378aa0bf1cbf0e3904cf7e1ec4908a98160cd78ddf809e81fa",
+      "bytes": 598
+    },
+    "qualification/.artifacts/desktop-task14/logs/scripts-first.log": {
+      "sha256": "3a5668a2b99bb7b777d72a180579aaedfcc19f22bb7a72c8e795d32be96c4ce2",
+      "bytes": 6116
+    },
+    "qualification/.artifacts/desktop-task14/logs/scripts.log": {
+      "sha256": "59deae6820aaacac60bc7262c54f479005745dd6b608a90b5b1407dd8e9a63c0",
+      "bytes": 6329
+    },
+    "qualification/.artifacts/desktop-task14/logs/uninstall-cli-green.log": {
+      "sha256": "67f412717af99ed4b6d76c983a726e7247ced20e725dc616a9d447ffd995c505",
+      "bytes": 672
+    },
+    "qualification/.artifacts/desktop-task14/logs/update-flow-fixture.log": {
+      "sha256": "f764d64ba3ca3f3bb50b4df3b2635f956614bb1030bd2c242aa5b85af38eabc2",
+      "bytes": 3260
+    },
+    "qualification/.artifacts/desktop-task14/logs/update-flow-green.log": {
+      "sha256": "d19351f6aca58fa2cf8f9a0f7235bf0ef702929f7df8cf1c87dafa4547daff5a",
+      "bytes": 1999
+    }
+  },
+  "qualification": {
+    "native_final_payload": "passed real pinned inference, authenticated MCP status and authenticated shutdown; no native manager",
+    "offline_install_upgrade_rollback_uninstall": "passed final split archive with genuine complete published0.8.0 baseline; custom registration definition only; settings preserved",
+    "interactive_linux": "unavailable for final candidate; earlier private watcher fixture is historical",
+    "windows_macos_native": "unavailable locally; source workflows are not execution",
+    "intel_runtime": "source-build-required; unpromoted; release blocked",
+    "signing": "unsigned-waiver",
+    "promotion": "blocked: incomplete four-target/native evidence; local artifact has no successful candidate-run provenance"
+  },
+  "platform_has_model_payload": false,
+  "disposable_fixture": {
+    "original_path": "/tmp/hiero-real-desktop-TRkjOm",
+    "durable_copy": "qualification/.artifacts/desktop-task14/disposable-offline",
+    "note": "Complete retained test tree copied after successful test; historical absolute paths inside fixture files refer to original disposable location. No process is left running. This snapshot is evidence, not an active installation."
+  }
+}

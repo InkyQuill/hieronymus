@@ -162,9 +162,9 @@ itself.
    about 0.12% of the published executable size, and does not explain its bulk.
 
 
-## Unpublished 0.9.0 desktop candidate — 2026-09-11
+## Historical Task 12 unpublished 0.9.0 candidate — 2026-09-11
 
-The final Linux package receipt is [desktop-task12-linux-receipt.json](desktop-task12-linux-receipt.json). It binds the actual rebuilt binaries, platform archive, shared model and final installed assets. The real disposable test passed offline install, genuine stopped 0.8.0→0.9.0 upgrade, complete-pair rollback and uninstall preservation. The stripped installed CLI also ran its actual semantic lane and completed authenticated shutdown. Native managed active-update and live tray replacement were not qualified here.
+The historical Task 12 Linux package receipt is [desktop-task12-linux-receipt.json](desktop-task12-linux-receipt.json). It binds the actual rebuilt binaries, platform archive, shared model and final installed assets. The real disposable test passed offline install, genuine stopped 0.8.0→0.9.0 upgrade, complete-pair rollback and uninstall preservation. The stripped installed CLI also ran its actual semantic lane and completed authenticated shutdown. Native managed active-update and live tray replacement were not qualified here.
 
 | Executable | Before strip | Shipped | Saving |
 |---|---:|---:|---:|
@@ -172,3 +172,33 @@ The final Linux package receipt is [desktop-task12-linux-receipt.json](desktop-t
 | hiero-desktop | 21,291,504 B | 13,009,480 B | 7.90 MiB (38.90%) |
 
 The platform archive is 97,753,102 bytes (93.22 MiB); the one unchanged model archive is 435,109,879 bytes (414.95 MiB). No model payload appears in the platform archive. The mandatory upstream runtime is unchanged at its pinned digest. Linux keeps separate diagnostic symbol files keyed by the original executable digest. The release profile remains Cargo defaults; this task measured native stripping, not LTO or panic-mode changes. The CLI dynamic dependencies are libc, libm, libgcc and the ELF loader; native GTK dependencies remain in the helper.
+
+
+## Final Task 14 local Linux candidate — 2026-09-11
+
+[The final receipt](desktop-task14-linux-receipt.json) replaces Task 12 bytes for
+current qualification. This deliberate rebuild includes the Task 13 embedded
+console and Task 14 ownership correction. It is an unpublished `dev` candidate;
+there is no remote candidate-run or release-promotion claim.
+
+| Executable | Before strip | Shipped | Saving |
+|---|---:|---:|---:|
+| hiero | 280,823,064 B | 223,518,824 B | 54.65 MiB (20.41%) |
+| hiero-desktop | 21,295,008 B | 13,012,840 B | 7.90 MiB (38.89%) |
+
+The final platform archive is **97,766,207 bytes (93.24 MiB)**. The canonical model
+archive remains **435,109,879 bytes (414.95 MiB)** with SHA256
+`4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0`.
+The platform archive contains no model payload. The runtime remains pinned and
+unchanged. Separate diagnostic files are 41,846,000 bytes for the CLI and
+4,912,464 bytes for the helper; the receipt binds their SHA256 and executable ELF
+Build IDs. These diagnostic bytes are outside the installed platform archive.
+Cargo release defaults remain unchanged; no LTO or panic-mode saving is claimed.
+
+The final CLI has only libc/libm/libgcc/loader dynamic dependencies; GTK remains
+in the helper. The assembled stripped CLI passed real pinned inference and
+authenticated MCP/shutdown. The actual final split archive also passed disposable
+offline installation, genuine stopped 0.8.0→0.9.0 upgrade, rollback and uninstall.
+Native manager and interactive panel/session checks remain unavailable. The
+published 0.8.0 measurement above, the historical Task 12 candidate, this final
+candidate and separate diagnostic files are distinct measurements.
