@@ -5,6 +5,7 @@ pub mod linux_entry;
 pub mod linux_registration;
 mod settings;
 mod singleton;
+pub(crate) use singleton::is_session_lock_name;
 mod state;
 
 pub use controller::{Controller, DesktopBackend, LifecycleBackend, PollSchedule};

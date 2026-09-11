@@ -42,7 +42,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
 }
 
 function parseProvider(value: unknown): ProviderReadiness | null {
@@ -52,9 +54,11 @@ function parseProvider(value: unknown): ProviderReadiness | null {
     typeof value.model !== "string" ||
     !Number.isSafeInteger(value.revision) ||
     (value.revision as number) < 0 ||
-    !(value.condition === "untested" ||
+    !(
+      value.condition === "untested" ||
       value.condition === "healthy" ||
-      value.condition === "failed") ||
+      value.condition === "failed"
+    ) ||
     !(value.observed_at === null || typeof value.observed_at === "string") ||
     !(value.reason === null || typeof value.reason === "string") ||
     !(value.capabilities === undefined || isStringArray(value.capabilities))
@@ -75,9 +79,11 @@ function parseProvider(value: unknown): ProviderReadiness | null {
 function parseSummary(value: unknown): ReadinessSummary | null {
   if (!isRecord(value) || "schema_version" in value) return null;
   if (
-    !(value.level === "ready" ||
+    !(
+      value.level === "ready" ||
       value.level === "degraded" ||
-      value.level === "starting") ||
+      value.level === "starting"
+    ) ||
     !isStringArray(value.reasons) ||
     !Array.isArray(value.providers)
   ) {

@@ -289,6 +289,9 @@ pub(crate) fn validate_unit_root_guarded(
     validate_unit_root(options)
 }
 
+#[cfg(any(windows, target_os = "macos", test))]
+mod package_preflight;
+
 pub mod macos_agent;
 
 #[cfg(target_os = "macos")]

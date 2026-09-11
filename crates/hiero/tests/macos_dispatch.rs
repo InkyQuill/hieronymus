@@ -21,6 +21,8 @@ use std::{
 
 #[path = "../src/service/macos.rs"]
 mod backend;
+#[path = "../src/service/package_preflight.rs"]
+mod package_preflight;
 mod lifecycle {
     use super::*;
     pub fn checked_probe(_: &HieronymusConfig) -> Result<(), String> {
@@ -358,4 +360,98 @@ fn package_preflight_refuses_loaded_idle_headless_before_mutation() {
 #[test]
 fn package_failure_defers_active_headless_reload_to_explicit_restart() {
     package_rollback(macos_agent::DaemonMode::Headless, true);
+}
+
+#[test]
+fn package_capture_rejects_inner_and_composite_journals_even_when_definitions_absent() {
+    for (composite, present) in [(false, false), (false, true), (true, false)] {
+        let temp = tempfile::tempdir().unwrap();
+        let options = ServiceOptions {
+            data_root: temp.path().join("root"),
+            unit_dir: temp.path().join("units"),
+            binary: temp.path().join("hiero"),
+            use_manager: true,
+        };
+        std::fs::create_dir_all(&options.data_root).unwrap();
+        std::fs::create_dir_all(&options.unit_dir).unwrap();
+        let path = options.unit_dir.join(format!(
+            "{}.plist",
+            macos_agent::label(&options.data_root, false)
+        ));
+        let before = macos_agent::render_mode(
+            &options.binary,
+            &options.data_root,
+            &options.unit_dir,
+            false,
+            macos_agent::DaemonMode::Desktop,
+        )
+        .unwrap();
+        if present {
+            std::fs::write(&path, &before).unwrap();
+        }
+        let snapshot = serde_json::json!({"definition":before,"disabled":false,"loaded":false});
+        let (pending, journal) = if composite {
+            (
+                path.with_extension("desktop-pending.json"),
+                serde_json::json!({"daemon":{"definition":null,"disabled":false,"loaded":false},"tray":{"definition":null,"disabled":false,"loaded":false}}),
+            )
+        } else {
+            (
+                path.with_extension("pending.json"),
+                serde_json::json!({"before":snapshot,"after":null}),
+            )
+        };
+        let bytes = serde_json::to_vec(&journal).unwrap();
+        std::fs::write(&pending, &bytes).unwrap();
+        NATIVE.with_borrow_mut(|native| {
+            *native = Some(FakeLaunchd {
+                options: options.clone(),
+                loaded: false,
+                disabled: false,
+                bootstrapped_modes: Vec::new(),
+                kickstarts: 0,
+                force_idle: false,
+            })
+        });
+        backend::COMMAND_OVERRIDE.set(Some(fake_command));
+        let _fixture = CommandFixture;
+        // Passive inspection may return null, but must leave recovery untouched.
+        backend::execute(&options, TaskAction::Inspect, false).unwrap();
+        assert_eq!(std::fs::read(&pending).unwrap(), bytes);
+        assert_eq!(path.exists(), present);
+        assert!(
+            backend::execute(&options, TaskAction::PackageCapture, true)
+                .unwrap_err()
+                .contains("recovery is pending")
+        );
+        assert!(!path.with_extension("package-pending.json").exists());
+        assert_eq!(std::fs::read(&pending).unwrap(), bytes);
+        assert_eq!(path.exists(), present);
+        NATIVE.with_borrow(|native| {
+            let native = native.as_ref().unwrap();
+            assert!(!native.loaded && !native.disabled);
+            assert!(native.bootstrapped_modes.is_empty());
+            assert_eq!(native.kickstarts, 0);
+        });
+        // Normal explicit recovery settles first, then capture binds its exact state.
+        backend::execute(&options, TaskAction::Reconcile, false).unwrap();
+        assert!(!pending.exists());
+        let recovered = if composite {
+            None
+        } else {
+            Some(before.as_str())
+        };
+        assert_eq!(std::fs::read_to_string(&path).ok().as_deref(), recovered);
+        backend::execute(&options, TaskAction::PackageCapture, true).unwrap();
+        let captured: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(path.with_extension("package-pending.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            captured["daemon"]["definition"],
+            serde_json::to_value(recovered).unwrap()
+        );
+        assert_eq!(captured["daemon"]["loaded"], false);
+        backend::execute(&options, TaskAction::PackageCommit, true).unwrap();
+    }
 }

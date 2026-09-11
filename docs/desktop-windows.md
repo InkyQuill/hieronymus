@@ -76,3 +76,18 @@ After Quit, remove fixture registrations with the same exact paths before deleti
 Native inference, whole-package minimum OS, final signing, terminal behavior, actual scheduler normalization and native host acceptance remain pending. No public release or real registration modification was performed on the Linux implementation host.
 
 Primary API references: [task registration and interactive principals](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertaskdefinition), [notification icon ownership/version/events](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw), [scheduler recovery interval](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-restartinterval), [alpha-blended native icons](https://learn.microsoft.com/en-us/windows/win32/menurc/using-cursors#creating-an-alpha-blended-cursor).
+
+Package capture checks both daemon and tray registration journal paths while the
+native continuation gates remain held. A pending journal blocks the package
+snapshot even if scheduler readback matches its before/after state or absence.
+Normal authenticated registration recovery remains separate from passive inspection.
+The native unit fixture `native_package_capture_refuses_pending_before_after_and_absence_then_accepts_recovery`
+checks these states and successful capture after recovery; it has not run on the Linux host.
+
+Controller wakes are also latched in the existing UI-thread pending flags. Nested
+menu dispatch consumes the posted message but leaves delivery pending, so the owner
+drains before blocking again; callbacks neither repost that wake nor do controller work.
+Portable helper tests cover this latch. On a disposable interactive Windows desktop, run
+`cargo test -p hiero-desktop --locked native_modal_menu_drains_retirement_after_only_wake_is_consumed -- --ignored`
+to verify retirement delivery after native modal dismissal without another event.
+That authored native fixture remains unexecuted locally.

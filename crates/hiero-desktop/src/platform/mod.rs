@@ -58,3 +58,6 @@ pub fn run_with_service_options(
 ) -> Result<(), String> {
     linux::run_with_service_options(config, options)
 }
+
+#[cfg(any(target_os = "macos", test))]
+mod shutdown_owner;

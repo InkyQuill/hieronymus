@@ -747,11 +747,13 @@ pub(crate) fn execute(
             if package.exists() {
                 return Err("A prior package registration rollback is pending".into());
             }
+            super::package_preflight::require_settled([
+                path(options, false).with_extension("pending.json"),
+                path(options, true).with_extension("pending.json"),
+                path(options, false).with_extension("desktop-pending.json"),
+            ])?;
             for tray in [false, true] {
-                let state = execute(options, TaskAction::Inspect, tray)?;
-                if state.get("pending").and_then(Value::as_bool) == Some(true) {
-                    return Err("Native registration recovery is pending; complete it before package replacement".into());
-                }
+                execute(options, TaskAction::Inspect, tray)?;
             }
             let daemon = Agent::new(options, false)?;
             if daemon.loaded()?.is_some_and(|loaded| loaded.pid.is_none())

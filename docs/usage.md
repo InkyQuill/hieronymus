@@ -59,8 +59,12 @@ export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memo
 integration entries; it preserves databases and configuration by default. Add
 `--delete-data` only to clear user contents from the explicitly configured data
 root, including models, backups and audit data. A small coordination-only directory
-containing `.owner.lock` and `.lifecycle.lock` remains so concurrent processes
-continue sharing the same lock files. Check `--data-root` or `HIERONYMUS_DATA_ROOT` before
+retains only recognized coordination files: `.owner.lock`, `.lifecycle.lock`,
+`.desktop-launch.lock`, `dream-cycle.lock`, `.windows-native.lock`,
+`.windows-browser.lock`, `.macos-native.lock`, `.macos-browser.lock`, and session
+locks named `.tray-<64 lowercase hexadecimal digits>.lock`. Their persistent inodes
+keep concurrent processes on the same locks; unrelated `.lock` files and directories
+are deleted. Check `--data-root` or `HIERONYMUS_DATA_ROOT` before
 using that option. A translation workspace should remain outside the application
 data root; owned-path cleanup does not remove unrelated book directories.
 

@@ -253,7 +253,7 @@ impl Retirement {
         for entry in std::fs::read_dir(&root)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.starts_with(".tray-") || !name.ends_with(".lock") {
+            if !super::singleton::is_session_lock_name(&name) {
                 continue;
             }
             match lock(&entry.path()) {
@@ -486,7 +486,11 @@ mod tests {
     fn unknown_live_session_without_authenticated_record_refuses_before_replacement() {
         let root = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(root.path());
-        let held = lock(&root.path().join(".tray-unknown.lock")).unwrap();
+        let held =
+            lock(&root.path().join(
+                ".tray-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.lock",
+            ))
+            .unwrap();
         assert!(Retirement::begin(&config).is_err());
         drop(held);
     }
@@ -573,9 +577,19 @@ mod tests {
     fn unlocked_stale_control_record_is_not_retirement_completion() {
         let root = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(root.path());
-        drop(lock(&root.path().join(".tray-stale.lock")).unwrap());
-        private_file::create_private_new(&root.path().join(".tray-stale.json"), b"malformed")
-            .unwrap();
+        drop(
+            lock(&root.path().join(
+                ".tray-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.lock",
+            ))
+            .unwrap(),
+        );
+        private_file::create_private_new(
+            &root.path().join(
+                ".tray-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json",
+            ),
+            b"malformed",
+        )
+        .unwrap();
         assert!(Retirement::begin(&config).is_err());
     }
     #[test]

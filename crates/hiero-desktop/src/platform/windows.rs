@@ -44,6 +44,10 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     // No COM, settings, browser or daemon calls in native callbacks.
+    if message == WAKE {
+        PENDING.with(PendingEvents::controller_wake);
+        return 0;
+    }
     let event = if TASKBAR_CREATED.get().is_some_and(|id| *id == message) {
         Some(EXPLORER)
     } else {
@@ -495,9 +499,12 @@ pub fn run_with_service_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
     const FINISH_MODAL_TEST: u32 = WM_APP + 40;
     thread_local! {
+        static RETIREMENT_TEST: Cell<bool> = const { Cell::new(false) };
+        static DELIVERY: RefCell<VecDeque<Event>> = const { RefCell::new(VecDeque::new()) };
         static CONFIRM_SESSION: Cell<bool> = const { Cell::new(false) };
         static INSIDE_MODAL: Cell<bool> = const { Cell::new(false) };
         static SEEN_EVENTS: Cell<u8> = const { Cell::new(0) };
@@ -510,6 +517,16 @@ mod tests {
     ) -> LRESULT {
         if message == WM_ENTERMENULOOP {
             INSIDE_MODAL.set(true);
+            if RETIREMENT_TEST.get() {
+                // Same event/wake delivery contract as the worker notifier, while
+                // the real nested native dispatcher owns posted messages.
+                DELIVERY.with_borrow_mut(|events| events.push_back(Event::RetiredForUpdate));
+                unsafe {
+                    PostMessageW(window, WAKE, 0, 0);
+                    PostMessageW(window, FINISH_MODAL_TEST, 0, 0);
+                }
+                return 0;
+            }
             // These queued messages run through the real TrackPopupMenu dispatcher.
             unsafe {
                 PostMessageW(window, *TASKBAR_CREATED.get().unwrap(), 0, 0);
@@ -529,8 +546,10 @@ mod tests {
         }
         if message == FINISH_MODAL_TEST {
             // Consuming wakes via the window procedure cannot consume the event copy.
-            unsafe {
-                SendMessageW(window, WAKE, 0, 0);
+            if !RETIREMENT_TEST.get() {
+                unsafe {
+                    SendMessageW(window, WAKE, 0, 0);
+                }
             }
             SEEN_EVENTS.set(PENDING.with(PendingEvents::pending));
             unsafe {
@@ -543,10 +562,23 @@ mod tests {
     #[test]
     #[ignore = "requires an interactive disposable Windows desktop; opens a fixture popup"]
     fn native_modal_menu_retains_explorer_theme_and_confirmed_session_end() {
+        run_modal_regression(false);
+    }
+    #[test]
+    #[ignore = "requires an interactive disposable Windows desktop; opens a fixture popup"]
+    fn native_modal_menu_drains_retirement_after_only_wake_is_consumed() {
+        run_modal_regression(true);
+    }
+    fn run_modal_regression(retirement: bool) {
+        RETIREMENT_TEST.set(retirement);
         unsafe {
             TASKBAR_CREATED.get_or_init(|| RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()));
             assert_ne!(*TASKBAR_CREATED.get().unwrap(), 0);
-            let name = wide("HieronymusModalRegressionWindow");
+            let name = wide(if retirement {
+                "HieronymusModalRetirementWindow"
+            } else {
+                "HieronymusModalRegressionWindow"
+            });
             let instance = GetModuleHandleW(ptr::null());
             let mut class: WNDCLASSW = zeroed();
             class.lpfnWndProc = Some(modal_test_proc);
@@ -596,11 +628,39 @@ mod tests {
                     INSIDE_MODAL.get(),
                     "the native modal loop must actually run"
                 );
+                if retirement {
+                    // The nested dispatcher consumed the sole worker wake before
+                    // menu dismissal. No later synthetic/user event may rescue it.
+                    assert_eq!(SEEN_EVENTS.get(), super::super::windows_events::CONTROLLER);
+                    let mut message: MSG = zeroed();
+                    assert_eq!(
+                        PeekMessageW(&mut message, window.0, WAKE, WAKE, PM_REMOVE),
+                        0
+                    );
+                    assert_ne!(PENDING.with(PendingEvents::pending), 0);
+                    assert_eq!(
+                        PENDING.with(PendingEvents::take),
+                        super::super::windows_events::CONTROLLER
+                    );
+                    let mut state = DesktopState::new();
+                    let event = DELIVERY
+                        .with_borrow_mut(|events| events.pop_front())
+                        .unwrap();
+                    assert!(state.apply(event).exit_requested);
+                    assert_eq!(PENDING.with(PendingEvents::pending), 0);
+                    break;
+                }
                 let expected = EXPLORER | APPEARANCE | if confirmed { TEARDOWN } else { 0 };
                 if !confirmed {
-                    assert_eq!(SEEN_EVENTS.get(), expected);
+                    assert_eq!(
+                        SEEN_EVENTS.get(),
+                        expected | super::super::windows_events::CONTROLLER
+                    );
                 }
-                assert_eq!(PENDING.with(PendingEvents::take), expected);
+                assert_eq!(
+                    PENDING.with(PendingEvents::take) & !super::super::windows_events::CONTROLLER,
+                    expected
+                );
                 assert_eq!(PENDING.with(PendingEvents::pending), 0);
             }
             DestroyMenu(menu);

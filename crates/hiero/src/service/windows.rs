@@ -504,6 +504,10 @@ pub(crate) fn execute(
             if package.exists() {
                 return Err("A prior package registration rollback is pending".into());
             }
+            super::package_preflight::require_settled([
+                record_path(options, false).with_extension("pending.json"),
+                record_path(options, true).with_extension("pending.json"),
+            ])?;
             let before = [
                 execute(options, TaskAction::Inspect, false)?,
                 execute(options, TaskAction::Inspect, true)?,
@@ -768,6 +772,78 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn native_package_capture_refuses_pending_before_after_and_absence_then_accepts_recovery() {
+        for actual_side in [0, 1, 2] {
+            for tray in [false, true] {
+                let temp = tempfile::tempdir().unwrap();
+                let options = ServiceOptions {
+                    data_root: temp.path().join("root"),
+                    unit_dir: temp.path().join("units"),
+                    binary: std::env::current_exe().unwrap(),
+                    use_manager: true,
+                };
+                std::fs::create_dir_all(&options.data_root).unwrap();
+                std::fs::create_dir_all(&options.unit_dir).unwrap();
+                let before = TaskRecord::new(&options, tray).unwrap();
+                let _cleanup = DisposableTask {
+                    record: before.clone(),
+                };
+                let scheduler = Scheduler::connect().unwrap();
+                assert!(scheduler.task(&before.name()).unwrap().is_none());
+                let mut after = before.clone();
+                after.enabled = false;
+                after.recovery = false;
+                let actual = match actual_side {
+                    0 => Some(before.clone()),
+                    1 => Some(after.clone()),
+                    _ => None,
+                };
+                if let Some(actual) = &actual {
+                    scheduler.put(actual, false).unwrap();
+                }
+                let path = record_path(&options, tray);
+                save(&path, &actual).unwrap();
+                let pending = path.with_extension("pending.json");
+                let journal = Journal {
+                    before: Some(before.clone()),
+                    after: if actual_side == 2 { None } else { Some(after) },
+                };
+                let bytes = serde_json::to_vec(&journal).unwrap();
+                hieronymus::atomic::atomic_write(&pending, &bytes).unwrap();
+                let record_bytes = std::fs::read(&path).ok();
+                let xml = scheduler.xml(&before.name()).unwrap();
+                execute(&options, TaskAction::Inspect, tray).unwrap();
+                assert!(
+                    execute(&options, TaskAction::PackageCapture, true)
+                        .unwrap_err()
+                        .contains("recovery is pending")
+                );
+                assert!(
+                    !options
+                        .unit_dir
+                        .join(".hieronymus-package-pending.json")
+                        .exists()
+                );
+                assert_eq!(std::fs::read(&pending).unwrap(), bytes);
+                assert_eq!(std::fs::read(&path).ok(), record_bytes);
+                assert_eq!(scheduler.xml(&before.name()).unwrap(), xml);
+                execute(&options, TaskAction::Install, tray).unwrap();
+                assert!(!pending.exists());
+                execute(&options, TaskAction::PackageCapture, true).unwrap();
+                let captured: [Option<TaskRecord>; 2] = serde_json::from_slice(
+                    &hieronymus::private_file::read_private(
+                        &options.unit_dir.join(".hieronymus-package-pending.json"),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(captured[usize::from(tray)], Some(before));
+                execute(&options, TaskAction::PackageCommit, true).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn native_pending_registration_recovers_exact_prior_definition_and_rejects_foreign_task() {
         let temp = tempfile::tempdir().unwrap();

@@ -4,7 +4,7 @@
 //! generated agent-plugin entries — and nothing else. Databases,
 //! configuration, models, backups, and audit data are preserved by default;
 //! clearing user contents requires the separate explicit `--delete-data`
-//! action. The root and its two coordination lock files remain.
+//! action. The root and its recognized coordination lock files remain.
 //!
 //! Confirmation is mandatory: either `--yes` or an interactive prompt owned
 //! by the CLI layer. The library refuses to run unconfirmed.
@@ -269,24 +269,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     // Data deletion is a separate explicit action that names the exact root.
     let mut data_deleted = false;
     if options.delete_data {
-        for entry in std::fs::read_dir(config.data_root())? {
-            let entry = entry?;
-            if entry.file_name() == OWNER_LOCK_FILE
-                || entry.file_name() == LIFECYCLE_LOCK_FILE
-                || entry.file_name().to_string_lossy().ends_with(".lock")
-            {
-                continue;
-            }
-            if entry.file_type()?.is_dir() {
-                std::fs::remove_dir_all(entry.path())?;
-            } else {
-                std::fs::remove_file(entry.path())?;
-            }
-        }
-        preserved.clear();
-        preserved.push(format!(
-            "coordination files: {OWNER_LOCK_FILE} and {LIFECYCLE_LOCK_FILE}"
-        ));
+        preserved = delete_data_contents(config.data_root())?;
         data_deleted = true;
     }
 
@@ -296,6 +279,41 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
         data_root: config.data_root().to_path_buf(),
         data_deleted,
     })
+}
+
+/// Preserve only implementation-defined coordination names, including sessions
+/// from other supported platforms when a data root has moved between hosts.
+fn is_coordination_name(name: &str) -> bool {
+    matches!(
+        name,
+        OWNER_LOCK_FILE
+            | LIFECYCLE_LOCK_FILE
+            | ".desktop-launch.lock"
+            | "dream-cycle.lock"
+            | ".windows-native.lock"
+            | ".windows-browser.lock"
+            | ".macos-native.lock"
+            | ".macos-browser.lock"
+    ) || crate::desktop::is_session_lock_name(name)
+}
+
+fn delete_data_contents(root: &Path) -> std::io::Result<Vec<String>> {
+    let mut retained = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.to_str().is_some_and(is_coordination_name) {
+            retained.push(format!("coordination file: {}", name.to_string_lossy()));
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(entry.path())?;
+        } else {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    retained.sort();
+    Ok(retained)
 }
 
 /// Whether `link` (a symlink at `link_path` with raw `target`) eventually
@@ -427,6 +445,80 @@ mod tests {
                 .render_human()
                 .contains(&config.data_root().display().to_string())
         );
+    }
+
+    #[test]
+    fn delete_data_removes_unrelated_lock_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = seed_install(&temp);
+        for name in [
+            "foo.lock",
+            ".tray-unknown.lock",
+            ".tray-abc.lock",
+            ".tray-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.lock",
+            ".tray-000000000000000000000000000000000000000000000000000000000000000g.lock",
+        ] {
+            std::fs::write(config.data_root().join(name), "user data").unwrap();
+        }
+        std::fs::create_dir(config.data_root().join("notes.lock")).unwrap();
+        std::fs::write(config.data_root().join("notes.lock/contents"), "user data").unwrap();
+        run_uninstall(&options(&temp, true, true)).unwrap();
+        let mut names: Vec<_> = std::fs::read_dir(config.data_root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_deletion_preserves_every_coordination_inode_and_held_claim() {
+        use std::os::unix::fs::MetadataExt;
+        let temp = tempfile::tempdir().unwrap();
+        let session = format!(".tray-{}.lock", "0123456789abcdef".repeat(4));
+        let names = [
+            OWNER_LOCK_FILE,
+            LIFECYCLE_LOCK_FILE,
+            ".desktop-launch.lock",
+            "dream-cycle.lock",
+            ".windows-native.lock",
+            ".windows-browser.lock",
+            ".macos-native.lock",
+            ".macos-browser.lock",
+            &session,
+        ];
+        let guards: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let file = crate::platform::native_gate::acquire(temp.path(), name).unwrap();
+                let inode = file.metadata().unwrap().ino();
+                (file, inode)
+            })
+            .collect();
+        std::fs::write(temp.path().join("unrelated.lock"), "remove me").unwrap();
+        let report = delete_data_contents(temp.path()).unwrap();
+        assert_eq!(report.len(), names.len());
+        assert!(!temp.path().join("unrelated.lock").exists());
+        for (name, (_, inode)) in names.iter().zip(&guards) {
+            assert_eq!(
+                std::fs::metadata(temp.path().join(name)).unwrap().ino(),
+                *inode
+            );
+            assert_eq!(
+                crate::platform::native_gate::acquire(temp.path(), name)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+        }
+        drop(guards);
+        for name in names {
+            assert!(crate::platform::native_gate::acquire(temp.path(), name).is_ok());
+        }
     }
 
     #[test]

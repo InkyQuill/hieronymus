@@ -162,8 +162,11 @@ Two interlocking flows share one on-disk layout
   generated agent-plugin entries; preserves databases, configuration, models,
   backups, and audit data. Data deletion happens only through the explicit
   `--delete-data`, which names the exact data root in its report. It clears user
-  contents while retaining `.owner.lock` and `.lifecycle.lock` in a small
-  coordination-only directory; held lock files must never be unlinked. The
+  contents while retaining only `.owner.lock`, `.lifecycle.lock`,
+  `.desktop-launch.lock`, `dream-cycle.lock`, `.windows-native.lock`,
+  `.windows-browser.lock`, `.macos-native.lock`, `.macos-browser.lock`, and
+  `.tray-<64 lowercase hexadecimal digits>.lock` session files. Held coordination
+  inodes must never be unlinked; unrelated `.lock` files and directories are deleted. The
   persistent `.hieronymus.service.lock` beside the systemd unit also remains
   to serialize registration across different data roots. Uninstall refuses
   layouts that would delete a held coordination file through a parent directory.

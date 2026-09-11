@@ -391,12 +391,12 @@ pub fn run_with_service_options(
     app.run();
     timer.invalidate();
     MenuEvent::set_event_handler(None::<fn(MenuEvent)>);
-    let shutdown = UI.with_borrow_mut(|ui| {
-        ui.take()
-            .and_then(|mut runtime| runtime.controller.take())
-            .map(Controller::shutdown)
-            .unwrap_or(Ok(()))
-    });
+    let runtime = UI.with_borrow_mut(Option::take);
+    let shutdown = super::shutdown_owner::shutdown_owned(
+        runtime,
+        |runtime| runtime.controller.take(),
+        Controller::shutdown,
+    );
     if TEARDOWN.get() {
         app.replyToApplicationShouldTerminate(true);
     }

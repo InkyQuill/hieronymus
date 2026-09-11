@@ -4,6 +4,18 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io;
 
+/// Only generated session lock names identify persistent coordination authority.
+pub(crate) fn is_session_lock_name(name: &str) -> bool {
+    name.strip_prefix(".tray-")
+        .and_then(|name| name.strip_suffix(".lock"))
+        .is_some_and(|hash| {
+            hash.len() == 64
+                && hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+}
+
 #[derive(Debug)]
 pub struct TraySingleton {
     file: File,
