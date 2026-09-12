@@ -7,10 +7,14 @@ import {
   lstatSync,
   mkdtempSync,
   rmSync,
+  mkdirSync,
+  copyFileSync,
+  renameSync,
+  constants,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { reviewedSource, validateSourceReceipt } from "./reviewed-runtime";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
 import { localFile, verifyFile } from "./check-desktop-evidence";
@@ -42,8 +46,58 @@ export function validateRun(
 }
 function gh(args: string[]) {
   const r = Bun.spawnSync(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode !== 0) throw new Error("GitHub artifact operation failed");
+  if (r.exitCode !== 0)
+    throw new Error(`GitHub ${args[0]} ${args[1]} failed (exit ${r.exitCode})`);
   return r.stdout.toString();
+}
+
+/** Extract independently; publish only a verified union of identical shared files. */
+export async function downloadCandidates(
+  names: readonly string[],
+  output: string,
+  acquire: (name: string, directory: string) => void | Promise<void>,
+  verify: (directory: string) => Promise<unknown>,
+) {
+  const destination = resolve(output);
+  if (lstatSync(destination, { throwIfNoEntry: false }))
+    throw new Error("candidate output already exists");
+  mkdirSync(dirname(destination), { recursive: true });
+  const staging = mkdtempSync(
+    join(dirname(destination), ".candidate-download-"),
+  );
+  const merged = join(staging, "merged");
+  try {
+    mkdirSync(merged);
+    for (const [index, name] of names.entries()) {
+      const artifact = join(staging, `artifact-${index}`);
+      await acquire(name, artifact);
+      for (const file of readdirSync(artifact)) {
+        const source = localFile(artifact, file);
+        const dest = join(merged, file);
+        if (lstatSync(dest, { throwIfNoEntry: false })) {
+          await verifyFile(merged, file, await digest(source));
+        } else {
+          copyFileSync(source, dest, constants.COPYFILE_EXCL);
+        }
+      }
+    }
+    await verify(merged);
+    if (lstatSync(destination, { throwIfNoEntry: false }))
+      throw new Error("candidate output already exists");
+    renameSync(merged, destination);
+  } catch (error) {
+    try {
+      rmSync(staging, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Candidate acquisition failed and its temporary directory could not be removed",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  rmSync(staging, { recursive: true, force: true });
 }
 export async function inventory(
   directory: string,
@@ -168,9 +222,24 @@ if (import.meta.main) {
       kind === "desktop-candidate"
         ? TARGETS.map((t) => `candidate-${t}`)
         : ["desktop-evidence"];
-    for (const name of names)
-      gh(["run", "download", id, "--repo", repo, "--name", name, "--dir", out]);
-    if (kind === "desktop-candidate") await verifyCandidate(out, source);
+    const acquire = (name: string, directory: string) => {
+      gh([
+        "run",
+        "download",
+        id,
+        "--repo",
+        repo,
+        "--name",
+        name,
+        "--dir",
+        directory,
+      ]);
+    };
+    if (kind === "desktop-candidate")
+      await downloadCandidates(names, out, acquire, (directory) =>
+        verifyCandidate(directory, source),
+      );
+    else acquire(names[0], out);
     if (process.env.GITHUB_OUTPUT) {
       const { appendFileSync } = await import("node:fs");
       appendFileSync(process.env.GITHUB_OUTPUT, `commit=${source}\n`);

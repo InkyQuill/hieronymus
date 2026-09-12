@@ -1,5 +1,35 @@
 # v0.9.0 maintenance and release evidence
 
+## Final artifact transport correction (2026-09-12, 21:24 UTC)
+
+PRs #26–#29 are merged. Source `b4f2cba5204480f56302e0cf537f1b35c32e9e88`
+was fast-forwarded to main and pulled locally. Its complete native candidate run
+[34713682687](https://github.com/InkyQuill/hieronymus/actions/runs/34713682687)
+passed on all four targets, including packaged real inference and authenticated
+MCP. Local main compiled successfully; installed Linux checks covered inference,
+startup, duplicate ownership, tray registration, restart, insecure credential
+refusal and unauthenticated browser overview/memory reads. The seven-session data
+commit `4c07c95c0ab56cc6e691672c7fd1b433b963ffbb` preserves those exact-byte
+observations and explicit gaps; it does not qualify subsequent candidates.
+
+The evidence run
+[34719821220](https://github.com/InkyQuill/hieronymus/actions/runs/34719821220)
+failed before matrix validation, in the candidate download loop. Its wrapper
+reported `GitHub artifact operation failed` at `scripts/desktop-ci.ts:172`.
+A direct reproduction exposed the cause: extracting the Apple artifact into the
+already downloaded Linux directory failed on `desktop-metadata.awk: file exists`.
+Every platform carries shared model/installer files, and GitHub CLI refuses even
+identical existing files during extraction.
+
+The downloader now extracts each artifact separately, merges only byte-identical
+shared files, verifies the complete inventory, and renames the verified staging
+directory into place. Conflicts, acquisition failures, unexpected directories and
+failed verification leave no partial output; an existing destination is preserved.
+Cleanup failures retain the original error as well. All 113 script tests pass.
+The release tag has not been created. The transport correction requires a new
+same-source candidate/evidence chain; the older successful binaries are retained
+as diagnostic evidence rather than relabelled with a new source commit.
+
 Snapshot started 2026-09-12 for PRs [#26](https://github.com/InkyQuill/hieronymus/pull/26),
 [#27](https://github.com/InkyQuill/hieronymus/pull/27), and
 [#28](https://github.com/InkyQuill/hieronymus/pull/28).

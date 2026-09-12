@@ -42,11 +42,13 @@ import {
   readdirSync,
   copyFileSync,
   rmSync,
+  existsSync,
+  readFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { inventory, verifyCandidate } from "./desktop-ci";
+import { inventory, verifyCandidate, downloadCandidates } from "./desktop-ci";
 import {
   TARGETS,
   desktopTarget,
@@ -57,6 +59,96 @@ import {
   modelMembers,
   type OfficialRuntime,
 } from "./desktop-targets";
+
+test("candidate downloads isolate extraction and deduplicate identical shared files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "candidate-download-"));
+  const output = join(root, "result");
+  const extractionPaths = new Set<string>();
+  try {
+    await downloadCandidates(
+      ["linux", "macos"],
+      output,
+      (name, directory) => {
+        expect(existsSync(directory)).toBe(false);
+        extractionPaths.add(directory);
+        mkdirSync(directory);
+        writeFileSync(join(directory, "common-model.tar.gz"), "same model");
+        writeFileSync(join(directory, "desktop-metadata.awk"), "same decoder");
+        writeFileSync(join(directory, `${name}.json`), name);
+      },
+      async (directory) => {
+        expect(existsSync(output)).toBe(false);
+        expect(readdirSync(directory).sort()).toEqual([
+          "common-model.tar.gz",
+          "desktop-metadata.awk",
+          "linux.json",
+          "macos.json",
+        ]);
+      },
+    );
+    expect(extractionPaths.size).toBe(2);
+    expect(readFileSync(join(output, "common-model.tar.gz"), "utf8")).toBe(
+      "same model",
+    );
+    expect(readdirSync(root)).toEqual(["result"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed or conflicting candidate acquisition never publishes a partial output", async () => {
+  for (const failure of ["download", "conflict", "verification", "directory"]) {
+    const root = mkdtempSync(join(tmpdir(), "candidate-download-failure-"));
+    const output = join(root, "result");
+    try {
+      await expect(
+        downloadCandidates(
+          ["first", "second"],
+          output,
+          (name, directory) => {
+            if (failure === "download" && name === "second")
+              throw Error("download failed");
+            mkdirSync(directory);
+            if (failure === "directory")
+              mkdirSync(join(directory, "unexpected-directory"));
+            else
+              writeFileSync(
+                join(directory, "shared"),
+                failure === "conflict" ? name : "same",
+              );
+          },
+          async () => {
+            if (failure === "verification") throw Error("verification failed");
+          },
+        ),
+      ).rejects.toThrow();
+      expect(existsSync(output)).toBe(false);
+      expect(readdirSync(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("candidate downloads preserve an existing output directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "candidate-download-existing-"));
+  try {
+    writeFileSync(join(root, "existing"), "preserve");
+    await expect(
+      downloadCandidates(
+        ["one"],
+        root,
+        () => {
+          throw Error("must not acquire");
+        },
+        async () => {},
+      ),
+    ).rejects.toThrow("already exists");
+    expect(readFileSync(join(root, "existing"), "utf8")).toBe("preserve");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("candidate inventory binds all four exact payloads and rejects extra or changed attachments", async () => {
   const root = mkdtempSync(join(tmpdir(), "candidate-inventory-"));
