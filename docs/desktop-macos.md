@@ -1,6 +1,6 @@
 # macOS desktop lifecycle
 
-The desktop helper uses the bundle identity `net.inkyquill.hieronymus` and an agent-style `LSUIElement` application. `assets/macos/Info.plist` is the bundle metadata input; the complete signed bundle, version fields, icon resources, activation and update mapping belong to packaging. Native macOS execution has **not** been qualified on this Linux development host.
+The desktop helper uses the bundle identity `net.inkyquill.hieronymus` and an agent-style `LSUIElement` application. `assets/macos/Info.plist` is the bundle metadata input; the complete signed bundle, version fields, icon resources, activation and update mapping belong to packaging. Core native LaunchAgent execution was measured on Apple Silicon as recorded below; complete installed-app and interactive acceptance remains a separate qualification boundary.
 
 ## Registration and startup
 
@@ -48,6 +48,10 @@ cargo test -p hiero --locked --test macos_desktop native_disposable_launchagents
 cargo test -p hiero --locked --lib native_interrupted_registration_restores_prior_absence_and_rejects_foreign_file -- --ignored
 cargo test -p hiero --locked --lib native_headless_stop_conversion_and_failed_tray_restores_prior_mode -- --ignored
 ```
+
+The 2026-09-12 current-main qualification ran these six checks on an Apple M1 Pro (`arm64`), macOS 26.5.2 build 25F84, Rust 1.96.0, Bun 1.4.0, Apple clang 21.0.0 and Command Line Tools 26.6. All six passed, including clean removal of each disposable LaunchAgent. The full locked Rust suite, warning-denied Clippy, strict rustdoc, 100 release-script tests, frontend typecheck, 85 frontend tests and production frontend build also passed. This records source-tree and disposable LaunchAgent acceptance only; it does not claim signing, notarization, next-login discovery, menu/display behavior, a second graphical session, Intel support, or release readiness.
+
+macOS 26.5 native output differs from the older fixture spelling: `launchctl print-disabled` may start with a blank line and reports `enabled`/`disabled`, while `launchctl print` can expose `/dev/null` output paths, transient accounting fields, the `system service` and `tle system` properties, and an `xpcproxy` process state with a PID during launch. Readback accepts only these measured shapes and values; unknown fields, properties, states, inconsistent PID/state pairs, or changed output paths remain an ownership error.
 
 The explicitly ignored registration tests create only unique temporary roots/labels and do not start a Hieronymus daemon or helper. The headless-mode fixture bootstraps `/usr/bin/true` once with the literal daemon arguments, waits for native idle readback, verifies stop-first refusal, acquires offline root ownership, tests safe unload with retained login preference, then injects a tray publication failure and checks exact native prior-mode rollback before a successful conversion. It is launchd fixture evidence, not real daemon/inference or next-login acceptance. The transport fixture contacts no native manager/browser; it measures private-pipe deadlines and continuing locks only. It must not be described as launchd acceptance. The real registration fixture uses a custom directory, so it does not establish next-login discovery.
 

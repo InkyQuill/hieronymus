@@ -737,6 +737,7 @@ fn hiero_stop_requests_authenticated_shutdown_through_the_discovered_endpoint() 
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn hiero_stop_confirms_absence_and_refuses_an_unverifiable_unit() {
     let root = tempfile::tempdir().unwrap();
@@ -777,6 +778,7 @@ fn hiero_stop_confirms_absence_and_refuses_an_unverifiable_unit() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn the_lifecycle_commands_route_and_the_service_subcommands_are_preserved() {
     let root = tempfile::tempdir().unwrap();

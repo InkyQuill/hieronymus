@@ -213,6 +213,7 @@ fn opt_in_cannot_bypass_owned_root_or_identity_mismatch() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn only_explicit_opt_in_starts_a_truly_stopped_root() {
     use std::time::{Duration, Instant};

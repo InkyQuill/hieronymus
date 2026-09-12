@@ -381,6 +381,7 @@ fn tray_missing_installed_helper_has_actionable_diagnostic() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn tray_forwards_absolute_root_as_one_literal_argument_to_sibling() {
     use std::os::unix::fs::PermissionsExt;

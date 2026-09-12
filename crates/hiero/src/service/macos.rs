@@ -356,6 +356,28 @@ fn run(args: &[&str]) -> Result<(), String> {
         Err("LaunchAgent manager operation failed".into())
     }
 }
+fn run_silent(args: &[&str]) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(command) = COMMAND_OVERRIDE.get() {
+        return if command(args)?.0.success() {
+            Ok(())
+        } else {
+            Err("LaunchAgent manager operation failed".into())
+        };
+    }
+    let status = Command::new("/bin/launchctl")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|_| "Could not observe launchctl")?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("LaunchAgent manager operation failed".into())
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Snapshot {
@@ -401,7 +423,7 @@ impl<'a> Agent<'a> {
         // launchctl also reports 113 for an absent service. Domain existence is
         // independently checked so absent GUI/login cannot masquerade as absence.
         if matches!(status.code(), Some(3 | 113)) {
-            run(&["print", &self.domain])?;
+            run_silent(&["print", &self.domain])?;
             Ok(None)
         } else {
             Err("Could not inspect LaunchAgent".into())
@@ -913,9 +935,10 @@ mod tests {
     #[ignore = "Requires current-user Aqua launchd; only fresh disposable on-demand agents"]
     fn native_interrupted_registration_restores_prior_absence_and_rejects_foreign_file() {
         let temp = tempfile::tempdir().unwrap();
+        let fixture = temp.path().canonicalize().unwrap();
         let options = ServiceOptions {
-            data_root: temp.path().join("root"),
-            unit_dir: temp.path().join("agents"),
+            data_root: fixture.join("root"),
+            unit_dir: fixture.join("agents"),
             binary: std::env::current_exe().unwrap(),
             use_manager: true,
         };
@@ -947,9 +970,10 @@ mod tests {
     #[ignore = "Requires an Aqua login; only unique disposable jobs running /usr/bin/true"]
     fn native_headless_stop_conversion_and_failed_tray_restores_prior_mode() {
         let temp = tempfile::tempdir().unwrap();
+        let fixture = temp.path().canonicalize().unwrap();
         let options = ServiceOptions {
-            data_root: temp.path().join("root"),
-            unit_dir: temp.path().join("agents"),
+            data_root: fixture.join("root"),
+            unit_dir: fixture.join("agents"),
             binary: PathBuf::from("/usr/bin/true"),
             use_manager: true,
         };

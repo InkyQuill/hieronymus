@@ -94,6 +94,13 @@ pub enum UninstallError {
 /// The full uninstall flow. Assumes `options.confirmed` was already checked
 /// by the CLI layer.
 pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, UninstallError> {
+    run_uninstall_impl(options, true)
+}
+
+fn run_uninstall_impl(
+    options: &UninstallOptions,
+    use_native_manager: bool,
+) -> Result<UninstallReport, UninstallError> {
     if !options.confirmed {
         return Err(UninstallError::Refused(
             "uninstall requires confirmation; rerun with --yes (or answer the prompt)".to_string(),
@@ -146,7 +153,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
             .clone()
             .unwrap_or_else(service::default_unit_dir),
         binary: layout.stable_link("hiero"),
-        use_manager: true,
+        use_manager: use_native_manager,
     };
     operation.register_unit(&service_options)?;
     let registration_dir = service_options.unit_dir.canonicalize()?;
@@ -171,12 +178,14 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     )
     .map_err(UninstallError::Refused)?;
     #[cfg(target_os = "macos")]
-    crate::platform::macos_broker::task(
-        &service_options,
-        crate::platform::macos_broker::TaskAction::Inspect,
-        true,
-    )
-    .map_err(UninstallError::Refused)?;
+    if use_native_manager {
+        crate::platform::macos_broker::task(
+            &service_options,
+            crate::platform::macos_broker::TaskAction::Inspect,
+            true,
+        )
+        .map_err(UninstallError::Refused)?;
+    }
     let _retirement = crate::desktop::control::Retirement::begin_owned(
         &config,
         true,
@@ -203,12 +212,14 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     )
     .map_err(UninstallError::Refused)?;
     #[cfg(target_os = "macos")]
-    crate::platform::macos_broker::task(
-        &service_options,
-        crate::platform::macos_broker::TaskAction::Remove,
-        true,
-    )
-    .map_err(UninstallError::Refused)?;
+    if use_native_manager {
+        crate::platform::macos_broker::task(
+            &service_options,
+            crate::platform::macos_broker::TaskAction::Remove,
+            true,
+        )
+        .map_err(UninstallError::Refused)?;
+    }
     let lines = service::uninstall_guarded(&service_options, &operation)?;
     removed.extend(lines);
 
@@ -350,6 +361,20 @@ mod tests {
         }
     }
 
+    fn run(options: &UninstallOptions) -> Result<UninstallReport, UninstallError> {
+        run_uninstall_impl(options, false)
+    }
+
+    fn expected_coordination_names() -> Vec<&'static str> {
+        let mut names = vec![".desktop-launch.lock", ".lifecycle.lock"];
+        #[cfg(target_os = "macos")]
+        names.extend([".macos-browser.lock", ".macos-native.lock"]);
+        #[cfg(windows)]
+        names.extend([".windows-browser.lock", ".windows-native.lock"]);
+        names.push(".owner.lock");
+        names
+    }
+
     fn seed_install(temp: &tempfile::TempDir) -> HieronymusConfig {
         // Managed application directory with one version and stable links.
         let layout = AppLayout::new(temp.path().join("app"));
@@ -362,7 +387,7 @@ mod tests {
         let service_options = ServiceOptions {
             data_root: config.data_root().to_path_buf(),
             unit_dir: temp.path().join("units"),
-            binary: layout.version_dir("1.0.0").join("hiero"),
+            binary: layout.stable_link("hiero"),
             use_manager: false,
         };
         service::install(&service_options).unwrap();
@@ -375,7 +400,7 @@ mod tests {
     #[test]
     fn uninstall_requires_confirmation() {
         let temp = tempfile::tempdir().unwrap();
-        let error = run_uninstall(&options(&temp, false, false)).unwrap_err();
+        let error = run(&options(&temp, false, false)).unwrap_err();
         assert!(error.to_string().contains("confirmation"), "{error}");
         // Nothing was touched by the refusal.
         assert!(temp.path().exists());
@@ -386,14 +411,16 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);
 
-        let report = run_uninstall(&options(&temp, true, false)).unwrap();
+        let report = run(&options(&temp, true, false)).unwrap();
         assert!(
             report
                 .removed
                 .iter()
                 .any(|entry| entry.contains("application directory"))
         );
-        assert!(report.removed.iter().any(|entry| entry.contains("unit")));
+        assert!(report.removed.iter().any(|entry| {
+            entry.contains("unit") || entry.contains("LaunchAgent") || entry.contains("task")
+        }));
         assert!(report.removed.iter().any(|entry| entry.contains("plugins")));
         assert!(!AppLayout::new(temp.path().join("app")).root().exists());
         assert!(!temp.path().join("units/hieronymus.service").exists());
@@ -422,7 +449,7 @@ mod tests {
     fn delete_data_is_a_separate_explicit_action_naming_the_root() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);
-        let report = run_uninstall(&options(&temp, true, true)).unwrap();
+        let report = run(&options(&temp, true, true)).unwrap();
         assert!(report.data_deleted);
         assert_eq!(report.data_root, config.data_root());
         let mut retained: Vec<_> = std::fs::read_dir(config.data_root())
@@ -430,10 +457,7 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         retained.sort();
-        assert_eq!(
-            retained,
-            [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
-        );
+        assert_eq!(retained, expected_coordination_names());
         assert!(
             report
                 .preserved
@@ -462,16 +486,13 @@ mod tests {
         }
         std::fs::create_dir(config.data_root().join("notes.lock")).unwrap();
         std::fs::write(config.data_root().join("notes.lock/contents"), "user data").unwrap();
-        run_uninstall(&options(&temp, true, true)).unwrap();
+        run(&options(&temp, true, true)).unwrap();
         let mut names: Vec<_> = std::fs::read_dir(config.data_root())
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         names.sort();
-        assert_eq!(
-            names,
-            [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
-        );
+        assert_eq!(names, expected_coordination_names());
     }
 
     #[cfg(unix)]
@@ -528,7 +549,7 @@ mod tests {
         let foreign = temp.path().join("important-data");
         std::fs::create_dir_all(&foreign).unwrap();
         uninstall_options.app_dir = Some(foreign.clone());
-        let error = run_uninstall(&uninstall_options).unwrap_err();
+        let error = run(&uninstall_options).unwrap_err();
         assert!(error.to_string().contains("does not look like"), "{error}");
         assert!(foreign.exists());
     }

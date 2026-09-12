@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! `hiero uninstall` CLI surface: mandatory confirmation, software removal
 //! with data preservation, the separate explicit `--delete-data` action, and
 //! the refusal to remove a foreign application directory.
