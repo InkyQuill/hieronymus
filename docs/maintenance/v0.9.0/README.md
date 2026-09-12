@@ -38,6 +38,8 @@ first; that is corrected and regression-tested, and the review is retained in
 The follow-up review found that a credential overlapping an HTTP(S) URL prefix
 could prevent later URL masking. URLs are now redacted first, with a regression
 for the signed-query case; see `coderabbit-download-url-order.ndjson`.
+The final CodeRabbit review raised zero issues; its complete record is retained
+in `coderabbit-download-closure.ndjson`.
 The fixed downloader successfully acquired and verified all four real artifacts
 from run 34713682687, and evidence packaging passed against the same-source data
 commit. An earlier real acquisition attempt returned `gh run download` exit 1
