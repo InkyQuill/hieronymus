@@ -1,6 +1,14 @@
 #!/usr/bin/env bun
 /** Fixed workflow/run identity and immutable candidate inventory transport. */
-import { readFileSync, readdirSync, writeFileSync, lstatSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  lstatSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
@@ -144,21 +152,50 @@ if (import.meta.main) {
     }
     console.log(source);
   } else if (mode === "publish") {
-    const [directory, commit, ref] = args;
+    const [directory, commit, ref, evidence, candidateRun] = args;
     const { checkSource } = await import("./check-rust-release");
     checkSource(process.cwd(), ref);
+    const { verifyEvidence } = await import("./package-desktop-evidence");
+    await verifyEvidence(directory, evidence, commit, candidateRun);
     const files = await verifyCandidate(directory, commit);
     const names = files.filter((n) => !n.startsWith("candidate-"));
-    gh([
-      "release",
-      "create",
-      ref.replace("refs/tags/", ""),
-      "--verify-tag",
-      "--title",
-      `hiero ${ref.replace("refs/tags/", "")}`,
-      "--notes-file",
-      "docs/desktop-release-notes.md",
-      ...names.map((n) => join(directory, n)),
-    ]);
+    const summaryDirectory = mkdtempSync(
+      join(tmpdir(), "hieronymus-qualification-"),
+    );
+    const summary = join(summaryDirectory, "native-qualification.json");
+    const records = JSON.parse(
+      readFileSync(localFile(evidence, "records.json"), "utf8"),
+    );
+    writeFileSync(
+      summary,
+      JSON.stringify(
+        {
+          provenance: JSON.parse(
+            readFileSync(localFile(evidence, "provenance.json"), "utf8"),
+          ),
+          records: records.map((path: string) =>
+            JSON.parse(readFileSync(localFile(evidence, path), "utf8")),
+          ),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    try {
+      gh([
+        "release",
+        "create",
+        ref.replace("refs/tags/", ""),
+        "--verify-tag",
+        "--title",
+        `hiero ${ref.replace("refs/tags/", "")}`,
+        "--notes-file",
+        "docs/desktop-release-notes.md",
+        summary,
+        ...names.map((n) => join(directory, n)),
+      ]);
+    } finally {
+      rmSync(summaryDirectory, { recursive: true, force: true });
+    }
   } else throw new Error("expected inventory|verify|download|publish");
 }

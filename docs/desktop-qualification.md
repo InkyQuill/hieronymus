@@ -2,8 +2,10 @@
 
 Implementation does not establish native delivery. The initial matrix is Linux
 x86_64 (KDE and GNOME AppIndicator, each on Wayland and X11), Windows x86_64,
-Apple Silicon, and Intel macOS. Seven session records are required. Unavailable
-or failed checks block publication. Current Intel ONNX 1.28.0 remains
+Apple Silicon, and Intel macOS. Seven session records form a coverage inventory.
+The owner-approved 2026-09-12 scope permits explicitly partial or unqualified
+records for unavailable native coverage; failed checks still block publication.
+Intel macOS must be labeled unqualified. Current Intel ONNX 1.28.0 remains
 `source-build-required`; no complete four-target candidate can succeed yet.
 Windows/macOS interactive acceptance and Linux real-panel/login/native-manager
 acceptance are also outstanding. See the final Linux receipt and limits below.
@@ -86,6 +88,16 @@ LaunchAgent state acceptance remains separate.
 `records.json` is an array of exactly seven relative JSON filenames, one per
 matrix session. Each record contains:
 
+Omitting `qualification` retains the strict fully qualified contract. For
+limited coverage, add `qualification: "partial"` or `"unqualified"` and a
+concrete `qualification_reason` (at least 20 characters). Partial records must
+contain both observed passes and unavailable checks, with at least one actual
+scale value. Unqualified records contain only unavailable checks and may have
+an empty scale array. Every unavailable check still needs a nonempty, hashed
+evidence file explaining the gap. Failed checks cannot be waived by changing
+the qualification status. The publisher attaches these records and their
+provenance as `native-qualification.json`.
+
 ```json
 {
   "candidate_commit": "<40 lowercase hex characters from candidate run>",
@@ -126,9 +138,10 @@ Include every name returned by `requiredChecks(target)` in
 `scripts/check-desktop-evidence.ts`; the example above is intentionally incomplete
 and must fail validation. Use desktop/session `gnome-appindicator/wayland`,
 `gnome-appindicator/x11`, `kde/x11`, `windows/native`, or `macos/native` for the
-remaining records. Both Mac targets need separate records. Scale must include
+remaining records. Both Mac targets need separate records. Fully qualified scale must include
 1 and an actually observed higher scale. Record `fail` or `unavailable` honestly;
-only observed `pass` plus an existing, nonempty, SHA256-matching capture qualifies.
+only observed `pass` plus an existing, nonempty, SHA256-matching capture qualifies
+as a passed check. Explicitly limited records preserve unavailable results.
 Captures should describe the trigger, expected/observed behavior, exact fixture
 and time; include screenshots when they help show a menu/theme/DPI result. A
 reused capture can cover multiple observations if its content substantiates each.

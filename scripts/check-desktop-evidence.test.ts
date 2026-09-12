@@ -43,6 +43,58 @@ test("fully populated native record passes", async () => {
   const f = fixture();
   await validateRecord(f.record, f.root, f.identity);
 });
+test("partial coverage keeps verified passes and records explicit gaps", async () => {
+  const f = fixture();
+  f.record.checks[0].result = "unavailable";
+  await validateRecord(
+    {
+      ...f.record,
+      scale: [1],
+      qualification: "partial",
+      qualification_reason:
+        "Only the available KDE session was tested at standard scale.",
+    },
+    f.root,
+    f.identity,
+  );
+});
+test("unqualified sessions never claim native passes", async () => {
+  const f = fixture();
+  const record = {
+    ...f.record,
+    scale: [],
+    qualification: "unqualified",
+    qualification_reason:
+      "No Intel Mac is available for native desktop testing.",
+  };
+  await expect(validateRecord(record, f.root, f.identity)).rejects.toThrow(
+    "cannot claim",
+  );
+  record.checks.forEach((check) => (check.result = "unavailable"));
+  await validateRecord(record, f.root, f.identity);
+  record.checks[0].result = "fail";
+  await expect(validateRecord(record, f.root, f.identity)).rejects.toThrow(
+    "must pass",
+  );
+});
+test("limited coverage still requires exact evidence and a reason", async () => {
+  const f = fixture();
+  f.record.checks[0].result = "unavailable";
+  const record = {
+    ...f.record,
+    qualification: "partial",
+    qualification_reason: "",
+  };
+  await expect(validateRecord(record, f.root, f.identity)).rejects.toThrow(
+    "concrete reason",
+  );
+  record.qualification_reason =
+    "The high DPI display was not available for this test.";
+  writeFileSync(join(f.root, "capture.txt"), "changed");
+  await expect(validateRecord(record, f.root, f.identity)).rejects.toThrow(
+    "digest",
+  );
+});
 test("absent interactive-menu evidence fails", async () => {
   const f = fixture();
   f.record.checks = f.record.checks.filter(

@@ -87,6 +87,12 @@ export async function validateRecord(
   root: string,
   identity: Identity,
 ): Promise<void> {
+  // The owner permits partial native coverage, provided every gap is explicit.
+  // Older records retain their strict fully-qualified semantics.
+  const qualification = record?.qualification ?? "qualified";
+  if (!["qualified", "partial", "unqualified"].includes(qualification))
+    throw new Error("invalid qualification status");
+  const limited = qualification !== "qualified";
   const fields = [
     ...Object.keys(identity),
     "os_version",
@@ -94,6 +100,8 @@ export async function validateRecord(
     "session",
     "scale",
     "checks",
+    ...(record?.qualification !== undefined ? ["qualification"] : []),
+    ...(limited ? ["qualification_reason"] : []),
   ].sort();
   if (
     !record ||
@@ -101,6 +109,12 @@ export async function validateRecord(
     Object.keys(record).sort().join("\n") !== fields.join("\n")
   )
     throw new Error("qualification fields mismatch");
+  if (
+    limited &&
+    (typeof record.qualification_reason !== "string" ||
+      record.qualification_reason.trim().length < 20)
+  )
+    throw new Error("limited qualification requires a concrete reason");
   for (const [key, value] of Object.entries(identity))
     if (record[key] !== value)
       throw new Error(`qualification identity mismatch: ${key}`);
@@ -114,12 +128,13 @@ export async function validateRecord(
     throw new Error("os_version required");
   if (
     !Array.isArray(record.scale) ||
-    record.scale.length < 2 ||
+    record.scale.length <
+      (qualification === "unqualified" ? 0 : limited ? 1 : 2) ||
     !record.scale.every(
       (s: any) => typeof s === "number" && s >= 1 && s <= 4,
     ) ||
-    !record.scale.includes(1) ||
-    !record.scale.some((s: number) => s > 1)
+    (!limited &&
+      (!record.scale.includes(1) || !record.scale.some((s: number) => s > 1)))
   )
     throw new Error("scale must cover standard and high DPI");
   const platform = record.target.includes("linux")
@@ -155,12 +170,22 @@ export async function validateRecord(
   for (const name of requiredChecks(record.target)) {
     const check = record.checks.find((c: any) => c.name === name);
     if (!check) throw new Error(`missing required check: ${name}`);
-    if (check.result !== "pass")
+    if (check.result !== "pass" && !(limited && check.result === "unavailable"))
       throw new Error(`required check must pass: ${name}`);
     await verifyFile(root, check.evidence_path, check.evidence_sha256);
     if (lstatSync(localFile(root, check.evidence_path)).size === 0)
       throw new Error(`empty evidence: ${name}`);
   }
+  const passed = record.checks.filter(
+    (check: any) => check.result === "pass",
+  ).length;
+  if (qualification === "unqualified" && passed !== 0)
+    throw new Error("unqualified session cannot claim passed native checks");
+  if (
+    qualification === "partial" &&
+    (passed === 0 || passed === record.checks.length)
+  )
+    throw new Error("partial qualification must record both passes and gaps");
 }
 export async function validateMatrix(
   release: string,
@@ -183,7 +208,9 @@ export async function validateMatrix(
   });
   const expectedCount = 7; // KDE and GNOME × Wayland and X11, Windows, both Macs.
   if (records.length !== expectedCount)
-    throw new Error("complete seven-session native matrix required");
+    throw new Error(
+      "seven-session coverage inventory required, with explicit qualification gaps",
+    );
   let common: string | undefined;
   for (const target of TARGETS) {
     if (desktopTarget(target).runtime.origin === "source-build-required")

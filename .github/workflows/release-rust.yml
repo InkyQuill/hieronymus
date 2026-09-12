@@ -35,4 +35,4 @@ jobs:
       - name: Verify complete matrix and evidence provenance again
         run: bun scripts/package-desktop-evidence.ts --verify target/candidate target/evidence "$GITHUB_SHA" "$CANDIDATE_RUN"
       - name: Publish exact retained and verified bytes without rebuilding
-        run: bun scripts/desktop-ci.ts publish target/candidate "$GITHUB_SHA" "$RELEASE_REF"
+        run: bun scripts/desktop-ci.ts publish target/candidate "$GITHUB_SHA" "$RELEASE_REF" target/evidence "$CANDIDATE_RUN"
