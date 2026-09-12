@@ -14,12 +14,12 @@ use hiero::agent_hook;
 use hiero::daemon::{DaemonOptions, run_foreground};
 use hiero::doctor;
 use hiero::stdio::{StdioOptions, run_stdio_adapter};
-use hiero::{lifecycle, service, uninstall, update};
+use hiero::{lifecycle, project_context, service, uninstall, update};
 use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|start|stop|restart|status|tray|desktop|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|start|stop|restart|status|tray|desktop|admin|config|classify|project-context|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (opens the authenticated web console in your browser; starts the local daemon if needed)";
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
@@ -32,6 +32,7 @@ const DOCTOR_USAGE: &str =
     "usage: hiero doctor [--json] [--data-root <path>] [--unit-dir <path>] [--skip-registration]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable|configure> [--json] [--data-root <path>] (configure: --provider ollama --base-url <origin> --model <installed-model>) (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
+const PROJECT_CONTEXT_USAGE: &str = "usage: hiero project-context [--cwd <path>] [--args '{\"direction_id\":null}'] [--json] [--data-root <path>]";
 
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
 const UPDATE_USAGE: &str = "usage: hiero update (--release-dir <dir> | --release-url <https-base>) [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
@@ -407,6 +408,9 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         return hiero::desktop::linux_cli::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
     }
     let parsed = parse_arguments(arguments, argv0_command())?;
+    if parsed.command.as_deref() == Some("project-context") {
+        return run_project_context(&parsed);
+    }
     let data_root = parsed.data_root.as_deref().map(std::path::Path::new);
     match parsed.command.as_deref() {
         Some("version") => {
@@ -610,6 +614,63 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some(other) => Err(format!("unknown command: {other}; {USAGE}")),
         None => Err(format!("missing command; {USAGE}")),
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectContextArguments {
+    #[serde(default)]
+    direction_id: Option<String>,
+}
+
+fn run_project_context(parsed: &ParsedArguments) -> Result<ExitCode, String> {
+    reject_subcommand(parsed, "project-context")?;
+    reject_feedback_flags(parsed, "project-context")?;
+    reject_output_flag(parsed, "project-context")?;
+    if parsed.port.is_some() || parsed.start_daemon || parsed.dry_run {
+        return Err(format!(
+            "project-context does not accept --port, --start-daemon, or --dry-run; {PROJECT_CONTEXT_USAGE}"
+        ));
+    }
+    if parsed.force
+        || parsed.no_activate
+        || parsed.unit_dir.is_some()
+        || parsed.binary.is_some()
+        || parsed.url.is_some()
+        || parsed.sha256.is_some()
+        || parsed.bytes.is_some()
+        || parsed.runtime.is_some()
+        || parsed.release_dir.is_some()
+        || parsed.release_url.is_some()
+        || parsed.channel.is_some()
+        || parsed.app_dir.is_some()
+        || parsed.yes
+        || parsed.delete_data
+    {
+        return Err(format!(
+            "project-context received an unrelated option; {PROJECT_CONTEXT_USAGE}"
+        ));
+    }
+    let arguments: ProjectContextArguments = match parsed.args_json.as_deref() {
+        Some(raw) => serde_json::from_str(raw).map_err(|error| {
+            format!("--args must contain only direction_id:string|null: {error}")
+        })?,
+        None => ProjectContextArguments { direction_id: None },
+    };
+    let cwd = match &parsed.cwd {
+        Some(cwd) => std::path::PathBuf::from(cwd),
+        None => std::env::current_dir().map_err(|error| error.to_string())?,
+    };
+    let report = project_context::inspect(&cwd, arguments.direction_id.as_deref());
+    if parsed.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+        );
+    } else {
+        print!("{}", project_context::render_human(&report));
+    }
+    Ok(ExitCode::from(project_context::exit_code(&report)))
 }
 
 fn reject_subcommand(parsed: &ParsedArguments, command: &str) -> Result<(), String> {

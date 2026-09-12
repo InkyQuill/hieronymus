@@ -10,6 +10,7 @@
 use std::path::Path;
 
 use hieronymus::agent_context::discover_project_context;
+use hieronymus::cws_project::{CwsError, discover as discover_cws};
 use hieronymus::data_root::HieronymusConfig;
 
 use crate::lifecycle::{self, DiscoveryHealth};
@@ -30,12 +31,17 @@ pub struct HookOutput {
 /// The `session-start` invocation: nearest `.hieronymus.json` context plus
 /// the service discovery payload.
 pub fn session_start(cwd: &Path, config: &HieronymusConfig) -> Result<HookOutput, HookError> {
+    let cws_project = matches!(
+        discover_cws(cwd),
+        Ok(Some(_)) | Err(CwsError::InvalidManifest | CwsError::UnsupportedSchema(_))
+    );
     let context = discover_project_context(cwd)?;
     let mut fields: Vec<(&'static str, Field)> = vec![
         ("event", Field::text("session-start")),
         ("handled", Field::flag(context.is_some())),
     ];
     match &context {
+        None if cws_project => fields.push(("reason", Field::text(cws_message()))),
         None => fields.push(("reason", Field::text("no .hieronymus.json context found"))),
         Some(context) => {
             fields.push(("series_slug", Field::text(&context.series_slug)));
@@ -51,9 +57,14 @@ pub fn session_start(cwd: &Path, config: &HieronymusConfig) -> Result<HookOutput
         json: render(&Field::object(fields)),
         human: match context {
             Some(_) => "Hieronymus context loaded".to_string(),
+            None if cws_project => cws_message().to_string(),
             None => "no .hieronymus.json context found".to_string(),
         },
     })
+}
+
+fn cws_message() -> &'static str {
+    "CWS project detected; run `hiero project-context` and read its AGENTS.md project instructions"
 }
 
 /// The `session-end` invocation.

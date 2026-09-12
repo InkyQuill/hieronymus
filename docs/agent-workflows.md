@@ -22,6 +22,34 @@ semantics honestly. Ingest individual typed claims and real file evidence, not i
 source_role/user_rule provenance. Two independent aligned paragraph anchors and resolved
 identity/scope can support a learned decision; ambiguous names remain tentative.
 
+## Read-only CWS project inspection
+
+The installed CLI can inspect the nearest Creative Writing Skills project without
+starting a daemon, loading its configuration, installing either product, or reading
+manuscript and project-instruction contents:
+
+```sh
+hiero project-context --cwd /path/to/project --args '{"direction_id":null}' --json
+```
+
+The JSON projection always contains `version`, `status`, `root`, `schema_version`,
+`instructions_path`, `binding`, `direction_id`, `source_language`, `target_language`,
+and `diagnostics`; absent optional values stay `null`. Human output uses those keys in
+the same order as `key: value` lines and writes `none` for null or empty diagnostics.
+The caller reads the reported `AGENTS.md` separately and interprets its free-text
+agreement in the current task. Detection and binding do not decide trust or authorize
+writes.
+
+Statuses `ready` and `unbound` exit 0. `ambiguous`, `unsupported`, and `not_found` exit
+1; `invalid` exits 2. Diagnostics are stable technical strings:
+`project_not_found`, `unsafe_path`, `invalid_manifest`, `invalid_binding`,
+`unsupported_schema`, `unsupported_binding_version`, `unsupported_contract_version`,
+`unsupported_direction_selection`, `ambiguous_direction`, `unknown_direction`, and
+`filesystem_error`. Filesystem error details are not printed. Contract version 1
+supports project schemas 1 and 2 independently. Direction-specific translation context
+currently reports `unsupported_direction_selection` until the direction adapter is
+available.
+
 ## Installed host wiring
 
 The stable `hieronymus-mcp` command discovers the daemon; generated JSON contains no

@@ -16,6 +16,7 @@ pub mod desktop;
 pub mod doctor;
 pub mod export;
 pub mod lifecycle;
+pub mod project_context;
 pub mod readiness;
 pub mod service;
 pub mod stdio;
