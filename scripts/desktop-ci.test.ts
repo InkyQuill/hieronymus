@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { numericRun, validateRun } from "./desktop-ci";
+import {
+  numericRun,
+  validateRun,
+  githubFailureDetail,
+  artifactAcquirer,
+} from "./desktop-ci";
 const good = {
   repository: { full_name: "owner/repo" },
   head_repository: { full_name: "owner/repo" },
@@ -9,6 +14,21 @@ const good = {
   conclusion: "success",
   head_sha: "a".repeat(40),
 };
+test("GitHub failures retain bounded diagnostics without tokens or signed URLs", () => {
+  expect(githubFailureDetail("extracting shared-file: file exists", [])).toBe(
+    "extracting shared-file: file exists",
+  );
+  const detail = githubFailureDetail(
+    "bad token abc123 at https://example.invalid/file?signature=sensitive\n" +
+      "x".repeat(3000),
+    ["abc123", ""],
+  );
+  expect(detail).not.toContain("abc123");
+  expect(detail).not.toContain("signature");
+  expect(detail).toContain("[redacted]");
+  expect(detail).toContain("[URL redacted]");
+  expect(detail.length).toBe(2000);
+});
 test("run provenance binds exact successful workflow and source", () => {
   expect(
     validateRun(good, "owner/repo", "desktop-candidate", "a".repeat(40)),
@@ -145,6 +165,49 @@ test("candidate downloads preserve an existing output directory", async () => {
       ),
     ).rejects.toThrow("already exists");
     expect(readFileSync(join(root, "existing"), "utf8")).toBe("preserve");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("production acquisition passes repository, artifact and isolated extraction paths to gh", async () => {
+  const root = mkdtempSync(join(tmpdir(), "candidate-production-download-"));
+  const output = join(root, "result");
+  const calls: string[][] = [];
+  const names = TARGETS.map((target) => `candidate-${target}`);
+  try {
+    const acquire = artifactAcquirer("123", "owner/repo", (args) => {
+      calls.push(args);
+      expect(args.slice(0, 5)).toEqual([
+        "run",
+        "download",
+        "123",
+        "--repo",
+        "owner/repo",
+      ]);
+      expect(args[5]).toBe("--name");
+      expect(args[7]).toBe("--dir");
+      const name = args[6];
+      const directory = args[8];
+      expect(names).toContain(name);
+      expect(existsSync(directory)).toBe(false);
+      mkdirSync(directory);
+      writeFileSync(
+        join(directory, "desktop-metadata.awk"),
+        "identical shared decoder",
+        { flag: "wx" },
+      );
+      writeFileSync(join(directory, `${name}.json`), name, { flag: "wx" });
+      return "";
+    });
+    await downloadCandidates(names, output, acquire, async (directory) => {
+      expect(readdirSync(directory).sort()).toEqual(
+        ["desktop-metadata.awk", ...names.map((name) => `${name}.json`)].sort(),
+      );
+    });
+    expect(calls.map((args) => args[6])).toEqual(names);
+    expect(new Set(calls.map((args) => args[8])).size).toBe(4);
+    expect(readdirSync(root)).toEqual(["result"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

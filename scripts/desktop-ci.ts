@@ -44,11 +44,52 @@ export function validateRun(
     );
   return run.head_sha as string;
 }
+export function githubFailureDetail(
+  stderr: string,
+  secrets: readonly string[],
+) {
+  let detail = stderr;
+  for (const secret of secrets) {
+    if (secret) detail = detail.replaceAll(secret, "[redacted]");
+  }
+  return detail
+    .replace(/https?:\/\/\S+/g, "[URL redacted]")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, 2000);
+}
 function gh(args: string[]) {
   const r = Bun.spawnSync(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode !== 0)
-    throw new Error(`GitHub ${args[0]} ${args[1]} failed (exit ${r.exitCode})`);
+  if (r.exitCode !== 0) {
+    const detail = githubFailureDetail(r.stderr.toString(), [
+      process.env.GH_TOKEN ?? "",
+      process.env.GITHUB_TOKEN ?? "",
+    ]);
+    throw new Error(
+      `GitHub ${args[0]} ${args[1]} failed (exit ${r.exitCode}): ${detail}`,
+    );
+  }
   return r.stdout.toString();
+}
+
+export function artifactAcquirer(
+  id: string,
+  repository: string,
+  invoke: (args: string[]) => unknown = gh,
+) {
+  return (name: string, directory: string) => {
+    invoke([
+      "run",
+      "download",
+      id,
+      "--repo",
+      repository,
+      "--name",
+      name,
+      "--dir",
+      directory,
+    ]);
+  };
 }
 
 /** Extract independently; publish only a verified union of identical shared files. */
@@ -222,19 +263,7 @@ if (import.meta.main) {
       kind === "desktop-candidate"
         ? TARGETS.map((t) => `candidate-${t}`)
         : ["desktop-evidence"];
-    const acquire = (name: string, directory: string) => {
-      gh([
-        "run",
-        "download",
-        id,
-        "--repo",
-        repo,
-        "--name",
-        name,
-        "--dir",
-        directory,
-      ]);
-    };
+    const acquire = artifactAcquirer(id, repo);
     if (kind === "desktop-candidate")
       await downloadCandidates(names, out, acquire, (directory) =>
         verifyCandidate(directory, source),
