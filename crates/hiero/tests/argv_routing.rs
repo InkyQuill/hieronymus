@@ -427,14 +427,20 @@ fn tray_forwards_absolute_root_as_one_literal_argument_to_sibling() {
     let helper = fixture.path().join("hiero-desktop");
     std::fs::write(
         &helper,
-        "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$1\" \"$2\" > \"$2.args\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$@\" > \"$2.args\"\n",
     )
     .unwrap();
     std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
     let root = "literal $(touch BAD) ; data";
-    let output = Command::new(cli)
+    let output = Command::new(&cli)
         .current_dir(fixture.path())
-        .args(["tray", "--data-root", root])
+        .args([
+            "tray",
+            "--data-root",
+            root,
+            "--unit-dir",
+            "units with spaces",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -445,7 +451,12 @@ fn tray_forwards_absolute_root_as_one_literal_argument_to_sibling() {
     let expected = fixture.path().join(root);
     assert_eq!(
         std::fs::read_to_string(fixture.path().join(format!("{root}.args"))).unwrap(),
-        format!("2\n--data-root\n{}\n", expected.display())
+        format!(
+            "6\n--data-root\n{}\n--unit-dir\n{}\n--binary\n{}\n",
+            expected.display(),
+            fixture.path().join("units with spaces").display(),
+            cli.display()
+        )
     );
     assert!(!fixture.path().join("BAD").exists());
 }
