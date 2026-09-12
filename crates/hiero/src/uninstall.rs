@@ -366,13 +366,19 @@ mod tests {
     }
 
     fn expected_coordination_names() -> Vec<&'static str> {
-        let mut names = vec![".desktop-launch.lock", ".lifecycle.lock"];
-        #[cfg(target_os = "macos")]
-        names.extend([".macos-browser.lock", ".macos-native.lock"]);
-        #[cfg(windows)]
-        names.extend([".windows-browser.lock", ".windows-native.lock"]);
-        names.push(".owner.lock");
-        names
+        vec![
+            ".desktop-launch.lock",
+            ".lifecycle.lock",
+            #[cfg(target_os = "macos")]
+            ".macos-browser.lock",
+            #[cfg(target_os = "macos")]
+            ".macos-native.lock",
+            #[cfg(windows)]
+            ".windows-browser.lock",
+            #[cfg(windows)]
+            ".windows-native.lock",
+            ".owner.lock",
+        ]
     }
 
     fn seed_install(temp: &tempfile::TempDir) -> HieronymusConfig {

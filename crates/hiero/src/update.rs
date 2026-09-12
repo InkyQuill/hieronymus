@@ -1090,7 +1090,7 @@ fn rollback_with_registration(
     registration: Option<&dyn RollbackRegistration>,
 ) -> Result<(), String> {
     operation.check(config).map_err(|error| error.to_string())?;
-    let mut service_options = ServiceOptions {
+    let service_options = ServiceOptions {
         data_root: config.data_root().to_path_buf(),
         unit_dir: snapshot
             .unit_path
@@ -1101,12 +1101,14 @@ fn rollback_with_registration(
         use_manager: true,
     };
     #[cfg(any(windows, target_os = "macos"))]
-    {
+    let service_options = {
+        let mut service_options = service_options;
         service_options.use_manager = operation
             .native_broker_executable(&service_options)
             .map_err(|error| error.to_string())?
             .is_some();
-    }
+        service_options
+    };
     operation
         .register_unit(&service_options)
         .map_err(|error| error.to_string())?;
