@@ -6,6 +6,11 @@ need to be installed to inspect or read a supported project. This is a reading
 and decision workflow; project detection and a `.hieronymus.json` binding do not
 grant trust or permission to write either store.
 
+Discover tool schemas through advertised metadata, read-only help, or supplied
+public resources. Never probe a mutating tool with dummy, partial, or trial
+payloads: a probe can create a real record. If the needed schema is unavailable,
+report that operation as unresolved.
+
 ## Inspect before choosing memory
 
 Run the installed read-only projection from the actual working path:
@@ -134,6 +139,13 @@ coverage, reference editions, and source hashes. A source-unit reference is
 from the selected files. Do not infer alignment from
 filenames or chapter numbering. Research results remain outside current applicability.
 
+When a source revision or newly applicable rule changes material that governs
+this task, preserve historical evidence, identify the affected dependent text,
+and explicitly report or mark that text as requiring review. Use an existing
+draft, note, or task artifact for ordinary authoring; do not invent CWS lifecycle
+fields. A requested draft revision may update the text, but report its remaining
+review requirement rather than treating the edit as acceptance.
+
 ## Preserve external dependencies in CWS translation packets
 
 When Hieronymus memory contributes to a CWS packet, retain each strict reference
@@ -169,6 +181,13 @@ pending, and unresolved records separately. If authoritative ingress cannot acce
 a requested replacement, report its exact pending, rejected, tentative, or
 unresolved result rather than claiming the replacement succeeded. A preference
 change alone authorizes neither transfer nor deletion.
+
+Keep a rejected intended disposition unresolved; do not silently substitute a
+different write or disposition to make the transfer appear complete. An
+additional advisory copy is a separate mutation: create it only when the
+current user instruction actually authorizes that copy, and account for it
+separately without replacing the rejected outcome. Existing authorization is
+sufficient; do not require another approval when it already covers the copy.
 
 ## Reading and preservation boundaries
 
