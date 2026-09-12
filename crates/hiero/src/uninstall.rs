@@ -533,6 +533,7 @@ mod tests {
         assert!(foreign.exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn path_links_are_removed_only_when_they_point_into_the_app_dir() {
         let temp = tempfile::tempdir().unwrap();

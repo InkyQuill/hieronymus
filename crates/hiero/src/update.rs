@@ -32,7 +32,7 @@ use hieronymus::ownership::RootOwnership;
 #[cfg(unix)]
 use crate::app::LINK_NAMES;
 use crate::app::{AppLayout, TARGET_TRIPLE, compare_versions};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use crate::daemon::discovery;
 use crate::daemon::registry::PROTOCOL_REVISION;
 use crate::lifecycle::operation::LifecycleOperation;
