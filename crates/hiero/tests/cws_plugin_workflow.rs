@@ -54,6 +54,10 @@ fn every_generated_target_carries_the_project_agreement_workflow() {
                 "{skill} retained the unconditional terminology boundary for {target}"
             );
             if skill != "hieronymus-bootstrap" {
+                let body = body
+                    .rsplit_once("\n\n")
+                    .expect("shared agreement trailer")
+                    .0;
                 assert!(
                     body.contains("hieronymus-bootstrap") && body.contains("project agreement"),
                     "{skill} does not defer project context to hieronymus-bootstrap for {target}"

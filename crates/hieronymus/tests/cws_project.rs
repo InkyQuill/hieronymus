@@ -8,6 +8,24 @@ use serde_json::{Value, json};
 
 const MANIFEST: &str = "---\nschema-version: 1\ntitle: Test\nlanguage: ru\nstatus: drafting\n---\n";
 
+#[test]
+fn all_cws_line_separators_support_blank_lines_and_closing_delimiters() {
+    let root = tempfile::tempdir().unwrap();
+    for separator in [
+        '\n', '\r', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}',
+        '\u{2029}',
+    ] {
+        let text = MANIFEST
+            .replace("title: Test", "\ntitle: Test")
+            .replace('\n', &separator.to_string());
+        write(root.path(), "project.md", &text);
+        assert!(
+            discover(root.path()).unwrap().is_some(),
+            "separator {separator:?}"
+        );
+    }
+}
+
 fn write(root: &Path, name: &str, text: &str) {
     let path = root.join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();

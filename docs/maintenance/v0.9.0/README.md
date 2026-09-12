@@ -26,6 +26,53 @@ review threads or thread comments. Later findings and dispositions follow here.
 | 28 | 3996695551 | Honor use_native_manager on Windows | Fixed in 1ff6233: guard both Windows broker operations. |
 | 28 | 3996695556 | Guard the entire test file on Unix targets | Fixed in 1ff6233; reconcile file-level guard with #27 native fixtures during merge. |
 
+### Integration PR #29 review
+
+Full review bodies and comments are retained in `pr-29-reviews.json`,
+`pr-29-inline-reviews.json` and `pr-29-conversation.json`.
+
+| Comment | Finding | Disposition |
+| --- | --- | --- |
+| 3996969246 | Fixture provenance claimed byte identity despite local additions | Corrected provenance wording. |
+| 3996969258 | Registry language defaults were not normalized | Normalize and validate defaults identically to explicit values; regression added. |
+| 3996969264 | Display-variable startup gate skipped user-service trays | Use trusted graphical-session discovery, recover only display settings from the private user manager environment, and retry after later login. Live no-display-variable service test passed. |
+| 3996969266 | Non-UTF-8 project roots could panic during JSON projection | Reject unsafe reported paths before serialization; test implicit non-UTF-8 cwd and graceful rejection of invalid UTF-8 arguments. |
+| 3996969271 | Windows uninstall fixtures were compiled out | Restored fixtures and tests, sorted retained-name expectations, and added explicit native CI execution. |
+| 3996969273 | Common trailer made skill-body assertions vacuous | Strip trailer before checking each body; corrected remember skill wording exposed by the stronger test. |
+| 3996969277 | Blocking loopback fixture reads could stall teardown | Bounded read/write waits, whole-header deadline and byte limit; failed reads do not serve success responses. |
+| 3996969279 | Gate the daemon-backed semantic evidence fixture | Retained ordinary coverage: this test exercises authority/evidence helper bookkeeping, not inference. Module documentation now explicitly distinguishes it from opt-in real-model qualification. Static companion review agrees. |
+| 3996969282 | Windows invalid-credential fixture depended on inherited ACLs | Grant an explicit Everyone read ACE and check command success; run worker contracts in native CI. |
+| 3996969286 | Missing padded-direction predicate test | Added padded and empty-identity rejection assertions. |
+| 3996969287 | Unicode/control line separators survived line splitting | Strip all recognized separators; test blank lines and closing delimiters for each. |
+| 3996969291 | ADR decisions conflicted with optional browser authentication | Updated normative decisions and consequences for both browser modes and existing waived CSRF/rotation rules. |
+| 3996969292 | Null qualification was treated as omitted | Reject present null; regression added. |
+| 3996969295 | Intel could be incorrectly labelled qualified | Enforce unqualified Intel desktop evidence; regression covers qualified and partial rejection. |
+| 3996969298 | Reviewed runtime inputs were verified after output publication | Verify archive and receipt before packageDesktop writes outputs. |
+
+The strengthened skill test initially failed on `hieronymus-remember` because
+its body said “free-text agreement”; it now names the project agreement explicitly.
+The initial non-UTF-8 CLI fixture also exposed `std::env::args()` panicking before
+project inspection; arguments now fail with a normal diagnostic, and the working
+directory case returns the structured invalid envelope. These failures were
+fixed, not waived. Focused CWS domain tests passed (22), as did the five focused
+CLI/provider/worker integration suites and 109 release-script tests.
+
+The companion review additionally found a possible pipe-capacity deadlock in
+session environment capture. Nonblocking bounded draining now runs during child
+polling, with tests for larger-than-pipe output and excess output. Final static
+review found no remaining correctness issue in that helper.
+
+Live CachyOS/KDE Wayland development test: transient service
+`hieronymus-qualification-nodisplay-20260912.service` launched pid 211171 with
+DISPLAY, WAYLAND_DISPLAY and XAUTHORITY absent. Helper pid 211245 recovered those
+three settings and registered an Active StatusNotifierItem. Authenticated graceful
+stop removed both processes and returned the watcher from 8 items to its baseline
+7; the transient unit became inactive. This is development-source evidence,
+not qualification of the future immutable release candidate.
+
+PR #26 passed every check and merged at 2026-09-12T17:32:53Z as
+`7eed43b72a3af0d45366dbe6429b7c604848b845`.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)

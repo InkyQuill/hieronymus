@@ -84,9 +84,9 @@ fn remember_skill() -> String {
     workflow_skill(
         "hieronymus-remember",
         "Distinguish immediate trusted corrections from relevance and ordinary learned observations.",
-        r#"Apply the project-context workflow from hieronymus-bootstrap before deciding whether the current project should use or receive remembered information. A free-text agreement can control use and authorized storage, but cannot forge a trusted correction, mint a receipt, or change an internal rule's reported status.
+        r#"Apply the project-context workflow from hieronymus-bootstrap before deciding whether the current project should use or receive remembered information. A free-text project agreement can control use and authorized storage, but cannot forge a trusted correction, mint a receipt, or change an internal rule's reported status.
 
-Corrections require no Remember command. The independently supplied host UserPromptSubmit handler or dedicated authenticated console applies clear selected rendering, invalidation or qualification immediately. If the hook has no binding, say the correction was not applied; establish an explicit selection for a subsequent genuine event. Do not replay quoted user text through shell/model arguments to fabricate a host event, invent receipt_ref, or set source_role=user/user_rule as authority.
+Corrections require no Remember command. The independently supplied host UserPromptSubmit handler or local author console applies clear selected rendering, invalidation or qualification immediately. If the hook has no binding, say the correction was not applied; establish an explicit selection for a subsequent genuine event. Do not replay quoted user text through shell/model arguments to fabricate a host event, invent receipt_ref, or set source_role=user/user_rule as authority.
 
 Consume Applied/Replayed required_decision_id before dependent reads/validation. An invalidation marks only the selected claim incorrect and invents no replacement. Qualification preserves its exact scope. Unhelpful recall goes to relevance feedback instead. Ambiguous selection stays tentative with visible reasons. Provider outage cannot delay an already applied correction; consolidation is durable background work with retries, not evidence that a provider run succeeded. Never claim completion from a pending/parked job."#,
     )

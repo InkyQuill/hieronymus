@@ -51,8 +51,13 @@ fn argv0_command() -> Option<&'static str> {
 }
 
 fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    match run(&arguments) {
+    let result = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.into_string())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "command arguments must be valid UTF-8".to_string())
+        .and_then(|arguments| run(&arguments));
+    match result {
         Ok(code) => code,
         Err(error) => {
             eprintln!("hiero: {error}");

@@ -1,8 +1,9 @@
 # CWS structural compatibility examples
 
-`cws-project-v1.json` is a byte-identical copy from creative-writing-skills
+`cws-project-v1.json` copies structural cases verbatim from creative-writing-skills
 commit `d8ed8a2198b012af32dae2ace4feda196cb0560e`, at
-`plugins/creative-writing-skills/skills/project-maintenance/resources/compatibility/cws-project-v1.json`.
+`plugins/creative-writing-skills/skills/project-maintenance/resources/compatibility/cws-project-v1.json`,
+and adds the local `expect.selections` entries described below.
 The public specification is the adjacent producer `external-project-contract.md`.
 Contract v1 supports project schemas 1 and 2. Tests use the portable
 `technical_failure` field, not optional producer diagnostic codes.

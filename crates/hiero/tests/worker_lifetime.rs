@@ -373,6 +373,15 @@ fn an_unusable_credential_never_spawns_a_worker() {
     std::fs::write(&token, "ab".repeat(32)).unwrap();
     #[cfg(unix)]
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
+    #[cfg(windows)]
+    assert!(
+        std::process::Command::new("icacls.exe")
+            .arg(&token)
+            .args(["/grant", "*S-1-1-0:(R)"])
+            .status()
+            .unwrap()
+            .success()
+    );
     let arm = CountingArm::new();
     install_test_arm(root.path(), Arc::clone(&arm) as Arc<dyn SemanticArm>);
 

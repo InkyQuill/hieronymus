@@ -51,6 +51,9 @@ impl LoopbackModels {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_write_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
                         let Some((path, headers)) = read_request(&mut stream) else {
                             continue;
                         };
@@ -107,17 +110,23 @@ impl Drop for LoopbackModels {
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<(String, BTreeMap<String, String>)> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
     let mut raw = Vec::new();
     let mut buffer = [0_u8; 4096];
     let separator = loop {
         if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
             break position;
         }
+        let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+        stream.set_read_timeout(Some(remaining)).ok()?;
         let count = stream.read(&mut buffer).ok()?;
         if count == 0 {
             return None;
         }
         raw.extend_from_slice(&buffer[..count]);
+        if raw.len() > 65_536 {
+            return None;
+        }
     };
     let head = String::from_utf8_lossy(&raw[..separator]).into_owned();
     let mut lines = head.split("\r\n");

@@ -79,9 +79,17 @@ impl LoopbackFile {
                     continue;
                 };
                 socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                socket
+                    .set_write_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
                 *thread_requests.lock().unwrap() += 1;
                 let mut buffer = [0_u8; 4096];
-                let _ = socket.read(&mut buffer);
+                if !matches!(socket.read(&mut buffer), Ok(count) if count > 0) {
+                    continue;
+                }
                 let head = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()

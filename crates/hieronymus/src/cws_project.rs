@@ -178,11 +178,12 @@ pub(crate) fn parse_frontmatter(bytes: &[u8]) -> Result<BTreeMap<String, Metadat
         .replace("\r\n", "\n")
         .replace('\r', "\n");
     // Python splitlines also recognizes these Unicode/control line separators.
+    const SEPARATORS: [char; 9] = [
+        '\n', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}', '\u{2029}',
+    ];
     let mut lines = text
-        .split_inclusive([
-            '\n', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}', '\u{2029}',
-        ])
-        .map(|line| line.trim_end_matches('\n'));
+        .split_inclusive(SEPARATORS)
+        .map(|line| line.trim_end_matches(SEPARATORS));
     if lines.next() != Some("---") {
         return Err(CwsError::InvalidManifest);
     }

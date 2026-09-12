@@ -4,6 +4,30 @@ use serde_json::{Value, json};
 
 use hiero::project_context::exit_code;
 
+#[cfg(unix)]
+#[test]
+fn non_utf8_project_root_returns_invalid_json_without_panicking() {
+    use std::os::unix::ffi::OsStrExt;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"project-\xff"));
+    std::fs::create_dir(&root).unwrap();
+    write_project(&root, 1);
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .current_dir(&root)
+        .args(["project-context", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let report = json_stdout(&output);
+    assert_eq!(report["status"], "invalid");
+    assert_eq!(report["diagnostics"], json!(["unsafe_path"]));
+    let explicit = cli(&root, &temp.path().join("data"), &["--json"]);
+    assert_eq!(explicit.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&explicit.stderr).contains("arguments must be valid UTF-8"));
+}
+
 fn write_project(root: &std::path::Path, schema: u64) {
     let manifest = if schema == 1 {
         "---\nschema-version: 1\ntitle: Example\nlanguage: ru\nstatus: drafting\n---\nManuscript body must stay private.\n"

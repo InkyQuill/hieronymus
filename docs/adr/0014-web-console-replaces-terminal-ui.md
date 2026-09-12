@@ -25,9 +25,11 @@ a browser.
 
 The Svelte 5 web console is the only first-class interactive configuration and
 administration UI. `hiero config` and `hiero admin` start or discover the local
-daemon, create a single-use launch grant, and open the corresponding loopback
-web route. The frontend uses authenticated HTTP and WebSocket contracts and
-never writes SQLite or configuration files directly.
+daemon and open the corresponding loopback web route. Their single-use launch
+grant supports the session-cookie flow required when `authentication_required`
+is true. With the default false setting, direct browser HTTP and WebSocket
+access needs no session cookie. Host/Origin checks apply in both modes. The
+frontend never writes SQLite or configuration files directly.
 
 A browser is required only for interactive UI use. Headless CLI commands, MCP
 stdio, native MCP HTTP, daemon operation, migration, backup, doctor, import,

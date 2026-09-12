@@ -92,6 +92,11 @@ jobs:
       - name: Windows selected-helper contract
         if: runner.os == 'Windows'
         run: cargo test -p hiero --all-features --locked --lib desktop::launch::selection_tests::regular_windows_launcher_selects_versioned_helper
+      - name: Windows isolated uninstall and worker contracts
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p hiero --all-features --locked --lib uninstall::tests
+          cargo test -p hiero --all-features --locked --test worker_lifetime
       - name: Helper rustdoc (Unix)
         if: runner.os != 'Windows'
         run: RUSTDOCFLAGS="-D warnings" cargo doc -p hiero-desktop --no-deps --all-features --locked

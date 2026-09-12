@@ -29,6 +29,9 @@
 //! the corrupt-model daemon fails at the model checksum before any dylib is
 //! touched; and the corrupt-runtime daemon runs as a real `hiero daemon`
 //! subprocess to verify checksum rejection and recovery before native loading.
+//!
+//! The ordinary fixture-regression tests below check corpus bookkeeping and
+//! authority evidence helpers only. They do not require or claim real inference.
 
 mod common;
 

@@ -374,14 +374,31 @@ pub(crate) fn translation_context(
 }
 
 fn context_language(value: Option<String>, default: &str, field: &str) -> Result<String, AppError> {
-    let Some(value) = value else {
-        return Ok(default.to_owned());
-    };
+    let value = value.as_deref().unwrap_or(default);
     let value = value.trim().to_lowercase();
     if value.is_empty() {
         return Err(AppError::Domain(format!("{field} must not be empty")));
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod language_defaults_tests {
+    use super::context_language;
+
+    #[test]
+    fn registry_defaults_and_explicit_languages_have_the_same_identity() {
+        assert_eq!(
+            context_language(None, " EN ", "source_language").unwrap(),
+            context_language(Some(" EN ".into()), "ja", "source_language").unwrap()
+        );
+        assert!(
+            context_language(None, "  ", "target_language")
+                .unwrap_err()
+                .to_string()
+                .contains("target_language must not be empty")
+        );
+    }
 }
 
 /// Narrative overrides are explicit for this request; research never becomes

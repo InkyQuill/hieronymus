@@ -43,6 +43,25 @@ test("fully populated native record passes", async () => {
   const f = fixture();
   await validateRecord(f.record, f.root, f.identity);
 });
+test("present null qualification is invalid", async () => {
+  const f = fixture();
+  await expect(
+    validateRecord({ ...f.record, qualification: null }, f.root, f.identity),
+  ).rejects.toThrow("invalid qualification status");
+});
+test("Intel desktop qualification cannot claim qualified or partial coverage", async () => {
+  const f = fixture();
+  const identity = { ...f.identity, target: "x86_64-apple-darwin" };
+  for (const qualification of ["qualified", "partial"]) {
+    await expect(
+      validateRecord(
+        { ...f.record, ...identity, qualification },
+        f.root,
+        identity,
+      ),
+    ).rejects.toThrow("Intel macOS must remain unqualified");
+  }
+});
 test("partial coverage keeps verified passes and records explicit gaps", async () => {
   const f = fixture();
   f.record.checks[0].result = "unavailable";

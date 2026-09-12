@@ -140,6 +140,11 @@ jobs:
       - name: Windows filesystem and uninstall contracts
         if: runner.os == 'Windows'
         run: cargo test -p hiero -p hieronymus --all-features --locked --test platform_filesystem --test export_safety --test dream_locks_port --test upgrade_port --test uninstall_cli
+      - name: Windows isolated uninstall and worker contracts
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p hiero --all-features --locked --lib uninstall::tests
+          cargo test -p hiero --all-features --locked --test worker_lifetime
       - name: Windows native broker contracts
         if: runner.os == 'Windows'
         run: cargo test -p hiero --all-features --locked --lib platform::windows_broker::tests

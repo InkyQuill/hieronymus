@@ -126,48 +126,118 @@ fn logind_session() -> io::Result<String> {
 
 #[cfg(target_os = "linux")]
 fn busctl(args: &[&str]) -> io::Result<String> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-    let mut child = Command::new("/usr/bin/busctl")
+    let mut command = std::process::Command::new("/usr/bin/busctl");
+    command
         .args(["--system", "--timeout=2", "--no-pager"])
         .args(args)
-        .env_remove("DBUS_SYSTEM_BUS_ADDRESS")
+        .env_remove("DBUS_SYSTEM_BUS_ADDRESS");
+    session_output(command, 4096)
+}
+
+#[cfg(target_os = "linux")]
+fn session_output(mut command: std::process::Command, limit: u64) -> io::Result<String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            result => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(result.err().unwrap_or_else(|| {
-                    io::Error::new(io::ErrorKind::TimedOut, "Desktop session lookup timed out")
-                }));
+    let result = (|| {
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("Session lookup had no output"))?;
+        let flags = rustix::fs::fcntl_getfl(&stdout)?;
+        rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK)?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut output = Vec::new();
+        let mut status = None;
+        loop {
+            let mut buffer = [0_u8; 4096];
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        output.extend_from_slice(&buffer[..count]);
+                        if output.len() as u64 > limit {
+                            return Err(io::Error::other("Desktop session response exceeds bound"));
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(error),
+                }
+            }
+            // Drain once more after observing exit, including its last write.
+            if let Some(status) = status {
+                if !std::process::ExitStatus::success(&status) {
+                    return Err(io::Error::other("Desktop session query failed"));
+                }
+                return String::from_utf8(output).map_err(io::Error::other);
+            }
+            status = child.try_wait()?;
+            if status.is_none() {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Desktop session lookup timed out",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
-    };
-    if !status.success() {
-        return Err(io::Error::other(
-            "No logind session was found for this process",
-        ));
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    let mut output = String::new();
-    child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("Session lookup had no output"))?
-        .take(4096)
-        .read_to_string(&mut output)?;
-    Ok(output)
+    result
 }
 
 #[cfg(target_os = "linux")]
-fn graphical_user_session() -> io::Result<String> {
+pub(crate) fn graphical_environment() -> io::Result<std::collections::BTreeMap<String, String>> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let uid = rustix::process::geteuid().as_raw();
+    let runtime = format!("/run/user/{uid}");
+    let metadata = std::fs::symlink_metadata(&runtime)?;
+    if !metadata.is_dir() || metadata.uid() != uid || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(io::Error::other("No private user runtime directory"));
+    }
+    let bus = format!("unix:path={runtime}/bus");
+    let mut command = std::process::Command::new("/usr/bin/systemctl");
+    command
+        .args(["--user", "show-environment", "--output=json"])
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env("DBUS_SESSION_BUS_ADDRESS", &bus);
+    let mut environment = display_environment(&session_output(command, 65_536)?)?;
+    environment.insert("XDG_RUNTIME_DIR".into(), runtime);
+    environment.insert("DBUS_SESSION_BUS_ADDRESS".into(), bus);
+    Ok(environment)
+}
+
+#[cfg(target_os = "linux")]
+fn display_environment(raw: &str) -> io::Result<std::collections::BTreeMap<String, String>> {
+    let values: serde_json::Value = serde_json::from_str(raw).map_err(io::Error::other)?;
+    let mut result = std::collections::BTreeMap::new();
+    for key in ["DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"] {
+        if let Some(value) = values.get(key).and_then(serde_json::Value::as_str)
+            && !value.is_empty()
+            && !value.contains('\0')
+        {
+            result.insert(key.to_string(), value.to_string());
+        }
+    }
+    if !result.contains_key("DISPLAY") && !result.contains_key("WAYLAND_DISPLAY") {
+        return Err(io::Error::other(
+            "Graphical user manager has no display environment yet",
+        ));
+    }
+    Ok(result)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn graphical_user_session() -> io::Result<String> {
     // User-manager services are outside a login scope. Ask the system's logind
     // for this UID's graphical session; caller-supplied environment is not authority.
     let uid = rustix::process::geteuid().as_raw();
@@ -267,6 +337,30 @@ fn trusted_session() -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn session_output_drains_large_responses_and_rejects_excess() {
+        let command = || {
+            let mut command = std::process::Command::new("/usr/bin/head");
+            command.args(["-c", "131072", "/dev/zero"]);
+            command
+        };
+        assert_eq!(session_output(command(), 131_072).unwrap().len(), 131_072);
+        assert!(
+            session_output(command(), 1024)
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds bound")
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn display_environment_only_forwards_display_settings() {
+        let env = display_environment(r#"{"DISPLAY":":0","XAUTHORITY":"/run/user/1000/xauth","SECRET":"private","HIERONYMUS_DATA_ROOT":"foreign"}"#).unwrap();
+        assert_eq!(env.len(), 2);
+        assert_eq!(env["DISPLAY"], ":0");
+        assert!(display_environment(r#"{"SECRET":"private"}"#).is_err());
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn graphical_service_identity_matches_login_and_rejects_foreign_sessions() {

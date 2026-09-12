@@ -11,11 +11,14 @@ use std::{
 };
 
 fn graphical_session() -> bool {
-    if cfg!(target_os = "linux") {
-        ["DISPLAY", "WAYLAND_DISPLAY"]
-            .iter()
-            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
-    } else {
+    #[cfg(target_os = "linux")]
+    {
+        // User services need not inherit display variables from the login.
+        // logind validates a local graphical session owned by this user.
+        super::singleton::graphical_user_session().is_ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
         cfg!(any(windows, target_os = "macos"))
     }
 }
@@ -27,9 +30,6 @@ pub(crate) fn supervise(
     service: Option<crate::service::ServiceOptions>,
     stop: Arc<AtomicBool>,
 ) -> Option<JoinHandle<()>> {
-    if !graphical_session() {
-        return None;
-    }
     Some(thread::spawn(move || {
         let mut child: Option<Child> = None;
         let mut next_start = Instant::now();
@@ -56,6 +56,10 @@ pub(crate) fn supervise(
                     }
                 }
             } else if Instant::now() >= next_start {
+                if !graphical_session() {
+                    next_start = Instant::now() + Duration::from_secs(5);
+                    continue;
+                }
                 match spawn(&config, service.as_ref()) {
                     Ok(started) => {
                         child = Some(started);
@@ -89,6 +93,13 @@ fn spawn(
         None => super::launch::stable_cli(&executable)?,
     };
     let mut command = Command::new(helper);
+    #[cfg(target_os = "linux")]
+    if !["DISPLAY", "WAYLAND_DISPLAY"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty()))
+    {
+        command.envs(super::singleton::graphical_environment().map_err(|e| e.to_string())?);
+    }
     command
         .arg("--resume")
         .arg("--data-root")

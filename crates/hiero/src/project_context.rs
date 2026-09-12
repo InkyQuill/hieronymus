@@ -21,6 +21,9 @@ pub fn inspect(cwd: &Path, direction: Option<&str>) -> Value {
         Err(error) => return error_report(error, direction),
     };
 
+    if project.root.to_str().is_none() {
+        return error_report(CwsError::UnsafePath, direction);
+    }
     let mut report = project_report(&project, direction);
     match instructions_path(&project) {
         Ok(path) => report["instructions_path"] = json!(path),
@@ -135,6 +138,9 @@ fn error_report(error: CwsError, direction: Option<&str>) -> Value {
 
 fn instructions_path(project: &CwsProject) -> Result<Option<PathBuf>, CwsError> {
     let path = project.root.join("AGENTS.md");
+    if path.to_str().is_none() {
+        return Err(CwsError::UnsafePath);
+    }
     match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             Err(CwsError::UnsafePath)

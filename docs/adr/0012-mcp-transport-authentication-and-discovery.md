@@ -49,9 +49,11 @@ clients use it.
 
 ## Decision
 
-The daemon binds to loopback only by default and authenticates every non-static
-endpoint with a per-installation bearer token. This includes REST, MCP,
-WebSocket upgrade, status details, and shutdown. `/health` may return only a
+The daemon binds to loopback only by default. MCP, native status and shutdown
+require their installation credentials. Browser REST and WebSocket access
+follow `authentication_required` in `web.conf`: false by default permits the
+local desktop console without a cookie; true requires a valid console session.
+Both modes enforce Host and Origin validation. `/health` may return only a
 minimal unauthenticated liveness response with no paths, versions, or user data.
 
 The token is generated with a cryptographically secure RNG, stored separately
@@ -62,16 +64,18 @@ default. Only the credential loader and outbound provider/auth header builders
 may call an explicit `expose_secret()` method. Public API DTOs cannot contain
 `Secret<T>` and must be constructed through redacting projection functions.
 
-Token rotation sends an explicit `credentials_rotated` close/error to current
-MCP and WebSocket sessions, then terminates them. Clients do not silently retry
-mutations. They rediscover credentials, reauthenticate, and may retry only
-operations declared idempotent or carrying an idempotency key.
+Token rotation replaces the credential; clients receiving 401 reread it and
+reconnect. The 2026-09-03 amendment waives a separate `credentials_rotated`
+ceremony and authentication-specific idempotency policy.
 
-Browser bootstrapping uses a short-lived, single-use launch grant created by
-`hiero config` or `hiero admin`. The grant is exchanged over loopback for a
-SameSite=Strict, HttpOnly session cookie. Tokens and grants never appear in URL
-query strings. State-changing browser requests also require validated
-`Host`/`Origin` and a CSRF token.
+With `authentication_required = true`, browser bootstrapping uses a short-lived,
+single-use launch grant created by `hiero config` or `hiero admin` and exchanged
+over loopback for a SameSite=Strict, HttpOnly session cookie. The CLI may also
+provide this bootstrap when authentication is off, but direct browser access
+does not require it in that mode. Tokens and grants never appear in URL query
+strings. State-changing browser requests require exact `Host`/`Origin` checks
+in both modes; the separate CSRF token is waived. Default-mode corrections use
+local desktop console attribution, while authenticated mode uses its session.
 
 Native HTTP MCP clients read the endpoint and credential location from generated
 host configuration. Where a host cannot supply authorization headers safely,
@@ -89,5 +93,6 @@ not hard-code `9768`.
 ## Consequences
 
 Authentication and discovery become cross-surface contracts rather than route
-implementation details. Frontend integration tests must exercise the launch
-grant, cookie, CSRF, WebSocket, and token-rotation flows.
+implementation details. Integration tests must exercise cookie-free default
+access, authenticated launch-grant/cookie and WebSocket flows, Host/Origin
+rejections in both modes, and authenticated native/MCP access.

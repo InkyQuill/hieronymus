@@ -353,7 +353,6 @@ fn resolve_into(link_path: &Path, target: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(windows))]
     use hieronymus::data_root::HieronymusConfig;
 
     fn options(temp: &tempfile::TempDir, confirmed: bool, delete_data: bool) -> UninstallOptions {
@@ -370,9 +369,8 @@ mod tests {
         run_uninstall_impl(options, false)
     }
 
-    #[cfg(not(windows))]
     fn expected_coordination_names() -> Vec<&'static str> {
-        vec![
+        let mut names = vec![
             ".desktop-launch.lock",
             ".lifecycle.lock",
             #[cfg(target_os = "macos")]
@@ -384,10 +382,11 @@ mod tests {
             #[cfg(windows)]
             ".windows-native.lock",
             ".owner.lock",
-        ]
+        ];
+        names.sort_unstable();
+        names
     }
 
-    #[cfg(not(windows))]
     fn seed_install(temp: &tempfile::TempDir) -> HieronymusConfig {
         // Managed application directory with one version and stable links.
         let layout = AppLayout::new(temp.path().join("app"));
@@ -430,7 +429,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn uninstall_removes_software_and_generated_entries_but_preserves_data() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);
@@ -476,7 +474,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn delete_data_is_a_separate_explicit_action_naming_the_root() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);
@@ -503,7 +500,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn delete_data_removes_unrelated_lock_names() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);

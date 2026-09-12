@@ -519,6 +519,10 @@ mod tests {
         assert!(structural_overlap(&db, &left, &compatible).unwrap());
         let malformed = scope(&["cws:direction:ru-main", "cws:direction:ru-literary"]);
         assert!(direction(&malformed.scope_predicates).is_err());
+        let padded = scope(&[" cws:direction:ru-main"]);
+        assert!(direction(&padded.scope_predicates).is_err());
+        let empty_identity = scope(&["cws:direction:"]);
+        assert!(direction(&empty_identity.scope_predicates).is_err());
         assert!(direction(&left.scope_predicates).is_ok());
         assert!(matches!(
             validate(&db, &malformed),

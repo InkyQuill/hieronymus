@@ -87,16 +87,9 @@ if (values["dry-run"]) {
         "--out",
         "target/desktop-icons",
       ]);
-    mkdirSync(resolve(values.out!), { recursive: true });
-    await packageDesktop({
-      target,
-      input: resolve(
-        `${process.env.CARGO_TARGET_DIR ?? "target"}/${target}/release`,
-      ),
-      runtime: resolve(process.env.HIERO_RELEASE_RUNTIME_DIR),
-      common: resolve(process.env.HIERO_COMMON_MODEL_DIR),
-      out: resolve(values.out!),
-    });
+    let reviewed:
+      | { archive: string; receipt: string; name: string }
+      | undefined;
     const runtime = desktopTarget(target).runtime;
     if (runtime.origin === "source-reviewed") {
       const source = reviewedSource(runtime, target);
@@ -107,9 +100,23 @@ if (values["dry-run"]) {
       await verify(archive, runtime.sha256, runtime.size);
       await verify(receipt, source.receipt_sha256);
       validateSourceReceipt(await Bun.file(receipt).json(), runtime);
-      copyFileSync(archive, resolve(values.out!, runtime.archive));
+      reviewed = { archive, receipt, name: runtime.archive };
+    }
+    mkdirSync(resolve(values.out!), { recursive: true });
+    await packageDesktop({
+      target,
+      input: resolve(
+        `${process.env.CARGO_TARGET_DIR ?? "target"}/${target}/release`,
+      ),
+      runtime: resolve(process.env.HIERO_RELEASE_RUNTIME_DIR),
+      common: resolve(process.env.HIERO_COMMON_MODEL_DIR),
+      out: resolve(values.out!),
+    });
+
+    if (reviewed) {
+      copyFileSync(reviewed.archive, resolve(values.out!, reviewed.name));
       copyFileSync(
-        receipt,
+        reviewed.receipt,
         resolve(values.out!, "onnxruntime-source-build-receipt.json"),
       );
     }

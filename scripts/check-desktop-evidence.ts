@@ -89,10 +89,18 @@ export async function validateRecord(
 ): Promise<void> {
   // The owner permits partial native coverage, provided every gap is explicit.
   // Older records retain their strict fully-qualified semantics.
-  const qualification = record?.qualification ?? "qualified";
+  const qualification =
+    record && Object.hasOwn(record, "qualification")
+      ? record.qualification
+      : "qualified";
   if (!["qualified", "partial", "unqualified"].includes(qualification))
     throw new Error("invalid qualification status");
   const limited = qualification !== "qualified";
+  if (
+    identity.target === "x86_64-apple-darwin" &&
+    qualification !== "unqualified"
+  )
+    throw new Error("Intel macOS must remain unqualified for this release");
   const fields = [
     ...Object.keys(identity),
     "os_version",
