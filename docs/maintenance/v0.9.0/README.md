@@ -73,6 +73,16 @@ not qualification of the future immutable release candidate.
 PR #26 passed every check and merged at 2026-09-12T17:32:53Z as
 `7eed43b72a3af0d45366dbe6429b7c604848b845`.
 
+The next full Rust run hit an intermittent message assertion in
+`update::tests::undiscovered_owner_refuses_before_retirement_or_manager_actions`
+(162 library tests passed, 1 failed). The original assertion did not print the
+returned error. After adding diagnostic output, ten complete library-suite
+reruns passed, so the precise race remains unconfirmed. The fixture now holds
+the actual RootOwnership lock without starting unrelated daemon workers and
+deleting their discovery state; all existing no-manager/no-retirement/no-switch
+assertions remain. Its focused test passed. The README installation instructions
+also now describe the v0.9 split archives and matching desktop installers.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)

@@ -2258,13 +2258,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let (options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
         let config = hieronymus::data_root::load_config(options.data_root.as_deref());
-        let daemon = crate::daemon::Daemon::start(&crate::daemon::DaemonOptions {
-            data_root: options.data_root.clone(),
-            port: 0,
-            ..Default::default()
-        })
-        .unwrap();
-        std::fs::remove_file(config.daemon_discovery_path()).unwrap();
+        // Hold the actual ownership primitive without unrelated live workers.
+        // This case specifically tests a locked root with no discovery record.
+        let owner = RootOwnership::acquire(&config, "undiscovered-test-owner").unwrap();
         assert!(!lifecycle::checked_probe(&config).unwrap().is_live());
         let manager = FakeManager::default();
         let error = run_update_impl(&options, Some(&manager)).unwrap_err();
@@ -2274,7 +2270,7 @@ mod tests {
             manager.calls()
         );
         assert_eq!(error.exit_code(), 2);
-        assert!(error.to_string().contains("owns this data root"));
+        assert!(error.to_string().contains("owns this data root"), "{error}");
         assert!(
             !config
                 .data_root()
@@ -2285,7 +2281,7 @@ mod tests {
         assert!(!layout.version_dir("9.9.0").exists());
         assert!(!layout.versions_dir().join(".staging-9.9.0").exists());
         assert!(RootOwnership::acquire(&config, "test").is_err());
-        daemon.shutdown().unwrap();
+        drop(owner);
     }
 
     #[test]

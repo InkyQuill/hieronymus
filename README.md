@@ -21,44 +21,68 @@ in the release binary. Python is not required to build, test, release or run it.
 
 ## Install a binary release
 
-The supported target is Linux x86_64. Download the native archive, checksum,
-`release.json` and standalone `install.sh` from the
-[GitHub releases](https://github.com/InkyQuill/hieronymus/releases).
-With the GitHub CLI, installation requires no source checkout:
+For v0.9.0, choose your computer on the
+[release page](https://github.com/InkyQuill/hieronymus/releases/tag/v0.9.0).
+The release's `native-qualification.json` records the tests and gaps for each
+platform. Intel macOS is included but unqualified for native desktop use.
+
+| Computer | Target name |
+| --- | --- |
+| Linux x86_64 | `x86_64-unknown-linux-gnu` |
+| Windows x86_64 | `x86_64-pc-windows-msvc` |
+| Apple Silicon Mac | `aarch64-apple-darwin` |
+| Intel Mac (unqualified) | `x86_64-apple-darwin` |
+
+Download these assets into one folder, using your target name:
+
+- `hieronymus-0.9.0-<target>.tar.gz` (Windows uses `.zip`).
+- The shared `hieronymus-model-...tar.gz` archive.
+- `release-<target>.json`.
+- `install-desktop-<target>.sh` (Windows uses `.ps1`).
+- On Linux and macOS, also download `desktop-metadata.awk`.
+
+Keep the archives compressed. Open a terminal in that folder and run the
+installer for your computer. For example, on Linux:
 
 ```bash
-gh release download v0.8.0 --repo InkyQuill/hieronymus --dir hieronymus-release \
-  --pattern 'hieronymus-*-x86_64-unknown-linux-gnu.tar.gz' \
-  --pattern '*.sha256' --pattern release.json --pattern install.sh
-echo 'dd27c2715e75dccefe246484bab544521df60bdf1eca0fe9260f7caee1c60eea  hieronymus-release/install.sh' | sha256sum --check && \
-bash hieronymus-release/install.sh --release-dir hieronymus-release
+bash ./install-desktop-x86_64-unknown-linux-gnu.sh --release-dir .
 ```
 
-The checksum above pins the v0.8.0 installer before execution. The installer
-then verifies the archive checksum and bundled native assets before
-installing. The application needs no Python, Bun or Rust compiler at runtime.
-The same four files can be downloaded from the release page without the GitHub CLI.
+On Apple Silicon, use `install-desktop-aarch64-apple-darwin.sh` in the same
+command; on Intel macOS, use `install-desktop-x86_64-apple-darwin.sh`.
+On Windows, run this in PowerShell 7.4 or newer:
+
+```powershell
+pwsh -File ./install-desktop-x86_64-pc-windows-msvc.ps1 -ReleaseDir .
+```
+
+The installer verifies archive checksums and bundled assets before installing.
+The application needs no Python, Bun or Rust compiler at runtime. After
+installation, use the tray icon to open the web interface and connect your agent.
+For a v0.8 installation, use this v0.9 installer to upgrade: the old
+single-archive updater cannot consume the new split archives.
 
 ## Install from a checkout
 
-The supported target is Linux x86_64. Given a verified release directory containing
-`release.json`, its archive and checksum file, run from this checkout:
+Given a verified v0.9 release directory containing the matching target metadata
+and both archives, run on Linux or macOS from this checkout:
 
 ```bash
-./install.sh --release-dir /path/to/release-dist
+bash scripts/install-desktop.sh --release-dir /path/to/release-dist
 ```
 
 For a disposable installation without service activation:
 
 ```bash
-./install.sh --release-dir /path/to/release-dist \
+bash scripts/install-desktop.sh --release-dir /path/to/release-dist \
   --app-dir /tmp/hiero-rehearsal/app --data-root /tmp/hiero-rehearsal/data \
   --unit-dir /tmp/hiero-rehearsal/units --no-activate
 ```
 
-The root checkout installer delegates to `scripts/install.sh`; it is intended for checkout
-usage. The installed executable includes its model/runtime assets and needs no
-Bun or compiler. No public release feed is assumed. Native host acceptance and
+For Windows, use `pwsh -File scripts/install-desktop.ps1 -ReleaseDir <directory>`.
+The root `install.sh` remains the legacy single-archive installer. The installed
+executable includes its model/runtime assets and needs no Bun or compiler.
+No public update feed is assumed. Native host acceptance and
 installed workflow qualification remain separate gates; see the
 [rehearsal](docs/rust-cutover-rehearsal.md) and
 [host acceptance record](docs/agent-host-acceptance.md).
