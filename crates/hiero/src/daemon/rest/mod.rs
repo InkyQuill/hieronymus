@@ -16,6 +16,7 @@
 //! and always reports `404 {"error":"not_found"}`.
 
 pub(crate) mod admin;
+mod connection;
 pub(crate) mod feedback;
 pub(crate) mod providers;
 mod semantic;
@@ -37,6 +38,9 @@ pub(crate) fn handle(
     runtime: &DaemonRuntime,
 ) -> Response {
     match path {
+        "/api/agents/prepare" if request.method == "POST" => {
+            guard_api(request, runtime, connection::prepare)
+        }
         "/status" => status::handle(request, runtime),
         "/authority/host-event" if request.method == "POST" => host_event(request, runtime),
         "/api/authority/correct" if request.method == "POST" => {
@@ -178,9 +182,7 @@ fn guard_api(
     if !host_is_valid(request, runtime) {
         return invalid_host();
     }
-    let authorized = presented_session(request)
-        .is_some_and(|session| runtime.sessions.session_is_valid(&session));
-    if !authorized {
+    if !browser_is_authorized(request, runtime) {
         return unauthorized();
     }
     let is_safe_read = matches!(request.method.as_str(), "GET" | "HEAD");
@@ -193,6 +195,12 @@ fn guard_api(
         return forbidden_origin();
     }
     handler(request, runtime)
+}
+
+pub(crate) fn browser_is_authorized(request: &Request, runtime: &DaemonRuntime) -> bool {
+    !runtime.web.authentication_required
+        || presented_session(request)
+            .is_some_and(|session| runtime.sessions.session_is_valid(&session))
 }
 
 /// Mint a launch grant: the minimal native (bearer + Host) path the
@@ -294,13 +302,15 @@ fn host_event(request: &Request, runtime: &DaemonRuntime) -> Response {
     )
 }
 fn console_correction(request: &Request, runtime: &DaemonRuntime) -> Response {
-    // Cookie was authenticated by guard_api. Store a hash, never a live cookie credential.
-    let identity = crate::trusted_ingress::hash(&presented_session(request).unwrap_or_default());
-    correction_response(
-        request,
-        runtime,
-        crate::trusted_ingress::Principal::Console(identity),
-    )
+    // Default desktop mode records a local UI action, not a verified user session.
+    let principal = if runtime.web.authentication_required {
+        crate::trusted_ingress::Principal::Console(crate::trusted_ingress::hash(
+            &presented_session(request).expect("guard_api authenticated the session"),
+        ))
+    } else {
+        crate::trusted_ingress::Principal::LocalConsole
+    };
+    correction_response(request, runtime, principal)
 }
 fn correction_response(
     request: &Request,

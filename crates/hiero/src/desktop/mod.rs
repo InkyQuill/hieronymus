@@ -4,6 +4,7 @@ pub mod linux_cli;
 pub mod linux_entry;
 pub mod linux_registration;
 mod settings;
+pub(crate) mod sidecar;
 mod singleton;
 pub(crate) use singleton::is_session_lock_name;
 mod state;

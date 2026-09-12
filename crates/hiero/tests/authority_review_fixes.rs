@@ -306,6 +306,13 @@ fn console_selection_preserves_registered_nondefault_pair() {
 #[test]
 fn unresolved_signal_conflicts_staleness_and_transaction_failure_leave_no_partial_work() {
     let root = tempfile::tempdir().unwrap();
+    // This scenario checks distinct authenticated browser principals. Default
+    // desktop mode intentionally attributes both browsers to the local console.
+    std::fs::write(
+        root.path().join("web.conf"),
+        "authentication_required = true\n",
+    )
+    .unwrap();
     let config = HieronymusConfig::new(root.path());
     let app = Application::open(&config).unwrap();
     let (mut draft, mut event) = common::authority::prepared(&app, root.path());

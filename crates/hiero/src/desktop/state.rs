@@ -210,8 +210,8 @@ impl DesktopState {
             accent: Accent::Red,
             reason: "Stopped".to_owned(),
             busy: false,
-            can_start: true,
-            exit_requested: false,
+            can_start: false,
+            exit_requested: true,
         };
 
         self.show_status_when_unblocked();

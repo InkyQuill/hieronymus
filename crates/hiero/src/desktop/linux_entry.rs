@@ -27,6 +27,14 @@ pub fn argument(path: &Path) -> Result<String, String> {
 }
 
 pub fn render(binary: &Path, root: &Path) -> Result<String, String> {
+    render_with_unit_dir(binary, root, None)
+}
+
+pub fn render_with_unit_dir(
+    binary: &Path,
+    root: &Path,
+    unit_dir: Option<&Path>,
+) -> Result<String, String> {
     if binary.as_os_str().to_string_lossy().contains('=') {
         return Err("Desktop executable paths cannot contain an equal sign".into());
     }
@@ -40,8 +48,13 @@ pub fn render(binary: &Path, root: &Path) -> Result<String, String> {
     } else {
         ""
     };
+    let unit = unit_dir
+        .filter(|directory| *directory != crate::service::default_unit_dir())
+        .map(|directory| argument(directory).map(|arg| format!(" --unit-dir {arg}")))
+        .transpose()?
+        .unwrap_or_default();
     Ok(format!(
-        "[Desktop Entry]\nType=Application\nName=Hieronymus\nTerminal=false\nIcon=hieronymus\nExec={prefix}{} tray --data-root {}\n",
+        "[Desktop Entry]\nType=Application\nName=Hieronymus\nTerminal=false\nIcon=hieronymus\nExec={prefix}{} tray --data-root {}{unit}\n",
         argument(binary)?,
         argument(root)?
     ))

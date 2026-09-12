@@ -148,3 +148,17 @@ export async function startAdminDreaming(): Promise<{
     body: "{}",
   });
 }
+
+export interface AgentConnection {
+  id: string;
+  name: string;
+  instructions: string;
+}
+export async function prepareAgentConnection(): Promise<AgentConnection[]> {
+  return (
+    await request<{ agents: AgentConnection[] }>("/api/agents/prepare", {
+      method: "POST",
+      body: "{}",
+    })
+  ).agents;
+}

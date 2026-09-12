@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 fn identity(principal: &Principal) -> Result<(&str, &str), AppError> {
     match principal {
         Principal::Console(id) => Ok(("console_user", id)),
+        Principal::LocalConsole => Ok(("console_user", "local-desktop-console")),
         Principal::HostEvent => Ok(("host_user_event", "local-host-event")),
         Principal::Agent => Err(AppError::Authority(DecisionErrorV1::UnverifiedOrigin)),
     }

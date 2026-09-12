@@ -57,6 +57,7 @@ pub mod story_applicability;
 pub mod terminology;
 pub mod tls;
 pub mod upgrade;
+pub mod web_config;
 pub mod workspace;
 
 pub mod authority;

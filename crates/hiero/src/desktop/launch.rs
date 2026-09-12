@@ -43,7 +43,7 @@ pub fn launch(config: &HieronymusConfig) -> Result<(), String> {
         launch_with_options(config, &options)
     }
     #[cfg(not(any(windows, target_os = "macos")))]
-    launch_impl(config)
+    launch_impl(config, None)
 }
 #[cfg(any(windows, target_os = "macos"))]
 pub fn launch_with_options(
@@ -73,7 +73,17 @@ pub fn launch_with_options(
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]
-fn launch_impl(config: &HieronymusConfig) -> Result<(), String> {
+pub fn launch_with_options(
+    config: &HieronymusConfig,
+    options: &crate::service::ServiceOptions,
+) -> Result<(), String> {
+    launch_impl(config, Some(options))
+}
+#[cfg(not(any(windows, target_os = "macos")))]
+fn launch_impl(
+    config: &HieronymusConfig,
+    options: Option<&crate::service::ServiceOptions>,
+) -> Result<(), String> {
     let executable =
         std::env::current_exe().map_err(|_| "Could not locate the Hieronymus installation")?;
     let helper = sibling_binary(&executable, "hiero-desktop")?;
@@ -81,6 +91,13 @@ fn launch_impl(config: &HieronymusConfig) -> Result<(), String> {
         .map_err(|_| "Could not resolve the desktop data root")?;
     let mut command = Command::new(helper);
     command.arg("--data-root").arg(root);
+    if let Some(options) = options {
+        command
+            .arg("--unit-dir")
+            .arg(&options.unit_dir)
+            .arg("--binary")
+            .arg(&options.binary);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

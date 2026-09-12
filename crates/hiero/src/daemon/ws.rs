@@ -53,9 +53,7 @@ pub(crate) fn handle(request: &Request, runtime: &DaemonRuntime) -> Dispatch {
     if !rest::host_is_valid(request, runtime) {
         return Dispatch::Respond(rest::invalid_host());
     }
-    let authorized = rest::presented_session(request)
-        .is_some_and(|session| runtime.sessions.session_is_valid(&session));
-    if !authorized {
+    if !rest::browser_is_authorized(request, runtime) {
         return Dispatch::Respond(rest::unauthorized());
     }
     if !rest::origin_is_valid(request, runtime) {

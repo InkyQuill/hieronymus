@@ -440,7 +440,13 @@ impl<R: AutostartRegistration> DesktopBackend for LifecycleBackend<R> {
                     Event::ProbeTimeout
                 }
             }
-            DiscoveryHealth::Unreachable { .. } => Event::ProbeTimeout,
+            DiscoveryHealth::Unreachable { .. } => {
+                if lifecycle::root_is_released(&self.config).unwrap_or(false) {
+                    Event::Stopped
+                } else {
+                    Event::ProbeTimeout
+                }
+            }
             _ => Event::InvalidIdentity,
         }
     }

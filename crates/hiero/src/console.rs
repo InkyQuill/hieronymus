@@ -1,4 +1,7 @@
-//! `hiero admin` / `hiero config`: open an authenticated web console tab.
+//! `hiero admin` / `hiero config`: open the local web console.
+//! Browser authentication is optional (`web.conf`); the grant flow below is
+//! also works when authentication is disabled, so CLI launches remain valid
+//! while configuration changes are waiting for a server restart.
 //!
 //! There is no in-browser way to obtain a session: the daemon only hands out a
 //! session cookie in exchange for a one-time launch grant, and only a
@@ -72,24 +75,24 @@ pub fn launch_with_options(
         .map_err(|error| error.to_string())?
         .with_local_credential(config, crate::daemon::discovery::LocalCredential::Console)
         .map_err(|error| error.to_string())?;
-    let response = client
-        .post("/auth/launch-grant", &json!({}))
-        .map_err(|error| error.to_string())?;
-    let grant = response
-        .get("launch_grant")
-        .and_then(serde_json::Value::as_str)
-        .filter(|grant| !grant.is_empty())
-        .ok_or_else(|| "the daemon did not return a launch grant".to_string())?;
-
     let address = client.address();
     let origin = format!("http://{address}");
-    // The only place the grant appears: the fragment of the URL handed to the
-    // opener. Never logged, never printed.
-    let url = format!("{origin}/{page}#launch_grant={grant}");
+    let mut url = format!("{origin}/{page}");
+    {
+        // The running daemon owns the active mode. Always obtaining a grant
+        // also works if web.conf changed since that daemon started.
+        let response = client
+            .post("/auth/launch-grant", &json!({}))
+            .map_err(|error| error.to_string())?;
+        let grant = response
+            .get("launch_grant")
+            .and_then(serde_json::Value::as_str)
+            .filter(|grant| !grant.is_empty())
+            .ok_or("the server did not return a launch grant")?;
+        url.push_str(&format!("#launch_grant={grant}"));
+    }
 
-    // The cause from `open_in_browser` is a fixed secret-free diagnostic, so it is safe to surface. Manually browsing
-    // to the page is not an option — the console cannot sign in on its own, so
-    // the only recovery is to re-run this command where a browser can open.
+    // The opener diagnostic never includes the grant-bearing URL.
     crate::platform::browser::open(options, &url).map_err(|cause| {
         format!(
             "could not open a browser for {origin}/{page} ({cause}). Re-run `hiero {page}` from \

@@ -105,7 +105,7 @@ test("the primary header wraps into accessible mobile navigation", async () => {
   const linkClasses = [...navigation![2].matchAll(/<a class="([^"]*)"/g)].map(
     (match) => match[1],
   );
-  expect(linkClasses).toHaveLength(3);
+  expect(linkClasses).toHaveLength(4);
   for (const classes of linkClasses) {
     expect(classes).toContain("inline-flex");
     expect(classes).toContain("min-h-11");

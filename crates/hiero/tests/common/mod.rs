@@ -360,7 +360,13 @@ pub fn browser_session(daemon: &hiero::daemon::Daemon) -> (String, String) {
 /// Daemon plus a live browser session, ready for the REST route cases.
 pub fn start_daemon_with_browser_session()
 -> (RouteFixture, tempfile::TempDir, hiero::daemon::Daemon) {
-    let (root, daemon) = start_daemon_on_ephemeral_port();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("web.conf"),
+        "authentication_required = true\n",
+    )
+    .unwrap();
+    let daemon = start_daemon(root.path());
     let (grant, session) = browser_session(&daemon);
     let fixture = RouteFixture {
         port: daemon.local_addr().port(),

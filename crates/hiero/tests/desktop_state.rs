@@ -136,13 +136,14 @@ fn probe_failures_during_quit_update_status_without_clearing_busy_state() {
 }
 
 #[test]
-fn stopped_server_enables_start() {
+fn stopped_server_requests_sidecar_exit() {
     let mut state = DesktopState::new();
     let view = state.apply(Event::Stopped);
 
     assert_eq!(view.accent, Accent::Red);
     assert_eq!(view.reason, "Stopped");
-    assert!(view.can_start);
+    assert!(!view.can_start);
+    assert!(view.exit_requested);
     assert!(!view.busy);
 }
 

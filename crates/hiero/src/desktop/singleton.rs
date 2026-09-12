@@ -101,7 +101,7 @@ fn trusted_session() -> io::Result<String> {
     {
         return Ok(format!("audit-{id}"));
     }
-    if let Ok(session) = logind_session() {
+    if let Ok(session) = logind_session().or_else(|_| graphical_user_session()) {
         return Ok(session);
     }
 
@@ -112,24 +112,26 @@ fn trusted_session() -> io::Result<String> {
 }
 #[cfg(target_os = "linux")]
 fn logind_session() -> io::Result<String> {
+    let output = busctl(&[
+        "call",
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        "GetSessionByPID",
+        "u",
+        &std::process::id().to_string(),
+    ])?;
+    parse_logind_session(&output)
+}
+
+#[cfg(target_os = "linux")]
+fn busctl(args: &[&str]) -> io::Result<String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
-    // A fixed system tool queries the system bus for our own PID. Neither the
-    // supplied hint, XDG_SESSION_ID nor DBUS_SESSION_BUS_ADDRESS is authority.
     let mut child = Command::new("/usr/bin/busctl")
-        .args([
-            "--system",
-            "--timeout=2",
-            "--no-pager",
-            "call",
-            "org.freedesktop.login1",
-            "/org/freedesktop/login1",
-            "org.freedesktop.login1.Manager",
-            "GetSessionByPID",
-            "u",
-        ])
-        .arg(std::process::id().to_string())
+        .args(["--system", "--timeout=2", "--no-pager"])
+        .args(args)
         .env_remove("DBUS_SYSTEM_BUS_ADDRESS")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -161,8 +163,71 @@ fn logind_session() -> io::Result<String> {
         .ok_or_else(|| io::Error::other("Session lookup had no output"))?
         .take(4096)
         .read_to_string(&mut output)?;
-    parse_logind_session(&output)
+    Ok(output)
 }
+
+#[cfg(target_os = "linux")]
+fn graphical_user_session() -> io::Result<String> {
+    // User-manager services are outside a login scope. Ask the system's logind
+    // for this UID's graphical session; caller-supplied environment is not authority.
+    let uid = rustix::process::geteuid().as_raw();
+    let user = format!("/org/freedesktop/login1/user/_{uid}");
+    let display = logind_property(&user, "org.freedesktop.login1.User", "Display")?;
+    let path = display
+        .get(1)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| io::Error::other("No graphical session"))?;
+    let canonical = parse_logind_session(&format!("o \"{path}\""))?;
+    let owner = logind_property(path, "org.freedesktop.login1.Session", "User")?;
+    let kind = logind_property(path, "org.freedesktop.login1.Session", "Type")?;
+    let remote = logind_property(path, "org.freedesktop.login1.Session", "Remote")?;
+    let audit = logind_property(path, "org.freedesktop.login1.Session", "Audit")?;
+    graphical_identity(uid, &owner, &kind, &remote, &audit, canonical)
+}
+
+#[cfg(target_os = "linux")]
+fn logind_property(path: &str, interface: &str, property: &str) -> io::Result<serde_json::Value> {
+    let output = busctl(&[
+        "--json=short",
+        "get-property",
+        "org.freedesktop.login1",
+        path,
+        interface,
+        property,
+    ])?;
+    let value: serde_json::Value = serde_json::from_str(&output).map_err(io::Error::other)?;
+    value
+        .get("data")
+        .cloned()
+        .ok_or_else(|| io::Error::other("Missing logind property data"))
+}
+
+#[cfg(target_os = "linux")]
+fn graphical_identity(
+    uid: u32,
+    owner: &serde_json::Value,
+    kind: &serde_json::Value,
+    remote: &serde_json::Value,
+    audit: &serde_json::Value,
+    canonical: String,
+) -> io::Result<String> {
+    if owner.pointer("/0").and_then(serde_json::Value::as_u64) != Some(u64::from(uid))
+        || !matches!(kind.as_str(), Some("wayland" | "x11"))
+        || remote.as_bool() != Some(false)
+    {
+        return Err(io::Error::other("No local graphical session for this user"));
+    }
+    let id = audit
+        .as_u64()
+        .and_then(|id| u32::try_from(id).ok())
+        .ok_or_else(|| io::Error::other("Invalid graphical audit session"))?;
+    Ok(if id == u32::MAX {
+        canonical
+    } else {
+        format!("audit-{id}")
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn parse_logind_session(output: &str) -> io::Result<String> {
     let session = output
@@ -202,6 +267,29 @@ fn trusted_session() -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn graphical_service_identity_matches_login_and_rejects_foreign_sessions() {
+        use serde_json::json;
+        let identify = |uid, kind, remote, audit| {
+            graphical_identity(
+                1000,
+                &json!([uid, "/org/freedesktop/login1/user/_1000"]),
+                &json!(kind),
+                &json!(remote),
+                &json!(audit),
+                "logind-_33".into(),
+            )
+        };
+        assert_eq!(identify(1000, "wayland", false, 3u32).unwrap(), "audit-3");
+        assert_eq!(
+            identify(1000, "x11", false, u32::MAX).unwrap(),
+            "logind-_33"
+        );
+        assert!(identify(1001, "wayland", false, 3).is_err());
+        assert!(identify(1000, "wayland", true, 3).is_err());
+        assert!(identify(1000, "tty", false, 3).is_err());
+    }
     #[test]
     fn caller_hints_cannot_split_trusted_session_ownership() {
         let directory = tempfile::tempdir().unwrap();

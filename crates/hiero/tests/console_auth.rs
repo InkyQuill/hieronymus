@@ -17,7 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 use common::{
-    browser_session, same_origin, send_request, start_daemon, start_daemon_on_ephemeral_port,
+    browser_session, same_origin, send_request, start_daemon_on_ephemeral_port,
     start_daemon_with_browser_session,
 };
 use serde_json::json;
@@ -484,4 +484,10 @@ fn local_authority_credentials_are_distinct_private_and_stable() {
     let text = String::from_utf8_lossy(&status.raw_body);
     assert!(!text.contains(console.expose_secret()));
     assert!(!text.contains(host.expose_secret()));
+}
+
+// These tests qualify the opt-in authenticated browser mode.
+fn start_daemon(root: &std::path::Path) -> hiero::daemon::Daemon {
+    std::fs::write(root.join("web.conf"), "authentication_required = true\n").unwrap();
+    common::start_daemon(root)
 }

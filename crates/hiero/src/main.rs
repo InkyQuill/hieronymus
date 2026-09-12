@@ -11,7 +11,7 @@
 use std::process::ExitCode;
 
 use hiero::agent_hook;
-use hiero::daemon::{DaemonOptions, run_foreground};
+use hiero::daemon::{DaemonOptions, run_foreground_with_service};
 use hiero::doctor;
 use hiero::stdio::{StdioOptions, run_stdio_adapter};
 use hiero::{lifecycle, project_context, service, uninstall, update};
@@ -467,7 +467,8 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
                 port: parsed.port.unwrap_or(hiero::daemon::DEFAULT_PORT),
                 assets: hiero::daemon::Assets::release(),
             };
-            run_foreground(options).map_err(|error| error.to_string())?;
+            run_foreground_with_service(options, service_options(&parsed, data_root)?)
+                .map_err(|error| error.to_string())?;
             Ok(ExitCode::SUCCESS)
         }
         Some("mcp") => {
@@ -497,13 +498,11 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             if parsed.port.is_some() || parsed.start_daemon || parsed.json || parsed.dry_run {
                 return Err("usage: hiero tray [--data-root <path>]".into());
             }
-            #[cfg(any(windows, target_os = "macos"))]
             hiero::desktop::launch::launch_with_options(
                 &load_config(data_root),
                 &service_options(&parsed, data_root)?,
             )?;
-            #[cfg(not(any(windows, target_os = "macos")))]
-            hiero::desktop::launch::launch(&load_config(data_root))?;
+
             Ok(ExitCode::SUCCESS)
         }
         // The authenticated web console launchers mint a one-time launch grant.

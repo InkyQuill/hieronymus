@@ -33,6 +33,12 @@ the local daemon. Remote deployment and TLS remain non-goals.
 > this separation protects MCP authorship and context binding without a broker
 > or claims against direct local credential access/database edits.
 
+## Owner amendment — 2026-09-12
+
+Browser authentication is optional and disabled by default for the local desktop deployment. Set `authentication_required = true` in the installation config root's `web.conf` to require the existing launch-grant/session-cookie flow. Host and Origin checks remain active in either mode. MCP and native trusted-ingress credentials remain required. Default browser corrections are attributed to the local desktop console, not to an authenticated individual.
+
+See [the release product direction](../maintenance/v0.9.0/product-direction.md).
+
 ## Context
 
 Loopback binding reduces exposure but does not authenticate local processes or

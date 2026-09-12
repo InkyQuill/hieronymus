@@ -67,7 +67,11 @@ impl LinuxRegistration {
         self.icons_dir.join("hieronymus.svg")
     }
     fn text(&self) -> Result<String, String> {
-        linux_entry::render(&self.service.binary, &self.service.data_root)
+        linux_entry::render_with_unit_dir(
+            &self.service.binary,
+            &self.service.data_root,
+            Some(&self.service.unit_dir),
+        )
     }
     fn validate(&self) -> Result<(), String> {
         self.text()?;
@@ -106,6 +110,11 @@ impl LinuxRegistration {
         ] {
             match std::fs::symlink_metadata(&path) {
                 Ok(meta) if owned && meta.is_file() && meta.len() == expected.len() as u64 && std::fs::read_to_string(&path).ok().as_deref() == Some(&expected) => {},
+                // Earlier owned entries omitted custom service directories.
+                // Accept only their exact rendering for this recorded root/binary.
+                Ok(meta) if owned && path != self.icon() && meta.is_file()
+                    && meta.len() <= 65536 && std::fs::read_to_string(&path).ok().as_deref()
+                        == Some(&linux_entry::render(&self.service.binary, &self.service.data_root)?) => {},
                 Ok(_) => return Err("Desktop registration file is foreign or modified; move it aside before retrying".into()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
                 Err(_) => return Err("Could not inspect desktop registration files".into()),

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { connectAdminEvents } from "./lib/admin-events.svelte";
+  import ConnectAgent from "./components/ConnectAgent.svelte";
   import AdminDashboard from "./components/AdminDashboard.svelte";
   import MemoryViews from "./components/MemoryViews.svelte";
   import DreamingEditor from "./components/DreamingEditor.svelte";
@@ -35,7 +36,9 @@
   } from "./lib/types";
 
   const path = window.location.pathname;
-  const section = path === "/admin/memory"
+  const section = path === "/" || path === "/admin/connect"
+    ? "connect"
+    : path === "/admin/memory"
     ? "memory"
     : path.startsWith("/admin")
     ? "admin"
@@ -210,9 +213,10 @@
     <div class="mx-auto flex w-full max-w-[90rem] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
     <a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
     <nav class="order-last flex w-full min-w-0 items-center gap-1 sm:order-none sm:w-auto sm:flex-1" aria-label="Primary navigation">
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/admin/connect" aria-current={section === "connect" ? "page" : undefined}>Connect your agent</a>
       <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'admin' ? 'bg-raised text-primary' : ''}" href="/admin">Overview</a>
       <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'memory' ? 'bg-raised text-primary' : ''}" href="/admin/memory">Memory</a>
-      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory') ? 'bg-raised text-primary' : ''}" href="/config">Config</a>
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory' || section === 'connect') ? 'bg-raised text-primary' : ''}" href="/config">Settings</a>
     </nav>
     <button class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-sm border border-default px-3 py-2 text-body-sm text-secondary hover:border-accent hover:text-primary" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
         {#if themeToggle.theme === "dark"}
@@ -225,7 +229,9 @@
     </div>
   </header>
   <section class="mx-auto w-full max-w-[90rem] px-4 py-6 sm:px-8 lg:px-12">
-    {#if section === "admin" && adminDashboard}
+    {#if section === "connect"}
+      <ConnectAgent />
+    {:else if section === "admin" && adminDashboard}
       <AdminDashboard dashboard={adminDashboard} {error} onDream={runDreaming} />
     {:else if section === "memory" && adminDashboard}
       <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />

@@ -4,6 +4,12 @@
 
 Accepted on 2026-08-31.
 
+## Owner amendment — 2026-09-12
+
+The server owns the running application and its web interface. `hiero` remains a convenience CLI. The tray is a companion of the running server and follows its lifetime, including when the server is started from the CLI; it should be visible whenever the desktop environment supports a tray. Earlier tray-first startup wording does not make the helper the application owner.
+
+See [the release product direction](../maintenance/v0.9.0/product-direction.md).
+
 ## Context
 
 The Rust proposal describes “one binary, one process,” while also allowing a

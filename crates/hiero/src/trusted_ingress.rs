@@ -29,6 +29,7 @@ pub struct DecisionDraftV1 {
 pub(crate) enum Principal {
     Agent,
     Console(String),
+    LocalConsole,
     HostEvent,
 }
 impl Principal {
@@ -36,6 +37,11 @@ impl Principal {
         match self {
             Self::Agent => ("agent", "ordinary-mcp", ActorKind::Agent),
             Self::Console(session) => ("console_user", session, ActorKind::ExplicitUser),
+            Self::LocalConsole => (
+                "console_user",
+                "local-desktop-console",
+                ActorKind::ExplicitUser,
+            ),
             Self::HostEvent => (
                 "host_user_event",
                 "local-host-event",

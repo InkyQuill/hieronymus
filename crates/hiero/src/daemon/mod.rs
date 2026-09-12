@@ -116,6 +116,8 @@ impl Default for DaemonOptions {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
+    #[error(transparent)]
+    WebConfig(#[from] hieronymus::web_config::WebConfigError),
     #[error("daemon cannot start: {message} (run `{remediation}`)")]
     InvalidStartupState {
         code: &'static str,
@@ -249,6 +251,7 @@ impl Drop for StartupGuard {
 
 #[derive(Debug)]
 pub(crate) struct DaemonRuntime {
+    pub web: hieronymus::web_config::WebConfig,
     pub config: HieronymusConfig,
     pub registry: McpRegistry,
     pub bearer: Secret<String>,
@@ -372,6 +375,7 @@ impl Daemon {
         let connection = open_migrated(&database_path)?;
 
         let registry = McpRegistry::embedded();
+        let web = hieronymus::web_config::load(&config)?;
         let application = Arc::new(Application::open(&config)?);
 
         // Bind and credential validation come *before* any worker exists.
@@ -478,6 +482,7 @@ impl Daemon {
             registry,
             bearer,
             console_credential,
+            web,
             host_event_credential,
             bound_address,
             workers,
@@ -755,6 +760,20 @@ fn http_io_timeout() -> Duration {
 /// SIGINT, so a service manager stopping the unit takes exactly the same
 /// drain-and-release path as ctrl-c.
 pub fn run_foreground(options: DaemonOptions) -> Result<(), DaemonError> {
+    run_foreground_impl(options, None)
+}
+
+pub fn run_foreground_with_service(
+    options: DaemonOptions,
+    service: crate::service::ServiceOptions,
+) -> Result<(), DaemonError> {
+    run_foreground_impl(options, Some(service))
+}
+
+fn run_foreground_impl(
+    options: DaemonOptions,
+    service: Option<crate::service::ServiceOptions>,
+) -> Result<(), DaemonError> {
     let daemon = Daemon::start(&options)?;
     let handler_stop = Arc::clone(&daemon.runtime.stop);
     ctrlc::set_handler(move || {
@@ -770,7 +789,16 @@ pub fn run_foreground(options: DaemonOptions) -> Result<(), DaemonError> {
     );
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
-    daemon.wait_for_shutdown()
+    let tray = crate::desktop::sidecar::supervise(
+        daemon.runtime.config.clone(),
+        service,
+        Arc::clone(&daemon.runtime.stop),
+    );
+    let result = daemon.wait_for_shutdown();
+    if let Some(tray) = tray {
+        let _ = tray.join();
+    }
+    result
 }
 
 #[cfg(test)]
