@@ -325,3 +325,72 @@ fn malformed_inspection_status_fails_closed() {
     assert_eq!(exit_code(&json!({"status": "unexpected"})), 2);
     assert_eq!(exit_code(&json!({})), 2);
 }
+
+#[cfg(unix)]
+#[test]
+fn deleted_implicit_cwd_returns_safe_json_and_human_envelopes() {
+    let fixture = tempfile::tempdir().unwrap();
+    let deleted_cwd = fixture.path().join("deleted-cwd");
+    std::fs::create_dir(&deleted_cwd).unwrap();
+    let data_root = fixture.path().join("unused");
+    let output = Command::new("/bin/sh")
+        .env("PATH", "")
+        .args([
+            "-c",
+            "cd \"$1\" && /bin/rmdir \"$1\" && exec \"$2\" project-context --json --data-root \"$3\"",
+            "sh",
+        ])
+        .arg(&deleted_cwd)
+        .arg(env!("CARGO_BIN_EXE_hiero"))
+        .arg(&data_root)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        json_stdout(&output),
+        json!({
+            "version": 1,
+            "status": "invalid",
+            "root": null,
+            "schema_version": null,
+            "instructions_path": null,
+            "binding": null,
+            "direction_id": null,
+            "source_language": null,
+            "target_language": null,
+            "diagnostics": ["filesystem_error"],
+        })
+    );
+    assert!(!data_root.exists());
+
+    let deleted_human_cwd = fixture.path().join("deleted-human-cwd");
+    std::fs::create_dir(&deleted_human_cwd).unwrap();
+    let human = Command::new("/bin/sh")
+        .env("PATH", "")
+        .args([
+            "-c",
+            "cd \"$1\" && /bin/rmdir \"$1\" && exec \"$2\" project-context --data-root \"$3\"",
+            "sh",
+        ])
+        .arg(&deleted_human_cwd)
+        .arg(env!("CARGO_BIN_EXE_hiero"))
+        .arg(&data_root)
+        .output()
+        .unwrap();
+    assert_eq!(human.status.code(), Some(2));
+    assert!(
+        human.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&human.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "version: 1\nstatus: invalid\nroot: none\nschema_version: none\ninstructions_path: none\nbinding: none\ndirection_id: none\nsource_language: none\ntarget_language: none\ndiagnostics: filesystem_error\n"
+    );
+}

@@ -13,7 +13,7 @@ use hieronymus::{
 use serde_json::{Value, json};
 
 /// Inspect the nearest CWS project without loading daemon configuration or
-/// reading manuscript and project-instruction contents.
+/// returning manuscript and project-instruction contents.
 pub fn inspect(cwd: &Path, direction: Option<&str>) -> Value {
     let project = match discover(cwd) {
         Ok(Some(project)) => project,

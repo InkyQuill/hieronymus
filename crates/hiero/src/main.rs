@@ -659,7 +659,7 @@ fn run_project_context(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     };
     let cwd = match &parsed.cwd {
         Some(cwd) => std::path::PathBuf::from(cwd),
-        None => std::env::current_dir().map_err(|error| error.to_string())?,
+        None => std::path::PathBuf::from("."),
     };
     let report = project_context::inspect(&cwd, arguments.direction_id.as_deref());
     if parsed.json {

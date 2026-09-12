@@ -25,7 +25,7 @@ identity/scope can support a learned decision; ambiguous names remain tentative.
 ## Read-only CWS project inspection
 
 The installed CLI can inspect the nearest Creative Writing Skills project without
-starting a daemon, loading its configuration, installing either product, or reading
+starting a daemon, loading its configuration, installing either product, or returning
 manuscript and project-instruction contents:
 
 ```sh
