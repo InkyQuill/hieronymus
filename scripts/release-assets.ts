@@ -387,7 +387,7 @@ export async function unpackRuntime(
   target: DesktopTarget = "x86_64-unknown-linux-gnu",
 ): Promise<void> {
   const descriptor = desktopTarget(target).runtime;
-  if (descriptor.origin !== "official")
+  if (descriptor.origin === "source-build-required")
     throw new Error(
       "Intel ONNX 1.28.0 requires a pinned native source build and measured provenance; no official artifact exists",
     );
@@ -427,7 +427,7 @@ export async function stage(
   inputs?: { runtimeArchive?: string; modelDirectory?: string },
 ): Promise<Record<string, string>> {
   const descriptor = desktopTarget(target).runtime;
-  if (descriptor.origin !== "official")
+  if (descriptor.origin === "source-build-required")
     throw new Error(
       "Intel ONNX 1.28.0 requires a pinned native source build and measured provenance; no official artifact exists",
     );

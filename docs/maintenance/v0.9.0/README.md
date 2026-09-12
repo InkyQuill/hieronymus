@@ -127,3 +127,34 @@ installed-layout regression (6 service CLI tests). Final full-suite revalidation
 then found the tray argument fixture still expecting two argv entries rather
 than the six required for data root, service directory and stable binary; the
 fixture now checks all literal arguments, including spaces and shell-like text.
+
+The final local verification chain passed main-workspace fmt, all-target/all-feature
+Clippy, normal Rust tests and rustdoc, then helper Clippy. Helper tests exposed one
+remaining stale expectation that Start stays enabled after Event::Stopped. That
+assertion now expects disabled Start and requested helper exit; the complete
+helper suite (20 tests) and helper rustdoc passed on rerun. No functional checks
+were removed. Source revalidation also passed 103 script tests and 86 frontend
+tests with typecheck/build. Optimized local Linux packaging is running separately.
+
+PR #28 merged into main as 6c92f728e9626d88527736c805fc6a745b3721ba after all
+checks and CodeRabbit approval. PR #27 then merged that main state locally,
+retaining the integration branch's previously verified native conflict
+resolutions, and pushed 0acaf5c. PR #29 contains the additional server/tray,
+onboarding, optional-browser-auth and practical qualification changes.
+
+Optimized local Linux packaging completed successfully. The extracted, verified
+package passed the explicit installed-payload test with real semantic inference,
+authenticated MCP and graceful shutdown (1 test, 3.36 seconds). These local
+development-candidate bytes are not the later immutable publication candidate.
+
+Reviewed Intel runtime support now binds the source receipt, retained CI run,
+archive digest and every member digest. Published releases retain that archive
+and receipt so acquisition can outlive CI artifact retention. The first release
+can acquire the same pinned bytes from the retained native build, with a bounded
+download timeout. Runtime pins remain `source-build-required` until the native
+build output is available and reviewed. The script suite passes 107 tests,
+including stalled-download and failed-download rejection. Installer shell syntax
+validation also passes with the Intel target enabled.
+
+CodeRabbit review of PR #29 initially hit the included-review rate limit; its
+original-PR approvals do not constitute review of the integration changes.

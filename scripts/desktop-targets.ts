@@ -1,4 +1,4 @@
-/** Exact release identities. Pins independently measured from official 1.28.0 archives. */
+/** Exact release identities. Pins bind official archives or reviewed native source builds. */
 import { openSync, closeSync, constants, fstatSync, readSync } from "node:fs";
 import runtimePins from "./onnxruntime-targets.json";
 export const TARGETS = [
@@ -20,7 +20,7 @@ export const MODEL_PINS = {
     "1e98ea05b0de579fcaad3d625b62ea55647142ed674d5f5ebf1440e4bbbb6f23",
 };
 export interface OfficialRuntime {
-  origin: "official";
+  origin: "official" | "source-reviewed";
   archive: string;
   url: string;
   sha256: string;
@@ -28,6 +28,12 @@ export interface OfficialRuntime {
   top: string;
   member: string;
   members: Record<string, { sha256: string; size: number }>;
+  source?: {
+    repository: string;
+    revision: string;
+    run: string;
+    receipt_sha256: string;
+  };
 }
 export interface SourceRuntime {
   origin: "source-build-required";

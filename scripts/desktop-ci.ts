@@ -9,6 +9,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { reviewedSource, validateSourceReceipt } from "./reviewed-runtime";
 import { join } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
@@ -108,6 +109,26 @@ export async function verifyCandidate(
         .filter((s: any) => s.original_sha256)
         .map((s: any) => s.debug),
     ];
+    const runtime = desktopTarget(target).runtime;
+    if (runtime.origin === "source-reviewed") {
+      const source = reviewedSource(runtime, target);
+      expected.push(runtime.archive, "onnxruntime-source-build-receipt.json");
+      await verifyFile(directory, runtime.archive, runtime.sha256);
+      await verifyFile(
+        directory,
+        "onnxruntime-source-build-receipt.json",
+        source.receipt_sha256,
+      );
+      validateSourceReceipt(
+        JSON.parse(
+          readFileSync(
+            localFile(directory, "onnxruntime-source-build-receipt.json"),
+            "utf8",
+          ),
+        ),
+        runtime,
+      );
+    }
     if (
       Object.keys(record.files).sort().join("\n") !== expected.sort().join("\n")
     )

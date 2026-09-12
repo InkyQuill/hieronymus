@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: desktop-candidate-${{ github.ref }}
   cancel-in-progress: false
@@ -105,14 +106,18 @@ jobs:
         with:
           name: common-model
           path: target/common-model
-      - name: Native Intel runtime candidate (never promotes its own pins)
+      - name: Read compiled Intel runtime authority
         if: matrix.target == 'x86_64-apple-darwin'
+        id: intel-runtime-mode
+        run: bun -e 'import { appendFileSync } from "node:fs"; import { desktopTarget } from "./scripts/desktop-targets"; appendFileSync(process.env.GITHUB_OUTPUT!, `origin=${desktopTarget("x86_64-apple-darwin").runtime.origin}\n`);'
+      - name: Native Intel runtime candidate (never promotes its own pins)
+        if: matrix.target == 'x86_64-apple-darwin' && steps.intel-runtime-mode.outputs.origin == 'source-build-required'
         run: |
           git clone --no-checkout https://github.com/microsoft/onnxruntime.git "$RUNNER_TEMP/onnx-source"
           git -C "$RUNNER_TEMP/onnx-source" checkout da9b5e364c465de65c49d91e696cd6485270757f
           bun scripts/build-intel-runtime.ts --source "$RUNNER_TEMP/onnx-source" --out "$RUNNER_TEMP/intel-runtime"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always() && matrix.target == 'x86_64-apple-darwin'
+        if: always() && matrix.target == 'x86_64-apple-darwin' && steps.intel-runtime-mode.outputs.origin == 'source-build-required'
         with:
           name: intel-runtime-review
           path: |
@@ -123,6 +128,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
       - name: Stage compiled-authority runtime and canonical model
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun scripts/prepare-target-assets.ts "${{ matrix.target }}"
       - name: Final stripped native package
         run: bun scripts/release-build.ts --target "${{ matrix.target }}"

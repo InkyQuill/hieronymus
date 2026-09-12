@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { stage, verify, extractTar } from "./release-assets";
 import { gunzipSync } from "node:zlib";
+import { acquireReviewedRuntime } from "./reviewed-runtime";
 import {
   desktopTarget,
   parseReleaseV2,
@@ -39,13 +40,24 @@ extractTar(
   "models",
   1024 * 1024 * 1024,
 );
+const reviewed = await acquireReviewedRuntime(resolve("."), target);
 const env = await stage(resolve("."), target, {
   modelDirectory: join(extracted, "models/minilm"),
+  ...(reviewed ? { runtimeArchive: reviewed.archive } : {}),
 });
 if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV required");
 appendFileSync(
   process.env.GITHUB_ENV,
-  Object.entries({ ...env, HIERO_COMMON_MODEL_DIR: common })
+  Object.entries({
+    ...env,
+    HIERO_COMMON_MODEL_DIR: common,
+    ...(reviewed
+      ? {
+          HIERO_REVIEWED_RUNTIME_ARCHIVE: reviewed.archive,
+          HIERO_REVIEWED_RUNTIME_RECEIPT: reviewed.receipt,
+        }
+      : {}),
+  })
     .map(([k, v]) => {
       if (/[\r\n]/.test(v)) throw new Error("invalid environment path");
       return `${k}=${v}\n`;

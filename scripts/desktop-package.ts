@@ -45,7 +45,7 @@ function regular(path: string) {
 }
 export async function validateInputs(o: Options): Promise<ModelArtifact> {
   const target = desktopTarget(o.target);
-  if (target.runtime.origin !== "official")
+  if (target.runtime.origin === "source-build-required")
     throw new Error(
       "Intel runtime requires reviewed source-build promotion; no package can be emitted",
     );
@@ -324,7 +324,7 @@ export async function packageDesktop(o: Options) {
             "MSVC release executable retained; supply matching PDB separately when generated",
         });
     }
-    if (target.runtime.origin !== "official")
+    if (target.runtime.origin === "source-build-required")
       throw new Error("unpromoted runtime");
     for (const name of Object.keys(target.runtime.members))
       copy(

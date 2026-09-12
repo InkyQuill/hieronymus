@@ -17,7 +17,7 @@ done
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) target=x86_64-unknown-linux-gnu; app="${app:-$HOME/.local/share/hieronymus/app}"; data="${data:-$HOME/.config/hieronymus}";;
   Darwin/arm64) target=aarch64-apple-darwin; app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
-  Darwin/x86_64) echo 'Intel macOS runtime has not been promoted; no installable artifact is available' >&2; exit 2;;
+  Darwin/x86_64) target=x86_64-apple-darwin; app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
   *) echo 'Unsupported desktop OS/architecture' >&2; exit 2;;
 esac
 absolute(){ case "$1" in /*) printf '%s\n' "$1";; *) printf '%s/%s\n' "$PWD" "$1";; esac; }

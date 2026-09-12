@@ -186,7 +186,7 @@ pub fn runtime_target() -> Result<&'static str, String> {
     }
 }
 /// Pinned regular runtime members relative to the assembled version root.
-/// This shared source contains measured official bytes, never host guesses.
+/// This shared source contains measured release bytes, never host guesses.
 pub fn runtime_member_pins(
     target: &str,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
@@ -194,7 +194,9 @@ pub fn runtime_member_pins(
         serde_json::from_str(include_str!("../../../scripts/onnxruntime-targets.json"))
             .map_err(|e| e.to_string())?;
     let descriptor = pins.get(target).ok_or("unsupported native ONNX target")?;
-    if descriptor["origin"] != "official" {
+    if descriptor["origin"] != "official"
+        && !(target == "x86_64-apple-darwin" && descriptor["origin"] == "source-reviewed")
+    {
         return Err("Intel ONNX 1.28.0 needs the pinned native source build, measured output hashes and approved provenance; no qualified runtime is available".into());
     }
     descriptor["members"]

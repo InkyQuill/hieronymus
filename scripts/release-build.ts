@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 /** Native target producer. No publication and no per-target model recompression. */
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { desktopTarget } from "./desktop-targets";
 import { packageDesktop } from "./desktop-package";
+import { reviewedSource, validateSourceReceipt } from "./reviewed-runtime";
+import { verify } from "./release-assets";
 function run(args: string[]) {
   const result = Bun.spawnSync(args, { stdout: "inherit", stderr: "inherit" });
   if (result.exitCode !== 0)
@@ -95,5 +97,21 @@ if (values["dry-run"]) {
       common: resolve(process.env.HIERO_COMMON_MODEL_DIR),
       out: resolve(values.out!),
     });
+    const runtime = desktopTarget(target).runtime;
+    if (runtime.origin === "source-reviewed") {
+      const source = reviewedSource(runtime, target);
+      const archive = process.env.HIERO_REVIEWED_RUNTIME_ARCHIVE;
+      const receipt = process.env.HIERO_REVIEWED_RUNTIME_RECEIPT;
+      if (!archive || !receipt)
+        throw new Error("reviewed runtime archive and receipt required");
+      await verify(archive, runtime.sha256, runtime.size);
+      await verify(receipt, source.receipt_sha256);
+      validateSourceReceipt(await Bun.file(receipt).json(), runtime);
+      copyFileSync(archive, resolve(values.out!, runtime.archive));
+      copyFileSync(
+        receipt,
+        resolve(values.out!, "onnxruntime-source-build-receipt.json"),
+      );
+    }
   }
 }
