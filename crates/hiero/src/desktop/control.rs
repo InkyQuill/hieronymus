@@ -430,7 +430,7 @@ mod tests {
         let (_temp, config, singleton, controller, entered, release) = fixture();
         let record = read_record(
             &singleton.path.with_extension("json"),
-            config.data_root(),
+            &config.data_root().canonicalize().unwrap(),
             &singleton.path.file_name().unwrap().to_string_lossy(),
         )
         .unwrap();
@@ -462,7 +462,8 @@ mod tests {
         let path = singleton.path.with_extension("json");
         let name = singleton.path.file_name().unwrap().to_string_lossy();
         assert!(read_record(&path, Path::new("/wrong-root"), &name).is_err());
-        let mut record = read_record(&path, config.data_root(), &name).unwrap();
+        let mut record =
+            read_record(&path, &config.data_root().canonicalize().unwrap(), &name).unwrap();
         let token = record.token.clone();
         record.token = "0".repeat(64);
         assert_eq!(request(&record, "retire").unwrap(), "denied");

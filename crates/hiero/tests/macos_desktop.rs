@@ -142,10 +142,21 @@ fn loaded_readback_refuses_foreign_paths_arguments_recovery_and_unknown_formats(
         &named_args,
     )
     .unwrap();
+    let tahoe = text
+        .replace(
+            "arguments = {",
+            "stdout path = /dev/null\nstderr path = /dev/null\nproxy started suspended = false\nextension alive = false\ntrial factors memory limit = 0 MB\nchecked allocations = false (queried = true)\nchecked allocations reason = none\nchecked allocations flags = 0x0\npended spawn = false\npended nondemand spawn = false\nspawn reason filter = none\narguments = {",
+        )
+        .replace(
+            "properties = inferred program",
+            "properties = inferred program | system service | tle system",
+        );
+    macos_agent::validate_loaded(&tahoe, path, &args).unwrap();
     for changed in [
         text.replace("path = /tmp/owned.plist", "path = /tmp/foreign.plist"),
         text.replace("/tmp/root", "/tmp/foreign"),
         text.replace("inferred program", "keepalive | inferred program"),
+        tahoe.replace("stdout path = /dev/null", "stdout path = /tmp/output"),
         text.replace(
             "program = /app/bin/hiero",
             "program = /app/bin/hiero\nprogram = /foreign",
@@ -154,9 +165,24 @@ fn loaded_readback_refuses_foreign_paths_arguments_recovery_and_unknown_formats(
         assert!(macos_agent::validate_loaded(&changed, path, &args).is_err());
     }
     assert!(!macos_agent::disabled_state("disabled services = {\n}", "fixture").unwrap());
+    assert!(!macos_agent::disabled_state("\n\tdisabled services = {\n}\n", "fixture").unwrap());
     assert!(
         macos_agent::disabled_state("disabled services = {\n\"fixture\" => true\n}", "fixture")
             .unwrap()
+    );
+    assert!(
+        macos_agent::disabled_state(
+            "\n\tdisabled services = {\n\t\t\"fixture\" => disabled\n\t}\n",
+            "fixture"
+        )
+        .unwrap()
+    );
+    assert!(
+        !macos_agent::disabled_state(
+            "\n\tdisabled services = {\n\t\t\"fixture\" => enabled\n\t}\n",
+            "fixture"
+        )
+        .unwrap()
     );
     assert!(macos_agent::disabled_state("unknown output", "fixture").is_err());
     assert!(
@@ -280,6 +306,10 @@ fn loaded_process_state_requires_explicit_idle_and_preserves_argument_spaces() {
     );
     let live = text.replace("state = not running", "state = running\n\tpid = 42");
     let loaded = macos_agent::loaded_state(&live, path, &args).unwrap();
+    assert_eq!(loaded.pid, Some(42));
+    assert!(!loaded.idle);
+    let proxy = text.replace("state = not running", "state = xpcproxy\n\tpid = 42");
+    let loaded = macos_agent::loaded_state(&proxy, path, &args).unwrap();
     assert_eq!(loaded.pid, Some(42));
     assert!(!loaded.idle);
     for malformed in [

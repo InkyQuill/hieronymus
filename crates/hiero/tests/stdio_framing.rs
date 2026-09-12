@@ -234,6 +234,7 @@ fn stdio_adapter_derives_mirrored_headers_from_the_body() {
     daemon.shutdown().unwrap();
 }
 
+#[cfg(not(any(windows, target_os = "macos")))]
 #[test]
 #[cfg(target_os = "linux")]
 fn stdio_adapter_start_daemon_flag_goes_through_the_service_integration() {

@@ -420,13 +420,19 @@ fn run_update_guarded_impl(
         binary: layout.stable_link("hiero"),
         use_manager: true,
     };
+    #[cfg(any(windows, target_os = "macos"))]
+    if manager_override.is_some() {
+        service_options.use_manager = false;
+    }
     #[cfg(target_os = "linux")]
     if desktop_install == Some(true) && options.unit_dir.is_some() {
         service_options.use_manager = false;
     }
     operation.register_unit(&service_options)?;
     #[cfg(any(windows, target_os = "macos"))]
-    operation.bind_native_broker(&service_options)?;
+    if service_options.use_manager {
+        operation.bind_native_broker(&service_options)?;
+    }
     service::validate_unit_root_guarded(&service_options, operation)
         .map_err(|error| UpdateError::Refused(error.to_string()))?;
 
@@ -655,7 +661,9 @@ fn run_update_guarded_impl(
     }
     // Capture authoritative manager state before retirement or stop can change it.
     // Native ordinary updates need the same rollback journal as bootstrap.
-    let registration = if desktop_install.is_some() || cfg!(any(windows, target_os = "macos")) {
+    let registration = if desktop_install.is_some()
+        || (cfg!(any(windows, target_os = "macos")) && service_options.use_manager)
+    {
         Some(
             crate::desktop::installation::Snapshot::capture(&service_options, operation)
                 .map_err(&refused)?,
@@ -826,7 +834,9 @@ fn run_update_guarded_impl(
             }
         }
         #[cfg(any(windows, target_os = "macos"))]
-        crate::desktop::installation::validate_native(&service_options, operation)?;
+        if service_options.use_manager {
+            crate::desktop::installation::validate_native(&service_options, operation)?;
+        }
         let doctor_output =
             Command::new(version_dir.join(crate::platform::install::executable_name("hiero")))
                 .arg("doctor")
@@ -1089,6 +1099,15 @@ fn rollback_with_registration(
             .to_path_buf(),
         binary: layout.stable_link("hiero"),
         use_manager: true,
+    };
+    #[cfg(any(windows, target_os = "macos"))]
+    let service_options = {
+        let mut service_options = service_options;
+        service_options.use_manager = operation
+            .native_broker_executable(&service_options)
+            .map_err(|error| error.to_string())?
+            .is_some();
+        service_options
     };
     operation
         .register_unit(&service_options)
@@ -1547,22 +1566,18 @@ mod tests {
     #[test]
     fn release_resolution_reads_release_json_and_refuses_signatures() {
         let temp = tempfile::tempdir().unwrap();
+        let archive = format!("hieronymus-1.2.3-{TARGET_TRIPLE}.tar.gz");
         std::fs::write(
             temp.path().join("release.json"),
             write_release(&serde_json::json!({
                 "version": "1.2.3",
-                "archive": "hieronymus-1.2.3-x86_64-unknown-linux-gnu.tar.gz",
+                "archive": archive,
                 "sha256": format!("{:0>64}", "ab"),
                 "signature": serde_json::Value::Null,
             })),
         )
         .unwrap();
-        std::fs::write(
-            temp.path()
-                .join("hieronymus-1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
-            b"archive",
-        )
-        .unwrap();
+        std::fs::write(temp.path().join(&archive), b"archive").unwrap();
 
         let release = resolve_release(temp.path()).unwrap();
         assert_eq!(release.version, "1.2.3");
@@ -1573,7 +1588,7 @@ mod tests {
             temp.path().join("release.json"),
             write_release(&serde_json::json!({
                 "version": "1.2.3",
-                "archive": "hieronymus-1.2.3-x86_64-unknown-linux-gnu.tar.gz",
+                "archive": archive,
                 "sha256": format!("{:0>64}", "ab"),
                 "signature": "MEUCIQ=",
             })),
@@ -1587,8 +1602,8 @@ mod tests {
     #[test]
     fn release_resolution_discovers_the_release_build_layout() {
         let temp = tempfile::tempdir().unwrap();
-        let name = "hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz";
-        std::fs::write(temp.path().join(name), b"archive").unwrap();
+        let name = format!("hieronymus-0.7.0-{TARGET_TRIPLE}.tar.gz");
+        std::fs::write(temp.path().join(&name), b"archive").unwrap();
         std::fs::write(
             temp.path().join(format!("{name}.sha256")),
             format!("{:0>64}  {name}\n", "cd"),
@@ -1600,8 +1615,8 @@ mod tests {
         assert_eq!(release.sha256, format!("{:0>64}", "cd"));
 
         // Two archives without metadata is ambiguous.
-        let second = "hieronymus-0.8.0-x86_64-unknown-linux-gnu.tar.gz";
-        std::fs::write(temp.path().join(second), b"archive").unwrap();
+        let second = format!("hieronymus-0.8.0-{TARGET_TRIPLE}.tar.gz");
+        std::fs::write(temp.path().join(&second), b"archive").unwrap();
         std::fs::write(
             temp.path().join(format!("{second}.sha256")),
             format!("{:0>64}  {second}\n", "ee"),
@@ -2156,14 +2171,12 @@ mod tests {
         std::fs::create_dir_all(&data_root).unwrap();
         let unit_dir = temp.join("units");
         std::fs::create_dir_all(&unit_dir).unwrap();
-        std::fs::write(
-            unit_dir.join("hieronymus.service"),
-            format!(
-                "[Service]\nExecStart=\"{}\" daemon --data-root \"{}\"\n",
-                prior_dir.join("hiero").display(),
-                data_root.display()
-            ),
-        )
+        service::install(&ServiceOptions {
+            data_root: data_root.clone(),
+            unit_dir: unit_dir.clone(),
+            binary: layout.stable_link("hiero"),
+            use_manager: false,
+        })
         .unwrap();
 
         (
@@ -2226,6 +2239,7 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn update_refuses_a_different_roots_registration_before_staging_or_manager_actions() {
         let temp = tempfile::tempdir().unwrap();
@@ -2286,6 +2300,7 @@ mod tests {
         assert!(layout.version_dir("1.0.0").exists());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn running_custom_unit_installation_refuses_before_stopping_or_switching() {
         let temp = tempfile::tempdir().unwrap();

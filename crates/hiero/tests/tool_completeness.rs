@@ -1146,7 +1146,7 @@ fn generated_plugin_bundle_is_deterministic_bytes() {
 
 #[test]
 fn export_cli_writes_deterministic_readonly_json() {
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let config = hieronymus::data_root::HieronymusConfig::new(root.path());
     let application = Application::open(&config).unwrap();
     application
