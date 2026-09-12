@@ -24,11 +24,19 @@ path or cross the reported root.
 `ready` and `unbound` are usable structural results. `ambiguous`, `unsupported`,
 `not_found`, and `invalid` require their diagnostics to be reported or resolved;
 do not select the first candidate or infer missing metadata. Contract version 1
-supports project schema versions 1 and 2 independently. Schema 2 is structurally
-readable, but actionable direction selection currently returns
-`unsupported_direction_selection`. Do not infer a translation direction,
-edition, language, or series from a map key, directory name, or legacy outer
-binding fields.
+supports project schema versions 1 and 2 independently. Schema 2 resolves an
+explicit `direction_id` or a uniquely identifying selected path against actual
+manifests. Several directions may share a target language. Source languages come
+from edition metadata, target languages from the direction, and a direction binding
+never falls back to the common-work slug or legacy outer language fields.
+
+Use `--cwd` inside the relevant series volume when `ambiguous_volume` is reported:
+per-volume settings may change source precedence and language. Without a selected
+volume, inspection returns a common direction context only when the effective
+primary and auxiliary editions agree across all covered volumes. An uncovered
+edition is invalid; it does not trigger a fallback. A shared source path can remain
+`ambiguous_direction`; select the intended direction explicitly. Conflicting
+explicit and path directions are invalid.
 
 Then apply the agreement:
 
@@ -79,6 +87,46 @@ no credentials, host IDs, receipts, viewpoint, trust policy, or task state. Proj
 inspection never creates a binding. Any authorized binding edit must use real series
 selection, validate paths, preserve unrelated outer fields, and re-read the current
 file before replacement.
+
+## Carry the selected direction into memory tools
+
+For a bound direction, use the inspected languages and series slug when starting a
+session or making sessionless reads. Registry languages are defaults when omitted;
+explicit nonempty language values are normalized. A stored session keeps its language
+pair and predicates across reloads. Do not reuse a session from another direction.
+
+This illustrative session input selects one direction; replace the slug and metadata
+with the observed project values and supply independently resolved story context:
+
+```json
+{
+  "series_slug": "example-work",
+  "source_language": "ja",
+  "target_language": "ru",
+  "story_scopes": ["cws:direction:ru-main"]
+}
+```
+
+Carry the same `story_scopes` into `hieronymus_termbase_contract`,
+`hieronymus_termbase_validate`, `hieronymus_memory_search`, and
+`hieronymus_rag_search`. `hieronymus_recall` reloads the session predicates; a
+conflicting explicit direction is rejected. Volume/chapter seeds remain separate.
+When capturing each typed claim, put its evidence-limited predicates in
+`applicability.scope_predicates` as well: relevance tags cannot isolate directions.
+
+A direction-level rendering has `cws:direction:<direction-id>` and does not require
+an edition predicate. Add `cws:edition:<edition-id>` only when the claim is specific
+to that edition; several reference editions may coexist. A common-work claim has
+neither predicate unless its evidence limits it. Preserve the other applicability
+fields, reviewed chronology, scene and knowledge gates. Unknown context stays
+unknown. Never rewrite a historical source's scope to make it current.
+
+Read `edition.md`, the direction's `translation.md`, applicable volume `settings.md`,
+and explicitly referenced source units as task evidence. Keep edition role, revision,
+coverage, reference editions, and source hashes. A source-unit reference is
+`edition-id:unit-id`, not a bare chapter ID. The CLI reports direction and languages; read source-unit identities and hashes
+from the selected files. Do not infer alignment from
+filenames or chapter numbering. Research results remain outside current applicability.
 
 ## Reading and preservation boundaries
 

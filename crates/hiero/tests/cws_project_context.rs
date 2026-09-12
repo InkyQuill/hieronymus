@@ -234,12 +234,9 @@ fn invalid_args_unrelated_flags_and_direction_selection_are_rejected() {
     );
     assert_eq!(selected.status.code(), Some(1));
     let report = json_stdout(&selected);
-    assert_eq!(report["status"], "unsupported");
+    assert_eq!(report["status"], "not_found");
     assert_eq!(report["direction_id"], "unknown");
-    assert_eq!(
-        report["diagnostics"],
-        json!(["unsupported_direction_selection"])
-    );
+    assert_eq!(report["diagnostics"], json!(["unknown_direction"]));
     assert!(!data_root.exists());
 }
 
@@ -393,4 +390,92 @@ fn deleted_implicit_cwd_returns_safe_json_and_human_envelopes() {
         String::from_utf8(human.stdout).unwrap(),
         "version: 1\nstatus: invalid\nroot: none\nschema_version: none\ninstructions_path: none\nbinding: none\ndirection_id: none\nsource_language: none\ntarget_language: none\ndiagnostics: filesystem_error\n"
     );
+}
+
+#[test]
+fn actionable_translation_fixtures_project_the_existing_envelope() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../compatibility/rust/cws-project-v1.json"
+    ))
+    .unwrap();
+    for case in fixtures["cases"].as_array().unwrap() {
+        let Some(selections) = case["expect"]["selections"].as_array() else {
+            continue;
+        };
+        let root = tempfile::tempdir().unwrap();
+        for (relative, contents) in case["files"].as_object().unwrap() {
+            let path = root.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents.as_str().unwrap()).unwrap();
+        }
+        let data_root = root.path().join("unused-data");
+        for selection in selections {
+            let cwd = root.path().join(selection["cwd"].as_str().unwrap());
+            let args = json!({"direction_id":selection["direction_id"]}).to_string();
+            let output = cli(&cwd, &data_root, &["--args", &args, "--json"]);
+            let report = json_stdout(&output);
+            assert_eq!(
+                report["status"], selection["status"],
+                "{} {selection}: {report}",
+                case["name"]
+            );
+            assert_eq!(report.as_object().unwrap().len(), 10);
+            assert_eq!(output.status.code(), Some(i32::from(exit_code(&report))));
+            if let Some(diagnostic) = selection.get("diagnostic") {
+                assert_eq!(report["diagnostics"], json!([diagnostic]));
+            } else {
+                assert_eq!(
+                    &report["direction_id"],
+                    selection
+                        .get("selected_direction")
+                        .unwrap_or(&selection["direction_id"])
+                );
+                assert_eq!(report["source_language"], selection["source_language"]);
+                assert_eq!(report["target_language"], selection["target_language"]);
+                if selection["status"] == "ready" {
+                    assert_eq!(report["binding"]["series_slug"], "work");
+                } else {
+                    assert_eq!(report["binding"], Value::Null);
+                }
+            }
+            assert!(!data_root.exists());
+        }
+    }
+}
+
+#[test]
+fn relative_cwd_selects_the_same_direction_as_an_absolute_path() {
+    let fixture = tempfile::tempdir().unwrap();
+    let project = fixture.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../compatibility/rust/cws-project-v1.json"
+    ))
+    .unwrap();
+    let case = cases["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "direction-context-series")
+        .unwrap();
+    for (relative, contents) in case["files"].as_object().unwrap() {
+        let path = project.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents.as_str().unwrap()).unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
+        .current_dir(fixture.path())
+        .env("PATH", "")
+        .args([
+            "project-context",
+            "--cwd",
+            "project/translations/ru-main/volumes/v002",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let report = json_stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{report}");
+    assert_eq!(report["direction_id"], "ru-main");
+    assert_eq!(report["source_language"], "en");
 }

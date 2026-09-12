@@ -424,16 +424,236 @@ fn bindings_are_explicit_validated_and_independent_of_legacy_defaults() {
 }
 
 #[test]
-fn schema_two_discovery_is_supported_without_promising_direction_context() {
+fn schema_two_discovery_and_binding_are_independent_of_direction_selection() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "project.md", &MANIFEST.replace("schema-version: 1", "schema-version: 2\nproject-kind: translation\nwork-kind: series\ntranslation-enabled: true"));
     let project = discover(dir.path()).unwrap().unwrap();
     assert_eq!(project.schema_version, 2);
     assert!(project.translation_enabled);
     for direction in [None, Some("ru-main")] {
+        assert_eq!(select_binding(&project, direction).unwrap(), None);
+    }
+}
+
+#[test]
+fn actionable_selection_retains_editions_sources_and_producer_hashes() {
+    use hieronymus::cws_project::select_direction;
+    use sha2::{Digest, Sha256};
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../compatibility/rust/cws-project-v1.json"
+    ))
+    .unwrap();
+    for case in fixtures["cases"].as_array().unwrap() {
+        let Some(selections) = case["expect"]["selections"].as_array() else {
+            continue;
+        };
+        let root = tempfile::tempdir().unwrap();
+        for (path, contents) in case["files"].as_object().unwrap() {
+            write(root.path(), path, contents.as_str().unwrap());
+        }
+        let project = discover(root.path()).unwrap().unwrap();
+        for expected in selections
+            .iter()
+            .filter(|s| s["status"] == "ready" || s["status"] == "unbound")
+        {
+            let selected = select_direction(
+                &project,
+                &root.path().join(expected["cwd"].as_str().unwrap()),
+                expected["direction_id"].as_str(),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(selected.work_kind, "series");
+            assert_eq!(
+                serde_json::to_value(&selected.volume_id).unwrap(),
+                expected["volume_id"]
+            );
+            assert_eq!(
+                selected.primary_edition.edition_id,
+                expected["primary_edition"]
+            );
+            assert_eq!(selected.primary_edition.revision_label, "first");
+            assert_eq!(
+                selected
+                    .auxiliary_editions
+                    .iter()
+                    .map(|e| &e.edition_id)
+                    .collect::<Vec<_>>(),
+                Vec::<&String>::new()
+            );
+            let refs: Vec<_> = selected
+                .source_units
+                .iter()
+                .map(|u| u.reference.clone())
+                .collect();
+            assert_eq!(
+                serde_json::to_value(refs).unwrap(),
+                expected.get("source_units").cloned().unwrap_or(json!([]))
+            );
+            for unit in selected.source_units {
+                assert_eq!(
+                    unit.sha256,
+                    format!("{:x}", Sha256::digest(fs::read(&unit.path).unwrap()))
+                );
+                assert!(unit.original_sha256.is_some());
+                assert!(
+                    unit.original_path
+                        .unwrap()
+                        .starts_with(project.root.join("sources"))
+                );
+            }
+        }
+    }
+}
+
+fn translation_fixture(name: &str) -> tempfile::TempDir {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../compatibility/rust/cws-project-v1.json"
+    ))
+    .unwrap();
+    let case = fixtures["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == name)
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    for (path, contents) in case["files"].as_object().unwrap() {
+        write(root.path(), path, contents.as_str().unwrap());
+    }
+    root
+}
+
+#[test]
+fn book_selection_follows_declared_source_units_and_never_filename_alignment() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("translation-book");
+    let project = discover(root.path()).unwrap().unwrap();
+    let selected = select_direction(
+        &project,
+        Path::new("translations/ru-main/drafts/u001.md"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(selected.work_kind, "book");
+    assert_eq!(selected.volume_id, None);
+    assert_eq!(selected.source_language, "ja");
+    assert_eq!(selected.target_language, "ru");
+    assert_eq!(selected.source_units[0].reference, "ja:u001");
+    assert!(matches!(
+        select_direction(&project, Path::new("sources/ja/text/u001.md"), None),
+        Err(CwsError::AmbiguousDirection)
+    ));
+    let dotted = select_direction(
+        &project,
+        Path::new("./sources/ja/text/u001.md"),
+        Some("ru-main"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(dotted.source_units[0].reference, "ja:u001");
+    let unknown = select_direction(
+        &project,
+        Path::new("translations/ru-main/drafts/another.md"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(unknown.source_units.is_empty());
+    let path = root.path().join("translations/ru-main/drafts/u001.md");
+    let contents = fs::read_to_string(&path)
+        .unwrap()
+        .replace("ja:u001", "u001");
+    fs::write(&path, contents).unwrap();
+    assert!(matches!(
+        select_direction(&project, &path, None),
+        Err(CwsError::InvalidManifest)
+    ));
+}
+
+#[test]
+fn selection_rejects_unsafe_overrides_mismatched_identity_and_layout() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("direction-context-series");
+    let project = discover(root.path()).unwrap().unwrap();
+    for content in [
+        "---\ndirection-id: another\nvolume-id: v002\n---\n",
+        "---\ndirection-id: ru-main\nvolume-id: v002\nprimary-edition: ../ja\n---\n",
+        "---\ndirection-id: ru-main\nvolume-id: v002\nlanguage: fr\n---\n",
+    ] {
+        write(
+            root.path(),
+            "translations/ru-main/volumes/v002/settings.md",
+            content,
+        );
         assert!(matches!(
-            select_binding(&project, direction),
-            Err(CwsError::UnsupportedDirectionSelection)
+            select_direction(
+                &project,
+                Path::new("translations/ru-main/volumes/v002"),
+                None
+            ),
+            Err(CwsError::InvalidManifest)
         ));
     }
+    let book = translation_fixture("translation-book");
+    let project = discover(book.path()).unwrap().unwrap();
+    assert!(matches!(
+        select_direction(
+            &project,
+            Path::new("translations/ru-main/volumes/v001"),
+            None
+        ),
+        Err(CwsError::InvalidManifest)
+    ));
+    let source = book.path().join("sources/ja/text/u001.md");
+    write(book.path(), "translations/ru-main/project.md", MANIFEST);
+    assert!(matches!(
+        select_direction(&project, &source, Some("ru-main")),
+        Err(CwsError::UnsafePath)
+    ));
+}
+
+#[test]
+fn direction_binding_never_falls_back_to_common_work_or_legacy_languages() {
+    let root = translation_fixture("direction-explicit-unbound");
+    let project = discover(root.path()).unwrap().unwrap();
+    assert_eq!(
+        select_binding(&project, None).unwrap().unwrap().series_slug,
+        "work"
+    );
+    assert_eq!(select_binding(&project, Some("ru-main")).unwrap(), None);
+    assert_eq!(
+        select_binding(&project, Some("en-main"))
+            .unwrap()
+            .unwrap()
+            .series_slug,
+        "work"
+    );
+}
+
+#[test]
+fn source_path_filters_direction_coverage_before_resolving_volume_context() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("direction-context-series");
+    let project = discover(root.path()).unwrap().unwrap();
+    assert!(matches!(
+        select_direction(&project, Path::new("sources/ja/edition.md"), None),
+        Err(CwsError::AmbiguousDirection)
+    ));
+    let direction = root.path().join("translations/en-main/translation.md");
+    let source = fs::read_to_string(&direction)
+        .unwrap()
+        .replace("  - v002\n", "");
+    fs::write(direction, source).unwrap();
+    // The English direction covers only volume one; it cannot make the selected
+    // volume-two source invalid, and the matching literary direction is unique.
+    let selected = select_direction(
+        &project,
+        Path::new("sources/ja/volumes/v002/text/u002.md"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(selected.direction_id, "ru-literary");
 }

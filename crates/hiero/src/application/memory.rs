@@ -128,7 +128,7 @@ fn memory_add(application: &Application, arguments: &Value) -> Result<Value, App
         &args.volume,
         &args.chapter,
     )?;
-    args.story.apply(&mut context);
+    args.story.apply(&mut context)?;
     let store = workspace(application)?;
     let session = match store.active_default_session(&context).map_err(domain)? {
         Some(session) => session,
@@ -280,7 +280,7 @@ fn memory_search(application: &Application, arguments: &Value) -> Result<Value, 
         &args.volume,
         &args.chapter,
     )?;
-    args.story.apply(&mut context);
+    args.story.apply(&mut context)?;
     let store = workspace(application)?;
     let response = match store.active_default_session(&context).map_err(domain)? {
         Some(session) => application.recall().recall_required(
@@ -575,7 +575,7 @@ fn recall(application: &Application, arguments: &Value) -> Result<Value, AppErro
     let store = workspace(application)?;
     let session = store.get_session(args.session_id).map_err(domain)?;
     let mut context = session.context.clone();
-    args.story.apply(&mut context);
+    args.story.apply(&mut context)?;
     let context = &context;
     if context.series_slug != series.slug {
         return Err(AppError::Domain("session context mismatch".to_string()));
@@ -596,12 +596,17 @@ fn recall(application: &Application, arguments: &Value) -> Result<Value, AppErro
         ("chapter", args.chapter, &context.chapter),
     ];
     for (field_name, override_value, context_value) in overrides {
-        if let Some(value) = override_value
-            && &value != context_value
-        {
-            return Err(AppError::Domain(format!(
-                "session context mismatch: {field_name}"
-            )));
+        if let Some(value) = override_value {
+            let value = if matches!(field_name, "source_language" | "target_language") {
+                super::context_language(Some(value), context_value, field_name)?
+            } else {
+                value
+            };
+            if &value != context_value {
+                return Err(AppError::Domain(format!(
+                    "session context mismatch: {field_name}"
+                )));
+            }
         }
     }
     if args.limit < 1 {
@@ -871,6 +876,10 @@ struct RagSearchArgs {
     #[serde(flatten)]
     story: super::StoryReadArgs,
     series_slug: String,
+    #[serde(default)]
+    source_language: Option<String>,
+    #[serde(default)]
+    target_language: Option<String>,
     query: String,
     #[serde(default = "default_rag_search_limit")]
     limit: i64,
@@ -895,13 +904,13 @@ fn rag_search(application: &Application, arguments: &Value) -> Result<Value, App
     let series = series_context(application, &args.series_slug)?;
     let mut context = translation_context(
         &series,
-        None,
-        None,
+        args.source_language,
+        args.target_language,
         "translation",
         &args.volume,
         &args.chapter,
     )?;
-    args.story.apply(&mut context);
+    args.story.apply(&mut context)?;
     application.search_rag_context(
         &context,
         &args.query,

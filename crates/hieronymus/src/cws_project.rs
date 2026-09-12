@@ -8,6 +8,10 @@ use std::{
 
 use serde::Serialize;
 
+mod direction;
+pub(crate) use direction::valid_identity;
+pub use direction::{CwsEdition, CwsSourceUnit, SelectedDirection, select_direction};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentRole {
@@ -54,8 +58,12 @@ pub enum CwsError {
     UnsupportedBinding(u64),
     #[error("unsupported CWS project contract version {0}")]
     UnsupportedContractVersion(u64),
-    #[error("CWS direction selection is not yet supported")]
-    UnsupportedDirectionSelection,
+    #[error("selected path conflicts with the explicit CWS direction")]
+    ConflictingDirection,
+    #[error("CWS direction has different effective sources across volumes")]
+    AmbiguousVolume,
+    #[error("CWS edition does not cover the selected volume")]
+    UncoveredEdition,
     #[error("multiple CWS translation directions require explicit selection")]
     AmbiguousDirection,
     #[error("unknown CWS translation direction {0}")]
@@ -146,7 +154,7 @@ fn required_string<'a>(
 
 // Retain decimal spelling independently of machine integer range: CWS integers
 // are arbitrary precision, and numeric list items retain their original spelling.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MetadataValue {
     String(String),
     Integer(String),

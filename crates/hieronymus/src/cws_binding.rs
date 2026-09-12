@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::cws_project::{CwsError, CwsProject, metadata, safe_project_path};
+use crate::cws_project::{CwsError, CwsProject, metadata, safe_project_path, valid_identity};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,12 +24,14 @@ struct Binding {
 }
 
 /// Read only the discovered project's own marker. Legacy fields cannot supply
-/// CWS context without a valid `cws` object. Direction context is a later milestone.
+/// CWS context without a valid `cws` object. Direction maps are independent of
+/// the optional common-work slug; selection never falls back to the root slug.
 pub fn select_binding(
     project: &CwsProject,
     direction: Option<&str>,
 ) -> Result<Option<SelectedBinding>, CwsError> {
     let path = safe_project_path(project, Path::new(".hieronymus.json"))?;
+    let mut directions = BTreeMap::new();
     let common = match metadata(&path)? {
         None => None,
         Some(info) => {
@@ -59,10 +61,11 @@ pub fn select_binding(
                 let binding: Binding =
                     serde_json::from_value(cws.clone()).map_err(|_| CwsError::InvalidBinding)?;
                 for (id, selected) in &binding.directions {
-                    if !valid_direction_id(id) || selected.series_slug.trim().is_empty() {
+                    if !valid_identity(id) || selected.series_slug.trim().is_empty() {
                         return Err(CwsError::InvalidBinding);
                     }
                 }
+                directions = binding.directions;
                 match raw.get("series_slug") {
                     None => None,
                     Some(Value::String(slug)) if !slug.trim().is_empty() => Some(SelectedBinding {
@@ -75,18 +78,9 @@ pub fn select_binding(
             }
         }
     };
-    if direction.is_some() || project.project_kind == "translation" {
-        return Err(CwsError::UnsupportedDirectionSelection);
+    match direction {
+        Some(id) if !valid_identity(id) => Err(CwsError::InvalidBinding),
+        Some(id) => Ok(directions.remove(id)),
+        None => Ok(common),
     }
-    Ok(common)
-}
-
-fn valid_direction_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.split('-').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
-        })
 }

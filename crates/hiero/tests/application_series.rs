@@ -314,7 +314,7 @@ fn session_start_persists_an_active_session() {
 }
 
 #[test]
-fn session_start_rejects_unknown_series_and_language_mismatches() {
+fn session_start_rejects_unknown_series_and_empty_languages() {
     let (_root, app) = test_application();
 
     let error = app
@@ -337,20 +337,20 @@ fn session_start_rejects_unknown_series_and_language_mismatches() {
     let error = app
         .call(
             "hieronymus_session_start",
-            &json!({"series_slug": "book", "source_language": "fr"}),
+            &json!({"series_slug": "book", "source_language": " "}),
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(error, "does not match registry default");
+    expect_domain(error, "must not be empty");
 
     let error = app
         .call(
             "hieronymus_session_start",
-            &json!({"series_slug": "book", "target_language": "fr"}),
+            &json!({"series_slug": "book", "target_language": " "}),
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(error, "does not match registry default");
+    expect_domain(error, "must not be empty");
 
     // Overrides equal to the defaults are accepted.
     app.call(

@@ -55,13 +55,26 @@ Statuses `ready` and `unbound` exit 0. `ambiguous`, `unsupported`, and `not_foun
 1; `invalid` exits 2. Diagnostics are stable technical strings:
 `project_not_found`, `unsafe_path`, `invalid_manifest`, `invalid_binding`,
 `unsupported_schema`, `unsupported_binding_version`, `unsupported_contract_version`,
-`unsupported_direction_selection`, `ambiguous_direction`, `unknown_direction`, and
-`filesystem_error`. Filesystem error details are not printed. Contract version 1
-supports project schemas 1 and 2 independently. Direction-specific translation context
-currently reports `unsupported_direction_selection` until the direction adapter is
-available. Skills must not infer direction, edition, language or series binding from a
-directory name or map key. Generated indexes, `.creative-writing/`, translation lifecycle
-metadata, supplied originals and nested projects remain protected boundaries. The workflow
+`ambiguous_direction`, `ambiguous_volume`, `conflicting_direction`, `uncovered_edition`,
+`unknown_direction`, and `filesystem_error`. Filesystem error details are not printed.
+Contract version 1 supports project schemas 1 and 2 independently. Schema 2 resolves
+explicit directions or uniquely identifying selected paths through actual manifests.
+Several directions may use the same language and series. A direction without its own
+map entry is `unbound`, even when the common-work slug is bound. Languages come from
+the effective primary edition and direction, including per-volume source overrides.
+
+For `ambiguous_volume`, select the relevant volume with `--cwd`. When all covered
+volumes have the same effective editions, inspection can return their common context
+without choosing a volume. Missing edition coverage fails with `uncovered_edition`.
+The adapter preserves edition-qualified unit references and hashes for selected task
+evidence; the ten-key CLI envelope remains unchanged. Skills carry
+`cws:direction:<id>` in `story_scopes` for sessions and reads and in each applicable
+claim's `scope_predicates`. Edition-specific evidence additionally carries
+`cws:edition:<id>`. Volume/chapter and knowledge gates stay independent. Session
+reload preserves predicates, contradictory direction selections fail, and omitted
+languages use registry defaults while explicit nonempty overrides are normalized.
+
+Generated indexes, `.creative-writing/`, translation lifecycle metadata, supplied originals and nested projects remain protected boundaries. The workflow
 does not import whole projects, copy secrets or hidden text, require synchronized stores,
 or recursively launch a second orchestrator.
 

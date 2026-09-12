@@ -50,6 +50,21 @@
             "type": "null"
           }
         ]
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
       }
     },
     "hieronymus_memory_search": {
@@ -108,6 +123,21 @@
       "chapter": {
         "type": "string",
         "default": ""
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
       }
     },
     "hieronymus_rag_search": {
@@ -166,6 +196,45 @@
       "chapter": {
         "type": "string",
         "default": ""
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
+      },
+      "source_language": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Explicit normalized task language; omitted values use the series registry default."
+      },
+      "target_language": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Explicit normalized task language; omitted values use the series registry default."
       }
     },
     "hieronymus_termbase_contract": {
@@ -216,6 +285,21 @@
             "type": "null"
           }
         ]
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
       }
     },
     "hieronymus_termbase_validate": {
@@ -266,6 +350,21 @@
             "type": "null"
           }
         ]
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
       }
     },
     "hieronymus_session_start": {
@@ -306,6 +405,21 @@
           "OmniscientResearch"
         ],
         "default": "Current"
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
       }
     },
     "hieronymus_memory_add": {
@@ -362,6 +476,21 @@
       "chapter": {
         "type": "string",
         "default": ""
+      },
+      "story_scopes": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Additional applicability predicates; preserve volume/chapter context. Select at most one cws:direction:<id>. Use cws:edition:<id> only for edition-specific evidence; typed claims carry the same applicability predicates."
       }
     },
     "hieronymus_short_term_add": {

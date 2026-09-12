@@ -125,9 +125,7 @@ fn default_task_type() -> String {
     "translation".to_string()
 }
 
-/// Start a session for an existing series, mirroring the Python
-/// `_translation_context` rules: `None` languages fall back to the series'
-/// registry defaults, and explicit overrides must match those defaults.
+/// Start a session using registry defaults or the explicit task language pair.
 fn session_start(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<SessionStart>(arguments)?;
     let registry = Registry::open(application.config()).map_err(domain)?;
@@ -140,7 +138,7 @@ fn session_start(application: &Application, arguments: &Value) -> Result<Value, 
         &args.volume,
         &args.chapter,
     )?;
-    args.story.apply(&mut context);
+    args.story.apply(&mut context)?;
     let store = WorkspaceStore::open(application.config()).map_err(domain)?;
     let session = store.start_session(&context).map_err(domain)?;
     Ok(json!({ "session_id": session.id }))

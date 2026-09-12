@@ -231,6 +231,18 @@ impl WorkspaceStore {
                    and story_scene_key is ?8
                    and story_viewpoint_json = ?9
                    and status = 'active'
+                   and not exists (
+                     select 1 from task_session_story_scopes scopes
+                     where scopes.session_id = task_sessions.id
+                       and scopes.story_scope not in (select value from json_each(?10))
+                   )
+                   and not exists (
+                     select 1 from json_each(?10) requested
+                     where requested.value not in (
+                       select story_scope from task_session_story_scopes
+                       where session_id = task_sessions.id
+                     )
+                   )
                  order by id desc
                  limit 1",
                 rusqlite::params![
@@ -243,6 +255,8 @@ impl WorkspaceStore {
                     context.story_timeline_id,
                     context.story_scene_key,
                     serde_json::to_string(&context.story_viewpoint)
+                        .map_err(|e| WorkspaceError::Json(e.to_string()))?,
+                    serde_json::to_string(&context.story_scopes)
                         .map_err(|e| WorkspaceError::Json(e.to_string()))?,
                 ],
                 |row| row.get(0),

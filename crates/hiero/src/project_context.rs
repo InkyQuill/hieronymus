@@ -8,7 +8,7 @@ use std::{
 
 use hieronymus::{
     cws_binding::select_binding,
-    cws_project::{CwsError, CwsProject, discover},
+    cws_project::{CwsError, CwsProject, discover, select_direction},
 };
 use serde_json::{Value, json};
 
@@ -31,12 +31,27 @@ pub fn inspect(cwd: &Path, direction: Option<&str>) -> Value {
         }
     }
 
-    match select_binding(&project, direction) {
-        Ok(Some(binding)) => {
-            report["status"] = json!("ready");
+    // Validate binding/contract versions independently of actionable selection.
+    let selected = (|| {
+        select_binding(&project, None)?;
+        let selected = select_direction(&project, &std::path::absolute(cwd)?, direction)?;
+        let binding = select_binding(&project, selected.as_ref().map(|s| s.direction_id.as_str()))?;
+        Ok::<_, CwsError>((selected, binding))
+    })();
+    match selected {
+        Ok((selected, binding)) => {
+            if let Some(selected) = selected {
+                report["direction_id"] = json!(selected.direction_id);
+                report["source_language"] = json!(selected.source_language);
+                report["target_language"] = json!(selected.target_language);
+            }
+            report["status"] = json!(if binding.is_some() {
+                "ready"
+            } else {
+                "unbound"
+            });
             report["binding"] = json!(binding);
         }
-        Ok(None) => report["status"] = json!("unbound"),
         Err(error) => {
             report["status"] = json!(status(&error));
             report["diagnostics"] = json!([diagnostic(&error)]);
@@ -134,11 +149,12 @@ fn status(error: &CwsError) -> &'static str {
     match error {
         CwsError::UnsupportedSchema(_)
         | CwsError::UnsupportedBinding(_)
-        | CwsError::UnsupportedContractVersion(_)
-        | CwsError::UnsupportedDirectionSelection => "unsupported",
-        CwsError::AmbiguousDirection => "ambiguous",
+        | CwsError::UnsupportedContractVersion(_) => "unsupported",
+        CwsError::AmbiguousDirection | CwsError::AmbiguousVolume => "ambiguous",
         CwsError::UnknownDirection(_) => "not_found",
         CwsError::UnsafePath
+        | CwsError::ConflictingDirection
+        | CwsError::UncoveredEdition
         | CwsError::InvalidManifest
         | CwsError::InvalidBinding
         | CwsError::Io(_) => "invalid",
@@ -153,7 +169,9 @@ fn diagnostic(error: &CwsError) -> &'static str {
         CwsError::InvalidBinding => "invalid_binding",
         CwsError::UnsupportedBinding(_) => "unsupported_binding_version",
         CwsError::UnsupportedContractVersion(_) => "unsupported_contract_version",
-        CwsError::UnsupportedDirectionSelection => "unsupported_direction_selection",
+        CwsError::ConflictingDirection => "conflicting_direction",
+        CwsError::AmbiguousVolume => "ambiguous_volume",
+        CwsError::UncoveredEdition => "uncovered_edition",
         CwsError::AmbiguousDirection => "ambiguous_direction",
         CwsError::UnknownDirection(_) => "unknown_direction",
         CwsError::Io(_) => "filesystem_error",

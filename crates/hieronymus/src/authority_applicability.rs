@@ -3,7 +3,26 @@ use crate::authority_models::DecisionErrorV1 as Error;
 use crate::story_applicability::*;
 use rusqlite::{Connection, Transaction, params};
 
+// Direction is a mutually exclusive task identity. Editions deliberately are
+// ordinary positive predicates: primary and reference sources may coexist.
+fn direction(predicates: &[String]) -> Result<Option<&str>, Error> {
+    let mut selected = None;
+    for predicate in predicates {
+        if let Some(id) = predicate.trim().strip_prefix("cws:direction:") {
+            if predicate != predicate.trim()
+                || !crate::cws_project::valid_identity(id)
+                || selected.is_some_and(|old| old != id)
+            {
+                return Err(Error::ApplicabilityConflict);
+            }
+            selected = Some(id);
+        }
+    }
+    Ok(selected)
+}
+
 pub(crate) fn validate(db: &Connection, a: &ApplicabilityV1) -> Result<(), Error> {
+    direction(&a.scope_predicates)?;
     if a.series_id <= 0
         || a.chapter_key.is_some() && a.volume_key.is_none()
         || a.scope_predicates.iter().any(|x| x.trim().is_empty())
@@ -112,6 +131,10 @@ fn structural_overlap(
     a: &ApplicabilityV1,
     b: &ApplicabilityV1,
 ) -> Result<bool, Error> {
+    if matches!((direction(&a.scope_predicates)?, direction(&b.scope_predicates)?), (Some(left), Some(right)) if left != right)
+    {
+        return Ok(false);
+    }
     if a.series_id != b.series_id
         || matches!((&a.volume_key,&b.volume_key),(Some(a),Some(b)) if a!=b)
         || matches!((&a.chapter_key,&b.chapter_key),(Some(a),Some(b)) if a!=b)
@@ -464,4 +487,40 @@ pub(crate) fn rule_identity_in_context(
     Ok(series == Some(app.series_id)
         && source == context.source_language
         && target == context.target_language)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn scope(predicates: &[&str]) -> ApplicabilityV1 {
+        ApplicabilityV1 {
+            series_id: 1,
+            timeline_id: None,
+            volume_key: None,
+            chapter_key: None,
+            scope_predicates: predicates.iter().map(|s| (*s).into()).collect(),
+            valid_from: None,
+            valid_until: None,
+            metadata_state: MetadataState::Unspecified,
+            knowledge_gates: vec![KnowledgeGateV1 {
+                viewpoint: KnowledgeViewpoint::All,
+                known_from: None,
+                known_until: None,
+            }],
+        }
+    }
+    #[test]
+    fn cws_directions_are_exclusive_but_reference_editions_can_coexist() {
+        let db = Connection::open_in_memory().unwrap();
+        let left = scope(&["cws:direction:ru-main", "cws:edition:ja"]);
+        let right = scope(&["cws:direction:ru-literary", "cws:edition:en"]);
+        assert!(!structural_overlap(&db, &left, &right).unwrap());
+        let compatible = scope(&["cws:direction:ru-main", "cws:edition:en"]);
+        assert!(structural_overlap(&db, &left, &compatible).unwrap());
+        let malformed = scope(&["cws:direction:ru-main", "cws:direction:ru-literary"]);
+        assert!(matches!(
+            validate(&db, &malformed),
+            Err(Error::ApplicabilityConflict)
+        ));
+    }
 }
