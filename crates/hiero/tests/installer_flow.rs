@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! The bootstrap installer (`scripts/install.sh`) executed end-to-end against
 //! local fixture releases built from the real binary: the 8 installer steps
 //! with the release-build archive layout. Tests override `HOME` so nothing

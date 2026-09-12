@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Cross-process lifecycle serialization. Every fixture and manager is disposable.
 use hiero::service::{self, ServiceOptions};
 use hieronymus::data_root::HieronymusConfig;

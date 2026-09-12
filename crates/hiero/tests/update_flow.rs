@@ -6,7 +6,7 @@
 //! override disables manager integration by design).
 
 // Shell-script candidate and systemd fixture flow; native helper coordination has its own qualification.
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 mod common;
 

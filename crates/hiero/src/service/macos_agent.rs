@@ -200,7 +200,7 @@ fn native_document(text: &str) -> Result<NativeEntry<'_>, String> {
     }
     let mut lines = text.lines().peekable();
     let header = lines
-        .next()
+        .find(|line| !line.trim().is_empty())
         .ok_or("Missing native readback envelope")?
         .trim();
     let (key, value) = header
@@ -291,6 +291,8 @@ pub fn loaded_state(text: &str, path: &Path, expected: &[String]) -> Result<Load
         "type",
         "state",
         "program",
+        "stdout path",
+        "stderr path",
         "arguments",
         "inherited environment",
         "default environment",
@@ -308,6 +310,15 @@ pub fn loaded_state(text: &str, path: &Path, expected: &[String]) -> Result<Load
         "trampolined",
         "started suspended",
         "proxy started",
+        "proxy started suspended",
+        "extension alive",
+        "trial factors memory limit",
+        "checked allocations",
+        "checked allocations reason",
+        "checked allocations flags",
+        "pended spawn",
+        "pended nondemand spawn",
+        "spawn reason filter",
         "last exit code",
         "last terminating signal",
         "jetsam priority",
@@ -341,6 +352,11 @@ pub fn loaded_state(text: &str, path: &Path, expected: &[String]) -> Result<Load
     if scalar("program")? != expected.first().map(String::as_str) {
         return Err("Loaded LaunchAgent executable differs".into());
     }
+    for key in ["stdout path", "stderr path"] {
+        if scalar(key)?.is_some_and(|value| value != "/dev/null") {
+            return Err("Loaded LaunchAgent output path differs".into());
+        }
+    }
     match entries
         .iter()
         .find(|entry| entry.key == "arguments")
@@ -371,6 +387,8 @@ pub fn loaded_state(text: &str, path: &Path, expected: &[String]) -> Result<Load
                 | "partial import"
                 | "dirty tracking"
                 | "managed"
+                | "system service"
+                | "tle system"
         )
     }) {
         return Err("Unknown loaded LaunchAgent property".into());
@@ -387,7 +405,7 @@ pub fn loaded_state(text: &str, path: &Path, expected: &[String]) -> Result<Load
     let state = scalar("state")?.ok_or("Missing loaded LaunchAgent process state")?;
     let idle = match (state, pid) {
         ("not running", None) => true,
-        ("running", Some(_)) => false,
+        ("running" | "xpcproxy", Some(_)) => false,
         ("spawn scheduled" | "spawn pending" | "waiting" | "exited", None) => false,
         _ => return Err("Inconsistent or unknown LaunchAgent process state".into()),
     };
@@ -418,8 +436,8 @@ pub fn disabled_state(text: &str, label: &str) -> Result<bool, String> {
             .filter(|name| !name.is_empty() && !name.contains('"'))
             .ok_or("Invalid disabled-service label")?;
         let value = match entry.value {
-            NativeValue::Scalar("true") => true,
-            NativeValue::Scalar("false") => false,
+            NativeValue::Scalar("true" | "disabled") => true,
+            NativeValue::Scalar("false" | "enabled") => false,
             _ => return Err("Invalid disabled-service state".into()),
         };
         if name == label {

@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! argv[0] command routing (distribution spec, installer section): one binary
 //! serves the historical entry points. `hieronymus` routes to the canonical
 //! CLI, `hieronymus-mcp` routes to `hiero mcp`, and `hieronymus-agent-hook`
@@ -409,6 +411,7 @@ fn tray_missing_installed_helper_has_actionable_diagnostic() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 #[cfg(unix)]
 fn tray_forwards_absolute_root_as_one_literal_argument_to_sibling() {

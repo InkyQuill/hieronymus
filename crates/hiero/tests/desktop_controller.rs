@@ -130,7 +130,22 @@ fn completed_start_without_snapshot_has_a_real_deadline() {
 use hiero::desktop::{
     AutostartRegistration, ForegroundMode, LifecycleBackend, SettingsStore, UnsupportedAutostart,
 };
+use hiero::service::ServiceOptions;
 use hieronymus::data_root::HieronymusConfig;
+
+fn lifecycle_backend<R: AutostartRegistration>(
+    config: HieronymusConfig,
+    registration: R,
+) -> LifecycleBackend<R> {
+    let options = ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir: config.data_root().with_extension("units"),
+        binary: "/usr/bin/true".into(),
+        use_manager: false,
+    };
+    LifecycleBackend::with_service_options(config, options, registration)
+}
+
 struct Registration {
     actual: bool,
     fail: bool,
@@ -193,7 +208,7 @@ fn settings_read_back_before_persistence_and_repair_interrupted_change() {
 fn production_probe_does_not_create_root_and_requires_owner_release() {
     let directory = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(directory.path().join("absent"));
-    let mut backend = LifecycleBackend::new(config.clone(), UnsupportedAutostart).unwrap();
+    let mut backend = lifecycle_backend(config.clone(), UnsupportedAutostart);
     assert_eq!(backend.probe(), Event::Stopped);
     assert!(!config.data_root().exists());
     let owner = hieronymus::ownership::RootOwnership::acquire(&config, "test").unwrap();
@@ -258,7 +273,7 @@ fn probe_reply(mut body: serde_json::Value) -> Event {
         )
         .unwrap();
     });
-    let mut backend = LifecycleBackend::new(config, UnsupportedAutostart).unwrap();
+    let mut backend = lifecycle_backend(config, UnsupportedAutostart);
     let event = backend.probe();
     server.join().unwrap();
     event
@@ -568,7 +583,7 @@ fn actual_registration_survives_preference_persistence_failure() {
     let directory = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(directory.path());
     std::fs::create_dir(directory.path().join("desktop-settings.json")).unwrap();
-    let mut backend = LifecycleBackend::new(
+    let mut backend = lifecycle_backend(
         config,
         Registration {
             actual: true,
@@ -576,8 +591,7 @@ fn actual_registration_survives_preference_persistence_failure() {
             lie: false,
             calls: vec![],
         },
-    )
-    .unwrap();
+    );
     // Actual registration is known even though preferences cannot be persisted/read.
     assert!(
         matches!(backend.preferences(), Some(Event::Preferences { settings: Some(settings), error: Some(_) }) if settings.autostart)
@@ -599,7 +613,7 @@ fn preferences_event_does_not_change_lifecycle_state() {
 fn failed_toggle_delivers_actual_registration_before_completion() {
     let directory = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(directory.path());
-    let backend = LifecycleBackend::new(
+    let backend = lifecycle_backend(
         config,
         Registration {
             actual: false,
@@ -607,8 +621,7 @@ fn failed_toggle_delivers_actual_registration_before_completion() {
             lie: false,
             calls: vec![],
         },
-    )
-    .unwrap();
+    );
     let controller = Controller::spawn(backend);
     wait_event(
         &controller,

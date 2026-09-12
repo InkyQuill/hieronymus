@@ -320,6 +320,7 @@ fn run_console_cli(
     )
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 #[cfg(target_os = "linux")]
 fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
@@ -372,6 +373,7 @@ fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
     daemon.shutdown().unwrap();
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 #[cfg(target_os = "linux")]
 fn cli_reports_opener_failure_without_exposing_the_grant() {

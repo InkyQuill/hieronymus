@@ -149,12 +149,14 @@ test("ZIP refuses declared and actual decompression overflows", () => {
 });
 
 import { acquireCommonModel } from "./shared-model";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 test("common acquisition cache rehashes every reuse without requests", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "hiero-common-cache-"));
+  const dir = mkdtempSync(
+    join(realpathSync(tmpdir()), "hiero-common-cache-"),
+  );
   try {
     const data = Buffer.from("transport fixture"),
       hash = createHash("sha256").update(data).digest("hex"),
@@ -205,7 +207,7 @@ test("Intel source-build route refuses cross-host acceptance", () => {
 });
 import { checkMetadata } from "./check-rust-release";
 test("source checker verifies both artifacts from the exact target manifest", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "hiero-v2-check-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "hiero-v2-check-"));
   try {
     const m = manifest();
     const data = Buffer.from("transport fixture");
