@@ -15,7 +15,7 @@ fn graphical_session() -> bool {
     {
         // User services need not inherit display variables from the login.
         // logind validates a local graphical session owned by this user.
-        super::singleton::graphical_user_session().is_ok()
+        super::singleton::trusted_session().is_ok()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -60,11 +60,15 @@ pub(crate) fn supervise(
                     next_start = Instant::now() + Duration::from_secs(5);
                     continue;
                 }
-                match spawn(&config, service.as_ref()) {
-                    Ok(started) => {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                match spawn(&config, service.as_ref(), &stop) {
+                    Ok(Some(started)) => {
                         child = Some(started);
                         reported_failure = false;
                     }
+                    Ok(None) => break,
                     Err(error) => {
                         if !reported_failure {
                             eprintln!("Tray companion unavailable: {error}");
@@ -85,7 +89,8 @@ pub(crate) fn supervise(
 fn spawn(
     config: &HieronymusConfig,
     service: Option<&crate::service::ServiceOptions>,
-) -> Result<Child, String> {
+    stop: &AtomicBool,
+) -> Result<Option<Child>, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let helper = super::launch::sibling_binary(&executable, "hiero-desktop")?;
     let binary = match service {
@@ -117,5 +122,8 @@ fn spawn(
         use std::os::windows::process::CommandExt;
         command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     }
-    command.spawn().map_err(|error| error.to_string())
+    if stop.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    command.spawn().map(Some).map_err(|error| error.to_string())
 }

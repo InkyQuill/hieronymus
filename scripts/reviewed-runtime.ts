@@ -1,5 +1,5 @@
 /** Consume retained, reviewed source-build bytes; never derive new release pins. */
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { desktopTarget, type OfficialRuntime } from "./desktop-targets";
 import { localFile } from "./check-desktop-evidence";
@@ -101,6 +101,7 @@ export async function acquireReviewedRuntime(root: string, target: string) {
   } catch {
     // A public archive may have downloaded before its receipt failed. Keep the
     // CI extraction empty so gh neither collides with nor trusts partial data.
+    rmSync(directory, { recursive: true, force: true });
     directory = mkdtempSync(join(parent, "reviewed-intel-ci-"));
     downloadRetainedArtifact([
       "gh",

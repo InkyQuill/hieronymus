@@ -34,7 +34,7 @@ Full review bodies and comments are retained in `pr-29-reviews.json`,
 | Comment | Finding | Disposition |
 | --- | --- | --- |
 | 3996969246 | Fixture provenance claimed byte identity despite local additions | Corrected provenance wording. |
-| 3996969258 | Registry language defaults were not normalized | Normalize and validate defaults identically to explicit values; regression added. |
+| 3996969258 | Registry language defaults were not normalized | Normalize both paths. Preserve unspecified default languages for ordinary writing-memory sessions; reject explicit empty overrides. Regression added. |
 | 3996969264 | Display-variable startup gate skipped user-service trays | Use trusted graphical-session discovery, recover only display settings from the private user manager environment, and retry after later login. Live no-display-variable service test passed. |
 | 3996969266 | Non-UTF-8 project roots could panic during JSON projection | Reject unsafe reported paths before serialization; test implicit non-UTF-8 cwd and graceful rejection of invalid UTF-8 arguments. |
 | 3996969271 | Windows uninstall fixtures were compiled out | Restored fixtures and tests, sorted retained-name expectations, and added explicit native CI execution. |
@@ -48,6 +48,8 @@ Full review bodies and comments are retained in `pr-29-reviews.json`,
 | 3996969292 | Null qualification was treated as omitted | Reject present null; regression added. |
 | 3996969295 | Intel could be incorrectly labelled qualified | Enforce unqualified Intel desktop evidence; regression covers qualified and partial rejection. |
 | 3996969298 | Reviewed runtime inputs were verified after output publication | Verify archive and receipt before packageDesktop writes outputs. |
+| 3997029212 | Raw audit identity could split tray ownership from the validated graphical session | Remove the audit-only shortcut; supervisor and helper use the same logind validation. Check shutdown again immediately before spawning after environment recovery. |
+| 3997029216 | Rejected public runtime downloads remained on disk before CI fallback | Remove the attempt's private temporary directory before creating the independent fallback directory. |
 
 The strengthened skill test initially failed on `hieronymus-remember` because
 its body said “free-text agreement”; it now names the project agreement explicitly.
@@ -73,6 +75,10 @@ not qualification of the future immutable release candidate.
 PR #26 passed every check and merged at 2026-09-12T17:32:53Z as
 `7eed43b72a3af0d45366dbe6429b7c604848b845`.
 
+PR #27 passed every check, including native Windows and Intel macOS, and retained
+CodeRabbit approval. It merged at 2026-09-12T17:51:09Z as
+`f97764178eda13fe5bc9c7cf780a7491f502b26b`.
+
 The next full Rust run hit an intermittent message assertion in
 `update::tests::undiscovered_owner_refuses_before_retirement_or_manager_actions`
 (162 library tests passed, 1 failed). The original assertion did not print the
@@ -82,6 +88,13 @@ the actual RootOwnership lock without starting unrelated daemon workers and
 deleting their discovery state; all existing no-manager/no-retirement/no-switch
 assertions remain. Its focused test passed. The README installation instructions
 also now describe the v0.9 split archives and matching desktop installers.
+
+The subsequent full run exposed an overly strict review fix in language-default
+normalization: `recall_exposes_contract_even_when_results_are_empty` failed with
+`source_language must not be empty` (13 other application-memory tests passed).
+Ordinary writing-memory projects may omit translation languages. Defaults are
+now normalized without requiring a language pair; explicit empty overrides still
+fail. The focused language test and all 14 application-memory tests passed.
 
 ## Observed run errors
 

@@ -92,15 +92,9 @@ impl Drop for TraySingleton {
 }
 
 #[cfg(target_os = "linux")]
-fn trusted_session() -> io::Result<String> {
-    // Kernel audit login session, inherited across fork/exec, independent of
-    // caller-controlled environment variables. -1 denotes no assigned session.
-    if let Ok(value) = std::fs::read_to_string("/proc/self/sessionid")
-        && let Ok(id) = value.trim().parse::<u32>()
-        && id != u32::MAX
-    {
-        return Ok(format!("audit-{id}"));
-    }
+pub(crate) fn trusted_session() -> io::Result<String> {
+    // Audit identity alone can belong to a TTY or SSH login. The supervisor
+    // and helper both resolve only a validated local graphical login.
     if let Ok(session) = logind_session().or_else(|_| graphical_user_session()) {
         return Ok(session);
     }
@@ -121,7 +115,14 @@ fn logind_session() -> io::Result<String> {
         "u",
         &std::process::id().to_string(),
     ])?;
-    parse_logind_session(&output)
+    let path: String = serde_json::from_str(
+        output
+            .trim()
+            .strip_prefix("o ")
+            .ok_or_else(|| io::Error::other("Invalid logind session path"))?,
+    )
+    .map_err(io::Error::other)?;
+    graphical_path(&path)
 }
 
 #[cfg(target_os = "linux")]
@@ -237,7 +238,7 @@ fn display_environment(raw: &str) -> io::Result<std::collections::BTreeMap<Strin
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn graphical_user_session() -> io::Result<String> {
+fn graphical_user_session() -> io::Result<String> {
     // User-manager services are outside a login scope. Ask the system's logind
     // for this UID's graphical session; caller-supplied environment is not authority.
     let uid = rustix::process::geteuid().as_raw();
@@ -247,6 +248,12 @@ pub(crate) fn graphical_user_session() -> io::Result<String> {
         .get(1)
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| io::Error::other("No graphical session"))?;
+    graphical_path(path)
+}
+
+#[cfg(target_os = "linux")]
+fn graphical_path(path: &str) -> io::Result<String> {
+    let uid = rustix::process::geteuid().as_raw();
     let canonical = parse_logind_session(&format!("o \"{path}\""))?;
     let owner = logind_property(path, "org.freedesktop.login1.Session", "User")?;
     let kind = logind_property(path, "org.freedesktop.login1.Session", "Type")?;

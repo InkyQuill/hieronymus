@@ -374,9 +374,12 @@ pub(crate) fn translation_context(
 }
 
 fn context_language(value: Option<String>, default: &str, field: &str) -> Result<String, AppError> {
+    let explicit = value.is_some();
     let value = value.as_deref().unwrap_or(default);
     let value = value.trim().to_lowercase();
-    if value.is_empty() {
+    // A series may leave languages unspecified for ordinary writing memory.
+    // An explicit empty override is still an invalid translation direction.
+    if explicit && value.is_empty() {
         return Err(AppError::Domain(format!("{field} must not be empty")));
     }
     Ok(value)
@@ -392,8 +395,9 @@ mod language_defaults_tests {
             context_language(None, " EN ", "source_language").unwrap(),
             context_language(Some(" EN ".into()), "ja", "source_language").unwrap()
         );
+        assert_eq!(context_language(None, "  ", "target_language").unwrap(), "");
         assert!(
-            context_language(None, "  ", "target_language")
+            context_language(Some("  ".into()), "ru", "target_language")
                 .unwrap_err()
                 .to_string()
                 .contains("target_language must not be empty")
