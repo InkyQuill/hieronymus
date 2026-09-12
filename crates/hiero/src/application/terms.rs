@@ -377,7 +377,7 @@ fn read_termbase(
         volume,
         chapter,
     )?;
-    story.apply(&mut context);
+    story.apply(&mut context)?;
     Termbase::open(application.config(), &context).map_err(domain)
 }
 

@@ -16,6 +16,8 @@ mod consolidation_completion;
 mod consolidation_context;
 mod consolidation_models;
 pub mod crystals;
+pub mod cws_binding;
+pub mod cws_project;
 pub mod data_root;
 pub mod db;
 pub mod dream_audit;

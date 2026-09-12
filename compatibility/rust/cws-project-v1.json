@@ -1,0 +1,372 @@
+{
+  "contract_version": 1,
+  "project_schemas": [
+    1,
+    2
+  ],
+  "cases": [
+    {
+      "name": "authoring-basic",
+      "files": {
+        "AGENTS\u002emd": "Prefer files unless I say otherwise.\n",
+        "project.md": "---\nschema-version: 1\ntitle: Example\nlanguage: ru\nstatus: drafting\n---\n",
+        "story/chapters/01.md": "---\nnumber: 1\n---\nText.\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 1,
+        "roles": {
+          "story/chapters/01.md": "accepted_prose"
+        }
+      }
+    },
+    {
+      "name": "authoring-structure",
+      "files": {
+        "AGENTS\u002emd": "Treat direct author edits as current project evidence.\n",
+        "project.md": "---\nschema-version: 1\ntitle: Ordered Example\nlanguage: ru\nstatus: revising\n---\n",
+        "story/chapters/02.md": "---\nnumber: 2\n---\nSecond chapter.\n",
+        "story/chapters/01.md": "---\nnumber: 1\n---\nVisible text. <hidden>Author-only intent.</hidden>\n",
+        "story/side-stories/a-after-first.md": "---\nafter: story/chapters/01.md\nsubtype: interlude\n---\nFirst anchored extra.\n",
+        "story/side-stories/b-after-first.md": "---\nafter: story/chapters/01.md\nsubtype: omake\n---\nSecond anchored extra.\n",
+        "story/chapters/_index.md": "---\ngenerated: true\n---\n# Chapters\n",
+        "work/drafts/revision.md": "---\ntarget: story/chapters/02.md\nbase-revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nstatus: working\n---\nRevision notes.\n",
+        "kb/world/city.md": "---\ntitle: City\n---\nKnown setting.\n",
+        ".creative-writing/transactions/receipt.json": "{\"state\":\"committed\"}\n",
+        "notes.txt": "Unknown root material remains untouched.\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 1,
+        "roles": {
+          "AGENTS\u002emd": "instructions",
+          "project.md": "manifest",
+          "story/chapters/01.md": "accepted_prose",
+          "story/chapters/02.md": "accepted_prose",
+          "story/side-stories/a-after-first.md": "accepted_prose",
+          "story/side-stories/b-after-first.md": "accepted_prose",
+          "story/chapters/_index.md": "derived",
+          "work/drafts/revision.md": "work",
+          "kb/world/city.md": "knowledge",
+          ".creative-writing/transactions/receipt.json": "private_state",
+          "notes.txt": "opaque"
+        }
+      }
+    },
+    {
+      "name": "authoring-v2-retained-structure",
+      "files": {
+        "AGENTS\u002emd": "Retain the authoring corpus when translation is enabled.\n",
+        "project.md": "---\nschema-version: 2\ntitle: Authoring With Translation\nlanguage: ru\nstatus: revising\nproject-kind: authoring\nwork-kind: book\ntranslation-enabled: true\n---\n",
+        "story/chapters/01.md": "---\nnumber: 1\n---\nChapter one.\n",
+        "story/side-stories/after-01.md": "---\nafter: story/chapters/01.md\nsubtype: interlude\n---\nAn anchored interlude.\n",
+        "story/chapters/_index.md": "---\ngenerated: true\n---\n# Chapters\n",
+        "work/drafts/revision.md": "---\ntarget: story/chapters/01.md\nbase-revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nstatus: working\n---\nRevision notes.\n",
+        "kb/vocab.md": "# Vocabulary\n\n| Term | Meaning |\n| --- | --- |\n| Gate | Threshold |\n",
+        "kb/continuity/state.md": "# Current State\n\nAuthor-maintained continuity.\n",
+        "kb/continuity/scenes/arrival.md": "---\nchapter: 1\n---\nArrival scene record.\n",
+        "kb/canon/premise.md": "---\ntitle: Premise\n---\nEstablished premise.\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 2,
+        "roles": {
+          "AGENTS\u002emd": "instructions",
+          "project.md": "manifest",
+          "story/chapters/01.md": "accepted_prose",
+          "story/side-stories/after-01.md": "accepted_prose",
+          "story/chapters/_index.md": "derived",
+          "work/drafts/revision.md": "work",
+          "kb/vocab.md": "knowledge",
+          "kb/continuity/state.md": "knowledge",
+          "kb/continuity/scenes/arrival.md": "knowledge",
+          "kb/canon/premise.md": "knowledge"
+        }
+      }
+    },
+    {
+      "name": "nested-project-boundary",
+      "files": {
+        "project.md": "---\nschema-version: 1\ntitle: Outer\nlanguage: ru\nstatus: drafting\n---\n",
+        "story/chapters/outer.md": "---\nnumber: 1\n---\nOuter prose.\n",
+        "story/nested/AGENTS\u002emd": "This agreement applies only to the nested project.\n",
+        "story/nested/project.md": "---\nschema-version: 1\ntitle: Nested\nlanguage: en\nstatus: planning\n---\n",
+        "story/nested/story/chapters/inner.md": "---\nnumber: 1\n---\nInner prose.\n"
+      },
+      "expect": {
+        "root": "story/nested",
+        "schema_version": 1,
+        "roles": {
+          "AGENTS\u002emd": "instructions",
+          "project.md": "manifest",
+          "story/chapters/inner.md": "accepted_prose"
+        }
+      }
+    },
+    {
+      "name": "translation-book",
+      "files": {
+        "AGENTS\u002emd": "Use the Japanese edition as source evidence; Russian directions remain separate.\n",
+        "project.md": "---\nschema-version: 2\ntitle: Book Translation\nlanguage: ru\nstatus: drafting\nproject-kind: translation\nwork-kind: book\ntranslation-enabled: true\n---\n",
+        "sources/_index.md": "---\ngenerated: true\n---\n# Sources\n",
+        "sources/ja/edition.md": "---\nedition-id: ja\nlanguage: ja\nedition-role: original\nrevision-label: first\ncoverage:\n---\nJapanese source.\n",
+        "sources/ja/originals/u001.md": "# Opaque supplied Markdown\n\nThis is not parsed as managed text.\n",
+        "sources/ja/text/u001.md": "---\nunit-id: u001\norder: 1\noriginal-path: sources/ja/originals/u001.md\noriginal-sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n第一章\n",
+        "sources/en/edition.md": "---\nedition-id: en\nlanguage: en\nedition-role: translation\nrevision-label: reference\ncoverage:\n---\nEnglish reference.\n",
+        "sources/en/originals/u001.txt": "Reference source bytes represented as UTF-8.\n",
+        "sources/en/text/u001.md": "---\nunit-id: u001\norder: 1\noriginal-path: sources/en/originals/u001.txt\noriginal-sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n---\nChapter one.\n",
+        "kb/entities/hero.md": "---\nentity-id: hero\nevidence:\n  - ja:u001\n---\nShared protagonist identity.\n",
+        "kb/source-comparisons/u001.md": "---\nalignment-id: u001\nsource-units:\n  - ja:u001\nreference-units:\n  - en:u001\nstatus: accepted\nrelation: equivalent\n---\nThe units correspond.\n",
+        "translations/ru-main/translation.md": "---\ndirection-id: ru-main\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n---\nPrimary Russian strategy.\n",
+        "translations/ru-main/memory/style.md": "---\nrecord-id: house-style\nsubject: narrative register\nstatus: accepted\nevidence:\n  - user: keep the register restrained\n---\nUse restrained narration.\n",
+        "translations/ru-main/drafts/u001.md": "---\ndirection-id: ru-main\ndraft-id: u001\nsource-units:\n  - ja:u001\npacket-transaction: tx-u001\nbase-revision: absent\nstatus: draft\n---\n<AI>Черновой перевод.</AI>\n",
+        "translations/ru-main/reviews/u001.md": "---\ndirection-id: ru-main\ndraft-id: u001\nsource-units:\n  - ja:u001\nreview-hash: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\nstatus: reviewed\n---\nReview evidence.\n",
+        "translations/ru-main/accepted/u001.md": "---\ndirection-id: ru-main\ndraft-id: u001\nsource-units:\n  - ja:u001\npacket-transaction: tx-u001\nbase-revision: absent\nstatus: accepted\n---\nПринятый перевод.\n",
+        "translations/ru-literary/translation.md": "---\ndirection-id: ru-literary\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n---\nAlternative Russian strategy.\n",
+        "translations/ru-main/_index.md": "---\ngenerated: true\n---\n# Russian translation\n",
+        "reference.bin": "Opaque external reference.\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 2,
+        "roles": {
+          "AGENTS\u002emd": "instructions",
+          "project.md": "manifest",
+          "sources/_index.md": "derived",
+          "sources/ja/edition.md": "source_edition",
+          "sources/ja/originals/u001.md": "opaque",
+          "sources/ja/text/u001.md": "source_unit",
+          "sources/en/edition.md": "source_edition",
+          "sources/en/text/u001.md": "source_unit",
+          "kb/entities/hero.md": "entity",
+          "kb/source-comparisons/u001.md": "alignment",
+          "translations/ru-main/translation.md": "translation_direction",
+          "translations/ru-main/memory/style.md": "translation_memory",
+          "translations/ru-main/drafts/u001.md": "draft",
+          "translations/ru-main/reviews/u001.md": "review",
+          "translations/ru-main/accepted/u001.md": "accepted_prose",
+          "translations/ru-literary/translation.md": "translation_direction",
+          "translations/ru-main/_index.md": "derived",
+          "reference.bin": "opaque"
+        }
+      }
+    },
+    {
+      "name": "translation-series",
+      "files": {
+        "AGENTS\u002emd": "Apply volume overrides before using reference editions.\n",
+        "project.md": "---\nschema-version: 2\ntitle: Series Translation\nlanguage: ru\nstatus: drafting\nproject-kind: translation\nwork-kind: series\ntranslation-enabled: true\n---\n",
+        "sources/ja/edition.md": "---\nedition-id: ja\nlanguage: ja\nedition-role: original\nrevision-label: first\ncoverage:\n  - v001\n  - v002\n---\nJapanese source.\n",
+        "sources/ja/volumes/v001/originals/u001.txt": "第一巻。\n",
+        "sources/ja/volumes/v001/text/u001.md": "---\nunit-id: u001\nvolume-id: v001\norder: 1\noriginal-path: sources/ja/volumes/v001/originals/u001.txt\noriginal-sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n第一巻。\n",
+        "sources/ja/volumes/v002/originals/u002.txt": "第二巻。\n",
+        "sources/ja/volumes/v002/text/u002.md": "---\nunit-id: u002\nvolume-id: v002\norder: 1\noriginal-path: sources/ja/volumes/v002/originals/u002.txt\noriginal-sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n---\n第二巻。\n",
+        "sources/en/edition.md": "---\nedition-id: en\nlanguage: en\nedition-role: translation\nrevision-label: reference\ncoverage:\n  - v001\n---\nEnglish reference.\n",
+        "sources/en/volumes/v001/originals/u001.txt": "Volume one.\n",
+        "sources/en/volumes/v001/text/u001.md": "---\nunit-id: u001\nvolume-id: v001\norder: 1\noriginal-path: sources/en/volumes/v001/originals/u001.txt\noriginal-sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n---\nVolume one.\n",
+        "kb/entities/hero.md": "---\nentity-id: hero\nevidence:\n  - ja:u001\n  - ja:u002\n---\nShared across volumes and directions.\n",
+        "translations/ru-main/translation.md": "---\ndirection-id: ru-main\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\n  - en\ncoverage:\n  - v001\n  - v002\n---\nPrimary Russian strategy.\n",
+        "translations/ru-main/volumes/v002/settings.md": "---\ndirection-id: ru-main\nvolume-id: v002\nauxiliary-editions:\ninheritance:\n---\nNo auxiliary source for volume two.\n",
+        "translations/ru-main/volumes/v002/drafts/u002.md": "---\ndirection-id: ru-main\ndraft-id: u002\nsource-units:\n  - ja:u002\npacket-transaction: tx-u002\nbase-revision: absent\nstatus: draft\n---\n<AI>Черновик второго тома.</AI>\n",
+        "translations/ru-literary/translation.md": "---\ndirection-id: ru-literary\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nLiterary Russian strategy.\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 2,
+        "roles": {
+          "AGENTS\u002emd": "instructions",
+          "project.md": "manifest",
+          "sources/ja/edition.md": "source_edition",
+          "sources/ja/volumes/v001/originals/u001.txt": "opaque",
+          "sources/ja/volumes/v001/text/u001.md": "source_unit",
+          "sources/ja/volumes/v002/text/u002.md": "source_unit",
+          "sources/en/edition.md": "source_edition",
+          "sources/en/volumes/v001/text/u001.md": "source_unit",
+          "kb/entities/hero.md": "entity",
+          "translations/ru-main/translation.md": "translation_direction",
+          "translations/ru-main/volumes/v002/settings.md": "direction_settings",
+          "translations/ru-main/volumes/v002/drafts/u002.md": "draft",
+          "translations/ru-literary/translation.md": "translation_direction"
+        }
+      }
+    },
+    {
+      "name": "unsupported-schema",
+      "files": {
+        "project.md": "---\nschema-version: 99\ntitle: Future Project\nlanguage: ru\nstatus: planning\n---\n",
+        "story/chapters/01.md": "---\nnumber: 1\n---\nFuture prose.\n"
+      },
+      "expect": {
+        "technical_failure": "unsupported_schema",
+        "producer_code": "CW-SCHEMA-001"
+      }
+    },
+    {
+      "name": "direction-context-series",
+      "files": {
+        "project.md": "---\nschema-version: 2\ntitle: Series\nlanguage: ru\nstatus: planning\nproject-kind: translation\nwork-kind: series\ntranslation-enabled: true\n---\n# Series\n\nTranslation project. Sources and directions define text languages.\n",
+        "sources/en/edition.md": "---\nedition-id: en\nlanguage: en\nedition-role: translation\nrevision-label: first\ncoverage:\n  - v001\n---\nEvidence and instructions.\n",
+        "sources/en/volumes/v001/text/u001.md": "---\nunit-id: u001\norder: 1\nvolume-id: v001\noriginal-path: sources/en/volumes/v001/originals/u001.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nReference prose.",
+        "sources/ja/edition.md": "---\nedition-id: ja\nlanguage: ja\nedition-role: original\nrevision-label: first\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "sources/ja/volumes/v001/text/u001.md": "---\nunit-id: u001\norder: 1\nvolume-id: v001\noriginal-path: sources/ja/volumes/v001/originals/u001.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nOriginal prose.",
+        "sources/ja/volumes/v002/text/u002.md": "---\nunit-id: u002\norder: 1\nvolume-id: v002\noriginal-path: sources/ja/volumes/v002/originals/u002.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nOriginal prose.",
+        "sources/ja-revised/edition.md": "---\nedition-id: ja-revised\nlanguage: en\nedition-role: translation\nrevision-label: first\ncoverage:\n  - v002\n---\nEvidence and instructions.\n",
+        "sources/ja-revised/volumes/v002/text/u002.md": "---\nunit-id: u002\norder: 1\nvolume-id: v002\noriginal-path: sources/ja-revised/volumes/v002/originals/u002.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nRevised source prose.",
+        "translations/en-main/translation.md": "---\ndirection-id: en-main\nlanguage: en\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-literary/translation.md": "---\ndirection-id: ru-literary\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-main/translation.md": "---\ndirection-id: ru-main\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-main/volumes/v002/settings.md": "---\ndirection-id: ru-main\nvolume-id: v002\nprimary-edition: ja-revised\nauxiliary-editions:\n---\nEvidence and instructions.\n",
+        ".hieronymus.json": "{\"series_slug\": \"work\", \"source_language\": \"wrong-legacy\", \"target_language\": \"wrong-legacy\", \"cws\": {\"binding_version\": 1, \"project_contract_version\": 1, \"directions\": {\"ru-main\": {\"series_slug\": \"work\"}, \"ru-literary\": {\"series_slug\": \"work\"}, \"en-main\": {\"series_slug\": \"work\"}}}}\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 2,
+        "roles": {},
+        "selections": [
+          {
+            "cwd": ".",
+            "direction_id": null,
+            "status": "ambiguous",
+            "diagnostic": "ambiguous_direction"
+          },
+          {
+            "cwd": ".",
+            "direction_id": "ru-main",
+            "status": "ambiguous",
+            "diagnostic": "ambiguous_volume"
+          },
+          {
+            "cwd": ".",
+            "direction_id": "ru-literary",
+            "status": "ready",
+            "source_language": "ja",
+            "target_language": "ru",
+            "primary_edition": "ja",
+            "auxiliary_editions": [],
+            "volume_id": null
+          },
+          {
+            "cwd": "translations/ru-main/volumes/v002",
+            "direction_id": null,
+            "selected_direction": "ru-main",
+            "status": "ready",
+            "source_language": "en",
+            "target_language": "ru",
+            "primary_edition": "ja-revised",
+            "auxiliary_editions": [],
+            "volume_id": "v002"
+          },
+          {
+            "cwd": "translations/en-main/volumes/v001",
+            "direction_id": null,
+            "selected_direction": "en-main",
+            "status": "ready",
+            "source_language": "ja",
+            "target_language": "en",
+            "primary_edition": "ja",
+            "auxiliary_editions": [],
+            "volume_id": "v001"
+          },
+          {
+            "cwd": "sources/ja-revised/volumes/v002/text/u002.md",
+            "direction_id": null,
+            "selected_direction": "ru-main",
+            "status": "ready",
+            "source_language": "en",
+            "target_language": "ru",
+            "primary_edition": "ja-revised",
+            "auxiliary_editions": [],
+            "volume_id": "v002",
+            "source_units": [
+              "ja-revised:u002"
+            ]
+          },
+          {
+            "cwd": "sources/ja/volumes/v001/text/u001.md",
+            "direction_id": null,
+            "status": "ambiguous",
+            "diagnostic": "ambiguous_direction"
+          },
+          {
+            "cwd": "translations/ru-main/volumes/v001",
+            "direction_id": "ru-literary",
+            "status": "invalid",
+            "diagnostic": "conflicting_direction"
+          },
+          {
+            "cwd": ".",
+            "direction_id": "missing",
+            "status": "not_found",
+            "diagnostic": "unknown_direction"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direction-uncovered-edition",
+      "files": {
+        "project.md": "---\nschema-version: 2\ntitle: Series\nlanguage: ru\nstatus: planning\nproject-kind: translation\nwork-kind: series\ntranslation-enabled: true\n---\n# Series\n\nTranslation project. Sources and directions define text languages.\n",
+        "sources/en/edition.md": "---\nedition-id: en\nlanguage: en\nedition-role: translation\nrevision-label: first\ncoverage:\n  - v001\n---\nEvidence and instructions.\n",
+        "sources/en/volumes/v001/text/u001.md": "---\nunit-id: u001\norder: 1\nvolume-id: v001\noriginal-path: sources/en/volumes/v001/originals/u001.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nReference prose.",
+        "sources/ja/edition.md": "---\nedition-id: ja\nlanguage: ja\nedition-role: original\nrevision-label: first\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "sources/ja/volumes/v001/text/u001.md": "---\nunit-id: u001\norder: 1\nvolume-id: v001\noriginal-path: sources/ja/volumes/v001/originals/u001.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nOriginal prose.",
+        "sources/ja/volumes/v002/text/u002.md": "---\nunit-id: u002\norder: 1\nvolume-id: v002\noriginal-path: sources/ja/volumes/v002/originals/u002.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nOriginal prose.",
+        "sources/ja-revised/edition.md": "---\nedition-id: ja-revised\nlanguage: en\nedition-role: translation\nrevision-label: first\ncoverage:\n  - v002\n---\nEvidence and instructions.\n",
+        "sources/ja-revised/volumes/v002/text/u002.md": "---\nunit-id: u002\norder: 1\nvolume-id: v002\noriginal-path: sources/ja-revised/volumes/v002/originals/u002.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nRevised source prose.",
+        "translations/en-main/translation.md": "---\ndirection-id: en-main\nlanguage: en\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-literary/translation.md": "---\ndirection-id: ru-literary\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-main/translation.md": "---\ndirection-id: ru-main\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-main/volumes/v002/settings.md": "---\ndirection-id: ru-main\nvolume-id: v002\nprimary-edition: en\n---\nEvidence and instructions.\n",
+        ".hieronymus.json": "{\"series_slug\": \"work\", \"source_language\": \"wrong-legacy\", \"target_language\": \"wrong-legacy\", \"cws\": {\"binding_version\": 1, \"project_contract_version\": 1, \"directions\": {\"ru-main\": {\"series_slug\": \"work\"}, \"ru-literary\": {\"series_slug\": \"work\"}, \"en-main\": {\"series_slug\": \"work\"}}}}\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 2,
+        "roles": {},
+        "selections": [
+          {
+            "cwd": "translations/ru-main/volumes/v002",
+            "direction_id": "ru-main",
+            "status": "invalid",
+            "diagnostic": "uncovered_edition"
+          }
+        ]
+      }
+    },
+    {
+      "name": "direction-explicit-unbound",
+      "files": {
+        "project.md": "---\nschema-version: 2\ntitle: Series\nlanguage: ru\nstatus: planning\nproject-kind: translation\nwork-kind: series\ntranslation-enabled: true\n---\n# Series\n\nTranslation project. Sources and directions define text languages.\n",
+        "sources/en/edition.md": "---\nedition-id: en\nlanguage: en\nedition-role: translation\nrevision-label: first\ncoverage:\n  - v001\n---\nEvidence and instructions.\n",
+        "sources/en/volumes/v001/text/u001.md": "---\nunit-id: u001\norder: 1\nvolume-id: v001\noriginal-path: sources/en/volumes/v001/originals/u001.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nReference prose.",
+        "sources/ja/edition.md": "---\nedition-id: ja\nlanguage: ja\nedition-role: original\nrevision-label: first\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "sources/ja/volumes/v001/text/u001.md": "---\nunit-id: u001\norder: 1\nvolume-id: v001\noriginal-path: sources/ja/volumes/v001/originals/u001.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nOriginal prose.",
+        "sources/ja/volumes/v002/text/u002.md": "---\nunit-id: u002\norder: 1\nvolume-id: v002\noriginal-path: sources/ja/volumes/v002/originals/u002.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nOriginal prose.",
+        "sources/ja-revised/edition.md": "---\nedition-id: ja-revised\nlanguage: en\nedition-role: translation\nrevision-label: first\ncoverage:\n  - v002\n---\nEvidence and instructions.\n",
+        "sources/ja-revised/volumes/v002/text/u002.md": "---\nunit-id: u002\norder: 1\nvolume-id: v002\noriginal-path: sources/ja-revised/volumes/v002/originals/u002.bin\noriginal-sha256: 9aa34998c2496627fd26dfcf48ab62d24abb51e8028838894b07630cfbce9166\n---\nRevised source prose.",
+        "translations/en-main/translation.md": "---\ndirection-id: en-main\nlanguage: en\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-literary/translation.md": "---\ndirection-id: ru-literary\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-main/translation.md": "---\ndirection-id: ru-main\nlanguage: ru\nprimary-edition: ja\nauxiliary-editions:\ncoverage:\n  - v001\n  - v002\n---\nEvidence and instructions.\n",
+        "translations/ru-main/volumes/v002/settings.md": "---\ndirection-id: ru-main\nvolume-id: v002\nprimary-edition: ja-revised\nauxiliary-editions:\n---\nEvidence and instructions.\n",
+        ".hieronymus.json": "{\"series_slug\": \"work\", \"source_language\": \"wrong-legacy\", \"target_language\": \"wrong-legacy\", \"cws\": {\"binding_version\": 1, \"project_contract_version\": 1, \"directions\": {\"ru-literary\": {\"series_slug\": \"work\"}, \"en-main\": {\"series_slug\": \"work\"}}}}\n"
+      },
+      "expect": {
+        "root": ".",
+        "schema_version": 2,
+        "roles": {},
+        "selections": [
+          {
+            "cwd": "translations/ru-main/volumes/v001",
+            "direction_id": "ru-main",
+            "status": "unbound",
+            "source_language": "ja",
+            "target_language": "ru",
+            "primary_edition": "ja",
+            "auxiliary_editions": [],
+            "volume_id": "v001"
+          }
+        ]
+      }
+    }
+  ]
+}

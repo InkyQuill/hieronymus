@@ -354,11 +354,8 @@ pub(crate) fn domain<E: std::fmt::Display>(error: E) -> AppError {
     AppError::Domain(error.to_string())
 }
 
-/// The Python `_translation_context` rule, shared by every tool that accepts
-/// optional language overrides over a registered series: `None` languages
-/// fall back to the series' registry defaults, and explicit overrides must
-/// match those defaults (mismatches are domain rejections, mirroring the
-/// Python `ValueError`s).
+/// Registry languages are defaults; an explicit task direction may use another
+/// normalized, nonempty language pair in the same common-work series.
 pub(crate) fn translation_context(
     series: &hieronymus::registry::Series,
     source_language: Option<String>,
@@ -367,20 +364,8 @@ pub(crate) fn translation_context(
     volume: &str,
     chapter: &str,
 ) -> Result<TranslationContext, AppError> {
-    let source = source_language.unwrap_or_else(|| series.source_language.clone());
-    let target = target_language.unwrap_or_else(|| series.target_language.clone());
-    if source != series.source_language {
-        return Err(AppError::Domain(format!(
-            "source_language {source:?} does not match registry default {:?} for series {:?}",
-            series.source_language, series.slug
-        )));
-    }
-    if target != series.target_language {
-        return Err(AppError::Domain(format!(
-            "target_language {target:?} does not match registry default {:?} for series {:?}",
-            series.target_language, series.slug
-        )));
-    }
+    let source = context_language(source_language, &series.source_language, "source_language")?;
+    let target = context_language(target_language, &series.target_language, "target_language")?;
     Ok(
         TranslationContext::new(series.slug.clone(), source, target, task_type)
             .volume(volume)
@@ -388,10 +373,23 @@ pub(crate) fn translation_context(
     )
 }
 
+fn context_language(value: Option<String>, default: &str, field: &str) -> Result<String, AppError> {
+    let Some(value) = value else {
+        return Ok(default.to_owned());
+    };
+    let value = value.trim().to_lowercase();
+    if value.is_empty() {
+        return Err(AppError::Domain(format!("{field} must not be empty")));
+    }
+    Ok(value)
+}
+
 /// Narrative overrides are explicit for this request; research never becomes
 /// a stored default. None preserves the durable session's supplied viewpoint.
 #[derive(Default, serde::Deserialize)]
 pub(crate) struct StoryReadArgs {
+    #[serde(default)]
+    pub story_scopes: Option<Vec<String>>,
     #[serde(default)]
     pub story_timeline_id: Option<i64>,
     #[serde(default)]
@@ -404,7 +402,48 @@ pub(crate) struct StoryReadArgs {
     pub required_decision_id: Option<String>,
 }
 impl StoryReadArgs {
-    pub fn apply(&self, context: &mut TranslationContext) {
+    pub fn apply(&self, context: &mut TranslationContext) -> Result<(), AppError> {
+        if let Some(scopes) = &self.story_scopes {
+            for scope in scopes {
+                if scope.is_empty() || scope.trim() != scope || scope.chars().any(char::is_control)
+                {
+                    return Err(AppError::Domain(
+                        "story_scopes require nonempty, unpadded predicates".into(),
+                    ));
+                }
+                for prefix in ["cws:direction:", "cws:edition:"] {
+                    if let Some(id) = scope.strip_prefix(prefix)
+                        && (id.is_empty()
+                            || !id.split('-').all(|part| {
+                                !part.is_empty()
+                                    && part
+                                        .bytes()
+                                        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+                            }))
+                    {
+                        return Err(AppError::Domain(
+                            "story_scopes contain an invalid CWS identity".into(),
+                        ));
+                    }
+                }
+            }
+            let mut direction = None;
+            for scope in context.story_scopes.iter().chain(scopes) {
+                if let Some(id) = scope.strip_prefix("cws:direction:") {
+                    if direction.is_some_and(|previous| previous != id) {
+                        return Err(AppError::Domain(
+                            "story_scopes contain conflicting CWS directions".into(),
+                        ));
+                    }
+                    direction = Some(id);
+                }
+            }
+            for scope in scopes {
+                if !context.story_scopes.contains(scope) {
+                    context.story_scopes.push(scope.clone());
+                }
+            }
+        }
         if let Some(id) = self.story_timeline_id {
             context.story_timeline_id = Some(id);
         }
@@ -415,6 +454,7 @@ impl StoryReadArgs {
             context.story_viewpoint = viewpoint;
         }
         context.story_query_mode = self.story_query_mode;
+        Ok(())
     }
 }
 pub(crate) fn recall_error(error: hieronymus::recall::RecallError) -> AppError {

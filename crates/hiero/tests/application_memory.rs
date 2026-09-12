@@ -531,15 +531,15 @@ fn memory_add_wraps_into_short_term_with_defaults() {
         .unwrap_err();
     expect_domain(error, "kind must not be empty");
 
-    // Language overrides must match the registry defaults.
+    // Explicit language overrides must be nonempty.
     let error = app
         .call(
             "hieronymus_memory_add",
-            &json!({"series_slug": "book", "kind": "note", "text": "x", "source_language": "fr"}),
+            &json!({"series_slug": "book", "kind": "note", "text": "x", "source_language": " "}),
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(error, "does not match registry default");
+    expect_domain(error, "must not be empty");
 }
 
 #[test]
@@ -622,7 +622,7 @@ fn memory_search_returns_legacy_entries_with_and_without_a_session() {
         "{searched}"
     );
 
-    // Unknown series are rejections; language overrides must match.
+    // Unknown series and empty language overrides are rejections.
     let error = app
         .call(
             "hieronymus_memory_search",
@@ -634,11 +634,11 @@ fn memory_search_returns_legacy_entries_with_and_without_a_session() {
     let error = app
         .call(
             "hieronymus_memory_search",
-            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "chalk", "target_language": "fr"}),
+            &json!({"series_slug": "book", "volume":"I", "chapter":"Opening", "query": "chalk", "target_language": " "}),
             ACTOR,
         )
         .unwrap_err();
-    expect_domain(error, "does not match registry default");
+    expect_domain(error, "must not be empty");
 }
 
 // ---------------------------------------------------------------- feedback tool
