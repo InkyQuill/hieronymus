@@ -51,6 +51,12 @@ status and provenance even when the agreement says project memory governs the cu
 work; applying the agreement does not internally invalidate the rule. Internal changes
 still require the evidence and trusted-ingress routes documented above.
 
+A new user instruction applies immediately in its stated scope. A local exception stays
+local. When the user requests a durable agreement change, re-read and update the nearest
+`AGENTS.md` through the recoverable project workflow while preserving unrelated and
+independent conditions. A change in source preference does not prove records were
+transferred and does not authorize a migration, deletion, or mirror.
+
 Statuses `ready` and `unbound` exit 0. `ambiguous`, `unsupported`, and `not_found` exit
 1; `invalid` exits 2. Diagnostics are stable technical strings:
 `project_not_found`, `unsafe_path`, `invalid_manifest`, `invalid_binding`,
@@ -77,6 +83,26 @@ languages use registry defaults while explicit nonempty overrides are normalized
 Generated indexes, `.creative-writing/`, translation lifecycle metadata, supplied originals and nested projects remain protected boundaries. The workflow
 does not import whole projects, copy secrets or hidden text, require synchronized stores,
 or recursively launch a second orchestrator.
+
+Translation tasks retain strict external dependencies as
+`provider`/`namespace`/`record_kind`/`record_id`/`revision`. The
+Hieronymus namespace uses the observed ephemeral `status.instance_id` and actual
+series. Capture or short-term responses without a public identity or revision use a
+separate unverified marker; no revision is invented. Before status or acceptance, CWS
+receives current strict observations through `--external-memory-observed`. Known
+changed or missing references require review and take precedence; unavailable
+observations and captured markers stay unknown. Historical unknown-at-acceptance is
+preserved even if later matching strict observations establish current freshness. The
+caller report is not authenticated remote verification, and every local source, review,
+base, coverage and path guard remains in force.
+
+An authorized transfer inventories only the selected records and provenance, uses public
+reads and writes, retains returned IDs and revisions, and reconciles selected, written,
+skipped, conflicting, pending and unresolved counts together with scopes and
+dispositions. Partial completion and unresolved conflicts are reported explicitly.
+Originals remain in place and no ongoing mirror is created unless the user requested
+that work. A requested authoritative write that returns pending, rejected, tentative or
+unresolved remains that exact result; it is not reported as a successful replacement.
 
 ## Installed host wiring
 

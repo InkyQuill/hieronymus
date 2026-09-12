@@ -45,6 +45,12 @@ Interpret trust conditions as free text, including local exceptions. Do not crea
 a mode flag, numeric ranking, or stored policy summary. With no special instruction,
 project files are primary and Hieronymus is additional memory.
 
+Apply a new user instruction in its stated scope immediately. Persist a durable
+change in AGENTS.md, preserving independent conditions; do not globalize a local
+exception. Changing trust does not prove old records were transferred. Before an
+authorized durable edit, re-read the nearest `AGENTS.md`, use a recoverable CWS
+project operation when available, and preserve unrelated instructions.
+
 A rule's active status inside Hieronymus does not overrule the project agreement.
 Preserve its actual status and provenance when reporting a disagreement. Applying
 the agreement does not invalidate that rule inside Hieronymus. Internal writes
@@ -127,6 +133,42 @@ coverage, reference editions, and source hashes. A source-unit reference is
 `edition-id:unit-id`, not a bare chapter ID. The CLI reports direction and languages; read source-unit identities and hashes
 from the selected files. Do not infer alignment from
 filenames or chapter numbering. Research results remain outside current applicability.
+
+## Preserve external dependencies in CWS translation packets
+
+When Hieronymus memory contributes to a CWS packet, retain each strict reference
+with exactly its `provider`, `namespace`, `record_kind`, `record_id`, and
+`revision`. Build a Hieronymus namespace from the actual ephemeral
+`status.instance_id` and real series; never use a database path or fabricate a
+revision. If a used capture or short-term response lacks a public identity or
+revision, record a separate `{"unverified":"<technical reason>"}` marker. An
+external entity may use the same references or marker and needs no Markdown KB
+mirror. Observed arrays accept strict references only.
+
+Before CWS status or acceptance, observe the captured references through current
+public reads and supply those strict results through `--external-memory-observed`.
+Known changed or missing references require `needs-review` and take precedence.
+Otherwise unavailable observations or a captured marker remain `unknown`; a
+fallback note cannot upgrade them. Preserve a historical unknown recorded at
+acceptance. Later matching observations may establish current freshness for strict
+references without rewriting that history. CWS does not authenticate the caller's
+report or perform remote atomic verification. Its local source, original-byte,
+direction, context, review, accepted-base, coverage, and path guards still apply.
+
+## Transfer only selected records
+
+For an authorized transfer, inventory the selected records and their provenance,
+write through supported operations, retain returned IDs, then reconcile counts,
+scopes, dispositions and unresolved conflicts. Report partial completion. Do not
+delete originals or create an ongoing mirror unless that work was requested.
+
+Use only current public reads and writes for the selected source and destination;
+never read the raw Hieronymus database or rewrite protected CWS lifecycle files.
+Keep actual IDs and revisions for successful records and report skipped, conflicting,
+pending, and unresolved records separately. If authoritative ingress cannot accept
+a requested replacement, report its exact pending, rejected, tentative, or
+unresolved result rather than claiming the replacement succeeded. A preference
+change alone authorizes neither transfer nor deletion.
 
 ## Reading and preservation boundaries
 
