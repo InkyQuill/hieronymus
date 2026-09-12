@@ -1,11 +1,14 @@
 # Agent workflows
 
-The Rust generator teaches automatic scoped memory maintenance: establish story context,
-recall before chapter work, capture significant observations, validate terminology and
-record correlated relevance feedback. Learned evidence can activate/revise terminology;
-clear independently delivered corrections apply immediately. No author label or routine
-approval queue confers authority. See [authority ingress](authority-ingress.md) for exact
-public DTOs, current-selection rules and receipt dependencies.
+The Rust generator teaches automatic scoped memory maintenance under the current user's
+free-text project agreement: establish story context, recall before chapter work, capture
+permitted significant observations, validate applicable terminology and record correlated
+relevance feedback. With no special instruction, project files are primary and Hieronymus
+is additional memory. Learned evidence can activate or revise terminology; clear
+independently delivered corrections apply immediately. Neither a technical project binding,
+an author label nor a routine approval queue confers authority or permission to write. See
+[authority ingress](authority-ingress.md) for exact public DTOs, current-selection rules and
+receipt dependencies.
 
 `hiero plugins generate` (`--dry-run`, `--json`) deterministically writes eight skills,
 MCP configuration and host manifests under `<data-root>/agent-plugins/`. It does not
@@ -15,7 +18,11 @@ native matrix is Claude/Codex/Pi. zCode's prior shared-Claude results remain his
 paused and unqualified.
 
 The skills are hieronymus-bootstrap, recall, learn, read, remember, translate, review and
-orchestrate. They preserve source language and explicit narrative scope, distinguish
+orchestrate. Every generated target carries a local
+`hieronymus-bootstrap/resources/cws-project.md`; bootstrap links to it and the other skills
+reuse bootstrap's project-context workflow by name. The resource is self-contained and
+requires no CWS installation for supported project reading. The skills preserve source
+language and explicit narrative scope, distinguish
 current truth from research, and separate factual invalidation from relevance feedback.
 RAG reads use the current results/non_current envelope and must report unavailable
 semantics honestly. Ingest individual typed claims and real file evidence, not invented
@@ -36,9 +43,13 @@ The JSON projection always contains `version`, `status`, `root`, `schema_version
 `instructions_path`, `binding`, `direction_id`, `source_language`, `target_language`,
 and `diagnostics`; absent optional values stay `null`. Human output uses those keys in
 the same order as `key: value` lines and writes `none` for null or empty diagnostics.
-The caller reads the reported `AGENTS.md` separately and interprets its free-text
-agreement in the current task. Detection and binding do not decide trust or authorize
-writes.
+The caller reads the reported `AGENTS.md` separately together with current user
+instructions and interprets their free-text agreement in the current task. The agreement
+is not reduced to a mode, ranking or stored summary. Detection and binding do not decide
+trust or authorize writes. A rule that remains active inside Hieronymus keeps that actual
+status and provenance even when the agreement says project memory governs the current
+work; applying the agreement does not internally invalidate the rule. Internal changes
+still require the evidence and trusted-ingress routes documented above.
 
 Statuses `ready` and `unbound` exit 0. `ambiguous`, `unsupported`, and `not_found` exit
 1; `invalid` exits 2. Diagnostics are stable technical strings:
@@ -48,7 +59,11 @@ Statuses `ready` and `unbound` exit 0. `ambiguous`, `unsupported`, and `not_foun
 `filesystem_error`. Filesystem error details are not printed. Contract version 1
 supports project schemas 1 and 2 independently. Direction-specific translation context
 currently reports `unsupported_direction_selection` until the direction adapter is
-available.
+available. Skills must not infer direction, edition, language or series binding from a
+directory name or map key. Generated indexes, `.creative-writing/`, translation lifecycle
+metadata, supplied originals and nested projects remain protected boundaries. The workflow
+does not import whole projects, copy secrets or hidden text, require synchronized stores,
+or recursively launch a second orchestrator.
 
 ## Installed host wiring
 
