@@ -912,8 +912,14 @@ fn upgrade_refuses_a_root_another_owner_holds() {
     let error = run_upgrade(&config(root.path()), false, &UpgradeOptions::default()).unwrap_err();
     assert!(matches!(error, MigrateError::RootOwnership(_)), "{error}");
     let message = error.to_string();
+    // Windows byte-range locking also prevents reading the advisory owner
+    // bytes. Refusal is authoritative; the role remains best-effort metadata.
+    #[cfg(windows)]
+    let diagnostic = "another process owns this data root";
+    #[cfg(not(windows))]
+    let diagnostic = "daemon";
     assert!(
-        message.contains("daemon"),
+        message.contains(diagnostic),
         "diagnostic names the owner: {message}"
     );
     // The upgrade touched nothing.

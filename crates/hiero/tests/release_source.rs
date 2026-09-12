@@ -92,6 +92,7 @@ impl Server {
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 };
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
@@ -185,7 +186,7 @@ fn archive(extra: Option<(&str, tar::EntryType, &str)>) -> Vec<u8> {
 fn metadata(channel: &str, bytes: &[u8]) -> serde_json::Value {
     use sha2::Digest;
     serde_json::json!({"version":"0.7.0", "channel":channel, "target":hiero::app::TARGET_TRIPLE,
-        "archive":"hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz", "sha256":format!("{:x}",sha2::Sha256::digest(bytes)), "signature": null})
+        "archive":format!("hieronymus-0.7.0-{}.tar.gz", hiero::app::TARGET_TRIPLE), "sha256":format!("{:x}",sha2::Sha256::digest(bytes)), "signature": null})
 }
 fn server_for(channel: &str, payload: &serde_json::Value, archive_response: Vec<u8>) -> Server {
     Server::new(vec![
@@ -194,7 +195,7 @@ fn server_for(channel: &str, payload: &serde_json::Value, archive_response: Vec<
             response(&serde_json::to_vec(payload).unwrap()),
         ),
         (
-            format!("/{channel}/hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz"),
+            format!("/{channel}/{}", payload["archive"].as_str().unwrap()),
             archive_response,
         ),
     ])
@@ -356,7 +357,8 @@ fn doctor_refuses_corrupt_explicit_runtime_and_model_overrides() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("checksum mismatch"), "{text}");
     assert!(text.contains("bad-runtime.so"), "{text}");
-    assert!(text.contains("missing-model/model.onnx"), "{text}");
+    let normalized = text.replace("\\\\", "/");
+    assert!(normalized.contains("missing-model/model.onnx"), "{text}");
 }
 
 #[test]
@@ -567,7 +569,15 @@ fn authenticated_snapshot_inspection_failure_cleans_assembly_and_preserves_sourc
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().join("release");
     std::fs::create_dir(&directory).unwrap();
+    #[cfg(not(windows))]
     let platform = archive(Some(("undeclared", tar::EntryType::Regular, "")));
+    #[cfg(windows)]
+    let platform = {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file("undeclared", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.finish().unwrap().into_inner()
+    };
     let model = b"model transport fixture";
     let payload = split_metadata(&platform, model);
     let metadata_path = directory.join(hiero::release_manifest::metadata_name(

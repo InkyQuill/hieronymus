@@ -178,7 +178,7 @@ fn export_never_clobbers_an_existing_destination() {
     // deliberate act (remove or rename the previous export first).
     let error = hiero::export::run(&config, &destination).unwrap_err();
     assert!(
-        error.to_string().contains("already exists"),
+        matches!(&error, hiero::export::ExportError::Write { source, .. } if source.kind() == std::io::ErrorKind::AlreadyExists),
         "the refusal must name the cause: {error}"
     );
     // Never truncated, never half-written: the previous export is intact.

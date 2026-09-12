@@ -5,11 +5,16 @@
 //! the systemd user manager is never contacted, and only use local
 //! directories (no network).
 
+#[cfg(target_os = "linux")]
 #[path = "common/multilingual.rs"]
 mod multilingual;
 
+#[cfg(target_os = "linux")]
 use std::io::Read as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 /// Test-only corroboration of the installed controller's cached readiness.
@@ -63,6 +68,7 @@ fn installed_readiness_requires_current_coverage_and_drained_work() {
     assert!(installed_corpus_is_covered(&path).unwrap());
 }
 
+#[cfg(target_os = "linux")]
 fn real_version() -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(["version", "--json"])
@@ -72,6 +78,7 @@ fn real_version() -> String {
     payload["version"].as_str().unwrap().to_string()
 }
 
+#[cfg(target_os = "linux")]
 fn sha256_hex(path: &Path) -> String {
     use sha2::Digest;
     let mut file = std::fs::File::open(path).unwrap();
@@ -85,6 +92,7 @@ fn sha256_hex(path: &Path) -> String {
 /// Build a local fixture release in the exact layout
 /// `scripts/release-build.sh` produces: archive with the binary plus relative
 /// argv[0] links, and the `.sha256` sibling.
+#[cfg(target_os = "linux")]
 fn build_release(root: &Path, binary: &str) -> PathBuf {
     let release_dir = root.join("release");
     let payload = root.join("payload");
@@ -133,6 +141,7 @@ fn build_release(root: &Path, binary: &str) -> PathBuf {
     release_dir
 }
 
+#[cfg(target_os = "linux")]
 fn installer_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../scripts/install.sh")
@@ -140,10 +149,12 @@ fn installer_path() -> PathBuf {
         .unwrap()
 }
 
+#[cfg(target_os = "linux")]
 struct Sandbox {
     root: tempfile::TempDir,
 }
 
+#[cfg(target_os = "linux")]
 impl Sandbox {
     fn new() -> Self {
         Self {
@@ -195,6 +206,7 @@ impl Sandbox {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[cfg(target_os = "linux")]
 fn install_refuses_a_checksum_mismatch_and_installs_nothing() {
     let sandbox = Sandbox::new();
     let release_dir = build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
@@ -213,6 +225,7 @@ fn install_refuses_a_checksum_mismatch_and_installs_nothing() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn install_refuses_a_signed_release_in_the_waived_first_line() {
     let sandbox = Sandbox::new();
     let release_dir = build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
@@ -236,6 +249,7 @@ fn install_refuses_a_signed_release_in_the_waived_first_line() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn install_requires_a_release_source() {
     let sandbox = Sandbox::new();
     let output = Command::new(installer_path())
@@ -248,6 +262,7 @@ fn install_requires_a_release_source() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn install_refuses_a_non_https_release_url() {
     let sandbox = Sandbox::new();
     // A loopback port that refuses connections: the installer must reject the
@@ -272,6 +287,7 @@ fn install_refuses_a_non_https_release_url() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn install_refuses_missing_semantic_assets_before_activation() {
     let sandbox = Sandbox::new();
     build_release(sandbox.root.path(), env!("CARGO_BIN_EXE_hiero"));
@@ -286,6 +302,7 @@ fn install_refuses_missing_semantic_assets_before_activation() {
 }
 
 /// A deliberately executable marker makes pre-execution refusal observable.
+#[cfg(target_os = "linux")]
 fn marker_release(sandbox: &Sandbox, expanded: bool, many_entries: bool) -> (PathBuf, String) {
     let release = sandbox.root.path().join("release");
     std::fs::create_dir_all(&release).unwrap();
@@ -336,6 +353,7 @@ fn marker_release(sandbox: &Sandbox, expanded: bool, many_entries: bool) -> (Pat
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn bootstrap_rejects_ambiguous_metadata_before_executing_archive_bytes() {
     let sandbox = Sandbox::new();
     let (release, fields) = marker_release(&sandbox, false, false);
@@ -370,6 +388,7 @@ fn bootstrap_rejects_ambiguous_metadata_before_executing_archive_bytes() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn bootstrap_bounds_expansion_before_executing_archive_bytes() {
     let sandbox = Sandbox::new();
     marker_release(&sandbox, true, false);
@@ -381,6 +400,7 @@ fn bootstrap_bounds_expansion_before_executing_archive_bytes() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn bootstrap_bounds_many_entry_listing_before_executing_archive_bytes() {
     let sandbox = Sandbox::new();
     marker_release(&sandbox, false, true);
@@ -399,6 +419,7 @@ fn bootstrap_bounds_many_entry_listing_before_executing_archive_bytes() {
 /// and CLI subprocess runs with an empty PATH and no loader override.
 #[test]
 #[ignore = "requires HIERO_TEST_RELEASE_DIR produced by scripts/release-build.sh"]
+#[cfg(target_os = "linux")]
 fn installed_release_boots_bundled_assets_and_runs_multilingual_retrieval() {
     use serde_json::{Value, json};
     use std::time::{Duration, Instant};

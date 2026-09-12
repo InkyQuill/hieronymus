@@ -410,7 +410,7 @@ mod tests {
         std::sync::mpsc::Sender<()>,
     ) {
         let temp = tempfile::tempdir().unwrap();
-        let config = HieronymusConfig::new(temp.path());
+        let config = HieronymusConfig::new(temp.path().canonicalize().unwrap());
         let mut singleton =
             TraySingleton::acquire_trusted(&config, "disposable-test-session").unwrap();
         let (entered, rx) = std::sync::mpsc::channel();
@@ -527,7 +527,7 @@ mod tests {
         }
         let record = read_record(
             &singleton.path.with_extension("json"),
-            root.path(),
+            &root.path().canonicalize().unwrap(),
             &singleton.path.file_name().unwrap().to_string_lossy(),
         )
         .unwrap();

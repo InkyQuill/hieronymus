@@ -22,6 +22,16 @@ fn icon_has_transparent_padding_and_both_regions() {
         rgba.chunks_exact(4)
             .any(|pixel| pixel == [240, 240, 240, 255])
     );
+    assert_eq!(
+        &rgba[(12 * 24 + 3) * 4..(12 * 24 + 3) * 4 + 4],
+        &[46, 173, 104, 255],
+        "outer region carries status color"
+    );
+    assert_eq!(
+        &rgba[(12 * 24 + 12) * 4..(12 * 24 + 12) * 4 + 4],
+        &[240, 240, 240, 255],
+        "center uses theme foreground"
+    );
 }
 
 #[test]

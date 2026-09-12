@@ -391,11 +391,11 @@ fn parse_arguments(
 
 fn run(arguments: &[String]) -> Result<ExitCode, String> {
     #[cfg(target_os = "macos")]
-    if arguments.as_slice() == ["__macos-native-broker"] {
+    if arguments == ["__macos-native-broker"] {
         return hiero::platform::macos_broker::run().map(|_| ExitCode::SUCCESS);
     }
     #[cfg(windows)]
-    if arguments.as_slice() == ["__windows-native-broker"] {
+    if arguments == ["__windows-native-broker"] {
         return hiero::platform::windows_broker::run().map(|_| ExitCode::SUCCESS);
     }
     if argv0_command().is_none() && arguments.first().map(String::as_str) == Some("desktop") {

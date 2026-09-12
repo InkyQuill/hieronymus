@@ -515,7 +515,13 @@ mod tests {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if message == WM_ENTERMENULOOP {
+        if message == WM_TIMER && wparam == 2 {
+            // Production uses TPM_NONOTIFY, which suppresses WM_ENTERMENULOOP.
+            // A one-shot timer is dispatched by the actual nested menu loop;
+            // there is no outer message pump in this fixture to deliver it.
+            unsafe {
+                KillTimer(window, 2);
+            }
             INSIDE_MODAL.set(true);
             if RETIREMENT_TEST.get() {
                 // Same event/wake delivery contract as the worker notifier, while
@@ -570,6 +576,9 @@ mod tests {
         run_modal_regression(true);
     }
     fn run_modal_regression(retirement: bool) {
+        // Popup menus compete for the desktop foreground even on separate threads.
+        static MODAL_DESKTOP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _desktop = MODAL_DESKTOP.lock().unwrap();
         RETIREMENT_TEST.set(retirement);
         unsafe {
             TASKBAR_CREATED.get_or_init(|| RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()));
@@ -614,6 +623,7 @@ mod tests {
                 SEEN_EVENTS.set(0);
                 SetForegroundWindow(window.0);
                 assert_ne!(SetTimer(window.0, 1, 2000, None), 0);
+                assert_ne!(SetTimer(window.0, 2, 10, None), 0);
                 TrackPopupMenu(
                     menu,
                     TPM_RETURNCMD | TPM_NONOTIFY,
@@ -624,6 +634,7 @@ mod tests {
                     ptr::null(),
                 );
                 KillTimer(window.0, 1);
+                KillTimer(window.0, 2);
                 assert!(
                     INSIDE_MODAL.get(),
                     "the native modal loop must actually run"

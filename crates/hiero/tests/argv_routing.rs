@@ -5,6 +5,7 @@
 //! Routes are exercised through the real `argv[0]` (CommandExt::arg0).
 
 use std::io::Write as _;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::process::{Command, Stdio};
 
@@ -15,8 +16,33 @@ fn run_as(
     arguments: &[&str],
     stdin_text: &str,
 ) -> (String, String, std::process::ExitStatus) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_hiero"))
-        .arg0(name)
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_hiero"));
+        command.arg0(name);
+        command
+    };
+    #[cfg(windows)]
+    let fixture = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let mut command = {
+        // Windows aliases are real selection-record launchers, not argv[0]
+        // overrides or renamed copies of the console executable.
+        let layout = hiero::app::AppLayout::new(fixture.path());
+        let payload = layout.version_dir(env!("CARGO_PKG_VERSION"));
+        std::fs::create_dir_all(&payload).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_hiero"), payload.join("hiero.exe")).unwrap();
+        std::fs::copy(
+            env!("CARGO_BIN_EXE_hiero-launcher"),
+            payload.join("hiero-launcher.exe"),
+        )
+        .unwrap();
+        layout
+            .switch_stable_links(env!("CARGO_PKG_VERSION"))
+            .unwrap();
+        Command::new(layout.stable_link(name))
+    };
+    let mut child = command
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -366,7 +392,9 @@ fn tray_missing_installed_helper_has_actionable_diagnostic() {
             .unwrap(),
     )
     .unwrap();
-    let cli = fixture.path().join("hiero");
+    let cli = fixture
+        .path()
+        .join(format!("hiero{}", std::env::consts::EXE_SUFFIX));
     std::fs::hard_link(env!("CARGO_BIN_EXE_hiero"), &cli).unwrap();
     let output = Command::new(cli)
         .args(["tray", "--data-root"])
@@ -382,6 +410,7 @@ fn tray_missing_installed_helper_has_actionable_diagnostic() {
 }
 
 #[test]
+#[cfg(unix)]
 fn tray_forwards_absolute_root_as_one_literal_argument_to_sibling() {
     use std::os::unix::fs::PermissionsExt;
     // Same-filesystem hard link avoids a writable executable descriptor leaking

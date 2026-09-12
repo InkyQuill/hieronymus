@@ -50,6 +50,7 @@ impl LoopbackModels {
             while !thread_stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
                         let Some((path, headers)) = read_request(&mut stream) else {
                             continue;
                         };

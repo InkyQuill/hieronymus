@@ -124,6 +124,7 @@ fn serve_once(
     response: &str,
     requests: &Mutex<Vec<String>>,
 ) -> std::io::Result<()> {
+    socket.set_nonblocking(false)?;
     let _ = socket.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = socket.set_write_timeout(Some(Duration::from_secs(10)));
     let connection = rustls::ServerConnection::new(Arc::new(config.clone()))

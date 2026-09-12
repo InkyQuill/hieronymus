@@ -129,26 +129,30 @@ jobs:
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend build
       - run: cargo clippy -p hiero-desktop --all-targets --all-features --locked -- -D warnings
-      - name: Helper tests (Unix)
-        if: runner.os != 'Windows'
+      - name: Helper tests
         run: cargo test -p hiero-desktop --all-features --locked
-      - name: Helper tests (Windows; source checksum deferred)
-        if: runner.os == 'Windows'
-        run: cargo test -p hiero-desktop --all-features --locked -- --skip preserved_sources_keep_the_supplied_checksums
-      - name: Windows source checksum (optional, advisory)
-        if: runner.os == 'Windows' && vars.RUN_WINDOWS_HOST_CONTRACTS == 'true'
-        continue-on-error: true
-        run: cargo test -p hiero-desktop --all-features --locked --test icons preserved_sources_keep_the_supplied_checksums -- --exact
       - name: Native private-file contracts
-        if: runner.os == 'macOS'
-        run: cargo test -p hieronymus --all-features --locked --lib private_file::tests
-      - name: Windows private-file contracts (optional, advisory)
-        if: runner.os == 'Windows' && vars.RUN_WINDOWS_HOST_CONTRACTS == 'true'
-        continue-on-error: true
+        if: runner.os == 'macOS' || runner.os == 'Windows'
         run: cargo test -p hieronymus --all-features --locked --lib private_file::tests
       - name: Windows selected-helper contract
         if: runner.os == 'Windows'
         run: cargo test -p hiero --all-features --locked --lib desktop::launch::selection_tests::regular_windows_launcher_selects_versioned_helper
+      - name: Windows filesystem and uninstall contracts
+        if: runner.os == 'Windows'
+        run: cargo test -p hiero -p hieronymus --all-features --locked --test platform_filesystem --test export_safety --test dream_locks_port --test upgrade_port --test uninstall_cli
+      - name: Windows native broker contracts
+        if: runner.os == 'Windows'
+        run: cargo test -p hiero --all-features --locked --lib platform::windows_broker::tests
+      - name: Windows desktop registration contracts
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p hiero --all-features --locked --test windows_desktop
+          cargo test -p hiero --all-features --locked --lib service::windows::tests
+      - name: Windows private prompt and retained-directory export contracts
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p hiero --all-features --locked --lib agent_prompt_delivery::host_tests::saved_prompt_records_remain_private_after_replacement
+          cargo test -p hiero --all-features --locked --lib platform::export::native::tests
       - name: Helper rustdoc (Unix)
         if: runner.os != 'Windows'
         run: RUSTDOCFLAGS="-D warnings" cargo doc -p hiero-desktop --no-deps --all-features --locked

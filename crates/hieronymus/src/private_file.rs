@@ -66,10 +66,10 @@ fn publish(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
     let mut file = native::create_new(&temporary)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    drop(file);
     if replace {
-        crate::atomic::replace_file(&temporary, path)?;
+        native::publish_replace(&file, &temporary, path)?;
     } else {
+        drop(file);
         native::publish_new(&temporary, path)?;
     }
     crate::atomic::sync_directory(parent)
@@ -131,6 +131,25 @@ mod tests {
         let mut bytes = Vec::new();
         opened.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"original");
+        assert_eq!(read_private(&path).unwrap(), b"replacement");
+    }
+    #[cfg(windows)]
+    #[test]
+    fn replacement_refuses_a_reader_that_does_not_share_delete() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("secret");
+        create_private_new(&path, b"original").unwrap();
+        let opened = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+        assert!(replace_private(&path, b"replacement").is_err());
+        assert_eq!(read_private(&path).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        drop(opened);
+        replace_private(&path, b"replacement").unwrap();
         assert_eq!(read_private(&path).unwrap(), b"replacement");
     }
     #[test]

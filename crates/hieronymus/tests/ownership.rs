@@ -37,9 +37,12 @@ fn a_contended_acquire_names_the_current_owner() {
     let error = RootOwnership::acquire(&config, "migrate").unwrap_err();
     let message = error.to_string();
     assert!(
-        message.contains("owns this data root") && message.contains("daemon"),
+        message.contains("owns this data root"),
         "diagnostic must name the current owner: {message}"
     );
+    // Windows denies reads through another handle while the range is locked.
+    #[cfg(not(windows))]
+    assert!(message.contains("daemon"), "{message}");
 }
 
 #[test]
@@ -79,7 +82,7 @@ fn subprocess_ownership_holder() {
 }
 
 #[test]
-fn os_lock_is_released_when_the_holder_is_sigkilled() {
+fn os_lock_is_released_when_the_holder_is_killed() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
 
@@ -101,11 +104,7 @@ fn os_lock_is_released_when_the_holder_is_sigkilled() {
     // While the subprocess lives, the root is owned.
     assert!(RootOwnership::acquire(&config, "contender").is_err());
 
-    let killed = Command::new("kill")
-        .args(["-KILL", &child.id().to_string()])
-        .status()
-        .expect("kill must be available");
-    assert!(killed.success());
+    child.kill().unwrap();
     child.wait().unwrap();
 
     // The kernel dropped the flock with the process; reacquire now succeeds.

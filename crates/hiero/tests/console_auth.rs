@@ -12,6 +12,7 @@
 
 mod common;
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
@@ -289,6 +290,7 @@ fn sessions_do_not_survive_a_daemon_restart() {
 
 /// Write an executable opener stub that records its single URL argument to
 /// `out_path` and exits 0.
+#[cfg(target_os = "linux")]
 fn write_capture_opener(dir: &std::path::Path, out_path: &std::path::Path) -> std::path::PathBuf {
     let script = dir.join("capture-opener.sh");
     std::fs::write(
@@ -300,6 +302,7 @@ fn write_capture_opener(dir: &std::path::Path, out_path: &std::path::Path) -> st
     script
 }
 
+#[cfg(target_os = "linux")]
 fn run_console_cli(
     data_root: &std::path::Path,
     page: &str,
@@ -318,6 +321,7 @@ fn run_console_cli(
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_daemon(root.path());
@@ -369,6 +373,7 @@ fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn cli_reports_opener_failure_without_exposing_the_grant() {
     let root = tempfile::tempdir().unwrap();
     let daemon = start_daemon(root.path());
@@ -437,6 +442,7 @@ fn local_authority_credentials_are_distinct_private_and_stable() {
         assert_eq!(response.status, 401);
     }
     for kind in [LocalCredential::Console, LocalCredential::HostEvent] {
+        #[cfg(unix)]
         assert_eq!(
             std::fs::metadata(kind.path(&config))
                 .unwrap()
@@ -445,6 +451,9 @@ fn local_authority_credentials_are_distinct_private_and_stable() {
                 & 0o777,
             0o600
         );
+        // Native same-handle validation checks protected owner-only DACLs on
+        // Windows; mode bits are meaningful only on Unix.
+        assert!(hiero::platform::credentials::read_private(&kind.path(&config)).is_ok());
     }
     daemon.shutdown().unwrap();
     let daemon = start_daemon(root.path());

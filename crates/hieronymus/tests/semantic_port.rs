@@ -144,6 +144,7 @@ impl LoopbackFile {
                     continue;
                 };
                 let mut stream = socket;
+                stream.set_nonblocking(false).unwrap();
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
                 let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
                 let mut buffer = [0_u8; 4096];
