@@ -132,6 +132,26 @@ fn cws_scalar_and_list_subset_accepts_producer_spellings() {
 }
 
 #[test]
+fn required_manifest_strings_reject_cws_control_whitespace() {
+    let dir = tempfile::tempdir().unwrap();
+    for field in ["title: Test", "language: ru"] {
+        let key = field.split_once(':').unwrap().0;
+        for code in 0x1c..=0x1f {
+            let replacement = format!("{key}: \"\\u00{code:02x}\"");
+            write(
+                dir.path(),
+                "project.md",
+                &MANIFEST.replace(field, &replacement),
+            );
+            assert!(
+                matches!(discover(dir.path()), Err(CwsError::InvalidManifest)),
+                "{replacement} must be rejected as empty by CWS whitespace rules"
+            );
+        }
+    }
+}
+
+#[test]
 fn unsupported_frontmatter_and_wrong_manifest_types_are_rejected() {
     let invalid = [
         "title: Duplicate\n",

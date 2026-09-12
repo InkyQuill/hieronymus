@@ -137,7 +137,9 @@ fn required_string<'a>(
     key: &str,
 ) -> Result<&'a str, CwsError> {
     match fields.get(key) {
-        Some(MetadataValue::String(value)) if !value.trim().is_empty() => Ok(value),
+        Some(MetadataValue::String(value)) if !value.trim_matches(cws_whitespace).is_empty() => {
+            Ok(value)
+        }
         _ => Err(CwsError::InvalidManifest),
     }
 }
