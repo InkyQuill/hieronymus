@@ -314,6 +314,7 @@ impl AutostartRegistration for LinuxRegistration {
 
 /// Full uninstall discovers only its unit-local record; it never probes unrelated
 /// default XDG locations when a disposable/custom installation has no record.
+#[cfg(target_os = "linux")]
 pub(crate) fn for_uninstall(
     service: &ServiceOptions,
     app: &Path,
@@ -352,6 +353,7 @@ pub(crate) fn for_uninstall(
 
 /// Unit repair/update must retain on-demand mode and refuse an invalid marker.
 /// The selected-version binary reconciliation itself is owned by the updater.
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn desktop_mode(options: &ServiceOptions) -> Result<bool, String> {
     let path = options.unit_dir.join(RECORD_NAME);
     let Some(record) = read_record(&path)? else {
