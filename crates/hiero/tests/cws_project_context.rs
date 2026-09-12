@@ -444,6 +444,58 @@ fn actionable_translation_fixtures_project_the_existing_envelope() {
 }
 
 #[test]
+fn series_documents_without_volume_metadata_project_actionable_context() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../compatibility/rust/cws-project-v1.json"
+    ))
+    .unwrap();
+    let case = fixtures["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "translation-series")
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    for (relative, contents) in case["files"].as_object().unwrap() {
+        let path = root.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents.as_str().unwrap()).unwrap();
+    }
+    // Recorded from the canonical CWS draft -> reviewed -> accepted producer.
+    let accepted = "---\ndirection-id: ru-main\ndraft-id: u002\nsource-units:\n  - ja:u002\npacket-transaction: 210549e157b84af0b55a9db1b2eca549\nbase-revision: absent\nstatus: accepted\nreview-hash: 23216bae071f0aa39799ab476268d46f780eefb1f4454df208899cbc44fdc197\n---\nПеревод второго тома.\n\n";
+    let target = root
+        .path()
+        .join("translations/ru-main/volumes/v002/accepted/u002.md");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(target, accepted).unwrap();
+    let data_root = root.path().join("unused-data");
+    for kind in ["drafts", "accepted"] {
+        let path = root
+            .path()
+            .join(format!("translations/ru-main/volumes/v002/{kind}/u002.md"));
+        let output = cli(&path, &data_root, &["--json"]);
+        assert!(output.stderr.is_empty());
+        assert_eq!(output.status.code(), Some(0), "{}", json_stdout(&output));
+        assert_eq!(
+            json_stdout(&output),
+            json!({
+                "version": 1,
+                "status": "unbound",
+                "root": root.path().canonicalize().unwrap(),
+                "schema_version": 2,
+                "instructions_path": root.path().canonicalize().unwrap().join("AGENTS.md"),
+                "binding": null,
+                "direction_id": "ru-main",
+                "source_language": "ja",
+                "target_language": "ru",
+                "diagnostics": [],
+            })
+        );
+        assert!(!data_root.exists());
+    }
+}
+
+#[test]
 fn relative_cwd_selects_the_same_direction_as_an_absolute_path() {
     let fixture = tempfile::tempdir().unwrap();
     let project = fixture.path().join("project");

@@ -573,6 +573,63 @@ fn book_selection_follows_declared_source_units_and_never_filename_alignment() {
 }
 
 #[test]
+fn series_documents_resolve_volume_without_document_volume_metadata() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("translation-series");
+    // Recorded from the canonical CWS draft -> reviewed -> accepted producer.
+    let accepted = "---\ndirection-id: ru-main\ndraft-id: u002\nsource-units:\n  - ja:u002\npacket-transaction: 210549e157b84af0b55a9db1b2eca549\nbase-revision: absent\nstatus: accepted\nreview-hash: 23216bae071f0aa39799ab476268d46f780eefb1f4454df208899cbc44fdc197\n---\nПеревод второго тома.\n\n";
+    write(
+        root.path(),
+        "translations/ru-main/volumes/v002/accepted/u002.md",
+        accepted,
+    );
+    let project = discover(root.path()).unwrap().unwrap();
+    for kind in ["drafts", "accepted"] {
+        let relative = format!("translations/ru-main/volumes/v002/{kind}/u002.md");
+        let path = root.path().join(&relative);
+        let original = fs::read_to_string(&path).unwrap();
+        for volume_field in ["", "volume-id: v002\n"] {
+            fs::write(
+                &path,
+                original.replacen("direction-id:", &format!("{volume_field}direction-id:"), 1),
+            )
+            .unwrap();
+            let selected = select_direction(&project, Path::new(&relative), None)
+                .unwrap_or_else(|error| panic!("{relative}: {error:?}"))
+                .unwrap();
+            assert_eq!(selected.direction_id, "ru-main");
+            assert_eq!(selected.work_kind, "series");
+            assert_eq!(selected.volume_id.as_deref(), Some("v002"));
+            assert_eq!(selected.source_language, "ja");
+            assert_eq!(selected.target_language, "ru");
+            assert_eq!(selected.primary_edition.edition_id, "ja");
+            assert!(selected.auxiliary_editions.is_empty());
+            assert_eq!(selected.source_units.len(), 1);
+            assert_eq!(selected.source_units[0].reference, "ja:u002");
+            assert_eq!(selected.source_units[0].volume_id.as_deref(), Some("v002"));
+            assert_eq!(
+                selected.source_units[0].path,
+                project.root.join("sources/ja/volumes/v002/text/u002.md")
+            );
+        }
+        for invalid in [
+            original.replacen("direction-id:", "volume-id: v001\ndirection-id:", 1),
+            original.replacen("direction-id:", "volume-id: \ndirection-id:", 1),
+            original.replace("ja:u002", "ja:u001"),
+        ] {
+            fs::write(&path, invalid).unwrap();
+            assert!(
+                matches!(
+                    select_direction(&project, Path::new(&relative), None),
+                    Err(CwsError::InvalidManifest)
+                ),
+                "{relative} accepted a conflicting volume"
+            );
+        }
+    }
+}
+
+#[test]
 fn selection_rejects_unsafe_overrides_mismatched_identity_and_layout() {
     use hieronymus::cws_project::select_direction;
     let root = translation_fixture("direction-context-series");

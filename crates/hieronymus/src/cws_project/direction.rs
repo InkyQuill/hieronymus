@@ -462,6 +462,7 @@ pub fn select_direction(
             {
                 let fields = read_metadata(project, relative)?;
                 if project.work_kind == "series"
+                    && fields.contains_key("volume-id")
                     && Some(identity(&fields, "volume-id")?) != selected.volume_id.as_deref()
                 {
                     return Err(CwsError::InvalidManifest);
