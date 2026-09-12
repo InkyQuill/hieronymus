@@ -1,0 +1,61 @@
+{
+  "format_version": 1,
+  "status": "candidate-requires-review",
+  "target": "x86_64-apple-darwin",
+  "runtime_version": "1.28.0",
+  "source_repository": "https://github.com/microsoft/onnxruntime.git",
+  "source_revision": "da9b5e364c465de65c49d91e696cd6485270757f",
+  "submodules": "c0bb220cb6e6f4e0fabb6f6db9efd53390ef5e56 cmake/external/emsdk (4.0.23)\n 7a2ed51a6b682a83e345ff49fc4cfd7ca47550db cmake/external/libprotobuf-mutator (v1.0~11)\n 2bb50465112feca9003e1ed654d77f01ff1415ca cmake/external/onnx (v1.22.0)",
+  "command": [
+    "/Users/runner/work/_temp/onnx-source/build.sh",
+    "--config",
+    "Release",
+    "--build_shared_lib",
+    "--parallel",
+    "2",
+    "--update",
+    "--build",
+    "--test",
+    "--build_dir",
+    "/Users/runner/work/_temp/intel-runtime/build",
+    "--cmake_extra_defines",
+    "CMAKE_OSX_ARCHITECTURES=x86_64",
+    "CMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+    "FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER"
+  ],
+  "toolchain": {
+    "os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.7.9\nBuildVersion:\t\t24G830",
+    "clang": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: x86_64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+    "xcode": "Xcode 16.4\nBuild version 16F6",
+    "cmake": "cmake version 4.4.2\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).",
+    "python": "Python 3.14.7",
+    "architecture": "x86_64"
+  },
+  "deployment_target_requested": "14.0",
+  "architecture": "x86_64",
+  "archive": "onnxruntime-osx-x86_64-1.28.0-source.tgz",
+  "sha256": "ff8befc83b955526ccf4062686d50d86796c9123d712ec1ec6c671fc97f330eb",
+  "members": {
+    "lib/libonnxruntime.dylib": {
+      "sha256": "68f5c454613a690061cd153fd71c5a340dcdbd8c949ebba7ef6fefcb447ba43b",
+      "size": 29357560
+    },
+    "LICENSE": {
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "size": 1073
+    },
+    "ThirdPartyNotices.txt": {
+      "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+      "size": 325054
+    },
+    "VERSION_NUMBER": {
+      "sha256": "229394bb3bac6e15d186324b7cbc90560803df8d7ee438a584118c4821b44e93",
+      "size": 7
+    }
+  },
+  "build_log_sha256": "871f7cfe6ee8ab3857268ac71ccefd03e4652e4323e8e23a6f0c209f79bae478",
+  "load_commands_sha256": "b9373d0da5770bbbd539b1e3e50d0c478d68511d5dac8d2ca5e77114678327b8",
+  "dependencies_sha256": "8a8c2b5218c0c8f2774f491080caaed0f07f0bc9bb5fe03756c53d2fb7c4328b",
+  "native_model_inference": "pending",
+  "interactive_desktop": "pending"
+}

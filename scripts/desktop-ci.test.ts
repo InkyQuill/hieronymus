@@ -55,6 +55,7 @@ import {
   MODEL_NAME,
   MODEL_REVISION,
   modelMembers,
+  type OfficialRuntime,
 } from "./desktop-targets";
 
 test("candidate inventory binds all four exact payloads and rejects extra or changed attachments", async () => {
@@ -62,6 +63,28 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
   const merged = join(root, "merged");
   mkdirSync(merged);
   const hash = (s: string) => createHash("sha256").update(s).digest("hex");
+  const intel = structuredClone(
+    desktopTarget("x86_64-apple-darwin").runtime,
+  ) as OfficialRuntime;
+  const runtimeBytes = "synthetic reviewed runtime";
+  intel.sha256 = hash(runtimeBytes);
+  intel.size = runtimeBytes.length;
+  const sourceReceipt = JSON.stringify({
+    format_version: 1,
+    target: "x86_64-apple-darwin",
+    architecture: "x86_64",
+    runtime_version: "1.28.0",
+    source_repository: intel.source!.repository,
+    source_revision: intel.source!.revision,
+    archive: intel.archive,
+    sha256: intel.sha256,
+    members: intel.members,
+  });
+  intel.source!.receipt_sha256 = hash(sourceReceipt);
+  const runtimeFor = (target: string) =>
+    target === "x86_64-apple-darwin" ? intel : desktopTarget(target).runtime;
+  const verify = (commit = "a".repeat(40)) =>
+    verifyCandidate(merged, commit, runtimeFor);
   try {
     for (const target of TARGETS) {
       const directory = join(root, target);
@@ -97,28 +120,36 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
         files["install.sh"] = "shared installer";
         files["desktop-metadata.awk"] = "shared decoder";
       }
+      if (target === "x86_64-apple-darwin") {
+        files[intel.archive] = runtimeBytes;
+        files["onnxruntime-source-build-receipt.json"] = sourceReceipt;
+      }
       for (const [name, content] of Object.entries(files))
         writeFileSync(join(directory, name), content);
       await inventory(directory, target, "a".repeat(40));
       for (const name of readdirSync(directory))
         copyFileSync(join(directory, name), join(merged, name));
     }
-    expect(
-      (await verifyCandidate(merged, "a".repeat(40))).length,
-    ).toBeGreaterThan(20);
-    await expect(verifyCandidate(merged, "b".repeat(40))).rejects.toThrow(
-      "source/target",
-    );
+    expect((await verify()).length).toBeGreaterThan(20);
+    await expect(verify("b".repeat(40))).rejects.toThrow("source/target");
     const unknown = join(merged, "unverified.exe");
     writeFileSync(unknown, "surprise");
-    await expect(verifyCandidate(merged, "a".repeat(40))).rejects.toThrow(
-      "unknown candidate attachment",
-    );
+    await expect(verify()).rejects.toThrow("unknown candidate attachment");
     rmSync(unknown);
-    writeFileSync(join(merged, "install.sh"), "replaced installer");
-    await expect(verifyCandidate(merged, "a".repeat(40))).rejects.toThrow(
-      "digest mismatch",
+    writeFileSync(join(merged, intel.archive), "substituted runtime");
+    await expect(verify()).rejects.toThrow("digest mismatch");
+    writeFileSync(join(merged, intel.archive), runtimeBytes);
+    writeFileSync(
+      join(merged, "onnxruntime-source-build-receipt.json"),
+      "substituted receipt",
     );
+    await expect(verify()).rejects.toThrow("digest mismatch");
+    writeFileSync(
+      join(merged, "onnxruntime-source-build-receipt.json"),
+      sourceReceipt,
+    );
+    writeFileSync(join(merged, "install.sh"), "replaced installer");
+    await expect(verify()).rejects.toThrow("digest mismatch");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -85,10 +85,36 @@
     }
   },
   "x86_64-apple-darwin": {
-    "origin": "source-build-required",
-    "version": "1.28.0",
-    "repository": "https://github.com/microsoft/onnxruntime.git",
-    "revision": "da9b5e364c465de65c49d91e696cd6485270757f",
-    "member": "lib/libonnxruntime.dylib"
+    "origin": "source-reviewed",
+    "archive": "onnxruntime-osx-x86_64-1.28.0-source.tgz",
+    "url": "https://github.com/InkyQuill/hieronymus/releases/download/v0.9.0/onnxruntime-osx-x86_64-1.28.0-source.tgz",
+    "sha256": "ff8befc83b955526ccf4062686d50d86796c9123d712ec1ec6c671fc97f330eb",
+    "size": 8051144,
+    "top": "onnxruntime-osx-x86_64-1.28.0-source",
+    "member": "lib/libonnxruntime.dylib",
+    "members": {
+      "lib/libonnxruntime.dylib": {
+        "sha256": "68f5c454613a690061cd153fd71c5a340dcdbd8c949ebba7ef6fefcb447ba43b",
+        "size": 29357560
+      },
+      "LICENSE": {
+        "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "size": 1073
+      },
+      "ThirdPartyNotices.txt": {
+        "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+        "size": 325054
+      },
+      "VERSION_NUMBER": {
+        "sha256": "229394bb3bac6e15d186324b7cbc90560803df8d7ee438a584118c4821b44e93",
+        "size": 7
+      }
+    },
+    "source": {
+      "repository": "https://github.com/microsoft/onnxruntime.git",
+      "revision": "da9b5e364c465de65c49d91e696cd6485270757f",
+      "run": "34703835119",
+      "receipt_sha256": "331a510ab904dfde7e6fdc8fd692046e4f548d6c57428ef205bef471a1588994"
+    }
   }
 }

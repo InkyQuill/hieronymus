@@ -31,7 +31,7 @@ test("native runtime names and exact target selection", () => {
   expect(runtimeName("aarch64-apple-darwin")).toBe("libonnxruntime.dylib");
   expect(() => desktopTarget("linux-x64")).toThrow();
   expect(desktopTarget("x86_64-apple-darwin").runtime.origin).toBe(
-    "source-build-required",
+    "source-reviewed",
   );
 });
 test("all targets bind one common pinned model artifact", () => {

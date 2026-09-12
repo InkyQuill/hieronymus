@@ -1,0 +1,28 @@
+{
+  "source_revision": "da9b5e364c465de65c49d91e696cd6485270757f",
+  "command": [
+    "/Users/runner/work/_temp/onnx-source/build.sh",
+    "--config",
+    "Release",
+    "--build_shared_lib",
+    "--parallel",
+    "2",
+    "--update",
+    "--build",
+    "--test",
+    "--build_dir",
+    "/Users/runner/work/_temp/intel-runtime/build",
+    "--cmake_extra_defines",
+    "CMAKE_OSX_ARCHITECTURES=x86_64",
+    "CMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+    "FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER"
+  ],
+  "toolchain": {
+    "os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.7.9\nBuildVersion:\t\t24G830",
+    "clang": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: x86_64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+    "xcode": "Xcode 16.4\nBuild version 16F6",
+    "cmake": "cmake version 4.4.2\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).",
+    "python": "Python 3.14.7",
+    "architecture": "x86_64"
+  }
+}

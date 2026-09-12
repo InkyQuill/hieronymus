@@ -120,6 +120,35 @@ the older changes-requested review. Its generic docstring-coverage warning
 a failing Rust documentation check, and does not justify mechanically adding
 comments to private helpers. Warning-denied rustdoc passes.
 
+The companion Rust reviewer rechecked the final shutdown fix in `5825531`:
+the stop flag is checked after environment recovery immediately before spawn,
+and both session lookup routes apply the same graphical validation. No remaining
+actionable findings in that bounded read-only review; no tests were rerun.
+
+Intel runtime build 34703835119 / job 103580591056 completed its native build
+and all 10 upstream CTest groups, then intentionally failed staging at the
+unpromoted-runtime gate at 2026-09-12T18:45:14Z. Artifact 10303049116 retains the
+archive and measured receipt. Reviewed source is ONNX 1.28.0 commit
+`da9b5e364c465de65c49d91e696cd6485270757f`; all archive/member/log hashes match.
+Independent LLVM inspection confirms x86_64, Mach-O minimum macOS 14.0, SDK 15.5,
+and only Apple system dependencies. Native toolchain: macOS 15.7.9, Xcode 16.4,
+Apple clang 17.0.0. Upstream skipped/disabled tests remain explicit in build.log;
+this is not Hieronymus final-model or interactive-desktop qualification.
+
+The exact archive digest is
+`ff8befc83b955526ccf4062686d50d86796c9123d712ec1ec6c671fc97f330eb`;
+the receipt digest is
+`331a510ab904dfde7e6fdc8fd692046e4f548d6c57428ef205bef471a1588994`.
+The small receipt, build plan and Mach-O reports are retained alongside this
+ledger. These reviewed bytes now replace `source-build-required` authority.
+Acquisition from the retained CI artifact passed and reverified the compiled pins.
+
+Pin promotion exposed a synthetic candidate-inventory fixture missing the newly
+required Intel archive and receipt (108 script tests passed, 1 failed with
+ENOENT). The fixture now supplies independently hashed synthetic runtime inputs
+and tests archive and receipt substitution, with production callers retaining
+compiled runtime authority. All 109 script tests pass after the fixture fix.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)

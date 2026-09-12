@@ -67,6 +67,10 @@ export async function inventory(
 export async function verifyCandidate(
   directory: string,
   commit: string,
+  runtimeFor: (
+    target: string,
+  ) => ReturnType<typeof desktopTarget>["runtime"] = (target) =>
+    desktopTarget(target).runtime,
 ): Promise<string[]> {
   const sourceVersion = checkSource(process.cwd(), undefined, true);
   const all = new Set<string>();
@@ -109,7 +113,7 @@ export async function verifyCandidate(
         .filter((s: any) => s.original_sha256)
         .map((s: any) => s.debug),
     ];
-    const runtime = desktopTarget(target).runtime;
+    const runtime = runtimeFor(target);
     if (runtime.origin === "source-reviewed") {
       const source = reviewedSource(runtime, target);
       expected.push(runtime.archive, "onnxruntime-source-build-receipt.json");

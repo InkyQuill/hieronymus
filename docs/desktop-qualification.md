@@ -5,8 +5,9 @@ x86_64 (KDE and GNOME AppIndicator, each on Wayland and X11), Windows x86_64,
 Apple Silicon, and Intel macOS. Seven session records form a coverage inventory.
 The owner-approved 2026-09-12 scope permits explicitly partial or unqualified
 records for unavailable native coverage; failed checks still block publication.
-Intel macOS must be labeled unqualified. Current Intel ONNX 1.28.0 remains
-`source-build-required`; no complete four-target candidate can succeed yet.
+Intel macOS must be labeled unqualified. Intel ONNX 1.28.0 now uses reviewed
+native source-build bytes retained from run 34703835119; final candidate
+inference and desktop observations remain separate from upstream runtime tests.
 Windows/macOS interactive acceptance and Linux real-panel/login/native-manager
 acceptance are also outstanding. See the final Linux receipt and limits below.
 
@@ -207,12 +208,12 @@ bash "$release/install-desktop-aarch64-apple-darwin.sh" \
 Record `sw_vers`, `uname -m`, launchctl loaded/unloaded and RunAtLoad state,
 unsigned bundle launch behavior, and `otool -L` dependency diagnostics. Runtime
 and model live outside the app in the verified version tree. Never edit a sealed
-bundle during install. Intel is unavailable until the native source-build receipt
-is reviewed and a compiled `source-built` authority is implemented with actual
-archive/member/provenance hashes. `macos-15-intel` candidate CI is prepared;
-no native Intel execution occurred in this work. A candidate receipt never grants
-runtime authority by itself and requested deployment target is not measured OS
-compatibility. Record actual minimum OS/dependencies before promotion.
+bundle during install. Intel uses compiled `source-reviewed` authority with
+reviewed archive/member/provenance hashes. The retained native build passed
+upstream runtime tests; the final Hieronymus candidate must still pass inference.
+A candidate receipt never grants runtime authority by itself. The measured
+Mach-O minimum OS is 14.0; that load command does not establish observed desktop
+compatibility on every supported macOS version.
 
 Linux uses the corresponding `.sh` installer and checks `ldd` on CLI and helper.
 GTK is required only for the helper. Test KDE and GNOME AppIndicator separately
