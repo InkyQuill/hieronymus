@@ -132,7 +132,15 @@ fn delete_data_removes_the_exact_named_root_only() {
         stdout.contains(&fixture.data_root.display().to_string()),
         "{stdout}"
     );
-    assert!(!fixture.data_root.exists());
+    let mut retained: Vec<_> = std::fs::read_dir(&fixture.data_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    retained.sort();
+    assert_eq!(
+        retained,
+        [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
+    );
     // The software side is still removed exactly once.
     assert!(!fixture.app.exists());
 }

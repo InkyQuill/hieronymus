@@ -29,10 +29,13 @@ use std::time::{Duration, Instant};
 use hieronymus::data_root::{HieronymusConfig, load_config};
 use hieronymus::ownership::RootOwnership;
 
-use crate::app::{AppLayout, LINK_NAMES, TARGET_TRIPLE, compare_versions};
-#[cfg(test)]
+#[cfg(unix)]
+use crate::app::LINK_NAMES;
+use crate::app::{AppLayout, TARGET_TRIPLE, compare_versions};
+#[cfg(all(test, unix))]
 use crate::daemon::discovery;
 use crate::daemon::registry::PROTOCOL_REVISION;
+use crate::lifecycle::operation::LifecycleOperation;
 use crate::lifecycle::{self, DiscoveryHealth};
 use crate::service::{self, ServiceManager, ServiceOptions, SystemdManager};
 
@@ -208,7 +211,9 @@ impl UpdateReport {
 /// fails, leaves every artifact in place and reports both causes without
 /// claiming a restoration that did not happen.
 pub fn run_update(options: &UpdateOptions) -> Result<UpdateReport, UpdateError> {
-    run_update_impl(options, None)
+    let config = load_config(options.data_root.as_deref());
+    let operation = LifecycleOperation::acquire(&config)?;
+    run_update_guarded(options, &operation)
 }
 
 /// Doctor exit-code contract for a started candidate: `0` is healthy, `1` is an
@@ -321,15 +326,82 @@ struct RestoreSnapshot {
     /// Whether the update stopped a daemon that was running; a rollback
     /// restarts the previous version only in that case.
     daemon_was_running: bool,
+    helper_was_running: bool,
+    desktop_registration: Option<crate::desktop::installation::Snapshot>,
     /// The version being installed — pruned (with its staging) only after a
     /// rollback is verified, never during one.
     candidate_version: String,
 }
 
+/// Update using an existing operation guard, so CLI release acquisition is
+/// serialized with activation and rollback in the same critical section.
+pub fn run_update_guarded(
+    options: &UpdateOptions,
+    operation: &LifecycleOperation,
+) -> Result<UpdateReport, UpdateError> {
+    run_update_guarded_impl(options, None, operation, None)
+}
+
+/// Standalone bootstrap and updater share one guarded activation/registration rollback.
+pub fn run_desktop_install(
+    options: &UpdateOptions,
+    no_activate: bool,
+) -> Result<UpdateReport, UpdateError> {
+    let config = load_config(options.data_root.as_deref());
+    let op = LifecycleOperation::acquire(&config)?;
+    run_update_guarded_impl(options, None, &op, Some(no_activate))
+}
+
+#[cfg(test)]
 fn run_update_impl(
     options: &UpdateOptions,
-    manager_override: Option<&dyn ServiceManager>,
+    manager: Option<&dyn ServiceManager>,
 ) -> Result<UpdateReport, UpdateError> {
+    let config = load_config(options.data_root.as_deref());
+    let operation = LifecycleOperation::acquire(&config)?;
+    run_update_guarded_impl(options, manager, &operation, None)
+}
+
+struct LifecycleManager<'a> {
+    options: ServiceOptions,
+    operation: &'a LifecycleOperation,
+}
+impl ServiceManager for LifecycleManager<'_> {
+    fn stop(&self) -> Result<(), service::ServiceError> {
+        lifecycle::stop_guarded(
+            &HieronymusConfig::new(&self.options.data_root),
+            &self.options,
+            self.operation,
+        )
+        .map(|_| ())
+        .map_err(|e| service::ServiceError::Manager(e.to_string()))
+    }
+    fn start(&self) -> Result<(), service::ServiceError> {
+        lifecycle::start_guarded(
+            &HieronymusConfig::new(&self.options.data_root),
+            &self.options,
+            self.operation,
+        )
+        .map(|_| ())
+        .map_err(|e| service::ServiceError::Manager(e.to_string()))
+    }
+    fn reload(&self) -> Result<(), service::ServiceError> {
+        if self.options.unit_path().exists() {
+            SystemdManager::new(self.options.clone(), self.operation).reload()
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn run_update_guarded_impl(
+    options: &UpdateOptions,
+    manager_override: Option<&dyn ServiceManager>,
+    operation: &LifecycleOperation,
+    desktop_install: Option<bool>,
+) -> Result<UpdateReport, UpdateError> {
+    let config = load_config(options.data_root.as_deref());
+    operation.check(&config)?;
     let mut lines: Vec<String> = Vec::new();
 
     let root = match &options.app_dir {
@@ -339,7 +411,44 @@ fn run_update_impl(
     let layout = AppLayout::new(root);
     let previous_version = layout.current_version();
 
-    let release = resolve_release(&options.release_dir)?;
+    let mut service_options = ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir: options
+            .unit_dir
+            .clone()
+            .unwrap_or_else(service::default_unit_dir),
+        binary: layout.stable_link("hiero"),
+        use_manager: true,
+    };
+    #[cfg(target_os = "linux")]
+    if desktop_install == Some(true) && options.unit_dir.is_some() {
+        service_options.use_manager = false;
+    }
+    operation.register_unit(&service_options)?;
+    #[cfg(any(windows, target_os = "macos"))]
+    operation.bind_native_broker(&service_options)?;
+    service::validate_unit_root_guarded(&service_options, operation)
+        .map_err(|error| UpdateError::Refused(error.to_string()))?;
+
+    let acquired = if options
+        .release_dir
+        .join(crate::release_manifest::metadata_name(TARGET_TRIPLE))
+        .try_exists()?
+    {
+        Some(
+            crate::release_source::stage_local_pair(
+                &options.release_dir,
+                &layout.root().join("cache/models"),
+            )
+            .map_err(UpdateError::Source)?,
+        )
+    } else {
+        None
+    };
+    let release_directory = acquired
+        .as_ref()
+        .map_or(options.release_dir.as_path(), |t| t.path());
+    let release = resolve_release(release_directory)?;
     lines.push(format!(
         "release resolved: {} (archive {})",
         release.version,
@@ -355,9 +464,21 @@ fn run_update_impl(
     }
     lines.push("archive checksum verified".to_string());
 
-    crate::release_source::inspect_archive(&release.archive).map_err(UpdateError::Refused)?;
+    if acquired.is_none() {
+        crate::release_source::inspect_archive(&release.archive).map_err(UpdateError::Refused)?;
+    }
 
     if previous_version.as_deref() == Some(release.version.as_str()) {
+        if acquired.is_some() {
+            let pair =
+                crate::release_archive::verify_split_directory(release_directory, TARGET_TRIPLE)
+                    .map_err(UpdateError::Source)?;
+            let installed = layout.version_dir(&release.version);
+            if sha256_file(&installed.join("assets.json"))? != pair.assets_sha256 {
+                return Err(UpdateError::Refused("immutable installed version has different asset identity; use a distinct release version".into()));
+            }
+            validate_payload(&installed).map_err(UpdateError::Refused)?;
+        }
         lines.push("already up to date; nothing was changed".to_string());
         return Ok(UpdateReport {
             outcome: UpdateOutcome::UpToDate,
@@ -387,13 +508,21 @@ fn run_update_impl(
     if staging.exists() {
         std::fs::remove_dir_all(&staging)?;
     }
-    std::fs::create_dir_all(&staging)?;
+    if acquired.is_none() {
+        std::fs::create_dir_all(&staging)?;
+    }
     let refused = |message: String| {
         let _ = std::fs::remove_dir_all(&staging);
         UpdateError::Refused(message)
     };
 
-    if let Err(error) = extract_archive(&release.archive, &staging) {
+    if let Err(error) = if acquired.is_some() {
+        crate::release_archive::extract_split_directory(release_directory, TARGET_TRIPLE, &staging)
+            .map(|_| ())
+            .map_err(UpdateError::Source)
+    } else {
+        extract_archive(&release.archive, &staging)
+    } {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(error);
     }
@@ -401,15 +530,40 @@ fn run_update_impl(
         return Err(refused(reason));
     }
 
-    let candidate = match candidate_identity(&staging.join("hiero")) {
-        Ok(identity) => identity,
-        Err(error) => return Err(refused(error.to_string())),
-    };
+    let candidate =
+        match candidate_identity(&staging.join(crate::platform::install::executable_name("hiero")))
+        {
+            Ok(identity) => identity,
+            Err(error) => return Err(refused(error.to_string())),
+        };
     if candidate.version != release.version {
         return Err(refused(format!(
             "archive binary reports version {} but the release metadata says {}",
             candidate.version, release.version
         )));
+    }
+    if let Ok(helper) = crate::desktop::launch::sibling_binary(
+        &staging.join(crate::platform::install::executable_name("hiero")),
+        "hiero-desktop",
+    ) {
+        let output = Command::new(&helper)
+            .args(["version", "--json"])
+            .output()
+            .map_err(|e| {
+                refused(format!(
+                    "matching helper/native GUI prerequisites unavailable: {e}"
+                ))
+            })?;
+        let identity: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| refused(format!("helper identity is unavailable: {e}")))?;
+        if !output.status.success()
+            || identity.get("version").and_then(|v| v.as_str()) != Some(candidate.version.as_str())
+            || identity.get("target").and_then(|v| v.as_str()) != Some(TARGET_TRIPLE)
+        {
+            return Err(refused(
+                "helper version/target differs from candidate CLI".into(),
+            ));
+        }
     }
     if candidate.protocol_revision != PROTOCOL_REVISION {
         return Err(refused(format!(
@@ -423,26 +577,22 @@ fn run_update_impl(
         candidate.protocol_revision, candidate.supported_schema_version
     ));
 
-    let config = load_config(options.data_root.as_deref());
+    if desktop_install.is_some() {
+        crate::desktop::launch::sibling_binary(
+            &staging.join(crate::platform::install::executable_name("hiero")),
+            "hiero-desktop",
+        )
+        .map_err(&refused)?;
+    }
     // Refuse incompatible releases before stopping a live service. Recheck
     // after ownership acquisition to close the preflight/mutation race.
     schema_gate(&config, &candidate).map_err(|error| refused(error.to_string()))?;
 
-    let mut service_options = ServiceOptions {
-        data_root: config.data_root().to_path_buf(),
-        unit_dir: options
-            .unit_dir
-            .clone()
-            .unwrap_or_else(service::default_unit_dir),
-        binary: layout.stable_link("hiero"),
-        use_manager: true,
-    };
     let unit_installed = service_options.unit_path().exists();
     // An injected manager (tests) is by definition engaged; in production the
     // systemd user manager is engaged only for a default-location unit with
     // `systemctl` on PATH.
-    let manager_engaged = manager_override.is_some()
-        || (unit_installed && service::manager_enabled(&service_options));
+
     // The exact unit content before this run: rollback restores it verbatim
     // instead of guessing what a pre-existing unit pointed at.
     let unit_before = if unit_installed {
@@ -451,47 +601,134 @@ fn run_update_impl(
         None
     };
 
-    let daemon_was_running = crate::lifecycle::probe(&config).is_live();
-    if daemon_was_running && !manager_engaged {
+    let daemon_was_running = lifecycle::checked_probe(&config)
+        .map_err(|error| refused(error.to_string()))?
+        .is_live();
+    #[cfg(target_os = "linux")]
+    if manager_override.is_none()
+        && !service::manager_enabled(&service_options)
+        && (daemon_was_running || (desktop_install == Some(false) && previous_version.is_none()))
+    {
+        return Err(refused("This registration has no managed restart capability. Stop the daemon first and use --no-activate for a fresh custom-unit installation; the running installation was left untouched".into()));
+    }
+    if desktop_install == Some(true) && daemon_was_running {
         return Err(refused(
-            "a daemon is currently running and the updater cannot stop it (no service \
-             unit, or a custom --unit-dir); stop the daemon first"
-                .to_string(),
+            "--no-activate cannot take over a running installation; stop it first".into(),
         ));
     }
+
+    // The lifecycle and registration claims are already held. An apparently
+    // offline root can still have an undiscovered owner: refuse before helper
+    // retirement or native snapshot mutations, and retain this same guard until
+    // activation. A live daemon instead follows the existing snapshot/stop path.
+    let offline_owner = if daemon_was_running {
+        None
+    } else {
+        Some(RootOwnership::acquire(&config, "update").map_err(|e| refused(e.to_string()))?)
+    };
 
     // Snapshot the restore target before ANY mutation, and pick the service
     // manager. Every rollback below drives this one `&dyn ServiceManager`, so
     // tests can assert the exact call sequence.
-    let systemd_manager = SystemdManager::new(service_options.clone());
+    let systemd_manager = LifecycleManager {
+        options: service_options.clone(),
+        operation,
+    };
     let manager: &dyn ServiceManager = manager_override.unwrap_or(&systemd_manager);
+    if layout.version_dir(&release.version).try_exists()? {
+        return Err(refused("immutable candidate version already exists; inspect the interrupted installation before retrying".into()));
+    }
+    if previous_version.as_ref().is_some_and(|v| {
+        crate::desktop::launch::sibling_binary(
+            &layout
+                .version_dir(v)
+                .join(crate::platform::install::executable_name("hiero")),
+            "hiero-desktop",
+        )
+        .is_ok()
+    }) {
+        crate::desktop::launch::sibling_binary(
+            &staging.join(crate::platform::install::executable_name("hiero")),
+            "hiero-desktop",
+        )
+        .map_err(&refused)?;
+    }
+    // Capture authoritative manager state before retirement or stop can change it.
+    // Native ordinary updates need the same rollback journal as bootstrap.
+    let registration = if desktop_install.is_some() || cfg!(any(windows, target_os = "macos")) {
+        Some(
+            crate::desktop::installation::Snapshot::capture(&service_options, operation)
+                .map_err(&refused)?,
+        )
+    } else {
+        None
+    };
+    let retirement_result = crate::desktop::control::Retirement::begin_owned(
+        &config,
+        desktop_install != Some(true),
+        Some(&layout.stable_link("hiero")),
+    );
+    let mut retirement = match retirement_result {
+        Ok(value) => value,
+        Err(error) => {
+            if let Some(registration) = &registration {
+                registration.commit(operation).map_err(&refused)?;
+            }
+            return Err(refused(error.to_string()));
+        }
+    };
     let snapshot = RestoreSnapshot {
         previous_version: previous_version.clone(),
         unit_before,
         unit_path: service_options.unit_path(),
         daemon_was_running,
         candidate_version: release.version.clone(),
+        helper_was_running: retirement.was_running,
+        desktop_registration: registration,
     };
 
-    // Pre-switch: a `stop` that cannot stop the running service means nothing
-    // on disk changed, so it is a plain failure — there is no rollback to run.
-    if daemon_was_running {
-        manager.stop().map_err(|error| UpdateError::Failed {
-            message: format!("could not stop the running service: {error}"),
-            steps: lines.clone(),
-        })?;
+    // Stop can partially suppress native recovery even if it fails. Restore
+    // through the same snapshot/ownership protocol; never assume no mutation.
+    if lifecycle::checked_probe(&config)
+        .map_err(|e| refused(e.to_string()))?
+        .is_live()
+    {
+        if let Err(error) = manager.stop() {
+            retirement.allow_launch();
+            return Err(activation_failed(
+                manager,
+                &layout,
+                &config,
+                &snapshot,
+                &lines,
+                format!("could not stop the running service: {error}"),
+                operation,
+            ));
+        }
         lines.push("running daemon stopped".to_string());
     }
 
     // Discovery can fail while a daemon or offline writer still owns the
     // root. Only the OS lock admits mutation, including a migration-pending
     // install. Hold it until handing the root to the managed candidate.
-    let mut ownership = Some(
-        RootOwnership::acquire(&config, "update").map_err(|error| refused(error.to_string()))?,
-    );
-    let migration_required =
-        schema_gate(&config, &candidate).map_err(|error| refused(error.to_string()))?;
-
+    let prepared = (|| -> Result<_, String> {
+        let ownership = match offline_owner {
+            Some(owner) => owner,
+            None => RootOwnership::acquire(&config, "update").map_err(|e| e.to_string())?,
+        };
+        let migration_required = schema_gate(&config, &candidate).map_err(|e| e.to_string())?;
+        Ok((ownership, migration_required))
+    })();
+    let (owner, migration_required) = match prepared {
+        Ok(value) => value,
+        Err(cause) => {
+            retirement.allow_launch();
+            return Err(activation_failed(
+                manager, &layout, &config, &snapshot, &lines, cause, operation,
+            ));
+        }
+    };
+    let mut ownership = Some(owner);
     let version_dir = layout.version_dir(&release.version);
 
     /// What the post-switch region concluded.
@@ -511,11 +748,7 @@ fn run_update_impl(
     let outcome = (|| -> Result<PostSwitch, String> {
         // Promote the staged directory and switch the stable links.
         (|| -> std::io::Result<()> {
-            if version_dir.exists() {
-                // A leftover from an interrupted attempt — the up-to-date
-                // check guarantees this is never the currently linked version.
-                std::fs::remove_dir_all(&version_dir)?;
-            }
+            if version_dir.try_exists()? { return Err(std::io::Error::other("immutable candidate version already exists; inspect the interrupted attempt before retrying")); }
             std::fs::rename(&staging, &version_dir)?;
             layout.switch_stable_links(&release.version)
         })()
@@ -528,17 +761,38 @@ fn run_update_impl(
         // The unit execs an absolute path: re-render it so a start launches
         // the new binary, never the old one.
         if unit_installed {
-            service_options.binary = version_dir.join("hiero");
-            service::install(&service_options)
+            service_options.binary = layout.stable_link("hiero");
+            service::install_guarded(&service_options, operation)
                 .map_err(|error| format!("service unit update failed ({error})"))?;
             lines.push("service unit updated to the new binary".to_string());
         }
 
+        if desktop_install.is_some()
+            && let Some(registration) = &snapshot.desktop_registration
+        {
+            registration.install(operation)?;
+        }
         if migration_required {
+            retirement.allow_launch();
+            if snapshot.helper_was_running {
+                crate::desktop::control::restart(
+                    &config,
+                    &layout.stable_link("hiero"),
+                    &service_options.unit_dir,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            if let Some(registration) = &snapshot.desktop_registration {
+                registration.commit(operation)?;
+            }
             return Ok(PostSwitch::MigrationPending);
         }
 
-        let daemon_started = if manager_engaged {
+        let daemon_started = if (daemon_was_running
+            || (desktop_install == Some(false) && previous_version.is_none()))
+            && !crate::desktop::control::quit_requested(config.data_root())
+                .map_err(|e| e.to_string())?
+        {
             drop(ownership.take());
             manager
                 .start()
@@ -558,17 +812,38 @@ fn run_update_impl(
         // Health gate: the candidate's non-mutating doctor. A `Command` that
         // will not even spawn (missing/non-executable candidate) is a failure
         // like any other here — it cannot escape this closure as a bare `?`.
-        let doctor_code = Command::new(version_dir.join("hiero"))
-            .arg("doctor")
-            .arg("--data-root")
-            .arg(config.data_root())
-            .output()
-            .map(|output| output.status.code())
-            .map_err(|error| {
-                format!("health check failed (could not run the candidate's doctor: {error})")
-            })?;
-        let degraded = accepted_doctor_exit(doctor_code)
+        match service::check_unit_guarded(
+            &service_options,
+            &version_dir.join(crate::platform::install::executable_name("hiero")),
+            operation,
+        ) {
+            service::UnitVerdict::Consistent => {}
+            service::UnitVerdict::Absent if desktop_install.is_none() && !unit_installed => {}
+            verdict => {
+                return Err(format!(
+                    "guarded native registration health failed: {verdict:?}"
+                ));
+            }
+        }
+        #[cfg(any(windows, target_os = "macos"))]
+        crate::desktop::installation::validate_native(&service_options, operation)?;
+        let doctor_output =
+            Command::new(version_dir.join(crate::platform::install::executable_name("hiero")))
+                .arg("doctor")
+                .args(["--skip-registration", "--json"])
+                .arg("--unit-dir")
+                .arg(&service_options.unit_dir)
+                .arg("--data-root")
+                .arg(config.data_root())
+                .output()
+                .map_err(|error| {
+                    format!("health check failed (could not run the candidate's doctor: {error})")
+                })?;
+        let degraded = accepted_doctor_exit(doctor_output.status.code())
             .map_err(|reason| format!("health check failed ({reason})"))?;
+        let doctor_report: serde_json::Value = serde_json::from_slice(&doctor_output.stdout)
+            .map_err(|error| format!("candidate doctor report is invalid: {error}"))?;
+        require_independent_doctor_scope(&doctor_report)?;
 
         // Doctor exit 0/1 is necessary but never sufficient. A started
         // candidate must publish a live, authenticated endpoint that reports
@@ -589,14 +864,22 @@ fn run_update_impl(
             require_semantic_ready(&config)
                 .map_err(|reason| format!("candidate semantic lane not ready ({reason})"))?;
         } else if degraded {
-            return Err(
-                "candidate doctor reported degraded (exit 1) and no daemon was \
-                        started, so authenticated readiness could not confirm the intended \
-                        version — a degraded candidate is not activated without that proof"
-                    .to_string(),
-            );
+            require_offline_doctor(&version_dir, &doctor_report)?;
+            lines.push("candidate installed offline; native assets verified, authenticated daemon readiness deferred until explicit Start".into());
+        }
+        retirement.allow_launch();
+        if snapshot.helper_was_running {
+            crate::desktop::control::restart(
+                &config,
+                &layout.stable_link("hiero"),
+                &service_options.unit_dir,
+            )
+            .map_err(|e| format!("replacement helper startup failed: {e}"))?;
         }
 
+        if let Some(registration) = &snapshot.desktop_registration {
+            registration.commit(operation)?;
+        }
         Ok(PostSwitch::Activated {
             daemon_started,
             degraded,
@@ -607,8 +890,9 @@ fn run_update_impl(
         Err(cause) => {
             // Rollback reacquires ownership after stopping the candidate.
             drop(ownership.take());
+            retirement.allow_launch();
             return Err(activation_failed(
-                manager, &layout, &config, &snapshot, &lines, cause,
+                manager, &layout, &config, &snapshot, &lines, cause, operation,
             ));
         }
         Ok(PostSwitch::MigrationPending) => {
@@ -640,7 +924,7 @@ fn run_update_impl(
         }) => (daemon_started, degraded),
     };
 
-    lines.push(if degraded {
+    lines.push(if degraded && !daemon_started { "offline installation verified; configuration initialization and daemon readiness are deferred until explicit Start".into() } else if degraded {
         "health check: degraded (doctor warnings) but the candidate confirmed ready; \
          update kept"
             .to_string()
@@ -719,8 +1003,9 @@ fn activation_failed(
     snapshot: &RestoreSnapshot,
     steps: &[String],
     cause: String,
+    operation: &LifecycleOperation,
 ) -> UpdateError {
-    match rollback(manager, layout, config, snapshot) {
+    match rollback(manager, layout, config, snapshot, operation) {
         Ok(()) => {
             // Only now — after the rollback verified — may the candidate go.
             prune_candidate(layout, &snapshot.candidate_version);
@@ -741,8 +1026,26 @@ fn activation_failed(
     }
 }
 
+/// Registration authority used by the outer rollback state machine.
+trait RollbackRegistration {
+    fn restore(&self, operation: &LifecycleOperation) -> Result<(), String>;
+    fn restores_manager_state(&self) -> bool;
+    fn commit(&self, operation: &LifecycleOperation) -> Result<(), String>;
+}
+impl RollbackRegistration for crate::desktop::installation::Snapshot {
+    fn restore(&self, operation: &LifecycleOperation) -> Result<(), String> {
+        self.restore(operation)
+    }
+    fn restores_manager_state(&self) -> bool {
+        cfg!(any(windows, target_os = "macos"))
+    }
+    fn commit(&self, operation: &LifecycleOperation) -> Result<(), String> {
+        self.commit(operation)
+    }
+}
+
 /// The ordered rollback: stop the candidate, restore the links and unit,
-/// reload the manager, and — only when the update had stopped a running
+/// reload file-based managers, and — only when the update had stopped a running
 /// daemon — restart the previous version and confirm it is authentically
 /// back. Each step propagates its error as a `String`; NO artifact is deleted
 /// here, so a rollback that fails midway leaves everything on disk.
@@ -751,17 +1054,74 @@ fn rollback(
     layout: &AppLayout,
     config: &HieronymusConfig,
     snapshot: &RestoreSnapshot,
+    operation: &LifecycleOperation,
 ) -> Result<(), String> {
+    rollback_with_registration(
+        manager,
+        layout,
+        config,
+        snapshot,
+        operation,
+        snapshot
+            .desktop_registration
+            .as_ref()
+            .map(|registration| registration as &dyn RollbackRegistration),
+    )
+}
+
+/// One outer rollback composition, with registration restoration substitutable
+/// independently from the native manager for state-transition fault tests.
+fn rollback_with_registration(
+    manager: &dyn ServiceManager,
+    layout: &AppLayout,
+    config: &HieronymusConfig,
+    snapshot: &RestoreSnapshot,
+    operation: &LifecycleOperation,
+    registration: Option<&dyn RollbackRegistration>,
+) -> Result<(), String> {
+    operation.check(config).map_err(|error| error.to_string())?;
+    let service_options = ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir: snapshot
+            .unit_path
+            .parent()
+            .ok_or("unit path has no parent")?
+            .to_path_buf(),
+        binary: layout.stable_link("hiero"),
+        use_manager: true,
+    };
+    operation
+        .register_unit(&service_options)
+        .map_err(|error| error.to_string())?;
+    service::validate_unit_root_guarded(&service_options, operation)
+        .map_err(|error| error.to_string())?;
+    let mut retirement = crate::desktop::control::Retirement::begin_owned(
+        config,
+        true,
+        Some(&layout.stable_link("hiero")),
+    )
+    .map_err(|e| e.to_string())?;
     manager
         .stop()
         .map_err(|error| format!("stop the candidate: {error}"))?;
     let ownership = RootOwnership::acquire(config, "update-rollback")
         .map_err(|error| format!("acquire data-root ownership for rollback: {error}"))?;
     restore_links_and_unit(layout, snapshot)?;
-    manager
-        .reload()
-        .map_err(|error| format!("reload the service manager: {error}"))?;
-    if snapshot.daemon_was_running {
+    if let Some(registration) = registration {
+        registration.restore(operation)?;
+    }
+    // Native package restore already reconciles and validates manager state.
+    // A generic native reload may bootstrap an originally unloaded agent.
+    // Linux restores files only, so its manager must still reload those files.
+    if !registration.is_some_and(|registration| registration.restores_manager_state()) {
+        manager
+            .reload()
+            .map_err(|error| format!("reload the service manager: {error}"))?;
+    }
+    if snapshot.daemon_was_running
+        && !crate::desktop::control::quit_requested(config.data_root())
+            .map_err(|e| e.to_string())?
+    {
         drop(ownership);
         manager
             .start()
@@ -771,6 +1131,18 @@ fn rollback(
         // that returned before its process exited.
         poll_until_live(config, snapshot.previous_version.as_deref())
             .map_err(|detail| format!("restarted the previous version but {detail}"))?;
+    }
+    retirement.allow_launch();
+    if snapshot.helper_was_running {
+        crate::desktop::control::restart(
+            config,
+            &layout.stable_link("hiero"),
+            &service_options.unit_dir,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(registration) = registration {
+        registration.commit(operation)?;
     }
     Ok(())
 }
@@ -799,11 +1171,12 @@ fn restore_links_and_unit(layout: &AppLayout, snapshot: &RestoreSnapshot) -> Res
             }
         }
         None => {
-            for name in LINK_NAMES {
-                remove_if_present(&layout.stable_link(name))
-                    .map_err(|error| format!("remove stale link {name}: {error}"))?;
-            }
+            crate::platform::install::clear_selection(layout)
+                .map_err(|error| format!("clear selection: {error}"))?;
         }
+    }
+    if cfg!(any(windows, target_os = "macos")) && snapshot.desktop_registration.is_some() {
+        return Ok(()); // Native snapshot restores coherent record + manager state.
     }
     match &snapshot.unit_before {
         Some(content) => hieronymus::atomic::atomic_write_text(&snapshot.unit_path, content)
@@ -817,21 +1190,7 @@ fn restore_links_and_unit(layout: &AppLayout, snapshot: &RestoreSnapshot) -> Res
 /// Whether every stable command link (`switch_stable_links` renames the four
 /// one at a time) resolves to `../versions/<version>/<name>`.
 fn all_links_point_at(layout: &AppLayout, version: &str) -> Result<(), String> {
-    for name in LINK_NAMES {
-        let want = PathBuf::from(format!("../versions/{version}/{name}"));
-        match std::fs::read_link(layout.stable_link(name)) {
-            Ok(target) if target == want => {}
-            Ok(target) => {
-                return Err(format!(
-                    "link {name} points at {} instead of {}",
-                    target.display(),
-                    want.display()
-                ));
-            }
-            Err(error) => return Err(format!("link {name} is unreadable: {error}")),
-        }
-    }
-    Ok(())
+    crate::platform::install::verify_selection(layout, version)
 }
 
 fn remove_if_present(path: &Path) -> std::io::Result<()> {
@@ -905,6 +1264,18 @@ pub fn resolve_release(directory: &Path) -> Result<ResolvedRelease, UpdateError>
             "release directory does not exist: {}",
             directory.display()
         )));
+    }
+    if directory
+        .join(crate::release_manifest::metadata_name(TARGET_TRIPLE))
+        .try_exists()?
+    {
+        let pair = crate::release_archive::verify_split_directory(directory, TARGET_TRIPLE)
+            .map_err(UpdateError::Source)?;
+        return Ok(ResolvedRelease {
+            version: pair.manifest.version,
+            archive: pair.platform_archive,
+            sha256: pair.manifest.platform.sha256,
+        });
     }
     let metadata_path = directory.join("release.json");
     if metadata_path.exists() {
@@ -1044,14 +1415,47 @@ fn failed(message: impl Into<String>) -> UpdateError {
 
 /// The staged payload must look exactly like the release layout: an
 /// executable `hiero` plus the three relative argv[0] links.
+fn require_independent_doctor_scope(report: &serde_json::Value) -> Result<(), String> {
+    if report.get("scope").and_then(|v| v.as_str()) != Some("payload-config-without-registration") {
+        return Err("candidate doctor did not report the required independent scope".into());
+    }
+    Ok(())
+}
+fn require_offline_doctor(version: &Path, report: &serde_json::Value) -> Result<(), String> {
+    if !version.join("assets.json").is_file() {
+        return Err("offline doctor warnings require a complete verified semantic payload".into());
+    }
+    let findings = report
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .ok_or("doctor findings missing")?;
+    if findings
+        .iter()
+        .any(|f| match f.get("level").and_then(|v| v.as_str()) {
+            Some("ok") => false,
+            Some("warning") => !matches!(
+                f.get("code").and_then(|v| v.as_str()),
+                Some("config-root-missing")
+            ),
+            _ => true,
+        })
+    {
+        return Err(
+            "offline doctor reported warnings beyond an uninitialized configuration root".into(),
+        );
+    }
+    Ok(())
+}
+
 fn validate_payload(staging: &Path) -> Result<(), String> {
-    let binary = staging.join("hiero");
+    let binary = staging.join(crate::platform::install::executable_name("hiero"));
     if !binary.is_file() {
         return Err(format!(
             "staged release has no hiero binary: {}",
             binary.display()
         ));
     }
+    #[cfg(unix)]
     for name in LINK_NAMES.iter().skip(1) {
         let link = staging.join(name);
         match std::fs::read_link(&link) {
@@ -1062,6 +1466,10 @@ fn validate_payload(staging: &Path) -> Result<(), String> {
                 ));
             }
         }
+    }
+    #[cfg(windows)]
+    if !staging.join("hiero-launcher.exe").is_file() {
+        return Err("staged release lacks native launcher".into());
     }
     if staging.join("assets.json").exists() || cfg!(feature = "console-embed") {
         let output = Command::new(&binary)
@@ -1128,7 +1536,7 @@ pub fn candidate_identity(binary: &Path) -> Result<CandidateIdentity, String> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -1331,6 +1739,30 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn scoped_candidate_health_rejects_full_scope_and_service_warnings() {
+        assert!(
+            require_independent_doctor_scope(
+                &serde_json::json!({"scope":"full","status":"healthy"})
+            )
+            .is_err()
+        );
+        let version = tempfile::tempdir().unwrap();
+        std::fs::write(version.path().join("assets.json"), b"verified separately").unwrap();
+        for code in ["service-unit-broken", "semantic-model-invalid"] {
+            let report = serde_json::json!({"scope":"payload-config-without-registration","findings":[{"level":"warning","code":code}]});
+            require_independent_doctor_scope(&report).unwrap();
+            assert!(require_offline_doctor(version.path(), &report).is_err());
+        }
+        assert!(
+            require_offline_doctor(
+                version.path(),
+                &serde_json::json!({"findings":[{"level":"warning","code":"config-root-missing"}]})
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn unexpected_doctor_exit_is_not_healthy() {
         assert!(super::accepted_doctor_exit(Some(42)).is_err());
         assert!(super::accepted_doctor_exit(None).is_err());
@@ -1415,6 +1847,89 @@ mod tests {
             unit_path,
             daemon_was_running: was_running,
             candidate_version: "2.0.0".to_string(),
+            helper_was_running: false,
+            desktop_registration: None,
+        }
+    }
+
+    #[test]
+    fn outer_native_rollback_preserves_unloaded_enabled_state_through_commit() {
+        use std::cell::{Cell, RefCell};
+        struct NativeState {
+            loaded: Cell<bool>,
+            enabled: Cell<bool>,
+            journal_pending: Cell<bool>,
+            events: RefCell<Vec<&'static str>>,
+        }
+        impl ServiceManager for NativeState {
+            fn stop(&self) -> Result<(), service::ServiceError> {
+                self.events.borrow_mut().push("stop");
+                self.loaded.set(false);
+                Ok(())
+            }
+            fn reload(&self) -> Result<(), service::ServiceError> {
+                self.events.borrow_mut().push("reload");
+                // macOS Install bootstraps enabled, unloaded Desktop agents.
+                self.loaded.set(self.enabled.get());
+                Ok(())
+            }
+            fn start(&self) -> Result<(), service::ServiceError> {
+                self.events.borrow_mut().push("start");
+                Err(service::ServiceError::Manager("unexpected startup".into()))
+            }
+        }
+        impl RollbackRegistration for NativeState {
+            fn restore(&self, _: &LifecycleOperation) -> Result<(), String> {
+                self.events.borrow_mut().push("restore");
+                self.loaded.set(false);
+                self.enabled.set(true);
+                Ok(())
+            }
+            fn restores_manager_state(&self) -> bool {
+                true
+            }
+            fn commit(&self, _: &LifecycleOperation) -> Result<(), String> {
+                self.events.borrow_mut().push("commit");
+                if self.loaded.get() || !self.enabled.get() {
+                    return Err("outer rollback changed restored unloaded/enabled state".into());
+                }
+                self.journal_pending.set(false);
+                Ok(())
+            }
+        }
+        for quit in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let layout = seeded_layout(temp.path(), &["1.0.0", "2.0.0"], "2.0.0");
+            let config = HieronymusConfig::new(temp.path().join("data"));
+            let operation = LifecycleOperation::acquire(&config).unwrap();
+            if quit {
+                crate::desktop::control::record_quit(config.data_root()).unwrap();
+            }
+            let snapshot = snapshot_for(
+                temp.path().join("units/hieronymus.service"),
+                Some("1.0.0"),
+                quit,
+            );
+            let native = NativeState {
+                loaded: Cell::new(true),
+                enabled: Cell::new(false),
+                journal_pending: Cell::new(true),
+                events: RefCell::new(Vec::new()),
+            };
+            rollback_with_registration(
+                &native,
+                &layout,
+                &config,
+                &snapshot,
+                &operation,
+                Some(&native),
+            )
+            .unwrap();
+            assert_eq!(*native.events.borrow(), ["stop", "restore", "commit"]);
+            assert!(!native.loaded.get());
+            assert!(native.enabled.get());
+            assert!(!native.journal_pending.get());
+            assert_eq!(layout.current_version().as_deref(), Some("1.0.0"));
         }
     }
 
@@ -1430,7 +1945,14 @@ mod tests {
             false,
         );
 
-        rollback(&manager, &layout, &config, &snapshot).unwrap();
+        rollback(
+            &manager,
+            &layout,
+            &config,
+            &snapshot,
+            &LifecycleOperation::acquire(&config).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(manager.calls(), vec!["stop", "reload"]);
         assert_eq!(layout.current_version().as_deref(), Some("1.0.0"));
@@ -1453,7 +1975,14 @@ mod tests {
 
         // No real daemon, so `poll_until_live` times out (short under
         // cfg(test)) and the rollback reports itself as incomplete.
-        let error = rollback(&manager, &layout, &config, &snapshot).unwrap_err();
+        let error = rollback(
+            &manager,
+            &layout,
+            &config,
+            &snapshot,
+            &LifecycleOperation::acquire(&config).unwrap(),
+        )
+        .unwrap_err();
         assert_eq!(manager.calls(), vec!["stop", "reload", "start"]);
         assert!(
             error.contains("restarted the previous version but")
@@ -1481,6 +2010,7 @@ mod tests {
             &snapshot,
             &["step one".to_string()],
             "health check failed (candidate doctor failed: Some(42))".to_string(),
+            &LifecycleOperation::acquire(&config).unwrap(),
         );
         assert_eq!(error.exit_code(), 1);
         match &error {
@@ -1523,6 +2053,7 @@ mod tests {
             &snapshot,
             &[],
             "boom".to_string(),
+            &LifecycleOperation::acquire(&config).unwrap(),
         );
         assert!(matches!(error, UpdateError::Failed { .. }));
         assert!(
@@ -1562,7 +2093,7 @@ mod tests {
         );
         let script = format!(
             "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  \
-             release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
+             release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) printf '%s\\n' '{{\"scope\":\"payload-config-without-registration\",\"findings\":[]}}'; exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
         );
         std::fs::write(path, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
@@ -1696,28 +2227,80 @@ mod tests {
     }
 
     #[test]
-    fn started_candidate_that_never_publishes_an_endpoint_is_rolled_back() {
+    fn update_refuses_a_different_roots_registration_before_staging_or_manager_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
+        options.data_root = Some(temp.path().join("other-data"));
+        let manager = FakeManager::default();
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+        assert!(error.to_string().contains("unit serves data root"));
+        assert!(manager.calls().is_empty());
+        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
+        assert!(!layout.versions_dir().join(".staging-9.9.0").exists());
+    }
+
+    #[test]
+    fn undiscovered_owner_refuses_before_retirement_or_manager_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
+        let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+        let daemon = crate::daemon::Daemon::start(&crate::daemon::DaemonOptions {
+            data_root: options.data_root.clone(),
+            port: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        std::fs::remove_file(config.daemon_discovery_path()).unwrap();
+        assert!(!lifecycle::checked_probe(&config).unwrap().is_live());
+        let manager = FakeManager::default();
+        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
+        assert!(
+            manager.calls().is_empty(),
+            "refusal called manager: {:?}",
+            manager.calls()
+        );
+        assert_eq!(error.exit_code(), 2);
+        assert!(error.to_string().contains("owns this data root"));
+        assert!(
+            !config
+                .data_root()
+                .join(crate::desktop::control::LAUNCH_GATE)
+                .exists()
+        );
+        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
+        assert!(!layout.version_dir("9.9.0").exists());
+        assert!(!layout.versions_dir().join(".staging-9.9.0").exists());
+        assert!(RootOwnership::acquire(&config, "test").is_err());
+        daemon.shutdown().unwrap();
+    }
+
+    #[test]
+    fn update_keeps_a_registered_but_stopped_daemon_stopped() {
         let temp = tempfile::tempdir().unwrap();
         let (options, layout) = staged_update(temp.path(), "1.0.0", "9.9.0", 0);
         let manager = FakeManager::default();
+        let report = run_update_impl(&options, Some(&manager)).unwrap();
+        assert!(!report.daemon_started);
+        assert!(manager.calls().is_empty());
+        assert!(all_links_point_at(&layout, "9.9.0").is_ok());
+        assert!(layout.version_dir("1.0.0").exists());
+    }
 
-        // Manager starts the candidate, but nothing ever publishes discovery.
-        let error = run_update_impl(&options, Some(&manager)).unwrap_err();
-
-        assert_eq!(error.exit_code(), 1);
+    #[test]
+    fn running_custom_unit_installation_refuses_before_stopping_or_switching() {
+        let temp = tempfile::tempdir().unwrap();
+        let (options, layout) = staged_update(temp.path(), "0.9.0", "9.9.0", 0);
+        let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+        fake_live_daemon(&config, &"ac".repeat(16), "0.9.0", "ready");
+        let error = run_update_impl(&options, None).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("candidate readiness check failed"),
+            error.to_string().contains("no managed restart capability"),
             "{error}"
         );
-        assert!(
-            error.to_string().contains("rolled back — restored 1.0.0"),
-            "{error}"
-        );
-        assert_eq!(manager.calls(), vec!["start", "stop", "reload"]);
-        assert!(all_links_point_at(&layout, "1.0.0").is_ok());
-        assert!(!layout.version_dir("9.9.0").exists(), "candidate pruned");
+        assert_eq!(error.exit_code(), 2);
+        assert!(all_links_point_at(&layout, "0.9.0").is_ok());
+        assert!(lifecycle::checked_probe(&config).unwrap().is_live());
+        assert!(!layout.version_dir("9.9.0").exists());
     }
 
     #[test]
@@ -1866,9 +2449,9 @@ mod tests {
         // This manager acknowledges stop without releasing the daemon's lock.
         let manager = FakeManager::default();
         let error = run_update_impl(&options, Some(&manager)).unwrap_err();
-        assert_eq!(error.exit_code(), 2);
+        assert_eq!(error.exit_code(), 1);
         assert!(error.to_string().contains("owns this data root"), "{error}");
-        assert_eq!(manager.calls(), vec!["stop"]);
+        assert_eq!(manager.calls(), vec!["stop", "stop"]);
         assert!(all_links_point_at(&layout, "0.9.0").is_ok());
         assert!(!layout.version_dir("9.9.0").exists());
         daemon.shutdown().unwrap();
@@ -1879,14 +2462,26 @@ mod tests {
         struct OwnershipManager<'a>(&'a HieronymusConfig);
         impl ServiceManager for OwnershipManager<'_> {
             fn stop(&self) -> Result<(), service::ServiceError> {
+                assert_eq!(
+                    LifecycleOperation::acquire(self.0).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock
+                );
                 Ok(())
             }
             fn reload(&self) -> Result<(), service::ServiceError> {
                 assert!(RootOwnership::acquire(self.0, "competing-writer").is_err());
+                assert_eq!(
+                    LifecycleOperation::acquire(self.0).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock
+                );
                 Ok(())
             }
             fn start(&self) -> Result<(), service::ServiceError> {
                 assert!(RootOwnership::acquire(self.0, "restarted-daemon").is_ok());
+                assert_eq!(
+                    LifecycleOperation::acquire(self.0).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock
+                );
                 Ok(())
             }
         }
@@ -1899,7 +2494,14 @@ mod tests {
             Some("1.0.0"),
             true,
         );
-        rollback(&OwnershipManager(&config), &layout, &config, &snapshot).unwrap();
+        rollback(
+            &OwnershipManager(&config),
+            &layout,
+            &config,
+            &snapshot,
+            &LifecycleOperation::acquire(&config).unwrap(),
+        )
+        .unwrap();
         assert!(all_links_point_at(&layout, "1.0.0").is_ok());
         assert!(RootOwnership::acquire(&config, "next-owner").is_ok());
     }

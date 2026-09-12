@@ -184,3 +184,28 @@ receipts remain attributed to their original artifacts; they were not repeated
 or relabeled. The earlier `e7a7e08e…` artifact remains the semantic-worker and
 upgrade/rollback receipt. Authority/native-host/external-service gates remain
 open. No broad Rust suite was repeated for this UI/documentation correction.
+
+## Desktop split-artifact qualification
+
+The current release path is documented in [desktop qualification](desktop-qualification.md).
+`scripts/release-build.sh` delegates to the exact-native v2 producer; it no longer
+emits monolithic `release.json`. One canonical common-model archive is produced
+once and consumed unchanged by every target job. `desktop-candidate.yml` builds
+retained bytes, `desktop-evidence.yml` ingests separate data-commit captures, and
+only an exact matching version tag invokes `release-rust.yml` promotion. No
+rebuild happens after evidence. All four targets and seven native session records
+are mandatory; Intel runtime promotion and unavailable native checks block release.
+
+The explicit final-payload fixture is:
+
+```sh
+HIERO_DESKTOP_INSTALLED_CLI=/path/to/verified/disposable/payload/hiero \
+  cargo test -p hiero --locked --test desktop_native -- --ignored --nocapture
+```
+
+It runs final native inference, authenticated MCP and shutdown. It does not claim
+native manager, live tray, login, panel restart or agent-host acceptance. The
+Linux-only `desktop_update` ignored test additionally needs the documented real
+0.8.0 baseline and final split release for offline upgrade/rollback/uninstall.
+Custom unit directories remain definition-only. See the final Task 14 receipt;
+Task 12 hashes describe an earlier embedded console and are historical.

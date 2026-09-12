@@ -16,15 +16,15 @@ are distinct from that candidate qualification.
 
 | Property | Value |
 | --- | --- |
-| Initial target | `x86_64-unknown-linux-gnu` |
+| Initial desktop targets | Linux x86_64, Windows x86_64, macOS arm64 and x86_64 (Intel runtime promotion pending) |
 | Semantic retrieval | Required — qualified multilingual MiniLM replacement; see `docs/semantic-validation.md` |
 | Release readiness | Real semantic lane must report `ready`; acquiring, rebuilding, missing/mismatched assets and FTS-only operation do not pass |
 | Rust pin | 1.96.0 (`rust-toolchain.toml`) |
 | Bun pin (console and release helpers) | 1.4.0 (`frontend/bun.lock`, CI `setup-bun`) |
 
-macOS and Windows receive no installer (spec §Support Matrix); a later ADR is
-required per additional target after native release and service-lifecycle
-rehearsal.
+The approved desktop amendment adds native installers and helper packages.
+Implementation is distinct from native qualification; the complete release gate
+and pending host evidence are in [desktop qualification](desktop-qualification.md).
 
 ## Build ownership
 
@@ -62,8 +62,11 @@ configuration, which is what the frozen static-route suites pin.
 
 From the checkout, run `bun scripts/stage-release-assets.ts`. It prints a JSON
 object with `HIERO_RELEASE_ONNX_RUNTIME`, `HIERO_RELEASE_ONNX_SHA256` and
-`HIERO_RELEASE_MODEL_DIR`; set those exact values in the environment before
-`./scripts/release-build.sh`. CI uses `--github-env "$GITHUB_ENV"` to export them.
+`HIERO_RELEASE_MODEL_DIR` plus `HIERO_RELEASE_RUNTIME_DIR` and the exact target.
+The current builder consumes `HIERO_RELEASE_RUNTIME_DIR` and
+`HIERO_COMMON_MODEL_DIR` (a directory containing the once-produced common archive
+and `common-model.json`). CI stages one canonical model archive and passes those
+identical bytes to each native target; see the desktop qualification guide.
 The helper verifies fixed model/tokenizer/license/card and runtime archive/library
 hashes, bounds transfers and extraction, and restricts HTTPS redirect hosts.
 Runtime notices come from a fresh extraction of the verified archive; internal
@@ -80,51 +83,40 @@ release helpers; no Python or uv step is part of the release pipeline.
 
 ## Artifacts
 
-`scripts/release-build.sh` (full mode) produces under `target/release-dist/`:
+`scripts/release-build.sh` delegates to `release-build.ts`. Its full mode builds
+native CLI/helper binaries and emits under `target/release-dist/`:
 
-- `hieronymus-<version>-x86_64-unknown-linux-gnu.tar.gz` containing the
-  `hiero` binary plus relative command links `hieronymus -> hiero`,
-  `hieronymus-agent-hook -> hiero`, `hieronymus-mcp -> hiero` (the binary
-  routes those names by `argv[0]`; the links carry them into `PATH`);
-- bundled ONNX runtime/model/tokenizer, licenses/runtime notices and verified assets.json;
-- release.json naming the exact archive, version, target, channel and SHA256;
-- `hieronymus-<version>-x86_64-unknown-linux-gnu.tar.gz.sha256`
-  (`sha256sum` format), verified together with an extraction round-trip
-  (link targets, `hiero version`, `hieronymus version` probes).
+- `release-<exact-target>.json`, strict v2 metadata binding platform and common model;
+- the exact-target `.tar.gz` or Windows `.zip`, containing stripped native
+  executables/helper, runtime companions/notices and `assets.json`;
+- one unchanged SHA256-bound common model archive with model/tokenizer/notices;
+- native standalone installer, external assets/packaging receipts, and actual
+  separated diagnostic symbols where produced.
 
-Modes: `--dry-run` (plan only), `--assets-only` (Bun pin + bundle +
-console-embed compile check), default full pipeline. Running the full
-pipeline locally is optional; CI runs it on every release tag.
+Model payload is absent from platform archives. Assemblers verify both archives
+into complete immutable version directories. New readers retain legacy monolithic
+`release.json` input support; split output never masquerades as v1. Existing old
+updaters need the current standalone installer to bootstrap v2 support.
+
+Modes remain `--dry-run`, `--assets-only`, and full pipeline. Full mode accepts
+`--target` and `--out`; production packaging runs only on that native host.
+`CARGO_TARGET_DIR` locates build outputs, not the distribution output directory.
 
 ## Release workflow
 
-The 0.8.0 Rust alpha line is the release source authority; historical Python 1.x
-tags are not Rust version metadata. The competing Python publisher is retired.
-`.github/workflows/release-rust.yml` guards exact Cargo workspace/lock/inheritance
-and tag-to-HEAD equality before downloads, stages pinned native assets, builds
-the embedded console/native archive, validates release.json version/target/channel/
-archive/hash/null signature, and attaches archive, checksum and release.json.
-Rust 1.96.0, Bun 1.4.0 and build-only Python 3.12 remain pinned.
+`desktop-candidate.yml` builds retained native candidates before tagging.
+`desktop-evidence.yml` ingests native records/captures from a separate immutable
+data commit, keeping code and evidence identities distinct. Only an exact
+workspace-version tag invokes `release-rust.yml`; it verifies successful expected
+workflow runs, exact source/tag/version, every candidate attachment and all seven
+native desktop sessions, then publishes those same bytes without rebuilding.
+One missing target, Intel runtime promotion, unavailable required check or expired
+candidate blocks publication. There is no partial-target release or merge-time
+publication. See [the operator sequence](desktop-qualification.md).
 
-`scripts/stage-release-assets.py` reuses verified acquisition for model/runtime,
-verifies committed tokenizer/license bytes and bounded HTTPS model-card transfer,
-checks runtime notices/version, then exports the three builder inputs. Cache hits
-are verified; fresh CI needs no machine-specific cache. `check-rust-release.py
---allow-untagged` is an explicit local-candidate check, never used by publishing CI.
-`release-build.sh` honors CARGO_TARGET_DIR for the built binary; downloadable files
-still go to worktree target/release-dist.
-
-The job declares the release environment. Actual remote required-reviewer settings
-are external and have not been verified by this source change. No tag, publication
-or feed deployment accompanies local candidate preparation. Attaching release.json
-does not create the updater's required `<base>/<channel>/release.json` HTTPS feed;
-local --release-dir installation is the documented available path until a real
-feed origin is selected and qualified.
-
-Signing/SBOM/provenance are WAIVED for the first Rust release line (spec
-amendment 2026-09-03): the release ships SHA-256 checksums and the owner
-approval gate only. Introducing them later requires a small ADR before any
-public distribution.
+The release environment declaration does not establish remote reviewer settings.
+No tag, publication or feed deployment accompanies this implementation. No default
+channel feed URL is invented; `--release-dir` remains the available offline path.
 
 ## Install and update machinery
 
@@ -169,7 +161,15 @@ Two interlocking flows share one on-disk layout
   application directory, owned PATH links that point into it, and the
   generated agent-plugin entries; preserves databases, configuration, models,
   backups, and audit data. Data deletion happens only through the explicit
-  `--delete-data`, which names the exact data root in its report.
+  `--delete-data`, which names the exact data root in its report. It clears user
+  contents while retaining only `.owner.lock`, `.lifecycle.lock`,
+  `.desktop-launch.lock`, `dream-cycle.lock`, `.windows-native.lock`,
+  `.windows-browser.lock`, `.macos-native.lock`, `.macos-browser.lock`, and
+  `.tray-<64 lowercase hexadecimal digits>.lock` session files. Held coordination
+  inodes must never be unlinked; unrelated `.lock` files and directories are deleted. The
+  persistent `.hieronymus.service.lock` beside the systemd unit also remains
+  to serialize registration across different data roots. Uninstall refuses
+  layouts that would delete a held coordination file through a parent directory.
 - Agent integrations keep referencing the stable `hiero`/`hieronymus*` link
   names, so after a healthy update the new binary serves existing entries
   without host-configuration edits; the Rust side has no host-config
@@ -242,7 +242,7 @@ cp target/release-dist/hieronymus-$VERSION-x86_64-unknown-linux-gnu.tar.gz* "$RE
       --app-dir "$APP" --data-root "$DATA" --unit-dir "$UNITS"`; expect the
       application directory, unit, and generated agent plugins removed while
       `$DATA/hieronymus.sqlite`, `backups/`, configs, and semantic state
-      survive; `--delete-data` (separate run) then removes exactly `$DATA`.
+      survive; `--delete-data` (separate run) then clears user contents from exactly `$DATA`, retaining coordination lock files, including `.desktop-launch.lock`, `.lifecycle.lock` and `.owner.lock`.
       A real-machine rehearsal also reruns this with the default unit dir so
       the manager paths are exercised once.
 
@@ -252,24 +252,26 @@ The full builder requires these explicit inputs; there is no model download
 or language-runtime setup on the installed machine:
 
 ```sh
-export HIERO_RELEASE_ONNX_RUNTIME="$PWD/qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so"
-export HIERO_RELEASE_ONNX_SHA256=1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab
-export HIERO_RELEASE_MODEL_DIR="$PWD/qualification/.artifacts/models/paraphrase-multilingual-MiniLM-L12-v2"
-scripts/release-build.sh
+export HIERO_RELEASE_RUNTIME_DIR="/path/to/verified/extracted/native-runtime"
+export HIERO_COMMON_MODEL_DIR="/path/to/once-produced/common-model"
+scripts/release-build.sh --target x86_64-unknown-linux-gnu
 ```
 
 Bun 1.4.0 is a build-time dependency only. The builder copies the real runtime,
 model, tokenizer, model card, Apache license and runtime notices, verifies
 pinned hashes and runs native document/query inference. `assets.json` records
-the actual identity and file hashes. Archive round-trip repeats verification
-and native inference. Missing or mismatched inputs fail the build.
+the actual identity and file hashes. Archive round-trip repeats payload verification. The separate
+`qualify-desktop-native.ts` gate executes inference/authenticated MCP on the final
+assembled payload; desktop interaction remains a separate native gate. Missing
+or mismatched inputs fail the build.
 
 The version directory contains `lib/libonnxruntime.so`,
 `models/minilm/{model.onnx,tokenizer.json,LICENSE,README.md}`, runtime notices
 under `licenses/runtime/`, and `assets.json`. `minilm` is only a filesystem
 label: metadata retains `paraphrase-multilingual-MiniLM-L12-v2` at immutable
 revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`. Runtime is ONNX Runtime
-1.28.0. No qualification-record schema or attestation platform is required.
+1.28.0. Final publication requires the explicit desktop evidence schema described
+in the qualification guide.
 
 The daemon resolves bundled paths from its canonical versioned executable.
 Switching back to an earlier binary therefore switches the bundled assets

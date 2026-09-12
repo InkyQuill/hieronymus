@@ -12,14 +12,20 @@ pub mod client;
 pub mod console;
 pub mod daemon;
 pub mod daemon_client;
+pub mod desktop;
 pub mod doctor;
 pub mod export;
 pub mod lifecycle;
+pub mod readiness;
 pub mod service;
 pub mod stdio;
 pub mod uninstall;
 pub mod update;
 
+pub mod release_archive;
+pub mod release_manifest;
 pub mod release_source;
+mod release_zip;
 
+pub mod platform;
 pub mod trusted_ingress;

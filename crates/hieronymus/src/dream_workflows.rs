@@ -17,6 +17,8 @@ use crate::dream_config::DreamConfig;
 use crate::dream_providers::LlmDreamProvider;
 use crate::dreaming::{DeterministicDreamProvider, DreamError, DreamProvider, ProviderIdentity};
 use crate::provider_config::{ProviderCatalog, ProviderProfile};
+use crate::provider_observation::{ProviderKey, ProviderObserver};
+use std::sync::Arc;
 
 /// One dream workflow assignment in resolution order (ADR 0007). On the
 /// choices a resolver hands out, `provider` and `model` carry the values the
@@ -71,6 +73,7 @@ struct FixedProviderSource {
 pub struct WorkflowResolver {
     catalog: ProviderCatalog,
     fixed: Option<FixedProviderSource>,
+    observation: Option<(Arc<dyn ProviderObserver>, u64)>,
 }
 
 impl std::fmt::Debug for WorkflowResolver {
@@ -96,7 +99,14 @@ impl WorkflowResolver {
         Self {
             catalog,
             fixed: None,
+            observation: None,
         }
+    }
+
+    /// Observe real generations without changing provider resolution.
+    pub fn with_observer(mut self, observer: Arc<dyn ProviderObserver>, revision: u64) -> Self {
+        self.observation = Some((observer, revision));
+        self
     }
 
     /// Explicit deterministic injection (tests and diagnostics): serves a
@@ -123,6 +133,7 @@ impl WorkflowResolver {
         let is_deterministic = provider.is_deterministic();
         Self {
             catalog: ProviderCatalog::default(),
+            observation: None,
             fixed: Some(FixedProviderSource {
                 factory: Box::new(factory),
                 identity,
@@ -146,6 +157,18 @@ impl WorkflowResolver {
             let profile = self.profile(choice)?;
             let provider =
                 LlmDreamProvider::new(choice.provider.clone(), profile, choice.model.clone())?;
+            let provider = if let Some((observer, revision)) = &self.observation {
+                provider.with_observer(
+                    Arc::clone(observer),
+                    ProviderKey {
+                        profile: choice.provider.clone(),
+                        model: choice.model.clone(),
+                        revision: *revision,
+                    },
+                )
+            } else {
+                provider
+            };
             return Ok(Box::new(provider));
         };
         Ok((fixed.factory)())

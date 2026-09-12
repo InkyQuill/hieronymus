@@ -15,7 +15,7 @@ use hieronymus::data_root::HieronymusConfig;
 /// Open a data root with a live, migrated database, exactly as the CLI would
 /// before an export runs.
 fn open_root() -> (tempfile::TempDir, HieronymusConfig) {
-    let root = tempfile::tempdir().unwrap();
+    let root = native_tempdir();
     let config = HieronymusConfig::new(root.path());
     let application = hiero::application::Application::open(&config).unwrap();
     // Keep the application only for its side effect (a migrated database);
@@ -123,6 +123,7 @@ fn export_refuses_runtime_files_and_managed_trees() {
 }
 
 #[test]
+#[cfg(unix)]
 fn export_refuses_a_symlink_alias_to_the_database() {
     let (root, config) = open_root();
     let alias = root.path().join("alias.json");
@@ -141,6 +142,7 @@ fn export_refuses_a_symlink_alias_to_the_database() {
 }
 
 #[test]
+#[cfg(unix)]
 fn export_refuses_a_symlinked_parent_directory() {
     let (root, config) = open_root();
     let link = root.path().join("root-link");
@@ -229,8 +231,12 @@ fn an_explicit_overwrite_replaces_an_existing_export() {
 #[test]
 fn an_explicit_overwrite_still_refuses_protected_destinations() {
     let (root, config) = open_root();
-    let symlink_alias = root.path().join("alias.json");
-    std::os::unix::fs::symlink(config.database_path(), &symlink_alias).unwrap();
+    #[cfg(unix)]
+    let symlink_alias = {
+        let alias = root.path().join("alias.json");
+        std::os::unix::fs::symlink(config.database_path(), &alias).unwrap();
+        alias
+    };
     let hardlink_alias = root.path().join("hardlink.json");
     std::fs::hard_link(config.database_path(), &hardlink_alias).unwrap();
     std::fs::write(config.daemon_token_path(), b"secret\n").unwrap();
@@ -240,6 +246,7 @@ fn an_explicit_overwrite_still_refuses_protected_destinations() {
     // permission to replace the user's memory or the installation's state.
     for destination in [
         config.database_path(),
+        #[cfg(unix)]
         symlink_alias.clone(),
         hardlink_alias.clone(),
         config.daemon_token_path(),
@@ -446,9 +453,10 @@ fn export_report_names_the_destination_it_published() {
 }
 
 #[test]
+#[cfg(unix)]
 fn export_refuses_symlink_parent_traversal_before_normalizing() {
     let (root, config) = open_root();
-    let outside = tempfile::tempdir().unwrap();
+    let outside = native_tempdir();
     let nested = root.path().join("nested");
     std::fs::create_dir(&nested).unwrap();
     let alias = outside.path().join("alias");
@@ -462,4 +470,8 @@ fn export_refuses_symlink_parent_traversal_before_normalizing() {
         Err(hiero::export::ExportError::UnsafeDestination(_))
     ));
     assert_eq!(std::fs::read(config.database_path()).unwrap(), before);
+}
+
+fn native_tempdir() -> tempfile::TempDir {
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
 }

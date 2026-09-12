@@ -27,7 +27,7 @@
 # Usage:
 #   scripts/install.sh --release-dir <dir> | --release-url <base-url>
 #                      [--app-dir <dir>] [--data-root <dir>] [--unit-dir <dir>]
-#                      [--no-activate]
+#                      [--no-activate] [--desktop]
 
 set -euo pipefail
 
@@ -42,9 +42,10 @@ RELEASE_URL="${HIERONYMUS_RELEASE_URL:-}"
 UNIT_DIR="${HIERONYMUS_UNIT_DIR:-}"
 CHANNEL="${HIERONYMUS_RELEASE_CHANNEL:-stable}"
 NO_ACTIVATE=0
+DESKTOP=0
 
 usage() {
-  echo "usage: $0 (--release-dir <dir> | --release-url <base-url>) [--app-dir <dir>] [--data-root <dir>] [--unit-dir <dir>] [--no-activate]" >&2
+  echo "usage: $0 (--release-dir <dir> | --release-url <base-url>) [--app-dir <dir>] [--data-root <dir>] [--unit-dir <dir>] [--no-activate] [--desktop]" >&2
   exit 2
 }
 
@@ -79,6 +80,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || usage
       UNIT_DIR="$2"
       shift 2
+      ;;
+    --desktop)
+      DESKTOP=1
+      shift
       ;;
     --no-activate)
       NO_ACTIVATE=1
@@ -303,6 +308,8 @@ info "path links:   $HOME/.local/bin/{hiero,hieronymus,hieronymus-agent-hook,hie
 step "6. install the per-user daemon service"
 # ---------------------------------------------------------------------------
 service_args=(install --data-root "$DATA_ROOT")
+service_command=service
+if [ "$DESKTOP" = "1" ]; then service_command=desktop; fi
 if [ -n "$UNIT_DIR" ]; then
   service_args+=(--unit-dir "$UNIT_DIR")
 fi
@@ -310,7 +317,10 @@ if [ "$NO_ACTIVATE" = "1" ]; then
   service_args+=(--no-activate)
 fi
 service_ok=1
-"$APP_DIR/bin/hiero" service "${service_args[@]}" || service_ok=0
+"$APP_DIR/bin/hiero" "$service_command" "${service_args[@]}" || service_ok=0
+if [ "$DESKTOP" = "1" ] && [ "$service_ok" = "0" ]; then
+  fatal "desktop registration failed; inspect the diagnostic above and rerun hiero desktop install after repairing the installation"
+fi
 if [ "$service_ok" = "1" ]; then
   info "service definition is in place (the daemon is NOT started yet; step 8 decides)"
 else
@@ -336,6 +346,7 @@ state="$("$APP_DIR/bin/hiero" classify --json --data-root "$DATA_ROOT" |
   sed -n 's/.*"state": "\([^"]*\)".*/\1/p')"
 can_activate=1
 [ "$NO_ACTIVATE" = "0" ] || can_activate=0
+[ "$DESKTOP" = "0" ] || can_activate=0
 [ -z "$UNIT_DIR" ] || can_activate=0
 command -v systemctl >/dev/null 2>&1 || can_activate=0
 daemon_summary="not started (see step 8 above for the manual command)"
@@ -383,6 +394,9 @@ echo "  binaries:   $APP_DIR/versions/$version"
 echo "  commands:   $APP_DIR/bin (linked from $HOME/.local/bin)"
 echo "  data root:  $DATA_ROOT"
 echo "  daemon:     $daemon_summary"
+if [ "$DESKTOP" = "1" ]; then
+  echo "  desktop:    launch Hieronymus from the application menu; future logins follow Start at login"
+fi
 if ! command -v hiero >/dev/null 2>&1; then
   echo
   echo "note: 'hiero' is not on PATH; add $HOME/.local/bin to PATH."

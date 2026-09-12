@@ -34,7 +34,19 @@ pub fn validate_channel(channel: &str) -> Result<(), String> {
 
 /// Typed decoding rejects duplicate security-sensitive metadata fields.
 pub fn parse_metadata(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    if bytes.len() > 65536 {
+        return Err("release metadata exceeds byte bound".into());
+    }
+    let shape: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if shape.get("format_version").is_some() {
+        return serde_json::to_value(crate::release_manifest::ReleaseV2::parse(
+            bytes,
+            TARGET_TRIPLE,
+        )?)
+        .map_err(|e| e.to_string());
+    }
     #[derive(serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
     struct Metadata {
         version: String,
         archive: String,
@@ -52,6 +64,13 @@ pub fn parse_metadata(bytes: &[u8]) -> Result<serde_json::Value, String> {
 
 /// Validate metadata before constructing a download or filesystem path.
 pub fn validate_metadata(payload: &serde_json::Value) -> Result<(), String> {
+    if payload.get("format_version").is_some() {
+        return crate::release_manifest::ReleaseV2::parse(
+            &serde_json::to_vec(payload).map_err(|e| e.to_string())?,
+            TARGET_TRIPLE,
+        )
+        .map(|_| ());
+    }
     let field = |name| {
         payload
             .get(name)
@@ -102,6 +121,25 @@ pub fn stage_remote_with_roots(
     destination: &Path,
     roots: TlsRoots,
 ) -> Result<PathBuf, String> {
+    stage_remote_cached_with_roots(
+        base_url,
+        channel,
+        destination,
+        &destination
+            .parent()
+            .ok_or("missing cache parent")?
+            .join("model-cache"),
+        roots,
+    )
+}
+
+pub fn stage_remote_cached_with_roots(
+    base_url: &str,
+    channel: &str,
+    destination: &Path,
+    cache: &Path,
+    roots: TlsRoots,
+) -> Result<PathBuf, String> {
     validate_base_url(base_url)?;
     validate_channel(channel)?;
     if destination.exists() {
@@ -117,18 +155,82 @@ pub fn stage_remote_with_roots(
         .map_err(|e| e.to_string())?;
     let transport = HttpModelTransport::new(Duration::from_secs(60)).with_tls_roots(roots);
     let base = format!("{}/{channel}", base_url.trim_end_matches('/'));
+    let target_name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
+    let target_metadata = temporary.path().join(&target_name);
+    match transport.download_to(
+        &format!("{base}/{target_name}"),
+        &target_metadata,
+        64 * 1024,
+    ) {
+        Ok(_) => {
+            let manifest = crate::release_manifest::ReleaseV2::parse(
+                &std::fs::read(&target_metadata).map_err(|e| e.to_string())?,
+                TARGET_TRIPLE,
+            )?;
+            if manifest.channel != channel {
+                return Err("release metadata channel mismatch".into());
+            }
+            {
+                let name = &manifest.platform.archive;
+                transport
+                    .download_to(
+                        &format!("{base}/{name}"),
+                        &temporary.path().join(name),
+                        MAX_ARCHIVE,
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            let cached = cache.join(format!("{}.tar.gz", manifest.model.sha256));
+            if !cached.try_exists().map_err(|e| e.to_string())? {
+                let download = temporary.path().join("model-download");
+                transport
+                    .download_to(
+                        &format!("{base}/{}", manifest.model.archive),
+                        &download,
+                        MAX_ARCHIVE,
+                    )
+                    .map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+                crate::release_archive::copy_verified(&download, &manifest.model.sha256, &cached)?;
+            }
+            crate::release_archive::copy_verified(
+                &cached,
+                &manifest.model.sha256,
+                &temporary.path().join(&manifest.model.archive),
+            )?;
+            crate::release_archive::verify_split_directory(temporary.path(), TARGET_TRIPLE)?;
+            std::fs::rename(temporary.path(), destination).map_err(|e| e.to_string())?;
+            return Ok(destination.to_path_buf());
+        }
+        Err(error)
+            if error
+                .to_string()
+                .ends_with("server answered with status 404") =>
+        {
+            if target_metadata.exists() {
+                std::fs::remove_file(target_metadata).map_err(|e| e.to_string())?;
+            }
+        }
+        Err(error) => return Err(error.to_string()),
+    }
     let metadata = temporary.path().join("release.json");
     transport
         .download_to(&format!("{base}/release.json"), &metadata, 64 * 1024)
         .map_err(|e| e.to_string())?;
     let payload = parse_metadata(&std::fs::read(&metadata).map_err(|e| e.to_string())?)?;
+    if payload.get("format_version").is_some() {
+        return Err("split metadata must use its exact-target filename".into());
+    }
     validate_metadata(&payload)?;
     if payload.get("channel").and_then(serde_json::Value::as_str) != Some(channel) {
         return Err(format!(
             "release metadata does not declare requested channel {channel}"
         ));
     }
-    let archive_name = payload["archive"].as_str().unwrap();
+    let archive_name = payload
+        .get("archive")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("legacy metadata needs an archive")?;
     let archive = temporary.path().join(archive_name);
     transport
         .download_to(&format!("{base}/{archive_name}"), &archive, MAX_ARCHIVE)
@@ -144,7 +246,13 @@ pub fn verify_directory(directory: &Path) -> Result<crate::update::ResolvedRelea
     if crate::update::sha256_file(&release.archive).map_err(|e| e.to_string())? != release.sha256 {
         return Err("release archive checksum mismatch".into());
     }
-    inspect_archive(&release.archive)?;
+    if !directory
+        .join(crate::release_manifest::metadata_name(TARGET_TRIPLE))
+        .try_exists()
+        .map_err(|e| e.to_string())?
+    {
+        inspect_archive(&release.archive)?;
+    }
     Ok(release)
 }
 
@@ -235,4 +343,50 @@ pub fn extract_archive(path: &Path, destination: &Path) -> Result<(), String> {
     archive.set_preserve_permissions(false);
     archive.set_preserve_mtime(false);
     archive.unpack(destination).map_err(|e| e.to_string())
+}
+
+/// Assemble an offline acquisition directory with a reverified content-addressed model cache.
+/// The returned temporary directory owns copies; installed versions never depend on the cache.
+pub fn stage_local_pair(directory: &Path, cache: &Path) -> Result<tempfile::TempDir, String> {
+    use std::io::Read;
+    let name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
+    let mut metadata = Vec::new();
+    crate::release_archive::regular_file(&directory.join(&name), 65536)?
+        .take(65537)
+        .read_to_end(&mut metadata)
+        .map_err(|e| e.to_string())?;
+    let manifest = crate::release_manifest::ReleaseV2::parse(&metadata, TARGET_TRIPLE)?;
+    std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    std::fs::write(temp.path().join(name), metadata).map_err(|e| e.to_string())?;
+    crate::release_archive::copy_verified(
+        &directory.join(&manifest.platform.archive),
+        &manifest.platform.sha256,
+        &temp.path().join(&manifest.platform.archive),
+    )?;
+    let cached = cache.join(format!("{}.tar.gz", manifest.model.sha256));
+    if !cached.try_exists().map_err(|e| e.to_string())? {
+        crate::release_archive::copy_verified(
+            &directory.join(&manifest.model.archive),
+            &manifest.model.sha256,
+            &cached,
+        )?;
+    }
+    // If supplied, a corrupt release member is an error even when the cache is good.
+    let supplied = directory.join(&manifest.model.archive);
+    if supplied.try_exists().map_err(|e| e.to_string())? {
+        crate::release_archive::copy_verified(
+            &supplied,
+            &manifest.model.sha256,
+            &temp.path().join("supplied-model"),
+        )?;
+        std::fs::remove_file(temp.path().join("supplied-model")).map_err(|e| e.to_string())?;
+    }
+    crate::release_archive::copy_verified(
+        &cached,
+        &manifest.model.sha256,
+        &temp.path().join(&manifest.model.archive),
+    )?;
+    crate::release_archive::verify_split_directory(temp.path(), TARGET_TRIPLE)?;
+    Ok(temp)
 }

@@ -4,7 +4,6 @@
 //! No rotation ceremony and no session state.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::secret::Secret;
@@ -66,29 +65,12 @@ fn random_hex(bytes: usize) -> Result<String, getrandom::Error> {
     Ok(text)
 }
 
-/// Restrict a written credential to its owner (best effort on non-Unix, where
-/// the daemon is out of scope for this cutover). On Unix a failure is an
-/// error: a credential file must never be left readable by others.
-fn unix_user_only(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(path)?.permissions();
-        permissions.set_mode(0o600);
-        std::fs::set_permissions(path, permissions)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
-}
-
-/// Write the bearer token atomically with user-only permissions.
+/// Write a token atomically with creation-time owner-only protection.
 pub fn write_token(config: &HieronymusConfig, token: &Secret<String>) -> std::io::Result<()> {
-    let path = config.daemon_token_path();
-    hieronymus::atomic::atomic_write_text(&path, token.expose_secret())?;
-    unix_user_only(&path)
+    crate::platform::credentials::replace_private(
+        &config.daemon_token_path(),
+        token.expose_secret().as_bytes(),
+    )
 }
 
 /// Why an existing installation credential cannot be used as-is.
@@ -109,6 +91,10 @@ pub enum EnsureTokenError {
          run `chmod 600 {path}` or delete the file and start the daemon again"
     )]
     Insecure { path: std::path::PathBuf, mode: u32 },
+    #[error(
+        "the stored installation token at {path} is readable beyond its owner or has unsafe aliases; on Unix run `chmod 600 {path}`; otherwise recreate it with owner-only access"
+    )]
+    Unsafe { path: std::path::PathBuf },
     #[error("the installation token could not be generated: {0}")]
     Random(#[from] getrandom::Error),
     #[error("the installation token at {path} could not be written: {source}")]
@@ -162,35 +148,36 @@ pub fn read_local_credential(
     read_token_at(kind.path(config))
 }
 fn ensure_token_at(path: std::path::PathBuf) -> Result<Secret<String>, EnsureTokenError> {
-    if path.exists() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path)
-                .map_err(|_| EnsureTokenError::Unreadable { path: path.clone() })?
-                .permissions()
-                .mode()
-                & 0o777;
-            // Owner-only bits are fine (0600 and the stricter 0400); any
-            // group or other access is not.
-            if mode & 0o077 != 0 {
-                return Err(EnsureTokenError::Insecure { path, mode });
-            }
+    match crate::platform::credentials::read_private(&path) {
+        Ok(bytes) => return decode_ensured(path, bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(EnsureTokenError::Unsafe { path });
         }
-        return match read_token_at(path.clone()) {
-            Ok(token) => Ok(token),
-            Err(CredentialError::Empty { path }) => Err(EnsureTokenError::Empty { path }),
-            Err(CredentialError::Missing { path }) => Err(EnsureTokenError::Unreadable { path }),
-        };
+        Err(_) => return Err(EnsureTokenError::Unreadable { path }),
     }
     let token = generate_bearer_token()?;
-    hieronymus::atomic::atomic_write_text(&path, token.expose_secret())
-        .and_then(|()| unix_user_only(&path))
-        .map_err(|source| EnsureTokenError::Write {
-            path: path.clone(),
-            source,
-        })?;
-    Ok(token)
+    match crate::platform::credentials::create_private_new(&path, token.expose_secret().as_bytes())
+    {
+        Ok(()) => Ok(token),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let bytes = crate::platform::credentials::read_private(&path)
+                .map_err(|_| EnsureTokenError::Unreadable { path: path.clone() })?;
+            decode_ensured(path, bytes)
+        }
+        Err(source) => Err(EnsureTokenError::Write { path, source }),
+    }
+}
+fn decode_ensured(
+    path: std::path::PathBuf,
+    bytes: Vec<u8>,
+) -> Result<Secret<String>, EnsureTokenError> {
+    let text = String::from_utf8(bytes)
+        .map_err(|_| EnsureTokenError::Unreadable { path: path.clone() })?;
+    if text.trim().is_empty() {
+        return Err(EnsureTokenError::Empty { path });
+    }
+    Ok(Secret::new(text.trim().to_string()))
 }
 
 /// Read the bearer token back (trimmed).
@@ -198,8 +185,10 @@ pub fn read_token(config: &HieronymusConfig) -> Result<Secret<String>, Credentia
     read_token_at(config.daemon_token_path())
 }
 fn read_token_at(path: std::path::PathBuf) -> Result<Secret<String>, CredentialError> {
-    let text = std::fs::read_to_string(&path)
+    let bytes = crate::platform::credentials::read_private(&path)
         .map_err(|_| CredentialError::Missing { path: path.clone() })?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| CredentialError::Missing { path: path.clone() })?;
     let token = text.trim();
     if token.is_empty() {
         return Err(CredentialError::Empty { path });
@@ -315,8 +304,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(root.path());
         std::fs::create_dir_all(config.data_root()).unwrap();
-        std::fs::write(config.daemon_token_path(), "   \n").unwrap();
-        unix_user_only(&config.daemon_token_path()).unwrap();
+        crate::platform::credentials::create_private_new(&config.daemon_token_path(), b"   \n")
+            .unwrap();
         let error = ensure_installation_token(&config).unwrap_err();
         let text = error.to_string();
         assert!(text.contains("is empty"), "{text}");

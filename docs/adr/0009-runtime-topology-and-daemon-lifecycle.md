@@ -78,3 +78,13 @@ authorization, audit, and scoring path.
 
 Direct-store CLI behavior from the initial proposal is rejected except for
 explicit exclusive maintenance commands.
+
+### 2026-09-11 desktop packaging amendment
+
+The unpublished 0.9.0 candidate ships a separate native helper. Linux Desktop mode uses an on-demand daemon plus XDG tray login registration; Windows uses owned per-user native tasks; macOS preserves Headless/ Desktop `RunAtLoad` mode with separate owned LaunchAgents and no implicit crash restart. Actual native execution evidence is recorded in the desktop platform support matrix; source inclusion checks do not establish OS acceptance.
+
+Desktop install/update holds one lifecycle operation through verified pair assembly, authenticated helper retirement, stop/root release, native registration snapshot, immutable version selection and activation/rollback. A root launch gate closes enumeration races, session OS locks prove retirement, and secret-protected root/session/instance records authenticate a distinct retirement action. Pending desktop actions, other active sessions and continuing native manager/browser gates refuse mutation. Explicit Quit intent survives retirement and failed activation; helper resume does not start a previously stopped daemon. Registrations and actual native enabled/mode state are restored along with the prior complete version. An indeterminate rollback retains artifacts and reports the pending state.
+
+Standalone installers use local verified releases and the same Rust activation transaction. No installed Python or Bun is required. Windows direct self-uninstall refuses before mutation because the executing image cannot be removed; the PowerShell installer provides an external verified CLI uninstall path. Data/settings are preserved, and persistent coordination lock files are not unlinked.
+
+A Linux custom unit directory remains definition-only. A package operation that needs managed startup/restoration refuses before retirement, stop or selection when that capability is unavailable. Offline install/upgrade evidence plus a separately launched disposable daemon does not establish native manager active-update acceptance.

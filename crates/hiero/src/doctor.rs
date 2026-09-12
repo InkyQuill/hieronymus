@@ -60,6 +60,7 @@ pub struct DoctorFinding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoctorReport {
+    pub scope: &'static str,
     pub status: Health,
     pub findings: Vec<DoctorFinding>,
 }
@@ -77,6 +78,7 @@ impl DoctorReport {
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "status": self.status.as_str(),
+            "scope": self.scope,
             "findings": self.findings.iter().map(|finding| serde_json::json!({
                 "level": finding.level.as_str(),
                 "code": finding.code,
@@ -87,7 +89,7 @@ impl DoctorReport {
 
     /// Human rendering: one line per finding, status last.
     pub fn render_human(&self) -> String {
-        let mut text = String::new();
+        let mut text = format!("scope: {}\n", self.scope);
         for finding in &self.findings {
             text.push_str(&format!(
                 "{:>7}  {:<28} {}\n",
@@ -120,7 +122,25 @@ pub fn run(config: &HieronymusConfig) -> DoctorReport {
 /// `<app>/versions/<version>/hiero`): a developer or library build has no
 /// service definition to report, so the check is skipped instead of guessed.
 pub fn run_with_service(config: &HieronymusConfig, unit_dir: Option<&Path>) -> DoctorReport {
+    run_scoped(config, unit_dir, false)
+}
+
+/// Independent payload/config checks for a parent-owned installation transaction.
+/// This report explicitly excludes registration and cannot establish full health.
+pub fn run_without_registration(config: &HieronymusConfig) -> DoctorReport {
+    run_scoped(config, None, true)
+}
+fn run_scoped(
+    config: &HieronymusConfig,
+    unit_dir: Option<&Path>,
+    skip_registration: bool,
+) -> DoctorReport {
     let mut report = DoctorReport {
+        scope: if skip_registration {
+            "payload-config-without-registration"
+        } else {
+            "full"
+        },
         status: Health::Healthy,
         findings: Vec::new(),
     };
@@ -129,7 +149,9 @@ pub fn run_with_service(config: &HieronymusConfig, unit_dir: Option<&Path>) -> D
     check_credential_permissions(config, &mut report);
     check_discovery(config, &mut report);
     check_semantic(config, &mut report);
-    check_service(config, unit_dir, &mut report);
+    if !skip_registration {
+        check_service(config, unit_dir, &mut report);
+    }
     if report
         .findings
         .iter()
@@ -330,40 +352,20 @@ fn check_credential_permissions(config: &HieronymusConfig, report: &mut DoctorRe
         );
         return;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        match std::fs::metadata(&token_path) {
-            Ok(metadata) => {
-                let mode = metadata.permissions().mode() & 0o777;
-                if mode == 0o600 {
-                    report.push(
-                        Level::Ok,
-                        "token-permissions",
-                        "bearer token is user-only (0600)".to_string(),
-                    );
-                } else {
-                    report.push(
-                        Level::Warning,
-                        "token-permissions",
-                        format!(
-                            "bearer token at {} is readable beyond its owner (mode {:o}); expected 600",
-                            token_path.display(),
-                            mode
-                        ),
-                    );
-                }
-            }
-            Err(error) => report.push(
-                Level::Warning,
-                "token-permissions",
-                format!("could not stat {}: {error}", token_path.display()),
+    match crate::platform::credentials::read_private(&token_path) {
+        Ok(_) => report.push(
+            Level::Ok,
+            "token-permissions",
+            "bearer token is user-only".into(),
+        ),
+        Err(error) => report.push(
+            Level::Warning,
+            "token-permissions",
+            format!(
+                "unsafe or unreadable bearer token at {}: {error}",
+                token_path.display()
             ),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = report;
+        ),
     }
 }
 

@@ -83,6 +83,25 @@ export type AdminCommand = {
   requires_selection: boolean;
 };
 
+export type ReadinessLevel = "ready" | "degraded" | "starting";
+export type ProviderCondition = "untested" | "healthy" | "failed";
+
+export type ProviderReadiness = {
+  capabilities?: string[];
+  provider: string;
+  model: string;
+  revision: number;
+  condition: ProviderCondition;
+  observed_at: string | null;
+  reason: string | null;
+};
+
+export type ReadinessSummary = {
+  level: ReadinessLevel;
+  reasons: string[];
+  providers: ProviderReadiness[];
+};
+
 export type AdminDashboard = {
   header: { product: string; version: string; tagline: string };
   stats: Record<string, number>;
@@ -90,6 +109,9 @@ export type AdminDashboard = {
   command_options?: AdminCommand[];
   short_term_status: Record<string, unknown>;
   dream_status: Record<string, unknown>;
+  /// Added by current daemons. Kept unknown until the presentation-boundary
+  /// parser verifies the complete unversioned DTO shape.
+  readiness?: unknown;
 };
 
 export type AdminRow = {

@@ -169,7 +169,7 @@ fn reused_port_receives_only_status_probes_from_both_entry_points() {
 }
 
 #[test]
-fn only_explicit_opt_in_calls_the_managed_service() {
+fn opt_in_cannot_bypass_owned_root_or_identity_mismatch() {
     for (stdio, stale) in [(false, false), (true, false), (false, true), (true, true)] {
         let root = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(root.path().join("data"));
@@ -206,17 +206,84 @@ fn only_explicit_opt_in_calls_the_managed_service() {
         assert!(!run(false).status.success());
         assert!(!log.exists());
         let output = run(true);
+        assert!(!output.status.success());
+        assert!(!log.exists());
+        assert!(output.stdout.is_empty());
+        daemon.shutdown().unwrap();
+    }
+}
+
+#[test]
+fn only_explicit_opt_in_starts_a_truly_stopped_root() {
+    use std::time::{Duration, Instant};
+    for stdio in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path().join("data"));
+        let log = root.path().join("manager.log");
+        let shim = root.path().join("systemctl");
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\nprintf '%s\n' \"$*\" >> \"$TEST_MANAGER_LOG\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |opt_in| {
+            let mut cmd = command(config.data_root(), stdio);
+            cmd.env("HOME", root.path())
+                .env("PATH", root.path())
+                .env("TEST_MANAGER_LOG", &log);
+            if opt_in {
+                cmd.arg("--start-daemon");
+            }
+            cmd.output().unwrap()
+        };
+        assert!(!run(false).status.success());
+        assert!(!log.exists());
+        // Publish a real daemon only when the disposable manager receives
+        // start. The root is actually unowned before the manager action.
+        let daemon_root = config.data_root().to_owned();
+        let manager_log = log.clone();
+        let (done, stop) = std::sync::mpsc::channel();
+        let manager = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if std::fs::read_to_string(&manager_log)
+                    .unwrap_or_default()
+                    .contains("--user start hieronymus.service")
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "manager was never asked to start"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let daemon = Daemon::start(&DaemonOptions {
+                data_root: Some(daemon_root),
+                port: 0,
+                ..Default::default()
+            })
+            .unwrap();
+            let _ = stop.recv_timeout(Duration::from_secs(30));
+            daemon.shutdown().unwrap();
+        });
+        let output = run(true);
+        let _ = done.send(());
+        manager.join().unwrap();
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let calls = std::fs::read_to_string(log).unwrap();
-        assert!(calls.contains("--user start hieronymus.service"), "{calls}");
+        assert!(
+            std::fs::read_to_string(log)
+                .unwrap()
+                .contains("--user start hieronymus.service")
+        );
         if stdio {
             assert!(output.stdout.is_empty());
         }
-        daemon.shutdown().unwrap();
     }
 }
 

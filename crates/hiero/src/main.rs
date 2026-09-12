@@ -19,7 +19,7 @@ use hieronymus::data_root::load_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: hiero <version|start|stop|restart|status|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
+const USAGE: &str = "usage: hiero <version|start|stop|restart|status|tray|desktop|admin|config|classify|doctor|semantic|agent-hook|migrate|recover|service|update|uninstall|daemon|mcp|recall-feedback|tool-call|export|plugins> [--json] [--dry-run] [--data-root <path>] [--port <n>] [--start-daemon]";
 const CONSOLE_USAGE: &str = "usage: hiero <admin|config> [--data-root <path>] (opens the authenticated web console in your browser; starts the local daemon if needed)";
 const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>]";
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
@@ -28,7 +28,8 @@ const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--force] [--jso
 const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
-const DOCTOR_USAGE: &str = "usage: hiero doctor [--json] [--data-root <path>]";
+const DOCTOR_USAGE: &str =
+    "usage: hiero doctor [--json] [--data-root <path>] [--unit-dir <path>] [--skip-registration]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable|configure> [--json] [--data-root <path>] (configure: --provider ollama --base-url <origin> --model <installed-model>) (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
 const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>]";
 
@@ -84,6 +85,7 @@ struct ParsedArguments {
     unit_dir: Option<String>,
     binary: Option<String>,
     no_activate: bool,
+    skip_registration: bool,
     release_dir: Option<String>,
     release_url: Option<String>,
     channel: Option<String>,
@@ -126,6 +128,7 @@ fn parse_arguments(
         unit_dir: None,
         binary: None,
         no_activate: false,
+        skip_registration: false,
         release_dir: None,
         release_url: None,
         channel: None,
@@ -142,6 +145,7 @@ fn parse_arguments(
         let argument = &arguments[index];
         match argument.as_str() {
             "--json" => parsed.json = true,
+            "--skip-registration" => parsed.skip_registration = true,
             "--host" | "--delivery-id" => {
                 index += 1;
                 let value = arguments
@@ -358,6 +362,9 @@ fn parse_arguments(
         Some(command) => Some(command.to_string()),
         None => positionals.next(),
     };
+    if parsed.skip_registration && parsed.command.as_deref() != Some("doctor") {
+        return Err("--skip-registration is only supported by doctor".into());
+    }
     if parsed.command.is_none() {
         return Err(format!("missing command; {USAGE}"));
     }
@@ -382,6 +389,23 @@ fn parse_arguments(
 }
 
 fn run(arguments: &[String]) -> Result<ExitCode, String> {
+    #[cfg(target_os = "macos")]
+    if arguments.as_slice() == ["__macos-native-broker"] {
+        return hiero::platform::macos_broker::run().map(|_| ExitCode::SUCCESS);
+    }
+    #[cfg(windows)]
+    if arguments.as_slice() == ["__windows-native-broker"] {
+        return hiero::platform::windows_broker::run().map(|_| ExitCode::SUCCESS);
+    }
+    if argv0_command().is_none() && arguments.first().map(String::as_str) == Some("desktop") {
+        #[cfg(windows)]
+        return hiero::desktop::windows_registration::run(&arguments[1..])
+            .map(|_| ExitCode::SUCCESS);
+        #[cfg(target_os = "macos")]
+        return hiero::desktop::macos_registration::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return hiero::desktop::linux_cli::run(&arguments[1..]).map(|_| ExitCode::SUCCESS);
+    }
     let parsed = parse_arguments(arguments, argv0_command())?;
     let data_root = parsed.data_root.as_deref().map(std::path::Path::new);
     match parsed.command.as_deref() {
@@ -462,9 +486,24 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         Some(command @ ("start" | "stop" | "restart" | "status")) => {
             run_lifecycle(command, &parsed, data_root)
         }
-        // The authenticated web console launchers (plan W1): mint a one-time
-        // launch grant through the local daemon and open the browser at the
-        // requested page. Never print the grant, the bearer, or the URL.
+        Some("tray") => {
+            reject_subcommand(&parsed, "tray")?;
+            reject_feedback_flags(&parsed, "tray")?;
+            reject_headless_flags(&parsed, "tray")?;
+            if parsed.port.is_some() || parsed.start_daemon || parsed.json || parsed.dry_run {
+                return Err("usage: hiero tray [--data-root <path>]".into());
+            }
+            #[cfg(any(windows, target_os = "macos"))]
+            hiero::desktop::launch::launch_with_options(
+                &load_config(data_root),
+                &service_options(&parsed, data_root)?,
+            )?;
+            #[cfg(not(any(windows, target_os = "macos")))]
+            hiero::desktop::launch::launch(&load_config(data_root))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        // The authenticated web console launchers mint a one-time launch grant.
+        // Never print the grant, the bearer, or the URL.
         Some(page @ ("admin" | "config")) => run_console(page, &parsed, data_root),
         Some("doctor") => run_doctor(&parsed, data_root),
         Some("semantic") => run_semantic(&parsed, data_root),
@@ -507,6 +546,32 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
                     .as_deref()
                     .ok_or("release-verify requires --release-dir")?,
             );
+            if directory
+                .join(hiero::release_manifest::metadata_name(
+                    hiero::app::TARGET_TRIPLE,
+                ))
+                .try_exists()
+                .map_err(|e| e.to_string())?
+            {
+                let release = if let Some(output) = &parsed.output {
+                    hiero::release_archive::extract_split_directory(
+                        &directory,
+                        hiero::app::TARGET_TRIPLE,
+                        &absolute_path(output),
+                    )?
+                } else {
+                    hiero::release_archive::verify_split_directory(
+                        &directory,
+                        hiero::app::TARGET_TRIPLE,
+                    )?
+                };
+                println!(
+                    "verified split release {} ({})",
+                    release.manifest.version,
+                    hiero::app::TARGET_TRIPLE
+                );
+                return Ok(ExitCode::SUCCESS);
+            }
             let release = hiero::release_source::verify_directory(&directory)?;
             if let Some(output) = &parsed.output {
                 hiero::release_source::extract_archive(&release.archive, &absolute_path(output))?;
@@ -516,6 +581,28 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
                 release.version,
                 hiero::app::TARGET_TRIPLE
             );
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("desktop-bootstrap") => {
+            let options = update::UpdateOptions {
+                release_dir: parsed
+                    .release_dir
+                    .as_deref()
+                    .map(absolute_path)
+                    .ok_or("desktop-bootstrap requires --release-dir")?,
+                app_dir: Some(
+                    parsed
+                        .app_dir
+                        .as_deref()
+                        .map(absolute_path)
+                        .unwrap_or_else(hiero::app::default_app_dir),
+                ),
+                data_root: parsed.data_root.as_deref().map(absolute_path),
+                unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
+            };
+            let report = update::run_desktop_install(&options, parsed.no_activate)
+                .map_err(|e| e.to_string())?;
+            println!("{}", report.render_human());
             Ok(ExitCode::SUCCESS)
         }
         Some("update") => run_update_command(&parsed),
@@ -637,7 +724,12 @@ fn run_doctor(
     reject_feedback_flags(parsed, "doctor")?;
     reject_headless_flags(parsed, "doctor")?;
     let config = load_config(data_root);
-    let report = doctor::run_with_service(&config, None);
+    let unit_dir = parsed.unit_dir.as_deref().map(absolute_path);
+    let report = if parsed.skip_registration {
+        doctor::run_without_registration(&config)
+    } else {
+        doctor::run_with_service(&config, unit_dir.as_deref())
+    };
     if parsed.json {
         let text =
             serde_json::to_string_pretty(&report.to_json()).map_err(|error| error.to_string())?;
@@ -1351,6 +1443,12 @@ fn service_options(
         None => std::env::current_exe()
             .map_err(|error| format!("could not locate the running binary: {error}"))?,
     };
+    #[cfg(any(windows, target_os = "macos"))]
+    let binary = if parsed.binary.is_none() {
+        hiero::desktop::launch::stable_cli(&binary)?
+    } else {
+        binary
+    };
     Ok(service::ServiceOptions {
         data_root: absolute_path(load_config(data_root).data_root()),
         unit_dir: parsed
@@ -1417,7 +1515,7 @@ fn run_lifecycle(
 }
 
 /// The `service` subcommand: install (idempotent unit render + optional
-/// manager enable), uninstall (unit removal only), status, start, stop. The
+/// manager enable), uninstall (graceful stop and unit removal), status, start, stop. The
 /// systemd user manager is only contacted for the default unit location;
 /// `--unit-dir` overrides are render/remove only, which keeps tests and
 /// custom setups away from the real manager.
@@ -1497,6 +1595,9 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     if local.is_some() && remote.is_some() {
         return Err("--release-dir and --release-url are mutually exclusive".into());
     }
+    let config = load_config(parsed.data_root.as_deref().map(std::path::Path::new));
+    let operation = lifecycle::operation::LifecycleOperation::acquire(&config)
+        .map_err(|error| error.to_string())?;
     let staging = tempfile::tempdir().map_err(|e| e.to_string())?;
     let channel = parsed
         .channel
@@ -1506,9 +1607,18 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     hiero::release_source::validate_channel(&channel)?;
     let release_dir = match (local, remote) {
         (Some(directory), None) => absolute_path(&directory),
-        (None, Some(base)) => {
-            hiero::release_source::stage_remote(&base, &channel, &staging.path().join("verified"))?
-        }
+        (None, Some(base)) => hiero::release_source::stage_remote_cached_with_roots(
+            &base,
+            &channel,
+            &staging.path().join("verified"),
+            &parsed
+                .app_dir
+                .as_deref()
+                .map(absolute_path)
+                .unwrap_or_else(hiero::app::default_app_dir)
+                .join("cache/models"),
+            hieronymus::tls::TlsRoots::default(),
+        )?,
         _ => {
             return Err(format!(
                 "configure HIERONYMUS_RELEASE_URL or pass --release-url / --release-dir; {UPDATE_USAGE}"
@@ -1521,7 +1631,7 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
         data_root: parsed.data_root.as_deref().map(absolute_path),
         unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
     };
-    match update::run_update(&options) {
+    match update::run_update_guarded(&options, &operation) {
         Ok(report) => {
             if parsed.json {
                 let text = serde_json::to_string_pretty(&report.to_json())

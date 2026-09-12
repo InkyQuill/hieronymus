@@ -18,8 +18,15 @@
 
 use std::path::{Path, PathBuf};
 
-/// The only supported release target (distribution spec §Support Matrix).
+/// Native release target; acquisition metadata remains separately qualified.
+#[cfg(target_os = "linux")]
 pub const TARGET_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+#[cfg(windows)]
+pub const TARGET_TRIPLE: &str = "x86_64-pc-windows-msvc";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub const TARGET_TRIPLE: &str = "aarch64-apple-darwin";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub const TARGET_TRIPLE: &str = "x86_64-apple-darwin";
 
 /// The command link names this project owns. `hiero` is canonical; the others
 /// route through the binary's `argv[0]` handling. Removing any of them requires
@@ -33,12 +40,29 @@ pub const LINK_NAMES: [&str; 4] = [
 
 /// Default application root, matching the historical managed install.
 pub fn default_app_dir() -> PathBuf {
-    home::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local")
-        .join("share")
-        .join("hieronymus")
-        .join("app")
+    #[cfg(target_os = "linux")]
+    {
+        home::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".local/share/hieronymus/app")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        home::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Library/Application Support/Hieronymus/app")
+    }
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                home::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("AppData/Local")
+            })
+            .join("Hieronymus/app")
+    }
 }
 
 /// The versioned-application-directory layout rooted at one path.
@@ -69,37 +93,23 @@ impl AppLayout {
     }
 
     pub fn stable_link(&self, name: &str) -> PathBuf {
-        self.bin_dir().join(name)
+        self.bin_dir()
+            .join(crate::platform::install::executable_name(name))
     }
 
     /// The version the stable `hiero` link points at right now, derived from
     /// the link target (`../versions/<version>/hiero`). `None` when the link
     /// is missing or does not point into this layout.
     pub fn current_version(&self) -> Option<String> {
-        let target = std::fs::read_link(self.stable_link("hiero")).ok()?;
-        // Relative target such as `../versions/0.7.0/hiero`.
-        let text = target.to_str()?;
-        let rest = text.strip_prefix("../versions/")?;
-        let version = rest.strip_suffix("/hiero")?;
-        if version.is_empty() || version.contains('/') {
-            return None;
-        }
-        Some(version.to_string())
+        crate::platform::install::current_version(self)
     }
 
     /// (Re)point every stable command link at `version`. Each link is created
-    /// under a temporary name and renamed into place, so a reader never sees a
-    /// half-switched set. Idempotent: rerunning produces the same links.
+    /// under a temporary name and renamed into place. Each Unix link changes
+    /// atomically; the set is not a transaction. Windows switches one record.
+    /// Idempotent: rerunning selects the same version.
     pub fn switch_stable_links(&self, version: &str) -> std::io::Result<()> {
-        std::fs::create_dir_all(self.bin_dir())?;
-        for name in LINK_NAMES {
-            let link = self.stable_link(name);
-            let temporary = self.bin_dir().join(format!(".{name}.switch"));
-            let _ = std::fs::remove_file(&temporary);
-            std::os::unix::fs::symlink(format!("../versions/{version}/{name}"), &temporary)?;
-            std::fs::rename(&temporary, &link)?;
-        }
-        Ok(())
+        crate::platform::install::switch(self, version)
     }
 
     /// Resolve the layout root from the currently running binary: a managed
@@ -158,14 +168,15 @@ pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
 /// Verify the qualified payload and execute real native document/query
 /// inference. Used by the release builder and bootstrap before activation.
 pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> {
-    use hieronymus::semantic_arming::{RUNTIME_SHA256, RUNTIME_VERSION, verify_runtime_library};
+    use hieronymus::semantic_arming::{
+        RUNTIME_VERSION, runtime_member_pins, verify_runtime_library,
+    };
     use hieronymus::semantic_embeddings::{EmbeddingProvider, OnnxEmbeddingProvider};
     use hieronymus::semantic_model::{MODEL_NAME, MODEL_REVISION, MODEL_SHA256, TOKENIZER_SHA256};
-    let runtime = root.join("lib/libonnxruntime.so");
+    let runtime = root.join(crate::platform::install::RUNTIME_LIBRARY);
     verify_runtime_library(&runtime)?;
     let mut hashes = serde_json::Map::new();
     for (file, expected) in [
-        ("lib/libonnxruntime.so", RUNTIME_SHA256),
         ("models/minilm/model.onnx", MODEL_SHA256),
         ("models/minilm/tokenizer.json", TOKENIZER_SHA256),
         (
@@ -190,20 +201,49 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
         }
         hashes.insert(file.into(), serde_json::json!(digest));
     }
-    for file in ["LICENSE", "ThirdPartyNotices.txt", "VERSION_NUMBER"] {
-        let name = format!("licenses/runtime/{file}");
+    for (name, expected) in runtime_member_pins(TARGET_TRIPLE)? {
         let path = root.join(&name);
         if !std::fs::symlink_metadata(&path)
             .map_err(|e| e.to_string())?
             .is_file()
-            || std::fs::metadata(&path).map_err(|e| e.to_string())?.len() == 0
         {
-            return Err(format!("required runtime notice is missing: {name}"));
+            return Err(format!(
+                "required regular runtime member is missing: {name}"
+            ));
         }
-        hashes.insert(
-            name,
-            serde_json::json!(crate::update::sha256_file(&path).map_err(|e| e.to_string())?),
-        );
+        let digest = crate::update::sha256_file(&path).map_err(|e| e.to_string())?;
+        if digest != expected {
+            return Err(format!("runtime member checksum mismatch: {name}"));
+        }
+        hashes.insert(name, serde_json::json!(digest));
+    }
+    for file in if cfg!(windows) {
+        &["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"][..]
+    } else {
+        if cfg!(target_os = "macos") {
+            &[
+                "hiero",
+                "Hieronymus.app/Contents/MacOS/hiero-desktop",
+                "Hieronymus.app/Contents/Info.plist",
+                "Hieronymus.app/Contents/Resources/hieronymus.icns",
+            ][..]
+        } else {
+            &["hiero", "hiero-desktop"][..]
+        }
+    } {
+        let path = root.join(file);
+        if path.try_exists().map_err(|e| e.to_string())? {
+            if !std::fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())?
+                .is_file()
+            {
+                return Err(format!("executable asset must be regular: {file}"));
+            }
+            hashes.insert(
+                (*file).into(),
+                serde_json::json!(crate::update::sha256_file(&path).map_err(|e| e.to_string())?),
+            );
+        }
     }
     if std::fs::read_to_string(root.join("licenses/runtime/VERSION_NUMBER"))
         .map_err(|e| e.to_string())?
@@ -241,12 +281,14 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn default_app_dir_matches_the_historical_managed_install() {
         let root = default_app_dir();
         assert!(root.ends_with(".local/share/hieronymus/app"), "{root:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_links_point_at_the_versioned_binary_and_reruns_are_idempotent() {
         let temp = tempfile::tempdir().unwrap();
@@ -275,6 +317,7 @@ mod tests {
         assert_eq!(layout.current_version().as_deref(), Some("1.2.3"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn switching_versions_moves_every_link() {
         let temp = tempfile::tempdir().unwrap();

@@ -1,0 +1,70 @@
+{
+  "version": "0.9.0",
+  "target": "x86_64-unknown-linux-gnu",
+  "signing": "unsigned; no signing identity or notarization supplied",
+  "metadata_sha256": "293639c7057ed6594e66c92d45541da8f490c4f148764a864ffc85f2430adabb",
+  "platform_sha256": "3ef35b0b4dff2efa11198bc937bc52e3a5c82d43b14aaf355c140044b1a0e811",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "assets_sha256": "ab1bfcfc659ec661501872ab8091cd29a6a5dfb3803ba51ea2db1f1ad5e8759c",
+  "symbols": [
+    {
+      "binary": "hiero",
+      "original_sha256": "1e38ba8d7cdf3506ebf89ab0ffc6f1dbee9fa69a5099a69b54d6f46c69d64566",
+      "debug": "hiero-1e38ba8d7cdf3506ebf89ab0ffc6f1dbee9fa69a5099a69b54d6f46c69d64566.debug",
+      "before": 280788536,
+      "after": 223470088
+    },
+    {
+      "binary": "hiero-desktop",
+      "original_sha256": "100022b2ff486291c2cd1a2ac3eb818bcfc093156da2a88218f7d95ba70d12f3",
+      "debug": "hiero-desktop-100022b2ff486291c2cd1a2ac3eb818bcfc093156da2a88218f7d95ba70d12f3.debug",
+      "before": 21291504,
+      "after": 13009480
+    }
+  ],
+  "git_base": "e7b8750c67923f3fa9d9fd71e44357990d22f13d",
+  "source_inputs_sha256": "493d5eff0aabb06054971a7765dfbf41c950f1b73f7b88808935e21a919db453",
+  "source_inputs_recipe": "Partial source/build-input inventory, not a complete toolchain/dependency closure: SHA256 of sorted relative path + NUL + file SHA256 + LF; Cargo.toml, Cargo.lock, rust-toolchain.toml, qualification/prerequisites.json; all regular files recursively in crates, assets, frontend/dist and scripts (including scripts/onnxruntime-targets.json). Runtime/model bytes are bound separately by release manifests.",
+  "build_command": "source .superpowers/sdd/2026-09-11-desktop-tray/environment.sh; cargo build --release --locked --target x86_64-unknown-linux-gnu -p hiero -p hiero-desktop --features hiero/console-embed --bin hiero --bin hiero-desktop",
+  "profile": "Cargo release defaults: opt-level3, no LTO, codegen-units16, unwind; native objcopy --only-keep-debug then strip --strip-unneeded on copied Hieronymus executables",
+  "rust": "1.96.0",
+  "bun": "1.4.0",
+  "native_host": {
+    "system": "Linux",
+    "release": "7.2.3-1-cachyos",
+    "version": "#1 SMP PREEMPT_DYNAMIC Sun, 06 Sep 2026 22:01:30 +0000",
+    "machine": "x86_64"
+  },
+  "archive_bytes": {
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": 97753102,
+    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": 435109879
+  },
+  "packaged_members": {
+    "hiero": {
+      "bytes": 223470088,
+      "sha256": "4584f7458c525d5795356b2fef5abe639129f9c627a522890dc0d3bd4f911485"
+    },
+    "hiero-desktop": {
+      "bytes": 13009480,
+      "sha256": "6decd39581dbaaef1f94d893e619303dc67a84d2846e6f312c771abeb1e4e090"
+    },
+    "assets.json": {
+      "bytes": 1190,
+      "sha256": "ab1bfcfc659ec661501872ab8091cd29a6a5dfb3803ba51ea2db1f1ad5e8759c"
+    },
+    "lib/libonnxruntime.so": {
+      "bytes": 24268848,
+      "sha256": "1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab"
+    }
+  },
+  "platform_has_model_payload": false,
+  "qualification": {
+    "offline_install_upgrade_rollback_uninstall": "passed: final artifact, actual 0.8.0 baseline, 56.15s",
+    "real_disposable_daemon": "semantic readiness and authenticated stop",
+    "native_active_manager_helper": "not executed",
+    "windows_macos_native": "not executed",
+    "signing": "unsigned",
+    "fixture": "/tmp/hiero-real-desktop-UpZlem",
+    "cache": "platform-only cache reuse and corrupt-cache refusal; see task12-fix2-cache-probe.json"
+  }
+}

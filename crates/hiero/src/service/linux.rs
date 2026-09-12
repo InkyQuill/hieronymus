@@ -12,41 +12,15 @@
 //! which keeps tests away from the real user manager and makes custom
 //! locations usable on non-systemd setups.
 
+use super::*;
+use hieronymus::data_root::HieronymusConfig;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Name of the unit this project installs.
 pub const SERVICE_UNIT_NAME: &str = "hieronymus.service";
 
-/// Seconds between daemon restart attempts (on-failure backoff policy).
 const RESTART_SECONDS: &str = "5s";
-
-#[derive(Debug, thiserror::Error)]
-pub enum ServiceError {
-    #[error("{0}")]
-    Manager(String),
-    #[error("{0}")]
-    Invalid(String),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-
-/// Everything one service subcommand needs: the data root to serve, the unit
-/// directory, the binary the unit must exec, and whether manager integration
-/// is allowed at all (CLI `--no-activate` sets it to `false`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceOptions {
-    pub data_root: PathBuf,
-    pub unit_dir: PathBuf,
-    pub binary: PathBuf,
-    pub use_manager: bool,
-}
-
-impl ServiceOptions {
-    pub fn unit_path(&self) -> PathBuf {
-        self.unit_dir.join(SERVICE_UNIT_NAME)
-    }
-}
 
 /// Default per-user unit directory (systemd user units).
 pub fn default_unit_dir() -> PathBuf {
@@ -73,18 +47,53 @@ fn systemctl_on_path() -> bool {
 }
 
 fn run_systemctl(arguments: &[&str]) -> Result<(), ServiceError> {
-    let output = Command::new("systemctl")
+    run_manager(
+        Path::new("systemctl"),
+        arguments,
+        std::time::Duration::from_secs(30),
+    )
+}
+
+// Mutation commands do not consume stdout. Bound the client process without
+// killing a daemon or claiming a timed-out manager job was cancelled.
+fn run_manager(
+    executable: &Path,
+    arguments: &[&str],
+    timeout: std::time::Duration,
+) -> Result<(), ServiceError> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut child = Command::new(executable)
         .arg("--user")
         .args(arguments)
-        .output()
-        .map_err(|error| ServiceError::Manager(format!("could not run systemctl: {error}")))?;
-    if output.status.success() {
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            ServiceError::Manager("could not run systemctl; check the user service manager".into())
+        })?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ServiceError::Manager(format!(
+                    "systemctl --user {} timed out or could not be observed; inspect the user service before retrying",
+                    arguments.join(" ")
+                )));
+            }
+        }
+    };
+    if status.success() {
         return Ok(());
     }
     Err(ServiceError::Manager(format!(
-        "systemctl --user {} failed: {}",
-        arguments.join(" "),
-        String::from_utf8_lossy(&output.stderr).trim()
+        "systemctl --user {} failed; inspect the user service manager",
+        arguments.join(" ")
     )))
 }
 
@@ -94,20 +103,24 @@ fn run_systemctl(arguments: &[&str]) -> Result<(), ServiceError> {
 pub fn render_unit(binary: &Path, data_root: &Path) -> Result<String, ServiceError> {
     let binary = absolute(binary)?;
     let data_root = absolute(data_root)?;
-    for (label, path) in [("binary", &binary), ("data root", &data_root)] {
-        let text = path.to_str().ok_or_else(|| {
-            ServiceError::Invalid(format!(
-                "{label} path is not valid UTF-8: {}",
-                path.display()
-            ))
-        })?;
-        if text.contains(['"', '\\', '\n']) {
-            return Err(ServiceError::Invalid(format!(
-                "{label} path contains a quote, backslash, or newline, which the unit \
-                 renderer does not support: {text}"
-            )));
+    let dispatcher = if binary
+        .to_str()
+        .is_some_and(|p| p.contains(['\'', '"', '\\', '$']))
+    {
+        // GNU env consumes NAME=VALUE operands even after --, including
+        // absolute-looking names. Such a path cannot be the dispatched CLI.
+        if binary.to_str().is_some_and(|path| path.contains('=')) {
+            return Err(ServiceError::Invalid("service executable paths requiring the env dispatcher cannot contain an equal sign".into()));
         }
-    }
+        if !Path::new("/usr/bin/env").is_file() {
+            return Err(ServiceError::Invalid("special executable paths require /usr/bin/env; install coreutils or choose another application directory".into()));
+        }
+        "\"/usr/bin/env\" -- "
+    } else {
+        ""
+    };
+    let binary = encode_unit_path(&binary)?;
+    let data_root = encode_unit_path(&data_root)?;
     Ok(format!(
         "# Generated by `hiero service install` — manual edits are overwritten by \
          the next install or update.\n\
@@ -116,7 +129,7 @@ pub fn render_unit(binary: &Path, data_root: &Path) -> Result<String, ServiceErr
          After=network.target\n\
          \n\
          [Service]\n\
-         ExecStart=\"{binary}\" daemon --data-root \"{data_root}\"\n\
+         ExecStart={dispatcher}\"{binary}\" daemon --data-root \"{data_root}\"\n\
          Restart=on-failure\n\
          RestartSec={RESTART_SECONDS}\n\
          SyslogIdentifier=hieronymus-daemon\n\
@@ -125,8 +138,8 @@ pub fn render_unit(binary: &Path, data_root: &Path) -> Result<String, ServiceErr
          \n\
          [Install]\n\
          WantedBy=default.target\n",
-        binary = binary.display(),
-        data_root = data_root.display(),
+        binary = binary,
+        data_root = data_root,
     ))
 }
 
@@ -142,24 +155,37 @@ fn absolute(path: &Path) -> Result<PathBuf, ServiceError> {
     }
 }
 
-/// The parsed execution definition of one unit file, as far as this project
-/// renders and reads them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnitDefinition {
-    pub binary: PathBuf,
-    pub data_root: PathBuf,
-}
-
-/// Parse `ExecStart="…" daemon --data-root "…"` out of a unit file. Returns
+/// Parse `ExecStart="…" daemon --data-root "…"`, optionally behind the exact
+/// fixed `/usr/bin/env --` dispatcher. Returns
 /// `Err` with a reason when the unit is not one of ours or is broken.
 pub fn parse_unit(text: &str) -> Result<UnitDefinition, String> {
     let line = text
         .lines()
         .find(|line| line.starts_with("ExecStart="))
         .ok_or("unit file has no ExecStart entry")?;
-    let tokens = tokenize(&line["ExecStart=".len()..]);
-    match tokens.as_slice() {
-        [binary, command, flag, data_root] if command == "daemon" && flag == "--data-root" => {
+    let tokens = tokenize(&line["ExecStart=".len()..])?;
+    let arguments = match tokens.as_slice() {
+        [dispatcher, separator, rest @ ..] if dispatcher == "/usr/bin/env" && separator == "--" => {
+            if rest.first().is_some_and(|binary| binary.contains('=')) {
+                return Err(
+                    "environment assignments are not executable identities in a unit dispatcher"
+                        .into(),
+                );
+            }
+            rest
+        }
+        [dispatcher, ..] if dispatcher == "/usr/bin/env" => {
+            return Err("unsupported env dispatcher in unit".into());
+        }
+        arguments => arguments,
+    };
+    match arguments {
+        [binary, command, flag, data_root]
+            if command == "daemon"
+                && flag == "--data-root"
+                && Path::new(binary).is_absolute()
+                && Path::new(data_root).is_absolute() =>
+        {
             Ok(UnitDefinition {
                 binary: PathBuf::from(binary),
                 data_root: PathBuf::from(data_root),
@@ -169,26 +195,57 @@ pub fn parse_unit(text: &str) -> Result<UnitDefinition, String> {
     }
 }
 
-/// Split a systemd ExecStart argument list on spaces, honoring double quotes.
-fn tokenize(input: &str) -> Vec<String> {
+fn encode_unit_path(path: &Path) -> Result<String, ServiceError> {
+    let value = path
+        .to_str()
+        .ok_or_else(|| ServiceError::Invalid("service paths must be UTF-8".into()))?;
+    if value.chars().any(char::is_control) {
+        return Err(ServiceError::Invalid(
+            "service paths cannot contain control characters or newlines".into(),
+        ));
+    }
+    Ok(value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%")
+        .replace('$', "$$"))
+}
+
+fn tokenize(input: &str) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
-    for character in input.chars() {
-        match character {
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        match c {
             '"' => quoted = !quoted,
+            '\\' => match chars.next() {
+                Some(c @ ('\\' | '"')) => current.push(c),
+                _ => return Err("unsupported unit escape".into()),
+            },
+            '%' | '$' => {
+                if chars.next() == Some(c) {
+                    current.push(c);
+                } else {
+                    return Err("unsupported unit expansion".into());
+                }
+            }
             ' ' if !quoted => {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
                 }
             }
-            other => current.push(other),
+            c if c.is_control() => return Err("unsupported unit control character".into()),
+            c => current.push(c),
         }
+    }
+    if quoted {
+        return Err("unterminated unit quote".into());
     }
     if !current.is_empty() {
         tokens.push(current);
     }
-    tokens
+    Ok(tokens)
 }
 
 /// Read and parse the unit file for `options`, if it exists.
@@ -204,11 +261,17 @@ pub fn read_unit(options: &ServiceOptions) -> Result<Option<UnitDefinition>, Str
         .map_err(|reason| format!("{}: {reason}", path.display()))
 }
 
-/// Install (or idempotently reinstall) the unit. The unit file is written
-/// atomically; the manager, when engaged, is reloaded and the unit enabled
-/// **without starting it** — the start decision belongs to the caller after
-/// the schema check (bootstrap installer step 8).
-pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+// The caller retains offline RootOwnership through this call, or has just
+// authenticated the live owner. Do not reacquire ownership here: startup and
+// update already hold it while installing the unit.
+pub(crate) fn install_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
+    let desktop_mode =
+        crate::desktop::linux_registration::desktop_mode(options).map_err(ServiceError::Invalid)?;
     let mut lines = Vec::new();
     if !options.binary.is_file() {
         return Err(ServiceError::Invalid(format!(
@@ -224,10 +287,14 @@ pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
     ));
     if manager_enabled(options) {
         run_systemctl(&["daemon-reload"])?;
-        run_systemctl(&["enable", SERVICE_UNIT_NAME])?;
-        lines.push(format!(
-            "service enabled (not started): {SERVICE_UNIT_NAME}"
-        ));
+        if !desktop_mode {
+            run_systemctl(&["enable", SERVICE_UNIT_NAME])?;
+            lines.push(format!(
+                "service enabled (not started): {SERVICE_UNIT_NAME}"
+            ));
+        } else {
+            lines.push("desktop mode: service remains startable on demand".into());
+        }
     } else {
         lines.push(
             "manager integration skipped (custom --unit-dir or no systemctl on PATH); \
@@ -238,9 +305,12 @@ pub fn install(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
     Ok(lines)
 }
 
-/// Remove the unit file only; databases, configuration, models, backups, and
-/// audit data are never touched. Idempotent: a missing unit is a no-op.
-pub fn uninstall(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+pub(crate) fn uninstall_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
     let mut lines = Vec::new();
     let path = options.unit_path();
     if path.exists() {
@@ -256,129 +326,135 @@ pub fn uninstall(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> 
     Ok(lines)
 }
 
-/// What `hiero service status` reports.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceStatus {
-    pub unit_path: PathBuf,
-    pub definition: Option<UnitDefinition>,
-    /// Why the definition is not consistent with these options, if it is not.
-    pub problems: Vec<String>,
-}
-
-impl ServiceStatus {
-    pub fn consistent(&self) -> bool {
-        self.definition.is_some() && self.problems.is_empty()
-    }
-
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "unit": self.unit_path,
-            "installed": self.definition.is_some(),
-            "consistent": self.consistent(),
-            "binary": self.definition.as_ref().map(|definition| definition.binary.clone()),
-            "data_root": self.definition.as_ref().map(|definition| definition.data_root.clone()),
-            "problems": self.problems,
-        })
-    }
-
-    pub fn render_human(&self) -> String {
-        match &self.definition {
-            None => format!(
-                "service unit: not installed ({} does not exist)",
-                self.unit_path.display()
-            ),
-            Some(definition) => {
-                let mut text = format!(
-                    "service unit: {}\n  binary: {}\n  data root: {}",
-                    self.unit_path.display(),
-                    definition.binary.display(),
-                    definition.data_root.display()
-                );
-                for problem in &self.problems {
-                    text.push_str(&format!("\n  problem: {problem}"));
-                }
-                text
+/// Read the login link created by our deterministic default.target unit. Refuse
+/// foreign links before asking the manager to change the shared registration.
+pub(crate) fn owned_login_link(options: &ServiceOptions) -> Result<Option<PathBuf>, ServiceError> {
+    let path = options
+        .unit_dir
+        .join("default.target.wants")
+        .join(SERVICE_UNIT_NAME);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let target = std::fs::read_link(&path)?;
+            let resolved = if target.is_absolute() {
+                target.clone()
+            } else {
+                path.parent().unwrap().join(&target)
+            };
+            if resolved.canonicalize()? != options.unit_path().canonicalize()? {
+                return Err(ServiceError::Invalid(
+                    "daemon login link belongs to another installation".into(),
+                ));
             }
+            Ok(Some(target))
         }
+        Ok(_) => Err(ServiceError::Invalid(
+            "daemon login registration is not an owned symbolic link".into(),
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
-/// Compare the installed unit against the expected definition.
-pub fn status(options: &ServiceOptions) -> Result<ServiceStatus, ServiceError> {
-    let definition = read_unit(options).map_err(ServiceError::Invalid)?;
-    let mut problems = Vec::new();
-    if let Some(definition) = &definition {
-        if !definition.binary.is_file() {
-            problems.push(format!(
-                "unit binary does not exist: {}",
-                definition.binary.display()
-            ));
-        }
-        if definition.data_root != options.data_root {
-            problems.push(format!(
-                "unit serves data root {} but this root is {}",
-                definition.data_root.display(),
-                options.data_root.display()
-            ));
+/// Disable future daemon logins without --now: the current daemon keeps running.
+/// Offline/custom installations reconcile only the positively owned local link.
+pub(crate) fn disable_login_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<(), ServiceError> {
+    operation.register_unit(options)?;
+    validate_unit_root(options)?;
+    let link = owned_login_link(options)?;
+    if manager_enabled(options) {
+        run_systemctl(&["disable", SERVICE_UNIT_NAME])?;
+    }
+    if link.is_some() {
+        let path = options
+            .unit_dir
+            .join("default.target.wants")
+            .join(SERVICE_UNIT_NAME);
+        if path.symlink_metadata().is_ok() {
+            owned_login_link(options)?;
+            std::fs::remove_file(path)?;
         }
     }
-    Ok(ServiceStatus {
-        unit_path: options.unit_path(),
-        definition,
-        problems,
-    })
+    Ok(())
 }
 
-/// Start or stop the daemon through the manager. Refuses (instead of
-/// degrading) because an explicit lifecycle request that cannot be executed
-/// must fail loudly, with the manual command in the message.
-pub fn start(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+pub(crate) fn start_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
     lifecycle(options, "start", &["start", SERVICE_UNIT_NAME])
 }
 
-pub fn stop(options: &ServiceOptions) -> Result<Vec<String>, ServiceError> {
+pub(crate) fn stop_guarded(
+    options: &ServiceOptions,
+    operation: &LifecycleOperation,
+) -> Result<Vec<String>, ServiceError> {
+    operation.register_unit(options)?;
     lifecycle(options, "stop", &["stop", SERVICE_UNIT_NAME])
 }
 
-/// The three manager lifecycle operations `hiero update`'s rollback state
-/// machine drives, behind a trait so tests can assert the exact call sequence
-/// and script a chosen call to fail. Each operation is all-or-nothing: it
-/// either completes or returns [`ServiceError`], never a partial success the
-/// caller has to interpret.
-pub trait ServiceManager {
-    /// Stop the managed unit (the candidate the failed activation may have
-    /// started). A unit that is already stopped is still `Ok`.
-    fn stop(&self) -> Result<(), ServiceError>;
-    /// Re-read unit files after the on-disk unit was restored.
-    fn reload(&self) -> Result<(), ServiceError>;
-    /// Start the managed unit (the restored previous version).
-    fn start(&self) -> Result<(), ServiceError>;
+/// Refuse foreign or unparseable registration before any manager/file change.
+/// A same-root obsolete binary may be repaired by install or update.
+pub(crate) fn validate_unit_root(options: &ServiceOptions) -> Result<(), ServiceError> {
+    if let Some(definition) = read_unit(options).map_err(ServiceError::Invalid)? {
+        let unit_root = definition
+            .data_root
+            .canonicalize()
+            .unwrap_or(definition.data_root.clone());
+        let expected = options
+            .data_root
+            .canonicalize()
+            .unwrap_or(options.data_root.clone());
+        if unit_root != expected {
+            return Err(ServiceError::Invalid(format!(
+                "unit serves data root {} but this root is {}",
+                definition.data_root.display(),
+                options.data_root.display(),
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The production [`ServiceManager`]: the systemd **user** manager, contacted
 /// only when [`manager_enabled`] holds for its options. A custom `--unit-dir`
-/// or a host without `systemctl` makes every call a silent `Ok` — the same
-/// rule the rest of this module follows, so the updater's rollback path does
+/// or a host without `systemctl` skips manager contact after ownership checks,
+/// so the updater's rollback path does
 /// link/unit restoration without ever touching a manager it must not touch.
-pub struct SystemdManager {
+pub struct SystemdManager<'a> {
     options: ServiceOptions,
+    operation: &'a LifecycleOperation,
 }
 
-impl SystemdManager {
-    pub fn new(options: ServiceOptions) -> Self {
-        Self { options }
+impl<'a> SystemdManager<'a> {
+    pub fn new(options: ServiceOptions, operation: &'a LifecycleOperation) -> Self {
+        Self { options, operation }
     }
 }
 
-impl ServiceManager for SystemdManager {
+impl ServiceManager for SystemdManager<'_> {
     fn stop(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
         if !manager_enabled(&self.options) {
             return Ok(());
         }
-        run_systemctl(&["stop", SERVICE_UNIT_NAME])
+        crate::lifecycle::stop_guarded(
+            &HieronymusConfig::new(&self.options.data_root),
+            &self.options,
+            self.operation,
+        )
+        .map(|_| ())
+        .map_err(|error| ServiceError::Manager(error.to_string()))
     }
 
     fn reload(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
         if !manager_enabled(&self.options) {
             return Ok(());
         }
@@ -386,64 +462,15 @@ impl ServiceManager for SystemdManager {
     }
 
     fn start(&self) -> Result<(), ServiceError> {
+        self.operation.register_unit(&self.options)?;
+        validate_unit_root(&self.options)?;
         if !manager_enabled(&self.options) {
             return Ok(());
         }
+        crate::lifecycle::checked_probe(&HieronymusConfig::new(&self.options.data_root))
+            .map_err(|error| ServiceError::Manager(error.to_string()))?;
         run_systemctl(&["start", SERVICE_UNIT_NAME])
     }
-}
-
-/// Verdict of comparing the installed unit against the expected definition and
-/// the currently running binary — doctor's service-definition check (security
-/// spec §Service Installation).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UnitVerdict {
-    Absent,
-    Consistent,
-    /// The unit is unreadable, is not one of ours, or its binary is gone.
-    Broken(String),
-    /// The unit serves a different data root than the one being checked.
-    DataRootMismatch {
-        unit_root: PathBuf,
-    },
-    /// The unit still execs a different binary than the running one (typical
-    /// after an update that did not reinstall the unit).
-    StaleBinary {
-        unit_binary: PathBuf,
-    },
-}
-
-/// Read the unit for `options` and compare it with `current_binary`.
-pub fn check_unit(options: &ServiceOptions, current_binary: &Path) -> UnitVerdict {
-    let definition = match read_unit(options) {
-        Ok(Some(definition)) => definition,
-        Ok(None) => return UnitVerdict::Absent,
-        Err(reason) => return UnitVerdict::Broken(reason),
-    };
-    if !definition.binary.is_file() {
-        return UnitVerdict::Broken(format!(
-            "unit binary does not exist: {}",
-            definition.binary.display()
-        ));
-    }
-    if definition.data_root != options.data_root {
-        return UnitVerdict::DataRootMismatch {
-            unit_root: definition.data_root.clone(),
-        };
-    }
-    let same_binary = match (
-        definition.binary.canonicalize(),
-        current_binary.canonicalize(),
-    ) {
-        (Ok(unit), Ok(current)) => unit == current,
-        _ => definition.binary == current_binary,
-    };
-    if !same_binary {
-        return UnitVerdict::StaleBinary {
-            unit_binary: definition.binary.clone(),
-        };
-    }
-    UnitVerdict::Consistent
 }
 
 fn lifecycle(
@@ -451,6 +478,7 @@ fn lifecycle(
     action: &str,
     arguments: &[&str],
 ) -> Result<Vec<String>, ServiceError> {
+    validate_unit_root(options)?;
     if !options.unit_path().exists() {
         return Err(ServiceError::Manager(format!(
             "no service unit at {}; install one with `hiero service install`",
@@ -483,6 +511,35 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn manager_timeout_is_bounded_reaped_and_output_is_not_a_diagnostic() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("manager");
+        let pid_file = root.path().join("pid");
+        std::fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nprintf 'SECRET' >&2\nexec sleep 30\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let began = std::time::Instant::now();
+        let error = run_manager(
+            &executable,
+            &["start", SERVICE_UNIT_NAME],
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(began.elapsed() < std::time::Duration::from_secs(1));
+        assert!(!error.to_string().contains("SECRET"));
+        let pid = std::fs::read_to_string(pid_file).unwrap();
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+
     #[test]
     fn unit_renders_absolute_paths_and_the_restart_policy() {
         let unit = render_unit(
@@ -511,8 +568,8 @@ mod tests {
     fn unit_rendering_requires_absolute_supported_paths() {
         let error = render_unit(Path::new("relative/hiero"), Path::new("/root")).unwrap_err();
         assert!(error.to_string().contains("absolute"), "{error}");
-        let error = render_unit(Path::new("/a\"b"), Path::new("/root")).unwrap_err();
-        assert!(error.to_string().contains("quote"), "{error}");
+        let error = render_unit(Path::new("/a\nb"), Path::new("/root")).unwrap_err();
+        assert!(error.to_string().contains("newline"), "{error}");
     }
 
     #[test]
@@ -564,7 +621,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let options = options(&temp);
         std::fs::create_dir_all(&options.unit_dir).unwrap();
-        std::fs::write(options.unit_path(), "[Unit]\n").unwrap();
+        std::fs::write(
+            options.unit_path(),
+            render_unit(&options.binary, &options.data_root).unwrap(),
+        )
+        .unwrap();
 
         let lines = uninstall(&options).unwrap();
         assert!(lines[0].contains("removed"), "{lines:?}");
@@ -608,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_refuses_without_a_unit_and_without_manager_integration() {
+    fn lifecycle_refuses_without_a_unit_and_with_an_unverifiable_unit() {
         let temp = tempfile::tempdir().unwrap();
         let options = options(&temp);
         let error = start(&options).unwrap_err();
@@ -619,9 +680,7 @@ mod tests {
         let error = stop(&options).unwrap_err();
         // Custom unit dir: the manager is never contacted.
         assert!(
-            error
-                .to_string()
-                .contains("manager integration is disabled"),
+            error.to_string().contains("unit file has no ExecStart"),
             "{error}"
         );
     }
@@ -632,7 +691,9 @@ mod tests {
         // owns the manager, so `SystemdManager` never shells out to systemctl
         // and every lifecycle call is `Ok`.
         let temp = tempfile::tempdir().unwrap();
-        let manager = SystemdManager::new(options(&temp));
+        let config = HieronymusConfig::new(options(&temp).data_root);
+        let operation = LifecycleOperation::acquire(&config).unwrap();
+        let manager = SystemdManager::new(options(&temp), &operation);
         assert!(manager.stop().is_ok());
         assert!(manager.reload().is_ok());
         assert!(manager.start().is_ok());

@@ -122,6 +122,13 @@ impl Server {
                     let _ = stream.flush();
                     stream.conn.send_close_notify();
                     let _ = stream.flush();
+                } else {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                    let _ = stream.flush();
+                    stream.conn.send_close_notify();
+                    let _ = stream.flush();
                 }
             }
         });
@@ -411,4 +418,180 @@ fn ipv6_release_staging_sends_bracketed_authority_over_real_tls() {
         server.roots.clone(),
     )
     .unwrap();
+}
+
+#[test]
+fn split_manifest_is_strict_and_target_specific() {
+    use hiero::release_manifest::*;
+    let target = hiero::app::TARGET_TRIPLE;
+    let value = serde_json::json!({"format_version":2,"version":"0.8.0","target":target,"channel":"stable","platform":{"archive":platform_name("0.8.0",target),"sha256":"a".repeat(64)},"model":{"name":hieronymus::semantic_model::MODEL_NAME,"revision":hieronymus::semantic_model::MODEL_REVISION,"archive":model_name(),"sha256":"b".repeat(64),"members":model_members()},"signature":null});
+    let text = value.to_string();
+    assert!(ReleaseV2::parse(text.as_bytes(), target).is_ok());
+    for broken in [
+        text.replace(
+            "\"format_version\":2",
+            "\"format_version\":2,\"format_version\":2",
+        ),
+        text.replace("\"platform\":", "\"unknown\":true,\"platform\":"),
+        text.replace(
+            "\"models/minilm/LICENSE\":",
+            "\"models/minilm/LICENSE\":\"bad\",\"models/minilm/LICENSE\":",
+        ),
+        text.replace(".tar.gz", ".zip"),
+        text.replace("\"signature\":null", "\"signature\":\"fake\""),
+    ] {
+        assert!(
+            ReleaseV2::parse(broken.as_bytes(), target).is_err(),
+            "accepted {broken}"
+        );
+    }
+    assert!(hiero::release_source::parse_metadata(text.as_bytes()).is_ok());
+    let disguised = text.replace("\"format_version\":2", "\"format_version\":1");
+    assert!(hiero::release_source::parse_metadata(disguised.as_bytes()).is_err());
+}
+
+fn split_metadata(platform: &[u8], model: &[u8]) -> serde_json::Value {
+    use hiero::release_manifest::*;
+    use sha2::{Digest, Sha256};
+    let target = hiero::app::TARGET_TRIPLE;
+    serde_json::json!({"format_version":2,"version":"0.8.0","target":target,"channel":"stable","platform":{"archive":platform_name("0.8.0",target),"sha256":format!("{:x}",Sha256::digest(platform))},"model":{"name":hieronymus::semantic_model::MODEL_NAME,"revision":hieronymus::semantic_model::MODEL_REVISION,"archive":model_name(),"sha256":format!("{:x}",Sha256::digest(model)),"members":model_members()},"signature":null})
+}
+#[test]
+fn split_second_download_failure_never_promotes_or_falls_back() {
+    let platform = b"platform fixture";
+    let value = split_metadata(platform, b"missing model");
+    let target = hiero::app::TARGET_TRIPLE;
+    let metadata_path = format!("/stable/{}", hiero::release_manifest::metadata_name(target));
+    let platform_path = format!("/stable/{}", value["platform"]["archive"].as_str().unwrap());
+    let model_path = format!("/stable/{}", value["model"]["archive"].as_str().unwrap());
+    let server = Server::new(vec![
+        (
+            metadata_path.clone(),
+            response(value.to_string().as_bytes()),
+        ),
+        (platform_path.clone(), response(platform)),
+    ]);
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("staged");
+    assert!(
+        stage_remote_with_roots(&server.url, "stable", &destination, server.roots.clone()).is_err()
+    );
+    assert!(!destination.exists());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    assert_eq!(
+        *server.requests.lock().unwrap(),
+        vec![metadata_path, platform_path, model_path]
+    );
+}
+#[test]
+fn split_missing_or_corrupt_model_cleans_fresh_assembly() {
+    let root = tempfile::tempdir().unwrap();
+    let release = root.path().join("release");
+    std::fs::create_dir(&release).unwrap();
+    let value = split_metadata(b"platform", b"model");
+    std::fs::write(
+        release.join(hiero::release_manifest::metadata_name(
+            hiero::app::TARGET_TRIPLE,
+        )),
+        value.to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        release.join(value["platform"]["archive"].as_str().unwrap()),
+        b"platform",
+    )
+    .unwrap();
+    for exists in [false, true] {
+        if exists {
+            std::fs::write(
+                release.join(value["model"]["archive"].as_str().unwrap()),
+                b"tampered",
+            )
+            .unwrap();
+        }
+        let out = root.path().join("assembled");
+        assert!(
+            hiero::release_archive::extract_split_directory(
+                &release,
+                hiero::app::TARGET_TRIPLE,
+                &out
+            )
+            .is_err()
+        );
+        assert!(!out.exists());
+    }
+}
+#[test]
+#[ignore = "requires HIERO_SPLIT_RELEASE_DIR containing actual pinned platform+model artifacts"]
+fn real_split_archive_pair_verifies_assembles_and_rejects_tampering() {
+    let source = std::path::PathBuf::from(
+        std::env::var_os("HIERO_SPLIT_RELEASE_DIR")
+            .expect("HIERO_SPLIT_RELEASE_DIR must name the disposable qualified pair"),
+    );
+    let target = hiero::app::TARGET_TRIPLE;
+    let verified = hiero::release_archive::verify_split_directory(&source, target).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("assembled");
+    let assembled =
+        hiero::release_archive::extract_split_directory(&source, target, &output).unwrap();
+    assert_eq!(verified.assets_sha256, assembled.assets_sha256);
+    assert_eq!(
+        hiero::update::sha256_file(&output.join("models/minilm/model.onnx")).unwrap(),
+        hieronymus::semantic_model::MODEL_SHA256
+    );
+    let candidate = hiero::app::verify_semantic_assets(&output).unwrap();
+    let declared: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.join("assets.json")).unwrap()).unwrap();
+    assert_eq!(candidate, declared);
+}
+
+#[test]
+fn split_metadata_cannot_masquerade_as_legacy_release_json() {
+    let payload = split_metadata(b"platform", b"model");
+    let server = Server::new(vec![(
+        "/stable/release.json".into(),
+        response(payload.to_string().as_bytes()),
+    )]);
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("staged");
+    assert!(
+        stage_remote_with_roots(&server.url, "stable", &destination, server.roots.clone())
+            .unwrap_err()
+            .contains("exact-target filename")
+    );
+    assert!(!destination.exists());
+}
+
+#[test]
+fn authenticated_snapshot_inspection_failure_cleans_assembly_and_preserves_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("release");
+    std::fs::create_dir(&directory).unwrap();
+    let platform = archive(Some(("undeclared", tar::EntryType::Regular, "")));
+    let model = b"model transport fixture";
+    let payload = split_metadata(&platform, model);
+    let metadata_path = directory.join(hiero::release_manifest::metadata_name(
+        hiero::app::TARGET_TRIPLE,
+    ));
+    let platform_path = directory.join(payload["platform"]["archive"].as_str().unwrap());
+    let model_path = directory.join(payload["model"]["archive"].as_str().unwrap());
+    std::fs::write(&metadata_path, payload.to_string()).unwrap();
+    std::fs::write(&platform_path, &platform).unwrap();
+    std::fs::write(&model_path, model).unwrap();
+    let output = root.path().join("assembled");
+    let error = hiero::release_archive::extract_split_directory(
+        &directory,
+        hiero::app::TARGET_TRIPLE,
+        &output,
+    )
+    .unwrap_err();
+    assert!(error.contains("unsafe"), "{error}");
+    assert!(!output.exists());
+    assert_eq!(std::fs::read(&platform_path).unwrap(), platform);
+    assert_eq!(std::fs::read(&model_path).unwrap(), model);
+    assert_eq!(
+        std::fs::read_to_string(&metadata_path).unwrap(),
+        payload.to_string()
+    );
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), 3);
 }

@@ -3,17 +3,24 @@
 //! command links), the owner's PATH links that point into it, and the
 //! generated agent-plugin entries — and nothing else. Databases,
 //! configuration, models, backups, and audit data are preserved by default;
-//! deleting the data root requires the separate explicit `--delete-data`
-//! action, which always names the exact root before removing it.
+//! clearing user contents requires the separate explicit `--delete-data`
+//! action. The root and its recognized coordination lock files remain.
 //!
 //! Confirmation is mandatory: either `--yes` or an interactive prompt owned
 //! by the CLI layer. The library refuses to run unconfirmed.
 
 use std::path::{Path, PathBuf};
 
+use crate::lifecycle::{
+    self,
+    operation::{LIFECYCLE_LOCK_FILE, LifecycleOperation},
+};
 use hieronymus::data_root::load_config;
+use hieronymus::ownership::{OWNER_LOCK_FILE, RootOwnership};
 
-use crate::app::{AppLayout, LINK_NAMES};
+use crate::app::AppLayout;
+#[cfg(unix)]
+use crate::app::LINK_NAMES;
 use crate::service::{self, ServiceOptions};
 
 #[derive(Debug, Clone)]
@@ -52,7 +59,7 @@ impl UninstallReport {
         }
         if self.data_deleted {
             text.push_str(&format!(
-                "deleted data root: {}\n",
+                "deleted user data from: {} (coordination files retained)\n",
                 self.data_root.display()
             ));
         } else {
@@ -95,24 +102,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     let mut removed = Vec::new();
 
     let config = load_config(options.data_root.as_deref());
-
-    // Service unit first, so nothing can restart the daemon mid-uninstall.
-    let service_options = ServiceOptions {
-        data_root: config.data_root().to_path_buf(),
-        unit_dir: options
-            .unit_dir
-            .clone()
-            .unwrap_or_else(service::default_unit_dir),
-        binary: PathBuf::from("hiero"),
-        use_manager: true,
-    };
-    // Best-effort stop of a managed daemon; a stopped or absent daemon is a
-    // no-op in systemd terms.
-    if service_options.unit_path().exists() && service::manager_enabled(&service_options) {
-        let _ = service::stop(&service_options);
-    }
-    let lines = service::uninstall(&service_options)?;
-    removed.extend(lines);
+    let operation = LifecycleOperation::acquire(&config)?;
 
     // Managed application directory (versioned binaries + stable links).
     let root = match &options.app_dir {
@@ -120,7 +110,24 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
         None => AppLayout::detect_from_exe().map_err(UninstallError::Refused)?,
     };
     let layout = AppLayout::new(&root);
+    #[cfg(windows)]
+    if layout.root().try_exists()?
+        && std::env::current_exe()?
+            .canonicalize()?
+            .starts_with(layout.root().canonicalize()?)
+    {
+        return Err(UninstallError::Refused("Windows cannot remove the executing installed CLI. Run install-desktop.ps1 -Uninstall from the verified release directory; it uses an external bootstrap executable".into()));
+    }
     if layout.root().exists() {
+        if config
+            .data_root()
+            .canonicalize()?
+            .starts_with(layout.root().canonicalize()?)
+        {
+            return Err(UninstallError::Refused(
+                "the data root is inside the application directory; move it outside before uninstalling so coordination locks and user data are preserved".into(),
+            ));
+        }
         // Safety: only remove a directory that has the managed layout.
         if !layout.versions_dir().is_dir() && !layout.bin_dir().is_dir() {
             return Err(UninstallError::Refused(format!(
@@ -129,6 +136,83 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
                 layout.root().display()
             )));
         }
+    }
+
+    // Service unit first, so nothing can restart the daemon mid-uninstall.
+    let service_options = ServiceOptions {
+        data_root: config.data_root().to_path_buf(),
+        unit_dir: options
+            .unit_dir
+            .clone()
+            .unwrap_or_else(service::default_unit_dir),
+        binary: layout.stable_link("hiero"),
+        use_manager: true,
+    };
+    operation.register_unit(&service_options)?;
+    let registration_dir = service_options.unit_dir.canonicalize()?;
+    if (layout.root().exists() && registration_dir.starts_with(layout.root().canonicalize()?))
+        || (config.agent_plugins_root().exists()
+            && registration_dir.starts_with(config.agent_plugins_root().canonicalize()?))
+        || (options.delete_data && registration_dir.starts_with(config.data_root().canonicalize()?))
+    {
+        return Err(UninstallError::Refused(
+            "the service registration directory is inside a directory being removed; move the registration outside before uninstalling so its coordination lock is preserved".into(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    let desktop_registration =
+        crate::desktop::linux_registration::for_uninstall(&service_options, layout.root())
+            .map_err(UninstallError::Refused)?;
+    #[cfg(windows)]
+    crate::platform::windows_broker::task(
+        &service_options,
+        crate::platform::windows_broker::TaskAction::Inspect,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    #[cfg(target_os = "macos")]
+    crate::platform::macos_broker::task(
+        &service_options,
+        crate::platform::macos_broker::TaskAction::Inspect,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    let _retirement = crate::desktop::control::Retirement::begin_owned(
+        &config,
+        true,
+        Some(&layout.stable_link("hiero")),
+    )
+    .map_err(|e| UninstallError::Refused(e.to_string()))?;
+    lifecycle::stop_guarded(&config, &service_options, &operation)
+        .map_err(|error| UninstallError::Refused(error.to_string()))?;
+    // Keep daemon ownership throughout every offline removal. Neither held
+    // coordination inode is ever unlinked, even with --delete-data.
+    let _ownership = RootOwnership::acquire(&config, "uninstall")?;
+    #[cfg(target_os = "linux")]
+    if let Some(registration) = desktop_registration {
+        registration
+            .uninstall_guarded(&operation)
+            .map_err(UninstallError::Refused)?;
+        removed.push("owned desktop login entry, launcher, icon and registration record".into());
+    }
+    #[cfg(windows)]
+    crate::platform::windows_broker::task(
+        &service_options,
+        crate::platform::windows_broker::TaskAction::Remove,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    #[cfg(target_os = "macos")]
+    crate::platform::macos_broker::task(
+        &service_options,
+        crate::platform::macos_broker::TaskAction::Remove,
+        true,
+    )
+    .map_err(UninstallError::Refused)?;
+    let lines = service::uninstall_guarded(&service_options, &operation)?;
+    removed.extend(lines);
+
+    if layout.root().exists() {
         std::fs::remove_dir_all(layout.root())?;
         removed.push(format!(
             "application directory (binaries and command links): {}",
@@ -141,6 +225,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     // PATH links owned by the bootstrap installer, but only when they point
     // into the application directory being removed: a foreign `hiero` on PATH
     // is host configuration and is preserved.
+    #[cfg(unix)]
     if let Some(bin_dir) = home::home_dir().map(|home| home.join(".local").join("bin")) {
         for name in LINK_NAMES {
             let link = bin_dir.join(name);
@@ -184,7 +269,7 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     // Data deletion is a separate explicit action that names the exact root.
     let mut data_deleted = false;
     if options.delete_data {
-        std::fs::remove_dir_all(config.data_root())?;
+        preserved = delete_data_contents(config.data_root())?;
         data_deleted = true;
     }
 
@@ -196,8 +281,44 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<UninstallReport, Unin
     })
 }
 
+/// Preserve only implementation-defined coordination names, including sessions
+/// from other supported platforms when a data root has moved between hosts.
+fn is_coordination_name(name: &str) -> bool {
+    matches!(
+        name,
+        OWNER_LOCK_FILE
+            | LIFECYCLE_LOCK_FILE
+            | ".desktop-launch.lock"
+            | "dream-cycle.lock"
+            | ".windows-native.lock"
+            | ".windows-browser.lock"
+            | ".macos-native.lock"
+            | ".macos-browser.lock"
+    ) || crate::desktop::is_session_lock_name(name)
+}
+
+fn delete_data_contents(root: &Path) -> std::io::Result<Vec<String>> {
+    let mut retained = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.to_str().is_some_and(is_coordination_name) {
+            retained.push(format!("coordination file: {}", name.to_string_lossy()));
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(entry.path())?;
+        } else {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    retained.sort();
+    Ok(retained)
+}
+
 /// Whether `link` (a symlink at `link_path` with raw `target`) eventually
 /// resolves under `root`.
+#[cfg(unix)]
 fn resolve_into(link_path: &Path, target: &Path, root: &Path) -> bool {
     let base = if target.is_absolute() {
         target.to_path_buf()
@@ -304,12 +425,100 @@ mod tests {
         let report = run_uninstall(&options(&temp, true, true)).unwrap();
         assert!(report.data_deleted);
         assert_eq!(report.data_root, config.data_root());
-        assert!(!config.data_root().exists());
+        let mut retained: Vec<_> = std::fs::read_dir(config.data_root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        retained.sort();
+        assert_eq!(
+            retained,
+            [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
+        );
+        assert!(
+            report
+                .preserved
+                .iter()
+                .any(|entry| entry.contains("coordination"))
+        );
         assert!(
             report
                 .render_human()
                 .contains(&config.data_root().display().to_string())
         );
+    }
+
+    #[test]
+    fn delete_data_removes_unrelated_lock_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = seed_install(&temp);
+        for name in [
+            "foo.lock",
+            ".tray-unknown.lock",
+            ".tray-abc.lock",
+            ".tray-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.lock",
+            ".tray-000000000000000000000000000000000000000000000000000000000000000g.lock",
+        ] {
+            std::fs::write(config.data_root().join(name), "user data").unwrap();
+        }
+        std::fs::create_dir(config.data_root().join("notes.lock")).unwrap();
+        std::fs::write(config.data_root().join("notes.lock/contents"), "user data").unwrap();
+        run_uninstall(&options(&temp, true, true)).unwrap();
+        let mut names: Vec<_> = std::fs::read_dir(config.data_root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_deletion_preserves_every_coordination_inode_and_held_claim() {
+        use std::os::unix::fs::MetadataExt;
+        let temp = tempfile::tempdir().unwrap();
+        let session = format!(".tray-{}.lock", "0123456789abcdef".repeat(4));
+        let names = [
+            OWNER_LOCK_FILE,
+            LIFECYCLE_LOCK_FILE,
+            ".desktop-launch.lock",
+            "dream-cycle.lock",
+            ".windows-native.lock",
+            ".windows-browser.lock",
+            ".macos-native.lock",
+            ".macos-browser.lock",
+            &session,
+        ];
+        let guards: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let file = crate::platform::native_gate::acquire(temp.path(), name).unwrap();
+                let inode = file.metadata().unwrap().ino();
+                (file, inode)
+            })
+            .collect();
+        std::fs::write(temp.path().join("unrelated.lock"), "remove me").unwrap();
+        let report = delete_data_contents(temp.path()).unwrap();
+        assert_eq!(report.len(), names.len());
+        assert!(!temp.path().join("unrelated.lock").exists());
+        for (name, (_, inode)) in names.iter().zip(&guards) {
+            assert_eq!(
+                std::fs::metadata(temp.path().join(name)).unwrap().ino(),
+                *inode
+            );
+            assert_eq!(
+                crate::platform::native_gate::acquire(temp.path(), name)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+        }
+        drop(guards);
+        for name in names {
+            assert!(crate::platform::native_gate::acquire(temp.path(), name).is_ok());
+        }
     }
 
     #[test]
@@ -324,6 +533,7 @@ mod tests {
         assert!(foreign.exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn path_links_are_removed_only_when_they_point_into_the_app_dir() {
         let temp = tempfile::tempdir().unwrap();

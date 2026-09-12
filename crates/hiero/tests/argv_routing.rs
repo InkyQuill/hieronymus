@@ -355,3 +355,67 @@ fn unreachable_service_failure_reason_carries_the_probe_error() {
     assert!(reason.starts_with(prefix), "{reason}");
     assert!(reason.len() > prefix.len(), "{reason}");
 }
+
+#[test]
+fn tray_missing_installed_helper_has_actionable_diagnostic() {
+    // Same-filesystem hard link avoids a writable executable descriptor leaking
+    // into a concurrently forked test child (ETXTBSY on immediate exec).
+    let fixture = tempfile::tempdir_in(
+        std::path::Path::new(env!("CARGO_BIN_EXE_hiero"))
+            .parent()
+            .unwrap(),
+    )
+    .unwrap();
+    let cli = fixture.path().join("hiero");
+    std::fs::hard_link(env!("CARGO_BIN_EXE_hiero"), &cli).unwrap();
+    let output = Command::new(cli)
+        .args(["tray", "--data-root"])
+        .arg(fixture.path().join("data"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("hiero-desktop") && error.contains("desktop package"),
+        "{error}"
+    );
+}
+
+#[test]
+fn tray_forwards_absolute_root_as_one_literal_argument_to_sibling() {
+    use std::os::unix::fs::PermissionsExt;
+    // Same-filesystem hard link avoids a writable executable descriptor leaking
+    // into a concurrently forked test child (ETXTBSY on immediate exec).
+    let fixture = tempfile::tempdir_in(
+        std::path::Path::new(env!("CARGO_BIN_EXE_hiero"))
+            .parent()
+            .unwrap(),
+    )
+    .unwrap();
+    let cli = fixture.path().join("hiero");
+    std::fs::hard_link(env!("CARGO_BIN_EXE_hiero"), &cli).unwrap();
+    let helper = fixture.path().join("hiero-desktop");
+    std::fs::write(
+        &helper,
+        "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$1\" \"$2\" > \"$2.args\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let root = "literal $(touch BAD) ; data";
+    let output = Command::new(cli)
+        .current_dir(fixture.path())
+        .args(["tray", "--data-root", root])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = fixture.path().join(root);
+    assert_eq!(
+        std::fs::read_to_string(fixture.path().join(format!("{root}.args"))).unwrap(),
+        format!("2\n--data-root\n{}\n", expected.display())
+    );
+    assert!(!fixture.path().join("BAD").exists());
+}

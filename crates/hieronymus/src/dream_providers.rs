@@ -23,6 +23,7 @@ use crate::provider_config::ProviderProfile;
 use crate::provider_http::{
     BlockingHttpTransport, HttpError, HttpResponse, MAX_PROVIDER_RESPONSE_BYTES, ProviderTransport,
 };
+use crate::provider_observation::{Observation, ProviderKey, ProviderObserver, ProviderOutcome};
 
 /// Verbatim from the Python client (`ANTHROPIC_API_VERSION`).
 pub const ANTHROPIC_API_VERSION: &str = "2023-06-01";
@@ -282,6 +283,7 @@ pub struct LlmDreamProvider {
     profile: ProviderProfile,
     model: String,
     core: HttpClientCore,
+    observation: Option<Observation>,
 }
 
 impl LlmDreamProvider {
@@ -304,10 +306,17 @@ impl LlmDreamProvider {
         }
         Ok(Self {
             profile_id,
+            observation: None,
             profile,
             model,
             core: HttpClientCore::new(Arc::new(BlockingHttpTransport::default())),
         })
+    }
+
+    /// Attach content-free observations to actual generation calls only.
+    pub fn with_observer(mut self, observer: Arc<dyn ProviderObserver>, key: ProviderKey) -> Self {
+        self.observation = Some(Observation { observer, key });
+        self
     }
 
     /// Inject a transport (loopback tests; defaults to the blocking client).
@@ -348,10 +357,22 @@ impl LlmDreamProvider {
     ) -> Result<Value, DreamError> {
         let wire = self.wire()?;
         let plan = pass_request(&self.profile, wire, &self.model, prompt)?;
+        // Planning/invalid caller input never publishes provider health. Classify
+        // typed transport/status/parse results before DreamError flattens them.
+        let sequence = self.observation.as_ref().map(Observation::start);
+        let finish = |outcome| {
+            if let (Some(observation), Some(sequence)) = (&self.observation, sequence) {
+                observation.finish(sequence, outcome);
+            }
+        };
         let response = self
             .core
             .post_json(&plan.url, &plan.headers, &plan.payload, timeout)
             .map_err(|failure| {
+                finish(match &failure.error {
+                    HttpError::TooLarge { .. } => ProviderOutcome::InvalidResponse,
+                    _ => ProviderOutcome::Unavailable,
+                });
                 DreamError::Provider(format!(
                     "{} request failed (request {}): {}",
                     wire.name(),
@@ -360,26 +381,39 @@ impl LlmDreamProvider {
                 ))
             })?;
         if !(200..300).contains(&response.status) {
+            finish(match response.status {
+                401 | 403 => ProviderOutcome::Authentication,
+                429 => ProviderOutcome::RateLimited,
+                _ => ProviderOutcome::Unavailable,
+            });
             return Err(DreamError::Provider(format!(
                 "{} returned HTTP {}",
                 wire.name(),
                 response.status
             )));
         }
-        let text = envelope_text(wire, &response.body).map_err(DreamError::Provider)?;
-        let payload: Value = serde_json::from_str(strip_code_fences(&text)).map_err(|_| {
-            DreamError::Provider(format!(
-                "{} returned invalid JSON for {pass_name}",
-                wire.name()
-            ))
-        })?;
-        if !payload.is_object() {
-            return Err(DreamError::Provider(format!(
-                "{} returned a non-object {pass_name} response",
-                wire.name()
-            )));
-        }
-        Ok(payload)
+        let parsed = (|| {
+            let text = envelope_text(wire, &response.body).map_err(DreamError::Provider)?;
+            let payload: Value = serde_json::from_str(strip_code_fences(&text)).map_err(|_| {
+                DreamError::Provider(format!(
+                    "{} returned invalid JSON for {pass_name}",
+                    wire.name()
+                ))
+            })?;
+            if !payload.is_object() {
+                return Err(DreamError::Provider(format!(
+                    "{} returned a non-object {pass_name} response",
+                    wire.name()
+                )));
+            }
+            Ok(payload)
+        })();
+        finish(if parsed.is_ok() {
+            ProviderOutcome::Success
+        } else {
+            ProviderOutcome::InvalidResponse
+        });
+        parsed
     }
 
     fn timeout(&self) -> Duration {
@@ -805,4 +839,202 @@ fn default_model_suggestions(provider_type: &str) -> Vec<String> {
         _ => &[],
     };
     suggestions.iter().map(|name| name.to_string()).collect()
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Observed(Mutex<Vec<(ProviderKey, u64, ProviderOutcome)>>);
+    impl ProviderObserver for Observed {
+        fn completed(&self, key: &ProviderKey, sequence: u64, outcome: ProviderOutcome) {
+            self.0
+                .lock()
+                .unwrap()
+                .push((key.clone(), sequence, outcome));
+        }
+    }
+    struct Transport {
+        status: u16,
+        body: String,
+        failure: Option<&'static str>,
+    }
+    impl ProviderTransport for Transport {
+        fn post_json(
+            &self,
+            _: &str,
+            _: &[(String, String)],
+            _: &Value,
+            _: Duration,
+        ) -> Result<HttpResponse, HttpError> {
+            match self.failure {
+                Some("network") => Err(HttpError::Network(
+                    "contains 401, 429 and secret body".into(),
+                )),
+                Some("size") => Err(HttpError::TooLarge { limit: 1 }),
+                _ => Ok(HttpResponse {
+                    status: self.status,
+                    body: self.body.clone(),
+                }),
+            }
+        }
+        fn get_json(
+            &self,
+            _: &str,
+            _: &[(String, String)],
+            _: Duration,
+        ) -> Result<HttpResponse, HttpError> {
+            Ok(HttpResponse {
+                status: 200,
+                body: "{\"data\":[{\"id\":\"model\"}]}".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn actual_generation_observes_typed_outcomes_once_after_retries() {
+        let observed = Arc::new(Observed::default());
+        let key = ProviderKey {
+            profile: "primary".into(),
+            model: "model".into(),
+            revision: 7,
+        };
+        let envelope = json!({"choices":[{"message":{"content":"{}"}}]}).to_string();
+        let cases = [
+            (
+                401,
+                "sensitive raw body".into(),
+                None,
+                ProviderOutcome::Authentication,
+            ),
+            (
+                403,
+                "429 misleading body".into(),
+                None,
+                ProviderOutcome::Authentication,
+            ),
+            (
+                429,
+                "401 misleading body".into(),
+                None,
+                ProviderOutcome::RateLimited,
+            ),
+            (503, "secret".into(), None, ProviderOutcome::Unavailable),
+            (
+                200,
+                "not json secret".into(),
+                None,
+                ProviderOutcome::InvalidResponse,
+            ),
+            (
+                200,
+                json!({"choices":[{"message":{"content":"[]"}}]}).to_string(),
+                None,
+                ProviderOutcome::InvalidResponse,
+            ),
+            (
+                200,
+                envelope.clone(),
+                Some("network"),
+                ProviderOutcome::Unavailable,
+            ),
+            (
+                200,
+                envelope.clone(),
+                Some("size"),
+                ProviderOutcome::InvalidResponse,
+            ),
+            (200, envelope, None, ProviderOutcome::Success),
+        ];
+        let mut previous = 0;
+        for (index, (status, body, failure, expected)) in cases.into_iter().enumerate() {
+            let provider = LlmDreamProvider::new(
+                "primary",
+                ProviderProfile::new(
+                    "Primary",
+                    "openai",
+                    "https://example.invalid",
+                    "secret-key",
+                    1.0,
+                ),
+                "model",
+            )
+            .unwrap()
+            .with_transport(Arc::new(Transport {
+                status,
+                body,
+                failure,
+            }))
+            .with_retry_backoff(Duration::ZERO)
+            .with_observer(observed.clone(), key.clone());
+            let result = provider.run_json_prompt(
+                "coverage_audit",
+                "private prompt",
+                Duration::from_secs(1),
+            );
+            assert_eq!(result.is_ok(), expected == ProviderOutcome::Success);
+            let values = observed.0.lock().unwrap();
+            assert_eq!(values.len(), index + 1);
+            let (actual_key, sequence, outcome) = values.last().unwrap();
+            assert_eq!(actual_key, &key);
+            assert_eq!(*outcome, expected);
+            assert!(*sequence > previous);
+            previous = *sequence;
+        }
+    }
+
+    #[test]
+    fn invalid_input_and_model_listing_never_publish_generation_success() {
+        let observed = Arc::new(Observed::default());
+        let provider = LlmDreamProvider::new(
+            "primary",
+            ProviderProfile::new(
+                "Primary",
+                "openai",
+                "https://example.invalid",
+                "secret-key",
+                1.0,
+            ),
+            "model",
+        )
+        .unwrap()
+        .with_transport(Arc::new(Transport {
+            status: 200,
+            body: "{}".into(),
+            failure: None,
+        }))
+        .with_observer(
+            observed.clone(),
+            ProviderKey {
+                profile: "primary".into(),
+                model: "model".into(),
+                revision: 1,
+            },
+        );
+        assert!(
+            provider
+                .run_pass(
+                    "invalid-user-pass",
+                    &TranslationContext::new("book", "ja", "ru", "translate"),
+                    &[]
+                )
+                .is_err()
+        );
+        assert!(observed.0.lock().unwrap().is_empty());
+        observed.completed(
+            &ProviderKey {
+                profile: "primary".into(),
+                model: "model".into(),
+                revision: 1,
+            },
+            1,
+            ProviderOutcome::Unavailable,
+        );
+        assert!(probe_models(&provider.profile, Arc::clone(&provider.core.transport)).ok);
+        let values = observed.0.lock().unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].2, ProviderOutcome::Unavailable);
+    }
 }

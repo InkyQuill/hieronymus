@@ -11,6 +11,7 @@ pub mod dream_worker;
 mod events;
 pub mod http;
 pub mod protocol;
+pub mod readiness;
 pub mod registry;
 mod rest;
 pub mod semantic_worker;

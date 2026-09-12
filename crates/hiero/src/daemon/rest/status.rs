@@ -40,10 +40,11 @@ pub(super) fn handle(request: &Request, runtime: &DaemonRuntime) -> Response {
 pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
     let (providers, providers_error) = provider_statuses(&runtime.config);
     let dreaming = dreaming_payload(&runtime.config);
+    let semantic = runtime.semantic.snapshot();
     let pending = dreaming["pending_short_term_memories"]
         .as_i64()
         .unwrap_or(0);
-    json!({
+    let mut payload = json!({
         "running": true,
         "pid": runtime.record.pid,
         "host": runtime.bound_address.ip().to_string(),
@@ -59,18 +60,33 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
         "providers_error": providers_error,
         "dreaming": dreaming,
         "mcp_adapter": {"available": true, "mode": "local-http"},
-        "semantic": semantic_payload(runtime),
+        "semantic": semantic_payload(&semantic),
+        "readiness": runtime.dream.readiness().snapshot_with_semantic(&semantic.state),
         "housekeeping": {"last_cycle": Value::Null, "pending": pending > 0},
-    })
+    });
+    if let Ok(catalog) = load_provider_catalog(&runtime.config) {
+        let secrets: Vec<_> = catalog
+            .providers
+            .values()
+            .map(|p| p.key().expose_secret().as_str())
+            .collect();
+        // Only user/provider-derived diagnostics are redacted. Process identity,
+        // protocol revision, timestamps, and runtime paths are structural data;
+        // even a short configured key must never corrupt authenticated discovery.
+        redact_status_strings(&mut payload["providers"], &secrets);
+        redact_status_strings(&mut payload["semantic"]["detail"], &secrets);
+    }
+    payload
 }
 
 /// The required semantic readiness surface (Task S2): the supervised
 /// controller's state plus, when it has one, its actionable failure detail.
 /// An FTS-only lane surfaces as `failed` — never as ready — so strict
 /// consumers gate on `require_semantic_ready`.
-fn semantic_payload(runtime: &DaemonRuntime) -> Value {
-    let snapshot = runtime.semantic.snapshot();
-    let mut payload = match snapshot.state {
+fn semantic_payload(
+    snapshot: &crate::daemon::semantic_worker::ConfigurationAcknowledgement,
+) -> Value {
+    let mut payload = match &snapshot.state {
         crate::daemon::semantic_worker::RequiredSemanticState::Acquiring => {
             json!({"state": "acquiring", "detail": Value::Null})
         }
@@ -104,11 +120,21 @@ fn provider_statuses(config: &HieronymusConfig) -> (Vec<Value>, String) {
     ];
     let dream_config = match load_dream_config(config) {
         Ok(dream_config) => dream_config,
-        Err(error) => return (Vec::new(), error.to_string()),
+        Err(_) => {
+            return (
+                Vec::new(),
+                "Provider configuration could not be loaded".into(),
+            );
+        }
     };
     let catalog = match load_provider_catalog(config) {
         Ok(catalog) => catalog,
-        Err(error) => return (Vec::new(), error.to_string()),
+        Err(_) => {
+            return (
+                Vec::new(),
+                "Provider configuration could not be loaded".into(),
+            );
+        }
     };
     let mut names: Vec<String> = builtin
         .iter()
@@ -170,7 +196,7 @@ fn provider_statuses(config: &HieronymusConfig) -> (Vec<Value>, String) {
             "configured": configured,
             "model": model,
             "api_key_present": api_key_present,
-            "base_url": profile.url(),
+            "base_url": display_endpoint(profile.url()),
             "timeout_seconds": profile.timeout_seconds(),
             "error": error,
         }));
@@ -215,7 +241,7 @@ fn dreaming_payload(config: &HieronymusConfig) -> Value {
         "pending_completed_sessions": pending_completed_sessions,
         "pending_short_term_memories": pending_short_term_memories,
         "last_started_at": state.last_started_at,
-        "last_error": state.last_error,
+        "last_error": if state.last_error.is_empty() { "" } else { "Previous dream run failed" },
         "last_skipped_at": state.last_skipped_at,
         "last_skip_reason": state.last_skip_reason,
         "not_enough_memories_skipped_count": state.not_enough_memories_skipped_count,
@@ -336,4 +362,36 @@ fn active_provider(dream_config: &DreamConfig, catalog: &ProviderCatalog) -> Str
         }
     }
     "deterministic".to_string()
+}
+
+/// Display endpoints never include credentials, query secrets, or fragments.
+fn display_endpoint(endpoint: &str) -> String {
+    let Ok(mut url) = url::Url::parse(endpoint) else {
+        return String::new();
+    };
+    if url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+    {
+        return endpoint.to_string();
+    }
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn redact_status_strings(value: &mut Value, secrets: &[&str]) {
+    match value {
+        Value::String(text) => *text = hieronymus::secret::redact_values(text, secrets),
+        Value::Array(values) => values
+            .iter_mut()
+            .for_each(|value| redact_status_strings(value, secrets)),
+        Value::Object(values) => values
+            .values_mut()
+            .for_each(|value| redact_status_strings(value, secrets)),
+        _ => {}
+    }
 }

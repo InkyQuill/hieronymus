@@ -1,0 +1,147 @@
+# Build retained candidates only. A matching v* tag promotes these exact bytes later.
+name: desktop-candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-candidate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  common-model:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - run: bun scripts/check-rust-release.ts --allow-untagged
+      - run: bun test scripts/*.test.ts
+      - run: bun scripts/prepare-common-model.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: common-model
+          path: target/common-model/
+          if-no-files-found: error
+          retention-days: 90
+  native:
+    needs: common-model
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
+      HIERONYMUS_RELEASE_CHANNEL: stable
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - name: Linux desktop dependencies (headless job stays GUI-free)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends protobuf-compiler libprotobuf-dev libgtk-3-dev libxdo-dev
+      - name: macOS protobuf
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Windows protobuf
+        if: runner.os == 'Windows'
+        run: choco install protoc --yes --no-progress
+      - name: Protobuf standard import preflight
+        run: |
+          protoc --version
+          ./scripts/check-protobuf.sh
+      - run: bun install --cwd frontend --frozen-lockfile
+      - run: bun run --cwd frontend build
+      - run: cargo clippy -p hiero-desktop --all-targets --all-features --locked -- -D warnings
+      - run: cargo test -p hiero-desktop --all-features --locked
+      - name: Native private-file contracts
+        if: runner.os == 'Windows' || runner.os == 'macOS'
+        run: cargo test -p hieronymus --all-features --locked --lib private_file::tests
+      - name: Windows selected-helper contract
+        if: runner.os == 'Windows'
+        run: cargo test -p hiero --all-features --locked --lib desktop::launch::selection_tests::regular_windows_launcher_selects_versioned_helper
+      - name: Helper rustdoc (Unix)
+        if: runner.os != 'Windows'
+        run: RUSTDOCFLAGS="-D warnings" cargo doc -p hiero-desktop --no-deps --all-features --locked
+      - name: Helper rustdoc (PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:RUSTDOCFLAGS = "-D warnings"
+          cargo doc -p hiero-desktop --no-deps --all-features --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: common-model
+          path: target/common-model
+      - name: Native Intel runtime candidate (never promotes its own pins)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          git clone --no-checkout https://github.com/microsoft/onnxruntime.git "$RUNNER_TEMP/onnx-source"
+          git -C "$RUNNER_TEMP/onnx-source" checkout da9b5e364c465de65c49d91e696cd6485270757f
+          bun scripts/build-intel-runtime.ts --source "$RUNNER_TEMP/onnx-source" --out "$RUNNER_TEMP/intel-runtime"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && matrix.target == 'x86_64-apple-darwin'
+        with:
+          name: intel-runtime-review
+          path: |
+            ${{ runner.temp }}/intel-runtime/*.json
+            ${{ runner.temp }}/intel-runtime/*.txt
+            ${{ runner.temp }}/intel-runtime/*.log
+            ${{ runner.temp }}/intel-runtime/*.tgz
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Stage compiled-authority runtime and canonical model
+        run: bun scripts/prepare-target-assets.ts "${{ matrix.target }}"
+      - name: Final stripped native package
+        run: bun scripts/release-build.ts --target "${{ matrix.target }}"
+      - name: Verify final pair and assemble disposable payload
+        env:
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: bun scripts/qualify-desktop-native.ts
+      - name: Record immutable candidate inventory
+        run: bun scripts/desktop-ci.ts inventory target/release-dist "${{ matrix.target }}" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ matrix.target }}
+          path: target/release-dist/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-log-${{ matrix.target }}
+          path: target/native-qualification.log
+          if-no-files-found: warn
+          retention-days: 90

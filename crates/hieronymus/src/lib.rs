@@ -70,3 +70,8 @@ pub mod corrections;
 pub mod authority_producers;
 
 pub mod ollama_embeddings;
+
+pub mod private_file;
+pub mod provider_observation;
+#[cfg(windows)]
+pub mod windows_file;

@@ -5,6 +5,9 @@
 //! directory; the systemd user manager is never contacted (`--unit-dir`
 //! override disables manager integration by design).
 
+// Shell-script candidate and systemd fixture flow; native helper coordination has its own qualification.
+#![cfg(unix)]
+
 mod common;
 
 use std::io::Read as _;
@@ -38,14 +41,22 @@ struct FakeRelease {
 }
 
 /// Write a fake `hiero` shell binary: `version --json` reports the given
-/// identity, `doctor` exits with `doctor_exit`, everything else succeeds.
+/// identity; `doctor` reports the requested independent scope and exits with
+/// `doctor_exit`. Exit 1 carries a semantic warning, not an offline config warning.
 fn write_fake_binary(path: &Path, version: &str, protocol: &str, schema: i64, doctor_exit: i32) {
     let json = format!(
         "{{\"version\": \"{version}\", \"protocol_revision\": \"{protocol}\", \
          \"supported_schema_version\": {schema}}}"
     );
+    let findings = if doctor_exit == 1 {
+        r#"[{"level":"warning","code":"semantic-unavailable"}]"#
+    } else {
+        "[]"
+    };
+    let doctor =
+        format!(r#"{{"scope":"payload-config-without-registration","findings":{findings}}}"#);
     let script = format!(
-        "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
+        "#!/bin/sh\ncase \"$1\" in\n  version) printf '%s\\n' '{json}' ;;\n  release-assets) printf '%s\\n' '{{}}' ;;\n  doctor) printf '%s\\n' '{doctor}'; exit {doctor_exit} ;;\n  *) exit 0 ;;\nesac\n"
     );
     std::fs::write(path, script).unwrap();
     use std::os::unix::fs::PermissionsExt;
@@ -244,7 +255,7 @@ fn update_installs_a_verified_release_and_switches_every_link() {
 }
 
 #[test]
-fn update_refreshes_the_service_unit_to_the_new_absolute_binary() {
+fn update_refreshes_the_service_unit_to_the_stable_launcher_and_new_selection() {
     let temp = tempfile::tempdir().unwrap();
     let payload = temp.path().join("payload-9.9.0");
     stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
@@ -278,9 +289,14 @@ fn update_refreshes_the_service_unit_to_the_new_absolute_binary() {
     assert!(status.success(), "{stdout}{stderr}");
     let unit = std::fs::read_to_string(unit_dir.join("hieronymus.service")).unwrap();
     assert!(
-        unit.contains(&app.join("versions/9.9.0/hiero").display().to_string()),
+        unit.contains(&app.join("bin/hiero").display().to_string()),
         "{unit}"
     );
+    assert_eq!(
+        stable_target(&app, "hiero"),
+        PathBuf::from("../versions/9.9.0/hiero")
+    );
+    assert!(!unit.contains(&app.join("versions/0.9.0/hiero").display().to_string()));
     assert!(stdout.contains("service unit updated"), "{stdout}");
 }
 
@@ -461,7 +477,7 @@ fn update_refuses_running_while_a_daemon_is_active_without_a_stoppable_service()
     let (stdout, stderr, status) =
         run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
     assert_eq!(status.code(), Some(2), "{stdout}\n{stderr}");
-    assert!(stderr.contains("daemon is currently running"), "{stderr}");
+    assert!(stderr.contains("no managed restart capability"), "{stderr}");
     assert_eq!(
         stable_target(&app, "hiero"),
         PathBuf::from("../versions/0.9.0/hiero")
@@ -616,9 +632,9 @@ fn update_rolls_back_when_the_candidate_doctor_returns_an_unexpected_exit() {
 }
 
 #[test]
-fn update_rolls_back_a_degraded_candidate_when_no_daemon_confirms_it() {
-    // doctor exit 1 with no started daemon: authenticated readiness cannot
-    // confirm the intended version, so a degraded candidate is not activated.
+fn update_rolls_back_a_semantically_degraded_offline_candidate() {
+    // A scoped doctor exit 1 with a semantic warning is not the narrowly
+    // accepted offline config-root-missing case and must roll back.
     let temp = tempfile::tempdir().unwrap();
     let payload = temp.path().join("payload-9.9.0");
     stage_payload(&payload, Path::new(env!("CARGO_BIN_EXE_hiero")));
@@ -638,7 +654,12 @@ fn update_rolls_back_a_degraded_candidate_when_no_daemon_confirms_it() {
     let (stdout, stderr, status) =
         run_update(&release.release_dir, &app, &data_root, &unit_dir, &[]);
     assert_eq!(status.code(), Some(1), "{stdout}{stderr}");
-    assert!(stderr.contains("degraded"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "offline doctor reported warnings beyond an uninitialized configuration root"
+        ),
+        "{stderr}"
+    );
     assert!(stderr.contains("rolled back"), "{stderr}");
     assert_eq!(
         stable_target(&app, "hiero"),
@@ -764,7 +785,12 @@ fn update_refuses_an_owned_root_even_when_authenticated_discovery_fails() {
             &[],
         );
         assert_eq!(status.code(), Some(2), "{failure}: {stdout}\n{stderr}");
-        assert!(stderr.contains("owns this data root"), "{stderr}");
+        let expected = if failure == "credential" {
+            "rejected this installation's credential"
+        } else {
+            "owns this data root"
+        };
+        assert!(stderr.contains(expected), "{stderr}");
         assert_eq!(
             stable_target(&app, "hiero"),
             PathBuf::from("../versions/0.9.0/hiero")

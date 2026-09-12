@@ -152,3 +152,53 @@ fn stale_cleanup_does_not_remove_replaced_state() {
     remove_state_if_unchanged(&config, &fresh);
     assert!(!paths.state_json.exists());
 }
+
+#[test]
+fn reused_live_pid_does_not_keep_an_unlocked_crashed_run_alive() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let paths = dream_cycle_paths(&config);
+    std::fs::create_dir_all(&paths.config_root).unwrap();
+    let state = DreamCycleState {
+        owner: "crashed".into(),
+        pid: std::process::id() as i32,
+        started_at: "old-run".into(),
+        token: "old-instance".into(),
+    };
+    std::fs::write(&paths.state_json, serde_json::to_vec(&state).unwrap()).unwrap();
+    assert!(read_dream_cycle_state(&config).is_none());
+    assert!(!paths.state_json.exists());
+}
+
+#[test]
+fn cleanup_cannot_remove_state_while_the_kernel_lock_is_held() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let lock = dream_cycle_lock(&config, "manual").unwrap();
+    remove_state_if_unchanged(&config, lock.state());
+    assert_eq!(read_dream_cycle_state(&config).as_ref(), Some(lock.state()));
+}
+
+#[test]
+fn crashed_process_releases_kernel_ownership_without_running_drop() {
+    const FIXTURE: &str = "HIERO_TEST_DREAM_CRASH_ROOT";
+    if let Some(path) = std::env::var_os(FIXTURE) {
+        let config = HieronymusConfig::new(path);
+        let _guard = dream_cycle_lock(&config, "crash-fixture").unwrap();
+        std::process::exit(0); // Deliberately bypass destructors, like a crashed owner.
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "crashed_process_releases_kernel_ownership_without_running_drop",
+        ])
+        .env(FIXTURE, config.data_root())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(dream_cycle_paths(&config).state_json.exists());
+    assert!(read_dream_cycle_state(&config).is_none());
+    let _successor = dream_cycle_lock(&config, "successor").unwrap();
+}

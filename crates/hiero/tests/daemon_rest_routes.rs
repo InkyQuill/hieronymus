@@ -130,7 +130,8 @@ fn assert_frozen_contract(route_id: &str, fixture: &RouteFixture, fixup: impl Fn
 /// unauthenticated), so R5 adds them here. S2 adds the semantic readiness
 /// surface (`semantic.state`, the required-gate DTO). The frozen fixture
 /// file itself is untouched; this list is the recorded expectation change.
-const STATUS_RUST_ADDITIONS: [&str; 3] = ["instance_id", "protocol_revision", "semantic"];
+const STATUS_RUST_ADDITIONS: [&str; 4] =
+    ["instance_id", "protocol_revision", "semantic", "readiness"];
 
 #[test]
 fn status_route_matches_frozen_target() {
@@ -157,6 +158,7 @@ fn status_route_matches_frozen_target() {
         body["instance_id"] = json!(record.instance_id);
         body["protocol_revision"] = json!(common::PROTOCOL_REVISION);
         body["semantic"] = semantic.clone();
+        body["readiness"] = probe["readiness"].clone();
     });
 
     // Every frozen key survives, and the additions are exactly the declared
@@ -513,6 +515,12 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
     assert_eq!(response.status, 200);
     assert_eq!(response.content_type, JSON_CONTENT_TYPE);
     let body = response.body();
+
+    // Runtime readiness is an additive Rust dashboard field. Its source is
+    // the same daemon-owned summary as authenticated `/status`, so the frozen
+    // historical payload remains the oracle for every pre-existing field.
+    expected["readiness"] = body["readiness"].clone();
+    assert!(body["readiness"]["level"].is_string());
 
     // Shape: the exact top-level key set of the frozen oracle.
     let expected_keys: Vec<String> = expected.as_object().unwrap().keys().cloned().collect();
