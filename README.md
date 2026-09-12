@@ -1,8 +1,19 @@
 # Hieronymus
 
-Hieronymus is a local-first translation memory MCP for literary translation.
-It keeps approved terminology deterministic while providing searchable working
-memory and semantic recall for translation decisions, plot facts and voice notes.
+Hieronymus gives your writing agent persistent memory for writing and literary
+translation projects: translation decisions, plot facts, voice notes and other
+working context. Approved terminology stays deterministic alongside searchable
+memory and semantic recall.
+
+Start the local server, open its web interface, and connect your agent by adding
+both the Hieronymus MCP connection and skills. Once your agent verifies both,
+continue writing in Codex, Cowork or pi. Return to the web interface to see what
+it remembers, add pointers, or flag memories that are wrong or stale.
+
+The web interface is the main author interface. Browser authentication is off
+by default, with optional configuration; MCP access remains authenticated.
+The server maintains a tray icon when the desktop supports one. The `hiero`
+CLI provides shortcuts for quick tasks.
 
 The application is a Rust 1.96 workspace with SQLite/FTS5, LanceDB and mandatory
 ONNX semantic inference. A Svelte 5 console is built with Bun 1.4.0 and embedded

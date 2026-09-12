@@ -2,7 +2,11 @@
 
 ## Project
 
-Hieronymus is a local-first translation memory MCP for literary translation workflows. It is separate from the translation workspace; source code lives here, while book projects and runtime databases live elsewhere.
+Hieronymus is a local desktop server providing several types of agent memory for writing and literary translation projects. Source code lives here, while book projects and runtime databases live elsewhere.
+
+The server serves the main web interface. Authors use it to inspect what their agent remembers, add pointers or context, and flag wrong or stale memories; it is not a comprehensive human-maintained project knowledge base. The main flow is to start the server, connect an agent by adding both its MCP connection and Hieronymus skills, verify both, and continue writing in Codex, Cowork or pi. Keep this flow approachable for nontechnical writers.
+
+`hiero` is a convenience CLI for quick tasks. The running server owns its tray presence, directly or through a supervised sidecar, whenever the desktop supports it. Browser authentication is off by default and optional in configuration; this does not disable authenticated MCP access.
 
 ## Development Defaults
 
