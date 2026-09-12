@@ -289,6 +289,7 @@ fn sessions_do_not_survive_a_daemon_restart() {
 
 /// Write an executable opener stub that records its single URL argument to
 /// `out_path` and exits 0.
+#[cfg(not(target_os = "macos"))]
 fn write_capture_opener(dir: &std::path::Path, out_path: &std::path::Path) -> std::path::PathBuf {
     let script = dir.join("capture-opener.sh");
     std::fs::write(
@@ -300,6 +301,7 @@ fn write_capture_opener(dir: &std::path::Path, out_path: &std::path::Path) -> st
     script
 }
 
+#[cfg(not(target_os = "macos"))]
 fn run_console_cli(
     data_root: &std::path::Path,
     page: &str,
@@ -317,6 +319,7 @@ fn run_console_cli(
     )
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
     let root = tempfile::tempdir().unwrap();
@@ -368,6 +371,7 @@ fn cli_opens_the_selected_page_with_the_grant_only_in_the_fragment() {
     daemon.shutdown().unwrap();
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn cli_reports_opener_failure_without_exposing_the_grant() {
     let root = tempfile::tempdir().unwrap();

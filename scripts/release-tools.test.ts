@@ -7,6 +7,7 @@ import {
   rmSync,
   symlinkSync,
   existsSync,
+  realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,9 @@ import {
 import { gzipSync } from "node:zlib";
 const roots: string[] = [];
 function temp() {
-  const root = mkdtempSync(join(tmpdir(), "hiero-release-test-"));
+  const root = mkdtempSync(
+    join(realpathSync(tmpdir()), "hiero-release-test-"),
+  );
   roots.push(root);
   return root;
 }

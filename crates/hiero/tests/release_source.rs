@@ -92,6 +92,7 @@ impl Server {
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 };
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
@@ -184,17 +185,19 @@ fn archive(extra: Option<(&str, tar::EntryType, &str)>) -> Vec<u8> {
 }
 fn metadata(channel: &str, bytes: &[u8]) -> serde_json::Value {
     use sha2::Digest;
+    let target = hiero::app::TARGET_TRIPLE;
     serde_json::json!({"version":"0.7.0", "channel":channel, "target":hiero::app::TARGET_TRIPLE,
-        "archive":"hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz", "sha256":format!("{:x}",sha2::Sha256::digest(bytes)), "signature": null})
+        "archive":format!("hieronymus-0.7.0-{target}.tar.gz"), "sha256":format!("{:x}",sha2::Sha256::digest(bytes)), "signature": null})
 }
 fn server_for(channel: &str, payload: &serde_json::Value, archive_response: Vec<u8>) -> Server {
+    let target = hiero::app::TARGET_TRIPLE;
     Server::new(vec![
         (
             format!("/{channel}/release.json"),
             response(&serde_json::to_vec(payload).unwrap()),
         ),
         (
-            format!("/{channel}/hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz"),
+            format!("/{channel}/hieronymus-0.7.0-{target}.tar.gz"),
             archive_response,
         ),
     ])
@@ -473,9 +476,8 @@ fn split_second_download_failure_never_promotes_or_falls_back() {
     ]);
     let root = tempfile::tempdir().unwrap();
     let destination = root.path().join("staged");
-    assert!(
-        stage_remote_with_roots(&server.url, "stable", &destination, server.roots.clone()).is_err()
-    );
+    let _error = stage_remote_with_roots(&server.url, "stable", &destination, server.roots.clone())
+        .unwrap_err();
     assert!(!destination.exists());
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     assert_eq!(
@@ -554,10 +556,12 @@ fn split_metadata_cannot_masquerade_as_legacy_release_json() {
     )]);
     let root = tempfile::tempdir().unwrap();
     let destination = root.path().join("staged");
+    let error = stage_remote_with_roots(&server.url, "stable", &destination, server.roots.clone())
+        .unwrap_err();
     assert!(
-        stage_remote_with_roots(&server.url, "stable", &destination, server.roots.clone())
-            .unwrap_err()
-            .contains("exact-target filename")
+        error.contains("exact-target filename"),
+        "{error}; requests={:?}",
+        server.requests.lock().unwrap()
     );
     assert!(!destination.exists());
 }

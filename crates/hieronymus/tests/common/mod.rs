@@ -68,6 +68,12 @@ impl TlsLoopbackServer {
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 };
+                // Darwin propagates O_NONBLOCK from the listener to accepted
+                // sockets. The per-connection TLS exchange is deliberately
+                // blocking and bounded by its read/write timeouts.
+                socket
+                    .set_nonblocking(false)
+                    .expect("blocking accepted socket");
                 let _ = serve_once(socket, &config, response, &thread_requests);
             }
         });
