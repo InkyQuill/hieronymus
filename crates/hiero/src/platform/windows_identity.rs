@@ -66,3 +66,56 @@ pub fn session() -> io::Result<String> {
     }
     Ok(format!("{}-session-{session}", sid()?))
 }
+
+/// Resolve a native account spelling to its SID without trusting environment data.
+pub(crate) fn account_sid(account: &str) -> io::Result<String> {
+    let account = hieronymus::windows_file::wide(std::ffi::OsStr::new(account))?;
+    let mut sid_bytes = 0;
+    let mut domain_chars = 0;
+    let mut kind = 0;
+    // SAFETY: the first call queries sizes only; all output pointers are valid.
+    unsafe {
+        LookupAccountNameW(
+            ptr::null(),
+            account.as_ptr(),
+            ptr::null_mut(),
+            &mut sid_bytes,
+            ptr::null_mut(),
+            &mut domain_chars,
+            &mut kind,
+        );
+    }
+    if sid_bytes == 0 || sid_bytes > 65536 || domain_chars > 65536 {
+        return Err(io::Error::other("Could not resolve native task account"));
+    }
+    let mut buffer = vec![0usize; (sid_bytes as usize).div_ceil(size_of::<usize>())];
+    let mut domain = vec![0u16; domain_chars as usize];
+    // SAFETY: both buffers have the queried capacity and stay live through lookup
+    // and SID serialization. ConvertSidToStringSidW returns a LocalFree allocation.
+    unsafe {
+        if LookupAccountNameW(
+            ptr::null(),
+            account.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            &mut sid_bytes,
+            domain.as_mut_ptr(),
+            &mut domain_chars,
+            &mut kind,
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mut text = ptr::null_mut();
+        if ConvertSidToStringSidW(buffer.as_mut_ptr().cast(), &mut text) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut length = 0;
+        while *text.add(length) != 0 {
+            length += 1;
+        }
+        let result = String::from_utf16(std::slice::from_raw_parts(text, length))
+            .map_err(|_| io::Error::other("Invalid SID encoding"));
+        LocalFree(text.cast());
+        result
+    }
+}

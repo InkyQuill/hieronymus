@@ -86,6 +86,7 @@ impl LoopbackLlm {
             while !thread_stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
                         let handler = Arc::clone(&handler);
                         let requests = Arc::clone(&thread_requests);
                         std::thread::spawn(move || {

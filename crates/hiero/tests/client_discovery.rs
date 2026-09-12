@@ -4,6 +4,7 @@ use hiero::daemon::{Daemon, DaemonOptions};
 use hieronymus::data_root::HieronymusConfig;
 use std::io::{BufRead, Read, Write};
 use std::net::TcpListener;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 
@@ -187,9 +188,12 @@ fn opt_in_cannot_bypass_owned_root_or_identity_mismatch() {
             record.instance_id = "previous-instance".into();
             discovery::write_discovery(&config, &record).unwrap();
         }
-        let shim = root.path().join("systemctl");
-        std::fs::write(&shim, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_MANAGER_LOG\"\nif [ \"$2\" = start ]; then /bin/cp \"$TEST_DISCOVERY_SAVED\" \"$TEST_DISCOVERY_TARGET\"; fi\n").unwrap();
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            let shim = root.path().join("systemctl");
+            std::fs::write(&shim, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_MANAGER_LOG\"\nif [ \"$2\" = start ]; then /bin/cp \"$TEST_DISCOVERY_SAVED\" \"$TEST_DISCOVERY_TARGET\"; fi\n").unwrap();
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let log = root.path().join("manager.log");
         let run = |opt_in| {
             let mut cmd = command(config.data_root(), stdio);
@@ -215,6 +219,7 @@ fn opt_in_cannot_bypass_owned_root_or_identity_mismatch() {
 
 #[cfg(target_os = "linux")]
 #[test]
+#[cfg(target_os = "linux")]
 fn only_explicit_opt_in_starts_a_truly_stopped_root() {
     use std::time::{Duration, Instant};
     for stdio in [false, true] {

@@ -1117,7 +1117,7 @@ mod tests {
         let path = config
             .data_root()
             .join(hieronymus::ownership::OWNER_LOCK_FILE);
-        let bytes = std::fs::read(&path).unwrap();
+        let bytes = format!("{} daemon\n", std::process::id()).into_bytes();
         assert!(!root_is_released(&config).unwrap());
         drop(owner);
         assert!(root_is_released(&config).unwrap());

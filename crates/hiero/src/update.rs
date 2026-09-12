@@ -352,7 +352,7 @@ pub fn run_desktop_install(
     run_update_guarded_impl(options, None, &op, Some(no_activate))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn run_update_impl(
     options: &UpdateOptions,
     manager: Option<&dyn ServiceManager>,

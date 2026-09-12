@@ -43,15 +43,33 @@ impl Fixture {
         };
         let layout = AppLayout::new(&fixture.app);
         std::fs::create_dir_all(layout.version_dir("1.0.0")).unwrap();
-        std::fs::write(layout.version_dir("1.0.0").join("hiero"), b"binary").unwrap();
+        let binary = layout
+            .version_dir("1.0.0")
+            .join(format!("hiero{}", std::env::consts::EXE_SUFFIX));
+        #[cfg(not(windows))]
+        std::fs::write(&binary, b"binary").unwrap();
+        #[cfg(windows)]
+        {
+            std::fs::copy(env!("CARGO_BIN_EXE_hiero"), &binary).unwrap();
+            std::fs::copy(
+                env!("CARGO_BIN_EXE_hiero-launcher"),
+                layout.version_dir("1.0.0").join("hiero-launcher.exe"),
+            )
+            .unwrap();
+        }
         layout.switch_stable_links("1.0.0").unwrap();
 
         std::fs::create_dir_all(&fixture.unit_dir).unwrap();
+        std::fs::create_dir_all(&fixture.data_root).unwrap();
         let service_options = ServiceOptions {
             data_root: fixture.data_root.clone(),
             unit_dir: fixture.unit_dir.clone(),
-            binary: layout.version_dir("1.0.0").join("hiero"),
-            use_manager: false,
+            binary: if cfg!(windows) {
+                layout.stable_link("hiero")
+            } else {
+                binary
+            },
+            use_manager: cfg!(windows),
         };
         service::install(&service_options).unwrap();
 
@@ -82,6 +100,17 @@ impl Fixture {
     }
 }
 
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        // Refusal tests leave an installed fixture; remove its native task
+        // while the executable and registration identity still exist.
+        #[cfg(windows)]
+        if self.app.exists() {
+            let _ = self.run(&["--yes"]);
+        }
+    }
+}
+
 #[test]
 fn uninstall_without_confirmation_refuses_and_changes_nothing() {
     let fixture = Fixture::new();
@@ -90,7 +119,7 @@ fn uninstall_without_confirmation_refuses_and_changes_nothing() {
     assert!(stderr.contains("confirmation"), "{stderr}");
     // Nothing was removed by the refusal.
     assert!(fixture.app.exists());
-    assert!(fixture.unit_dir.join("hieronymus.service").exists());
+    assert!(fixture.unit_dir.join(service::SERVICE_UNIT_NAME).exists());
     assert!(fixture.data_root.exists());
 }
 
@@ -104,7 +133,7 @@ fn uninstall_removes_software_and_generated_entries_and_preserves_data() {
 
     // Software and generated entries are gone.
     assert!(!fixture.app.exists());
-    assert!(!fixture.unit_dir.join("hieronymus.service").exists());
+    assert!(!fixture.unit_dir.join(service::SERVICE_UNIT_NAME).exists());
     assert!(
         !HieronymusConfig::new(&fixture.data_root)
             .agent_plugins_root()
@@ -128,6 +157,17 @@ fn uninstall_removes_software_and_generated_entries_and_preserves_data() {
 #[test]
 fn delete_data_removes_the_exact_named_root_only() {
     let fixture = Fixture::new();
+    for name in [
+        "foo.lock",
+        ".tray-unknown.lock",
+        ".tray-abc.lock",
+        ".tray-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.lock",
+        ".tray-000000000000000000000000000000000000000000000000000000000000000g.lock",
+    ] {
+        std::fs::write(fixture.data_root.join(name), b"user data").unwrap();
+    }
+    std::fs::create_dir(fixture.data_root.join("notes.lock")).unwrap();
+    std::fs::write(fixture.data_root.join("notes.lock/contents"), b"user data").unwrap();
     let (stdout, stderr, status) = fixture.run(&["--yes", "--delete-data"]);
     assert!(status.success(), "{stdout}{stderr}");
     assert!(
@@ -139,10 +179,13 @@ fn delete_data_removes_the_exact_named_root_only() {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     retained.sort();
-    assert_eq!(
-        retained,
-        [".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"]
-    );
+    let mut expected = vec![".desktop-launch.lock", ".lifecycle.lock", ".owner.lock"];
+    if cfg!(windows) {
+        expected.push(".windows-browser.lock");
+        expected.push(".windows-native.lock");
+    }
+    expected.sort();
+    assert_eq!(retained, expected);
     // The software side is still removed exactly once.
     assert!(!fixture.app.exists());
 }

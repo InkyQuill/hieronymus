@@ -109,7 +109,7 @@ pub(super) fn create_new(path: &Path) -> io::Result<File> {
         file_from_handle({
             CreateFileW(
                 path.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
+                GENERIC_READ | GENERIC_WRITE | DELETE,
                 FILE_SHARE_READ | FILE_SHARE_DELETE,
                 &attributes,
                 CREATE_NEW,
@@ -231,6 +231,43 @@ fn unsafe_credential() -> io::Error {
 }
 pub(super) fn publish_new(source: &Path, destination: &Path) -> io::Result<()> {
     crate::windows_file::move_file(source, destination, false)
+}
+
+pub(super) fn publish_replace(file: &File, _source: &Path, destination: &Path) -> io::Result<()> {
+    // MoveFileExW refuses an open destination even when the validated reader
+    // shares DELETE. POSIX replacement preserves that reader's original object
+    // while new opens see the newly published owner-protected credential.
+    // Keep this behavior specific to credentials, not executable activation.
+    const REPLACE_IF_EXISTS: u32 = 0x1;
+    const POSIX_SEMANTICS: u32 = 0x2;
+    let destination = wide(std::path::absolute(destination)?.as_os_str())?;
+    let name_bytes = (destination.len() - 1) * size_of::<u16>();
+    let size = size_of::<FILE_RENAME_INFO>() + name_bytes;
+    let size = u32::try_from(size)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "credential path is too long"))?;
+    let mut buffer = vec![0usize; (size as usize).div_ceil(size_of::<usize>())];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: usize storage aligns FILE_RENAME_INFO and includes its trailing
+    // UTF-16 name. The source is the still-owned creation handle with DELETE
+    // access; the buffer and handle remain live for the synchronous call.
+    unsafe {
+        (*info).Anonymous.Flags = REPLACE_IF_EXISTS | POSIX_SEMANTICS;
+        (*info).RootDirectory = ptr::null_mut();
+        (*info).FileNameLength = name_bytes as u32;
+        ptr::copy_nonoverlapping(
+            destination.as_ptr(),
+            (*info).FileName.as_mut_ptr(),
+            destination.len(),
+        );
+        if SetFileInformationByHandle(file.as_raw_handle(), FileRenameInfoEx, info.cast(), size)
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    // A failure here is post-publication and must remain an error. The caller
+    // also requests parent-directory durability, as with exclusive publication.
+    file.sync_all()
 }
 
 impl SecurityDescriptor {

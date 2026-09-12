@@ -236,6 +236,7 @@ fn stdio_adapter_derives_mirrored_headers_from_the_body() {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 #[test]
+#[cfg(target_os = "linux")]
 fn stdio_adapter_start_daemon_flag_goes_through_the_service_integration() {
     // Explicit opt-in autostart now starts the per-user SERVICE, never a raw
     // `hiero daemon` child (ADR 0009: the managed role is the service; the

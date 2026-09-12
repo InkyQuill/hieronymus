@@ -10,6 +10,7 @@ fn main() {
     let directory = exe.parent().unwrap();
     let before = exe.file_stem().unwrap() == "before";
     let browser = exe.file_stem().unwrap() == "browser";
+    let delayed_exit = exe.file_stem().unwrap() == "delayed-exit";
     let mut input = std::io::stdin().lock();
     let mut request = String::new();
     input.read_line(&mut request).unwrap();
@@ -36,11 +37,17 @@ fn main() {
         (root, registration),
         || {
             std::fs::write(directory.join("committed"), "yes").unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            if !delayed_exit {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
             Ok(())
         },
     );
     if result.is_ok() {
         let _ = std::io::stdout().write_all(b"{\"Ok\":null}\n");
+        std::io::stdout().flush().unwrap();
+        if delayed_exit {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
     }
 }

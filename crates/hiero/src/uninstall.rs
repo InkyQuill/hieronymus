@@ -353,6 +353,7 @@ fn resolve_into(link_path: &Path, target: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(windows))]
     use hieronymus::data_root::HieronymusConfig;
 
     fn options(temp: &tempfile::TempDir, confirmed: bool, delete_data: bool) -> UninstallOptions {
@@ -369,6 +370,7 @@ mod tests {
         run_uninstall_impl(options, false)
     }
 
+    #[cfg(not(windows))]
     fn expected_coordination_names() -> Vec<&'static str> {
         vec![
             ".desktop-launch.lock",
@@ -385,14 +387,25 @@ mod tests {
         ]
     }
 
+    #[cfg(not(windows))]
     fn seed_install(temp: &tempfile::TempDir) -> HieronymusConfig {
         // Managed application directory with one version and stable links.
         let layout = AppLayout::new(temp.path().join("app"));
         std::fs::create_dir_all(layout.version_dir("1.0.0")).unwrap();
-        std::fs::write(layout.version_dir("1.0.0").join("hiero"), b"binary").unwrap();
+        let binary = layout
+            .version_dir("1.0.0")
+            .join(format!("hiero{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&binary, b"binary").unwrap();
+        #[cfg(windows)]
+        std::fs::write(
+            layout.version_dir("1.0.0").join("hiero-launcher.exe"),
+            b"launcher",
+        )
+        .unwrap();
         layout.switch_stable_links("1.0.0").unwrap();
         // Service unit + generated plugins + user data.
         let config = HieronymusConfig::new(temp.path().join("data"));
+        std::fs::create_dir_all(config.data_root()).unwrap();
         std::fs::create_dir_all(temp.path().join("units")).unwrap();
         let service_options = ServiceOptions {
             data_root: config.data_root().to_path_buf(),
@@ -417,6 +430,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn uninstall_removes_software_and_generated_entries_but_preserves_data() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);
@@ -433,7 +447,13 @@ mod tests {
         }));
         assert!(report.removed.iter().any(|entry| entry.contains("plugins")));
         assert!(!AppLayout::new(temp.path().join("app")).root().exists());
-        assert!(!temp.path().join("units/hieronymus.service").exists());
+        assert!(
+            !temp
+                .path()
+                .join("units")
+                .join(service::SERVICE_UNIT_NAME)
+                .exists()
+        );
         assert!(!config.agent_plugins_root().exists());
 
         // The preservation ledger names the data the spec protects.
@@ -456,6 +476,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn delete_data_is_a_separate_explicit_action_naming_the_root() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);
@@ -482,6 +503,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn delete_data_removes_unrelated_lock_names() {
         let temp = tempfile::tempdir().unwrap();
         let config = seed_install(&temp);

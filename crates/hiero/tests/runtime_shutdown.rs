@@ -14,6 +14,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -37,10 +38,16 @@ fn options(root: &Path) -> DaemonOptions {
 }
 
 fn hiero(arguments: &[&str]) -> (String, String, std::process::ExitStatus) {
-    let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
-        .args(arguments)
-        .output()
-        .expect("the hiero binary must run");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hiero"));
+    command.args(arguments);
+    #[cfg(windows)]
+    if matches!(
+        arguments.first(),
+        Some(&("start" | "stop" | "restart" | "service"))
+    ) {
+        command.arg("--no-activate");
+    }
+    let output = command.output().expect("the hiero binary must run");
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -96,31 +103,31 @@ fn restart_reuses_installation_token() {
     // And the file on disk is the same one, still user-only.
     let on_disk = std::fs::read_to_string(root.path().join("daemon.token")).unwrap();
     assert_eq!(on_disk.trim(), token);
-    let mode = std::fs::metadata(root.path().join("daemon.token"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o600, "the installation token stays 0600");
+    assert_private_token(&root.path().join("daemon.token"));
 }
 
 #[test]
 fn a_freshly_minted_token_is_user_only() {
     let root = tempfile::tempdir().unwrap();
     let daemon = Daemon::start(&options(root.path())).unwrap();
-    let mode = std::fs::metadata(root.path().join("daemon.token"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o600);
+    assert_private_token(&root.path().join("daemon.token"));
     daemon.shutdown().unwrap();
+}
+
+fn assert_private_token(path: &Path) {
+    assert!(hieronymus::private_file::read_private(path).is_ok());
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 #[test]
 fn an_empty_token_file_is_refused_with_repair_guidance() {
     let root = tempfile::tempdir().unwrap();
     let token_path = root.path().join("daemon.token");
-    std::fs::write(&token_path, "\n").unwrap();
-    std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    hieronymus::private_file::create_private_new(&token_path, b"\n").unwrap();
 
     let error = Daemon::start(&options(root.path())).unwrap_err();
     let text = error.to_string();
@@ -140,6 +147,7 @@ fn an_empty_token_file_is_refused_with_repair_guidance() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_world_readable_token_file_is_refused_with_repair_guidance() {
     let root = tempfile::tempdir().unwrap();
     let token_path = root.path().join("daemon.token");
@@ -323,6 +331,7 @@ fn the_worker_group_joins_before_the_daemon_releases_ownership() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_sigterm_shuts_the_daemon_binary_down_gracefully() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
@@ -758,24 +767,31 @@ fn hiero_stop_confirms_absence_and_refuses_an_unverifiable_unit() {
     );
     assert!(RootOwnership::acquire(&HieronymusConfig::new(root.path()), "stopped").is_ok());
 
-    // A broken unit cannot authorize any fallback manager action.
-    std::fs::write(
-        unit_dir.path().join("hieronymus.service"),
-        "[Unit]\nDescription=Hieronymus\n",
-    )
-    .unwrap();
-    let (stdout, stderr, status) = hiero(&[
-        "stop",
-        "--data-root",
-        root.path().to_str().unwrap(),
-        "--unit-dir",
-        unit_dir.path().to_str().unwrap(),
-    ]);
-    assert_ne!(status.code(), Some(101), "stderr: {stderr}");
-    assert!(
-        !status.success() && stderr.contains("unit file has no ExecStart"),
-        "stdout: {stdout}\nstderr: {stderr}"
-    );
+    // A broken registration cannot authorize any fallback manager action.
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        std::fs::write(
+            unit_dir.path().join(hiero::service::SERVICE_UNIT_NAME),
+            "[Unit]\nDescription=Hieronymus\n",
+        )
+        .unwrap();
+        let (stdout, stderr, status) = hiero(&[
+            "stop",
+            "--data-root",
+            root.path().to_str().unwrap(),
+            "--unit-dir",
+            unit_dir.path().to_str().unwrap(),
+        ]);
+        assert_ne!(status.code(), Some(101), "stderr: {stderr}");
+        #[cfg(target_os = "linux")]
+        let reason = "unit file has no ExecStart";
+        #[cfg(windows)]
+        let reason = "Invalid native registration state";
+        assert!(
+            !status.success() && stderr.contains(reason),
+            "stdout: {stdout}\nstderr: {stderr}"
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -800,50 +816,71 @@ fn the_lifecycle_commands_route_and_the_service_subcommands_are_preserved() {
             "{command}: stdout: {stdout}\nstderr: {stderr}"
         );
     }
-    // `start` installs the unit through the service integration. With a
-    // custom `--unit-dir` the manager is deliberately never contacted, so the
-    // start step refuses — and the refusal still reports the install step
-    // that did happen.
-    let fresh_unit_dir = tempfile::tempdir().unwrap();
-    let (stdout, stderr, _) = hiero(&[
-        "start",
-        "--data-root",
-        root_argument,
-        "--unit-dir",
-        fresh_unit_dir.path().to_str().unwrap(),
-    ]);
-    let reported = format!("{stdout}{stderr}");
-    assert!(reported.contains("service unit written"), "{reported}");
-    assert!(fresh_unit_dir.path().join("hieronymus.service").exists());
-    assert!(unit_dir.path().join("hieronymus.service").exists());
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        // `start` installs the unit through the service integration. With a
+        // custom `--unit-dir` the manager is deliberately never contacted, so the
+        // start step refuses — and the refusal still reports the install step
+        // that did happen.
+        let fresh_unit_dir = tempfile::tempdir().unwrap();
+        let (stdout, stderr, _) = hiero(&[
+            "start",
+            "--data-root",
+            root_argument,
+            "--unit-dir",
+            fresh_unit_dir.path().to_str().unwrap(),
+        ]);
+        let reported = format!("{stdout}{stderr}");
+        #[cfg(target_os = "linux")]
+        let installed = "service unit written";
+        #[cfg(windows)]
+        let installed = "Windows daemon task installed";
+        assert!(reported.contains(installed), "{reported}");
+        assert!(
+            fresh_unit_dir
+                .path()
+                .join(hiero::service::SERVICE_UNIT_NAME)
+                .exists()
+        );
+        assert!(
+            unit_dir
+                .path()
+                .join(hiero::service::SERVICE_UNIT_NAME)
+                .exists()
+        );
 
-    // The lower-level `hiero service <...>` surface is untouched.
-    let (stdout, stderr, status) = hiero(&[
-        "service",
-        "status",
-        "--json",
-        "--data-root",
-        root_argument,
-        "--unit-dir",
-        unit_argument,
-    ]);
-    assert!(
-        status.code() == Some(0) || status.code() == Some(1),
-        "{stderr}"
-    );
-    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(payload["installed"], serde_json::json!(true));
+        // The lower-level `hiero service <...>` surface is untouched.
+        let (stdout, stderr, status) = hiero(&[
+            "service",
+            "status",
+            "--json",
+            "--data-root",
+            root_argument,
+            "--unit-dir",
+            unit_argument,
+        ]);
+        assert!(
+            status.code() == Some(0) || status.code() == Some(1),
+            "{stderr}"
+        );
+        let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(payload["installed"], serde_json::json!(true));
 
-    let (stdout, stderr, status) = hiero(&[
-        "service",
-        "uninstall",
-        "--data-root",
-        root_argument,
-        "--unit-dir",
-        unit_argument,
-    ]);
-    assert!(status.success(), "{stderr}");
-    assert!(stdout.contains("service unit removed"), "{stdout}");
+        let (stdout, stderr, status) = hiero(&[
+            "service",
+            "uninstall",
+            "--data-root",
+            root_argument,
+            "--unit-dir",
+            unit_argument,
+        ]);
+        assert!(status.success(), "{stderr}");
+        #[cfg(target_os = "linux")]
+        let removed = "service unit removed";
+        #[cfg(windows)]
+        let removed = "Windows daemon task removed";
+        assert!(stdout.contains(removed), "{stdout}");
+    }
 
     // The usage line advertises both surfaces.
     let (_, stderr, _) = hiero(&["nonsense-command"]);

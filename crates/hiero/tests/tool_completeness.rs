@@ -452,6 +452,7 @@ impl DreamLoopback {
             while !thread_stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
                         std::thread::spawn(move || serve_dream_request(stream));
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1191,7 +1192,7 @@ fn export_cli_writes_deterministic_readonly_json() {
     let existing = export_to(&output_path);
     assert!(!existing.status.success());
     assert!(
-        String::from_utf8_lossy(&existing.stderr).contains("already exists"),
+        String::from_utf8_lossy(&existing.stderr).contains("cannot write"),
         "{}",
         String::from_utf8_lossy(&existing.stderr)
     );

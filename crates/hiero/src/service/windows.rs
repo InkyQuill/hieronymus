@@ -439,7 +439,30 @@ fn canonical_task_xml(scheduler: &Scheduler, xml: &str) -> Result<String, String
         definition
             .XmlText(&mut canonical)
             .map_err(|_| "Could not serialize native task definition")?;
-        Ok(canonical.to_string())
+        let canonical = canonical.to_string();
+        // Scheduler persistence can spell a LogonTrigger user as DOMAIN\name
+        // even when registered with a SID. Normalize only that identity text;
+        // preserve every element, attribute and duplicate for full comparison.
+        let doc =
+            roxmltree::Document::parse(&canonical).map_err(|_| "Invalid normalized task XML")?;
+        let mut identities = Vec::new();
+        for trigger in doc.descendants().filter(|n| n.has_tag_name("LogonTrigger")) {
+            for user in trigger.children().filter(|n| n.has_tag_name("UserId")) {
+                for text in user.children().filter(|n| n.is_text()) {
+                    let value = text.text().unwrap_or_default();
+                    if !value.starts_with("S-1-") {
+                        let sid = crate::platform::windows_identity::account_sid(value)
+                            .map_err(|_| "Could not resolve native task trigger identity")?;
+                        identities.push((text.range(), sid));
+                    }
+                }
+            }
+        }
+        let mut normalized = canonical.clone();
+        for (range, sid) in identities.into_iter().rev() {
+            normalized.replace_range(range, &sid);
+        }
+        Ok(normalized)
     }
 }
 fn matches(
@@ -577,7 +600,11 @@ pub(crate) fn execute(
     let xml = scheduler.xml(&expected.name())?;
     // Native enabled state is the login preference authority, including an OS UI toggle.
     if let (Some(record), Some(xml)) = (&mut before, &xml) {
-        let doc = roxmltree::Document::parse(xml).map_err(|_| "Invalid task readback")?;
+        // Registered XML may omit the default Enabled=true. Let the connected
+        // native parser materialize defaults before reading the enabled state;
+        // complete definition/ownership comparison still follows below.
+        let normalized = canonical_task_xml(&scheduler, xml)?;
+        let doc = roxmltree::Document::parse(&normalized).map_err(|_| "Invalid task readback")?;
         let enabled = doc
             .descendants()
             .find(|n| n.has_tag_name("Settings"))

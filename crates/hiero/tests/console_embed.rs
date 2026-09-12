@@ -92,7 +92,7 @@ fn collect_dist_asset_paths(dir: &Path, out: &mut Vec<String>) {
                 path.strip_prefix(dist_dir())
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned(),
+                    .replace('\\', "/"),
             );
         }
     }

@@ -83,6 +83,7 @@ fn cli(root: &std::path::Path, args: &[&str], input: &Value) -> std::process::Ou
 }
 #[test]
 fn actual_cli_stdin_binding_delivery_and_private_files() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let (root, _daemon, context) = prepared();
     let bound = cli(root.path(), &["bind-context"], &context);
@@ -115,8 +116,11 @@ fn actual_cli_stdin_binding_delivery_and_private_files() {
     );
     for dir in ["host-contexts", "host-deliveries"] {
         for entry in std::fs::read_dir(root.path().join(dir)).unwrap() {
+            let entry = entry.unwrap();
+            assert!(hieronymus::private_file::read_private(&entry.path()).is_ok());
+            #[cfg(unix)]
             assert_eq!(
-                entry.unwrap().metadata().unwrap().permissions().mode() & 0o777,
+                entry.metadata().unwrap().permissions().mode() & 0o777,
                 0o600
             );
         }

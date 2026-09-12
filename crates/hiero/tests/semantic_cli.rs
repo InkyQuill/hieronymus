@@ -78,6 +78,7 @@ impl LoopbackFile {
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 };
+                socket.set_nonblocking(false).unwrap();
                 *thread_requests.lock().unwrap() += 1;
                 let mut buffer = [0_u8; 4096];
                 let _ = socket.read(&mut buffer);
@@ -139,8 +140,9 @@ fn status_on_a_fresh_root_reports_the_missing_model() {
         "{stdout}"
     );
 
-    let (stdout, _, status) = hiero(&["semantic", "status", "--json", "--data-root", data_root]);
-    assert!(status.success(), "{stdout}");
+    let (stdout, stderr, status) =
+        hiero(&["semantic", "status", "--json", "--data-root", data_root]);
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["model"], "missing");
     assert_eq!(payload["generation"], serde_json::Value::Null);
@@ -210,8 +212,9 @@ fn status_reports_an_active_generation_without_touching_the_network() {
         .unwrap();
 
     let data_root = config.data_root().to_str().unwrap();
-    let (stdout, _, status) = hiero(&["semantic", "status", "--json", "--data-root", data_root]);
-    assert!(status.success(), "{stdout}");
+    let (stdout, stderr, status) =
+        hiero(&["semantic", "status", "--json", "--data-root", data_root]);
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["model"], "missing");
     assert_eq!(payload["generation"]["generation_id"], "gen-a");
@@ -248,7 +251,7 @@ fn enable_acquires_the_model_from_an_explicit_loopback_url() {
     assert_eq!(server.request_count(), 1);
 
     // A second enable on an already-acquired model is a no-op: no download.
-    let (stdout, _, status) = hiero(&[
+    let (stdout, stderr, status) = hiero(&[
         "semantic",
         "enable",
         "--url",
@@ -260,7 +263,7 @@ fn enable_acquires_the_model_from_an_explicit_loopback_url() {
         "--data-root",
         data_root,
     ]);
-    assert!(status.success(), "{stdout}");
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     assert!(stdout.contains("already acquired"), "{stdout}");
     assert_eq!(server.request_count(), 1);
 }
@@ -272,7 +275,7 @@ fn enable_json_reports_acquisition_and_lane_verdict() {
     let (sha, size) = artifact(&body);
     let root = tempfile::tempdir().unwrap();
 
-    let (stdout, _, status) = hiero(&[
+    let (stdout, stderr, status) = hiero(&[
         "semantic",
         "enable",
         "--json",
@@ -285,7 +288,7 @@ fn enable_json_reports_acquisition_and_lane_verdict() {
         "--data-root",
         root.path().to_str().unwrap(),
     ]);
-    assert!(status.success(), "{stdout}");
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["model_status"], "available");
     assert_eq!(payload["downloaded"], true);
@@ -338,7 +341,7 @@ fn enable_reacquires_an_invalid_model_file() {
     std::fs::create_dir_all(store.model_path().parent().unwrap()).unwrap();
     std::fs::write(store.model_path(), b"stale").unwrap();
 
-    let (stdout, _, status) = hiero(&[
+    let (stdout, stderr, status) = hiero(&[
         "semantic",
         "enable",
         "--url",
@@ -350,7 +353,7 @@ fn enable_reacquires_an_invalid_model_file() {
         "--data-root",
         root.path().to_str().unwrap(),
     ]);
-    assert!(status.success(), "{stdout}");
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     assert_eq!(server.request_count(), 1);
     assert_eq!(std::fs::read(store.model_path()).unwrap(), body);
 }
@@ -386,8 +389,9 @@ fn enable_with_bytes_override_never_trusts_a_pinned_size_file() {
     std::fs::create_dir_all(store.model_path().parent().unwrap()).unwrap();
     let pinned_size_placeholder = std::fs::File::create(store.model_path()).unwrap();
     pinned_size_placeholder.set_len(MODEL_BYTES).unwrap();
+    drop(pinned_size_placeholder);
 
-    let (stdout, _, status) = hiero(&[
+    let (stdout, stderr, status) = hiero(&[
         "semantic",
         "enable",
         "--json",
@@ -400,7 +404,7 @@ fn enable_with_bytes_override_never_trusts_a_pinned_size_file() {
         "--data-root",
         root.path().to_str().unwrap(),
     ]);
-    assert!(status.success(), "{stdout}");
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["downloaded"], true, "{payload}");
     assert_eq!(payload["model_status"], "available", "{payload}");
@@ -423,7 +427,7 @@ fn enable_with_bytes_override_detects_a_checksum_mismatched_file() {
     std::fs::create_dir_all(store.model_path().parent().unwrap()).unwrap();
     std::fs::write(store.model_path(), wrong).unwrap();
 
-    let (stdout, _, status) = hiero(&[
+    let (stdout, stderr, status) = hiero(&[
         "semantic",
         "enable",
         "--json",
@@ -436,7 +440,7 @@ fn enable_with_bytes_override_detects_a_checksum_mismatched_file() {
         "--data-root",
         root.path().to_str().unwrap(),
     ]);
-    assert!(status.success(), "{stdout}");
+    assert!(status.success(), "stdout: {stdout}; stderr: {stderr}");
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["downloaded"], true, "{payload}");
     assert_eq!(payload["model_status"], "available", "{payload}");
@@ -586,6 +590,7 @@ fn ollama_cli_configures_arms_and_restarts_without_onnx_assets() {
                 std::thread::sleep(Duration::from_millis(5));
                 continue;
             };
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
