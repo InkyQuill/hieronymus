@@ -112,6 +112,14 @@ the watcher from 8 items to its baseline 7. The unit ended inactive. An auxiliar
 request to the nonexistent `/api/status` route yielded no evidence; this rerun
 claims tray lifecycle only. Earlier valid no-cookie web checks remain separate.
 
+CodeRabbit completed its review through `2242c7d` at 2026-09-12T17:55:41Z with
+no new actionable comments and no identified merge-blocking risk; both follow-up
+findings are marked addressed. GitHub's aggregate review decision still shows
+the older changes-requested review. Its generic docstring-coverage warning
+(61.04% against 80%) is retained in the full conversation snapshot; this is not
+a failing Rust documentation check, and does not justify mechanically adding
+comments to private helpers. Warning-denied rustdoc passes.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)
