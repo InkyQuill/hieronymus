@@ -1503,7 +1503,7 @@ fn service_options(
         None => std::env::current_exe()
             .map_err(|error| format!("could not locate the running binary: {error}"))?,
     };
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(unix, windows))]
     let binary = if parsed.binary.is_none() {
         hiero::desktop::launch::stable_cli(&binary)?
     } else {

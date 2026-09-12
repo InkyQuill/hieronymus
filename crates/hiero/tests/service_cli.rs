@@ -73,6 +73,33 @@ fn unit_content(binary: &Path, data_root: &Path) -> String {
 }
 
 #[test]
+fn installed_cli_keeps_stable_launcher_in_registration() {
+    let environment = Environment::new();
+    std::fs::remove_file(&environment.binary).unwrap();
+    std::fs::hard_link(env!("CARGO_BIN_EXE_hiero"), &environment.binary)
+        .or_else(|_| std::fs::copy(env!("CARGO_BIN_EXE_hiero"), &environment.binary).map(|_| ()))
+        .unwrap();
+    let stable = environment.root.path().join("app/bin/hiero");
+    std::fs::create_dir_all(stable.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&environment.binary, &stable).unwrap();
+    let output = Command::new(&stable)
+        .args(["service", "install", "--no-activate"])
+        .args(environment.base_arguments())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let unit = std::fs::read_to_string(environment.unit_path()).unwrap();
+    assert!(
+        unit.contains(&unit_content(&stable, &environment.data_root)),
+        "{unit}"
+    );
+}
+
+#[test]
 fn install_writes_a_unit_pointing_at_the_absolute_binary_and_data_root() {
     let environment = Environment::new();
     let (stdout, stderr, status) = environment.run(&[
