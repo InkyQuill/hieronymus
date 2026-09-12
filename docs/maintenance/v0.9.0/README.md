@@ -96,6 +96,22 @@ Ordinary writing-memory projects may omit translation languages. Defaults are
 now normalized without requiring a language pair; explicit empty overrides still
 fail. The focused language test and all 14 application-memory tests passed.
 
+Current follow-up validation passed the full normal Rust suite (1,558 passed,
+17 intentionally ignored) and warning-denied rustdoc, as well as
+all-target/all-feature Clippy and 109 script tests. A trailing
+helper command used the incorrect package name `hieronymus-desktop` and failed
+before selecting tests; the separate correct `hiero-desktop` command passed
+Clippy, all 20 helper tests and warning-denied rustdoc. This command error did
+not invalidate or replace the successful main-workspace test results.
+
+The revised shared graphical-session resolver also passed a fresh live KDE
+Wayland check: transient unit `hieronymus-qualification-session-final-20260912`
+started daemon 251066 without display variables, helper 251141 registered an
+Active tray item, and authenticated stop removed both processes and returned
+the watcher from 8 items to its baseline 7. The unit ended inactive. An auxiliary
+request to the nonexistent `/api/status` route yielded no evidence; this rerun
+claims tray lifecycle only. Earlier valid no-cookie web checks remain separate.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)
