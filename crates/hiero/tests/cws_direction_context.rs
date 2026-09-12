@@ -71,9 +71,13 @@ fn explicit_languages_are_normalized_registry_defaults_are_optional() {
         for key in ["source_language", "target_language"] {
             let mut args = json!({"series_slug":"book"});
             args[key] = json!(value);
+            let error = app
+                .call("hieronymus_session_start", &args, "agent")
+                .unwrap_err()
+                .to_string();
             assert!(
-                app.call("hieronymus_session_start", &args, "agent")
-                    .is_err()
+                error.contains("must not be empty"),
+                "{key}={value:?}: {error}"
             );
         }
     }
@@ -469,4 +473,32 @@ fn common_direction_and_edition_specific_claims_keep_distinct_applicability() {
     let mut malformed = draft["applicability"].clone();
     malformed["scope_predicates"] = json!(["cws:direction:ru-main", "cws:direction:ru-literary"]);
     assert!(app.call("hieronymus_short_term_add", &json!({"session_id":draft["session_id"],"kind":"note","text":"Alex conflict", "claims":[{"text":"Alex conflict", "concept_id":draft["concept_id"], "applicability":malformed}]}), "agent").is_err());
+}
+
+#[test]
+fn legacy_memory_add_persists_request_scope_provenance() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let app = Application::open(&config).unwrap();
+    common::authority::prepared(&app, root.path());
+    let session = call(
+        &app,
+        "hieronymus_session_start",
+        json!({"series_slug":"book", "story_scopes":["cws:direction:ru-main"]}),
+    );
+    let added = call(
+        &app,
+        "hieronymus_memory_add",
+        json!({"series_slug":"book", "kind":"note", "text":"Scoped observation", "story_scopes":["cws:direction:ru-main"]}),
+    );
+    drop(app);
+    let records = WorkspaceStore::open(&config)
+        .unwrap()
+        .list_short_term_memories(session["session_id"].as_i64().unwrap())
+        .unwrap();
+    let record = records
+        .iter()
+        .find(|record| json!(record.id) == added["memory_id"])
+        .unwrap();
+    assert_eq!(record.story_scopes, ["cws:direction:ru-main"]);
 }

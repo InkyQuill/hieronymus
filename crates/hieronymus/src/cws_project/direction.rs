@@ -181,17 +181,25 @@ fn effective_direction(
     if auxiliary_ids.iter().any(|id| id == primary_id) {
         return Err(CwsError::InvalidManifest);
     }
-    let primary_edition = edition(project, primary_id, volume)?;
+    let primary_edition = edition(project, primary_id, None)?;
     let auxiliary_editions = auxiliary_ids
         .iter()
-        .map(|id| edition(project, id, volume))
+        .map(|id| edition(project, id, None))
         .collect::<Result<Vec<_>, _>>()?;
+    let target_language = required_string(fields, "language")?.trim().to_lowercase();
+    if volume.is_some_and(|volume| {
+        std::iter::once(&primary_edition)
+            .chain(&auxiliary_editions)
+            .any(|edition| !edition.coverage.iter().any(|covered| covered == volume))
+    }) {
+        return Err(CwsError::UncoveredEdition);
+    }
     Ok(SelectedDirection {
         direction_id: id.into(),
         work_kind: project.work_kind.clone(),
         volume_id: volume.map(str::to_owned),
         source_language: primary_edition.language.clone(),
-        target_language: required_string(fields, "language")?.trim().to_lowercase(),
+        target_language,
         primary_edition,
         auxiliary_editions,
         source_units: Vec::new(),
@@ -248,7 +256,11 @@ fn uses_edition(
         coverage.iter().map(|v| Some(v.as_str())).collect()
     };
     for volume in volumes {
-        let selected = effective_direction(project, fields, volume)?;
+        let selected = match effective_direction(project, fields, volume) {
+            Ok(selected) => selected,
+            Err(CwsError::UncoveredEdition) => continue,
+            Err(error) => return Err(error),
+        };
         if selected.primary_edition.edition_id == edition
             || selected
                 .auxiliary_editions
@@ -362,10 +374,10 @@ pub fn select_direction(
     selected_path: &Path,
     requested: Option<&str>,
 ) -> Result<Option<SelectedDirection>, CwsError> {
+    let normalized;
     let relative = if selected_path.is_absolute() {
-        selected_path
-            .strip_prefix(&project.root)
-            .map_err(|_| CwsError::UnsafePath)?
+        normalized = super::project_relative_path(project, selected_path)?;
+        normalized.as_path()
     } else {
         selected_path
     };

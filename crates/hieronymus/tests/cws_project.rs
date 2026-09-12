@@ -473,13 +473,18 @@ fn actionable_selection_retains_editions_sources_and_producer_hashes() {
                 expected["primary_edition"]
             );
             assert_eq!(selected.primary_edition.revision_label, "first");
+            assert_eq!(selected.source_language, expected["source_language"]);
+            assert_eq!(selected.target_language, expected["target_language"]);
             assert_eq!(
-                selected
-                    .auxiliary_editions
-                    .iter()
-                    .map(|e| &e.edition_id)
-                    .collect::<Vec<_>>(),
-                Vec::<&String>::new()
+                serde_json::to_value(
+                    selected
+                        .auxiliary_editions
+                        .iter()
+                        .map(|e| &e.edition_id)
+                        .collect::<Vec<_>>()
+                )
+                .unwrap(),
+                expected["auxiliary_editions"]
             );
             let refs: Vec<_> = selected
                 .source_units
@@ -713,4 +718,105 @@ fn source_path_filters_direction_coverage_before_resolving_volume_context() {
     .unwrap()
     .unwrap();
     assert_eq!(selected.direction_id, "ru-literary");
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_ancestors_allow_discovery_and_selection_but_project_links_are_rejected() {
+    use hieronymus::cws_project::select_direction;
+    use std::os::unix::fs::symlink;
+    let root = translation_fixture("translation-book");
+    let aliases = tempfile::tempdir().unwrap();
+    symlink(root.path().parent().unwrap(), aliases.path().join("tmp")).unwrap();
+    let alias = aliases
+        .path()
+        .join("tmp")
+        .join(root.path().file_name().unwrap());
+    let selected = alias.join("translations/ru-main/drafts/u001.md");
+    let project = discover(&selected).unwrap().unwrap();
+    assert_eq!(project.root, root.path().canonicalize().unwrap());
+    assert_eq!(
+        select_direction(&project, &selected, None)
+            .unwrap()
+            .unwrap()
+            .direction_id,
+        "ru-main"
+    );
+    symlink(root.path().join("translations"), root.path().join("linked")).unwrap();
+    assert!(matches!(
+        discover(&alias.join("linked/ru-main/drafts/u001.md")),
+        Err(CwsError::UnsafePath)
+    ));
+    assert!(matches!(
+        select_direction(&project, &alias.join("linked/ru-main/drafts/u001.md"), None),
+        Err(CwsError::UnsafePath)
+    ));
+}
+
+#[test]
+fn uncovered_editions_do_not_block_other_source_direction_candidates() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("direction-context-series");
+    let project = discover(root.path()).unwrap().unwrap();
+    let path = root.path().join("translations/en-main/translation.md");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("primary-edition: ja", "primary-edition: en");
+    fs::write(&path, &text).unwrap();
+    let selected = select_direction(
+        &project,
+        Path::new("sources/ja/volumes/v002/text/u002.md"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(selected.direction_id, "ru-literary");
+    fs::write(
+        &path,
+        text.replace("primary-edition: en", "primary-edition: ../bad"),
+    )
+    .unwrap();
+    assert!(matches!(
+        select_direction(
+            &project,
+            Path::new("sources/ja/volumes/v002/text/u002.md"),
+            None
+        ),
+        Err(CwsError::InvalidManifest)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn internal_link_to_project_root_cannot_disappear_during_path_normalization() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("translation-book");
+    let project = discover(root.path()).unwrap().unwrap();
+    std::os::unix::fs::symlink(root.path(), root.path().join("loop")).unwrap();
+    let selected = root.path().join("loop/translations/ru-main/drafts/u001.md");
+    assert!(matches!(
+        select_direction(&project, &selected, None),
+        Err(CwsError::UnsafePath)
+    ));
+}
+
+#[test]
+fn uncovered_primary_does_not_hide_invalid_auxiliary_metadata() {
+    use hieronymus::cws_project::select_direction;
+    let root = translation_fixture("direction-context-series");
+    let project = discover(root.path()).unwrap().unwrap();
+    let path = root.path().join("translations/en-main/translation.md");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("primary-edition: ja", "primary-edition: en")
+        .replace("auxiliary-editions:\n", "auxiliary-editions:\n  - ../bad\n");
+    fs::write(path, text).unwrap();
+    assert!(matches!(
+        select_direction(
+            &project,
+            Path::new("sources/ja/volumes/v002/text/u002.md"),
+            None
+        ),
+        Err(CwsError::InvalidManifest)
+    ));
 }

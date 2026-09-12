@@ -150,6 +150,7 @@ fn memory_add(application: &Application, arguments: &Value) -> Result<Value, App
         text: args.text,
         source_ref: args.source_ref,
         metadata: Some(metadata),
+        story_scopes: context.story_scopes.clone(),
         ..ShortTermMemoryInput::default()
     };
     let record = store

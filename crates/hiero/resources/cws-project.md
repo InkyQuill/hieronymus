@@ -51,7 +51,8 @@ a mode flag, numeric ranking, or stored policy summary. With no special instruct
 project files are primary and Hieronymus is additional memory.
 
 Apply a new user instruction in its stated scope immediately. Persist a durable
-change in AGENTS.md, preserving independent conditions; do not globalize a local
+change in AGENTS.md only when the user explicitly requests it, preserving
+independent conditions; do not globalize a local
 exception. Changing trust does not prove old records were transferred. Before an
 authorized durable edit, re-read the nearest `AGENTS.md`, use a recoverable CWS
 project operation when available, and preserve unrelated instructions.

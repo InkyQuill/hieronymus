@@ -253,15 +253,29 @@ fn current_scope(
     )
 }
 
+struct TermContext<'a> {
+    scope: &'a Value,
+    position: &'a Value,
+    session_id: i64,
+    series: &'a SeriesSpec,
+    revision: i64,
+}
+
 fn activate_evidenced_term(
     daemon: &hiero::daemon::Daemon,
     id: &mut i64,
     root: &Path,
     term: &TermSpec,
-    scope: &Value,
-    position: &Value,
-    session_id: i64,
+    context: TermContext<'_>,
 ) {
+    let TermContext {
+        scope,
+        position,
+        session_id,
+        series,
+        revision,
+    } = context;
+    let decision_id = format!("21000000-0000-4000-8000-{:012}", *id + 1);
     let mut invoke = |name, args| {
         *id += 1;
         call_tool(daemon, *id, name, args)
@@ -275,8 +289,10 @@ fn activate_evidenced_term(
         "{}\n\n{}",
         term.canonical_translation, term.canonical_translation
     );
-    let source_snapshot = evidence_snapshot(&root.join("term-source.txt"), &source);
-    let target_snapshot = evidence_snapshot(&root.join("term-rendering.txt"), &target);
+    let source_snapshot =
+        evidence_snapshot(&root.join(format!("{decision_id}-source.txt")), &source);
+    let target_snapshot =
+        evidence_snapshot(&root.join(format!("{decision_id}-rendering.txt")), &target);
     let mut references = Vec::new();
     for (source_start, target_start) in [
         (0, 0),
@@ -285,7 +301,7 @@ fn activate_evidenced_term(
             term.canonical_translation.len() + 2,
         ),
     ] {
-        let mut binding = json!({"concept_id":concept["id"], "source_language":"en", "target_language":"ru", "applicability":scope, "position_id":position, "paragraph_start":0, "paragraph_end":0, "identity_anchor":true, "aligned_source_id":null, "rendering":null, "contradicts_rule":null, "conflict_kind":null});
+        let mut binding = json!({"concept_id":concept["id"], "source_language":series.source_language, "target_language":series.target_language, "applicability":scope, "position_id":position, "paragraph_start":0, "paragraph_end":0, "identity_anchor":true, "aligned_source_id":null, "rendering":null, "contradicts_rule":null, "conflict_kind":null});
         let source = invoke(
             "hieronymus_evidence_capture",
             json!({"series_id":scope["series_id"], "snapshot":source_snapshot, "kind":"source_passage", "selection":{"start":source_start,"end":source_start+term.source_text.len(),"expected_text":term.source_text}, "binding":binding}),
@@ -299,11 +315,11 @@ fn activate_evidenced_term(
     }
     let proposed = invoke(
         "hieronymus_termbase_propose",
-        json!({"series_slug":term.series_slug,"category":term.category,"source_text":term.source_text,"canonical_translation":term.canonical_translation,"concept_id":concept["id"]}),
+        json!({"series_slug":term.series_slug,"category":term.category,"source_language":series.source_language,"target_language":series.target_language,"source_text":term.source_text,"canonical_translation":term.canonical_translation,"concept_id":concept["id"]}),
     );
     let applied = invoke(
         "hieronymus_decide",
-        json!({"version":1,"decision_id":"21000000-0000-4000-8000-000000000001","expected_revision":1,"evidence_refs":references,"series_id":scope["series_id"],"concept_id":concept["id"],"source_language":"en","target_language":"ru","applicability":scope,"operation":{"Activate":{"candidate_id":proposed["id"],"candidate_revision":1}},"session_id":session_id}),
+        json!({"version":1,"decision_id":decision_id,"expected_revision":revision,"evidence_refs":references,"series_id":scope["series_id"],"concept_id":concept["id"],"source_language":series.source_language,"target_language":series.target_language,"applicability":scope,"operation":{"Activate":{"candidate_id":proposed["id"],"candidate_revision":1}},"session_id":session_id}),
     );
     assert!(applied.get("Applied").is_some(), "{applied}");
 }
@@ -837,17 +853,29 @@ fn real_semantic_qualification() {
     }
 
     // Evidence-learned terminology, never a forged trusted-user correction.
+    let mut revisions = std::collections::HashMap::<String, i64>::new();
     for term in &fixture.terms {
+        let series = fixture
+            .series
+            .iter()
+            .find(|s| s.slug == term.series_slug)
+            .unwrap();
+        let revision = revisions.entry(term.series_slug.clone()).or_insert(1);
         let (scope, position) = &scopes[&term.series_slug];
         activate_evidenced_term(
             &daemon,
             &mut id,
             root.path(),
             term,
-            scope,
-            position,
-            sessions[&term.series_slug],
+            TermContext {
+                scope,
+                position,
+                session_id: sessions[&term.series_slug],
+                series,
+                revision: *revision,
+            },
         );
+        *revision += 1;
     }
 
     // The supervised worker rebuilds the corpus with the real model.
@@ -1340,4 +1368,61 @@ fn free_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
+}
+
+#[test]
+fn evidence_fixture_supports_multiple_terms_and_language_pairs() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon = start_daemon(root.path());
+    let mut id = 0;
+    for language in ["en", "ja"] {
+        let series = SeriesSpec {
+            slug: format!("book-{language}"),
+            title: language.into(),
+            source_language: language.into(),
+            target_language: "ru".into(),
+        };
+        id += 1;
+        let created = call_tool(
+            &daemon,
+            id,
+            "hieronymus_series_create",
+            json!({"slug":series.slug,"title":series.title,"source_language":series.source_language,"target_language":series.target_language}),
+        );
+        let (scope, position) = current_scope(
+            &daemon,
+            &mut id,
+            root.path(),
+            created["id"].as_i64().unwrap(),
+        );
+        id += 1;
+        let session = call_tool(
+            &daemon,
+            id,
+            "hieronymus_session_start",
+            json!({"series_slug":series.slug,"volume":"I","chapter":"1","story_timeline_id":scope["timeline_id"],"story_scene_key":"opening"}),
+        );
+        for revision in 1..=2 {
+            let term = TermSpec {
+                series_slug: series.slug.clone(),
+                category: "character".into(),
+                source_text: format!("Name{revision}"),
+                canonical_translation: format!("Имя{revision}"),
+            };
+            activate_evidenced_term(
+                &daemon,
+                &mut id,
+                root.path(),
+                &term,
+                TermContext {
+                    scope: &scope,
+                    position: &position,
+                    session_id: session["session_id"].as_i64().unwrap(),
+                    series: &series,
+                    revision,
+                },
+            );
+        }
+    }
+    daemon.shutdown().unwrap();
 }

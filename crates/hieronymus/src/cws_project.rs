@@ -79,7 +79,6 @@ pub fn discover(start: &Path) -> Result<Option<CwsProject>, CwsError> {
         return Err(CwsError::UnsafePath);
     }
     let absolute = std::path::absolute(start)?;
-    ensure_no_links(&absolute)?;
     let directory = match metadata(&absolute)? {
         Some(info) if !info.is_dir() => absolute.parent().ok_or(CwsError::UnsafePath)?,
         _ => absolute.as_path(),
@@ -89,9 +88,17 @@ pub fn discover(start: &Path) -> Result<Option<CwsProject>, CwsError> {
         if !is_manifest(&path)? {
             continue;
         }
-        let root = root.canonicalize()?;
-        let fields = parse_frontmatter(&fs::read(root.join("project.md"))?)?;
-        return project_from_metadata(root, &fields).map(Some);
+        if metadata(root)?.is_some_and(|info| info.file_type().is_symlink()) {
+            return Err(CwsError::UnsafePath);
+        }
+        let relative = absolute
+            .strip_prefix(root)
+            .map_err(|_| CwsError::UnsafePath)?;
+        let canonical_root = root.canonicalize()?;
+        let fields = parse_frontmatter(&fs::read(canonical_root.join("project.md"))?)?;
+        let project = project_from_metadata(canonical_root, &fields)?;
+        safe_project_path(&project, relative)?;
+        return Ok(Some(project));
     }
     Ok(None)
 }
@@ -298,6 +305,34 @@ fn ensure_no_links(path: &Path) -> Result<(), CwsError> {
         }
     }
     Ok(())
+}
+
+// Resolve only the spelling of the root; validating the unchanged suffix keeps
+// links inside the project forbidden, including when the selected leaf is absent.
+fn project_relative_path(project: &CwsProject, path: &Path) -> Result<PathBuf, CwsError> {
+    if path.components().any(|part| part == Component::ParentDir) {
+        return Err(CwsError::UnsafePath);
+    }
+    let mut relative = None;
+    for ancestor in path.ancestors() {
+        match ancestor.canonicalize() {
+            Ok(root) if root == project.root => {
+                if metadata(ancestor)?.is_some_and(|info| info.file_type().is_symlink()) {
+                    continue;
+                }
+                let suffix = path
+                    .strip_prefix(ancestor)
+                    .map_err(|_| CwsError::UnsafePath)?;
+                relative = Some(suffix.to_owned());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let relative = relative.ok_or(CwsError::UnsafePath)?;
+    safe_project_path(project, &relative)?;
+    Ok(relative)
 }
 
 /// Validate a single relative path without enumerating private or opaque trees.

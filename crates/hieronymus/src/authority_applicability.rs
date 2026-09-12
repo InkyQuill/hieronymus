@@ -518,6 +518,8 @@ mod tests {
         let compatible = scope(&["cws:direction:ru-main", "cws:edition:en"]);
         assert!(structural_overlap(&db, &left, &compatible).unwrap());
         let malformed = scope(&["cws:direction:ru-main", "cws:direction:ru-literary"]);
+        assert!(direction(&malformed.scope_predicates).is_err());
+        assert!(direction(&left.scope_predicates).is_ok());
         assert!(matches!(
             validate(&db, &malformed),
             Err(Error::ApplicabilityConflict)
