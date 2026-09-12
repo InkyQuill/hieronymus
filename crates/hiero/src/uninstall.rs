@@ -171,12 +171,14 @@ fn run_uninstall_impl(
         crate::desktop::linux_registration::for_uninstall(&service_options, layout.root())
             .map_err(UninstallError::Refused)?;
     #[cfg(windows)]
-    crate::platform::windows_broker::task(
-        &service_options,
-        crate::platform::windows_broker::TaskAction::Inspect,
-        true,
-    )
-    .map_err(UninstallError::Refused)?;
+    if use_native_manager {
+        crate::platform::windows_broker::task(
+            &service_options,
+            crate::platform::windows_broker::TaskAction::Inspect,
+            true,
+        )
+        .map_err(UninstallError::Refused)?;
+    }
     #[cfg(target_os = "macos")]
     if use_native_manager {
         crate::platform::macos_broker::task(
@@ -205,12 +207,14 @@ fn run_uninstall_impl(
         removed.push("owned desktop login entry, launcher, icon and registration record".into());
     }
     #[cfg(windows)]
-    crate::platform::windows_broker::task(
-        &service_options,
-        crate::platform::windows_broker::TaskAction::Remove,
-        true,
-    )
-    .map_err(UninstallError::Refused)?;
+    if use_native_manager {
+        crate::platform::windows_broker::task(
+            &service_options,
+            crate::platform::windows_broker::TaskAction::Remove,
+            true,
+        )
+        .map_err(UninstallError::Refused)?;
+    }
     #[cfg(target_os = "macos")]
     if use_native_manager {
         crate::platform::macos_broker::task(

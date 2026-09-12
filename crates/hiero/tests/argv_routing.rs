@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! argv[0] command routing (distribution spec, installer section): one binary
 //! serves the historical entry points. `hieronymus` routes to the canonical
 //! CLI, `hieronymus-mcp` routes to `hiero mcp`, and `hieronymus-agent-hook`

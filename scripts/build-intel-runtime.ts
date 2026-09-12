@@ -67,6 +67,8 @@ export async function buildIntelRuntime(
     "--cmake_extra_defines",
     "CMAKE_OSX_ARCHITECTURES=x86_64",
     "CMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+    // ONNX pins protoc and protobuf together; Homebrew headers may be newer.
+    "FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER",
   ];
   const toolchain = {
     os: run(["sw_vers"], source),
