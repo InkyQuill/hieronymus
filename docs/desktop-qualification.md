@@ -51,7 +51,8 @@ still requires its separate installed-artifact and interactive evidence.
    code is never executed. Unknown attachments, aliases and paths escaping the
    evidence directory are rejected; each capture is 1 byte–50 MiB, total 250 MiB,
    and each JSON document is at most 64 KiB.
-6. After all four targets, Intel pin promotion and all native observations pass,
+6. After all four targets and Intel pin promotion pass, and every observation
+   record passes validation with its explicit qualification gaps,
    set repository variables `DESKTOP_CANDIDATE_RUN` and `DESKTOP_EVIDENCE_RUN`
    to those numeric successful run IDs. A reviewed exact `v<workspace-version>`
    tag pointing to the candidate commit triggers `release-rust.yml`. The release
@@ -76,8 +77,8 @@ manifest remains outside the sealed app; inner code precedes outer bundle seals.
 
 The full historical default workspace integration suite runs on Linux in the
 headless job. Native desktop jobs run helper clippy/tests/rustdoc, compiling the
-shared native graph, plus `private_file::tests` on macOS (optional/advisory on
-Windows PRs as described above) and the named
+shared native graph, plus mandatory `private_file::tests` on macOS and
+Windows and the named
 Windows regular-launcher selected-helper contract. Candidate jobs additionally
 run the explicit final-payload inference/MCP fixture. Linux/systemd-only legacy
 fixtures are not mislabeled as a portable full-suite gate. Native Scheduler and

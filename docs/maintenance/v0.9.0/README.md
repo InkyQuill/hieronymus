@@ -158,3 +158,10 @@ validation also passes with the Intel target enabled.
 
 CodeRabbit review of PR #29 initially hit the included-review rate limit; its
 original-PR approvals do not constitute review of the integration changes.
+
+After adding reviewed-runtime support, full local revalidation passed again:
+1,553 normal Rust tests (17 intentionally ignored), all-target/all-feature Clippy,
+warning-denied rustdoc and 107 script tests. The final-payload inference test
+above remains separate from the normally ignored suite. CodeRabbit subsequently
+started the PR #29 review. The diagnostic Intel job passed private-file tests and
+began its native runtime source build at 2026-09-12T17:07:58Z.

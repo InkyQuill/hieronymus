@@ -72,7 +72,7 @@ export async function acquireReviewedRuntime(root: string, target: string) {
   const source = reviewedSource(runtime, target);
   const parent = join(root, "target");
   mkdirSync(parent, { recursive: true });
-  const directory = mkdtempSync(join(parent, "reviewed-intel-"));
+  let directory = mkdtempSync(join(parent, "reviewed-intel-"));
   // Once published, release attachments outlive temporary CI artifact retention.
   // Before first publication the same pinned bytes come from their retained run.
   try {
@@ -99,6 +99,9 @@ export async function acquireReviewedRuntime(root: string, target: string) {
       signal,
     );
   } catch {
+    // A public archive may have downloaded before its receipt failed. Keep the
+    // CI extraction empty so gh neither collides with nor trusts partial data.
+    directory = mkdtempSync(join(parent, "reviewed-intel-ci-"));
     downloadRetainedArtifact([
       "gh",
       "run",
