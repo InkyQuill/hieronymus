@@ -1,0 +1,173 @@
+{
+  "candidate_commit": "b4f2cba5204480f56302e0cf537f1b35c32e9e88",
+  "target": "x86_64-apple-darwin",
+  "artifact_sha256": "113d93b67febf905f42198781b1dac64ebb4d120e951bf8ca960e1ece3bff03f",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "metadata_sha256": "25a6a1897142ccf3ecafffc1638bac584b431679024e1da068be6afd8b6efedc",
+  "assets_sha256": "79ea24c25381ee9f971def05d52332e785754108487198e132b06d558e46cf68",
+  "signing": "unsigned-waiver",
+  "os_version": "Unavailable: no physical Intel macOS host was available",
+  "desktop": "macos",
+  "session": "native",
+  "scale": [],
+  "qualification": "unqualified",
+  "qualification_reason": "Final-byte desktop testing was unavailable for this target/session; automated native CI and earlier PR receipts do not qualify the user desktop. Published with the owner-approved explicit coverage gap.",
+  "checks": [
+    {
+      "name": "native-semantic-mcp",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "startup",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "duplicate-start",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "model-acquisition",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "semantic-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "provider-failure-recovery-untested",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "three-probe-failures",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "failed-stop",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "quit-preserves-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "login-toggle",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "next-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "interactive-menu",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "missing-tray-host",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "host-restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "theme",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "dpi",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "console-grant",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "active-upgrade",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "rollback",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "uninstall",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "secret-free-diagnostics",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "pending-native-operation",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "private-storage-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "launchagent-loaded-state",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    },
+    {
+      "name": "bundle-launch",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-apple-darwin-macos-native.txt",
+      "evidence_sha256": "dc43eabc5de4bbe0076aa5f86fe0bb66c932a438d0c6184ebd65e290b68bc669"
+    }
+  ]
+}

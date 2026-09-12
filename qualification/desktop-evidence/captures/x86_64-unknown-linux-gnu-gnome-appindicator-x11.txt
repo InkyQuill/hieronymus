@@ -1,0 +1,42 @@
+Hieronymus v0.9.0 final-byte qualification
+Source: b4f2cba5204480f56302e0cf537f1b35c32e9e88
+Candidate run: https://github.com/InkyQuill/hieronymus/actions/runs/34713682687
+Target/session: x86_64-unknown-linux-gnu gnome-appindicator/x11
+Host: Unavailable: no GNOME X11 machine/session was available
+
+UNQUALIFIED. No final-byte native desktop observations were made on this target/session. Native CI builds, unit/integration checks and final-package inference are separate evidence and do not establish interactive desktop acceptance. Previous PR Windows/M1 receipts refer to earlier source/binaries and are deliberately not reused as final-byte qualification. The owner authorized publication with explicit testing gaps; Intel macOS must remain unqualified.
+
+native-semantic-mcp: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+startup: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+duplicate-start: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+model-acquisition: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+semantic-failure: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+provider-failure-recovery-untested: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+three-probe-failures: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+restart: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+failed-stop: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+quit-preserves-login: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+login-toggle: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+next-login: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+interactive-menu: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+missing-tray-host: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+host-restart: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+theme: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+dpi: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+console-grant: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+active-upgrade: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+rollback: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+uninstall: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+secret-free-diagnostics: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+pending-native-operation: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+private-storage-failure: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+native-manager-update: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+live-tray-replacement: UNAVAILABLE. The required target/session was not exercised on the final bytes; no native desktop pass is claimed.
+
+Separate final-candidate CI evidence: all four native jobs in run 34713682687 completed successfully. The following is the target-specific packaged inference/MCP log. It establishes the automated native fixture only; it does not upgrade unavailable desktop-session checks.
+
+running 1 test
+test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.88s
+
