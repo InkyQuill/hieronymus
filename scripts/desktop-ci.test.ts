@@ -42,6 +42,15 @@ test("overlapping credentials are fully redacted regardless of configuration ord
     );
   }
 });
+test("a credential overlapping a URL prefix cannot expose its signed query", () => {
+  for (const secret of ["https", "https://example.invalid"]) {
+    expect(
+      githubFailureDetail("https://example.invalid/file?signature=sensitive", [
+        secret,
+      ]),
+    ).toBe("[URL redacted]");
+  }
+});
 test("run provenance binds exact successful workflow and source", () => {
   expect(
     validateRun(good, "owner/repo", "desktop-candidate", "a".repeat(40)),

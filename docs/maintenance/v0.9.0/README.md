@@ -26,7 +26,7 @@ shared files, verifies the complete inventory, and renames the verified staging
 directory into place. Conflicts, acquisition failures, unexpected directories and
 failed verification leave no partial output; an existing destination is preserved.
 Cleanup failures retain the original error as well. GitHub failures now retain
-bounded diagnostics with configured credentials and URLs redacted. All 116 script
+bounded diagnostics with configured credentials and URLs redacted. All 117 script
 tests pass, including the production artifact-acquisition argument construction.
 CodeRabbit's first review raised one minor coverage issue in that acquisition
 path; the disposable four-artifact fixture addresses it while preserving the
@@ -35,6 +35,9 @@ original merge/failure tests. The review is retained in
 The next review found that overlapping credentials must be redacted longest
 first; that is corrected and regression-tested, and the review is retained in
 `coderabbit-download-diagnostics.ndjson`.
+The follow-up review found that a credential overlapping an HTTP(S) URL prefix
+could prevent later URL masking. URLs are now redacted first, with a regression
+for the signed-query case; see `coderabbit-download-url-order.ndjson`.
 The fixed downloader successfully acquired and verified all four real artifacts
 from run 34713682687, and evidence packaging passed against the same-source data
 commit. An earlier real acquisition attempt returned `gh run download` exit 1
