@@ -19,7 +19,8 @@ fn menu_has_stable_spec_order_and_disabled_text_status() {
     );
     assert!(!menu.items[0].enabled);
     assert!(menu.items[0].label.contains("Stopped"));
-    assert!(menu.items[2].enabled);
+    assert!(!menu.items[2].enabled);
+    assert!(view.exit_requested);
 }
 
 #[test]
