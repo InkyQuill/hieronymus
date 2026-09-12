@@ -42,6 +42,12 @@ export function reviewedSource(runtime: OfficialRuntime, target: string) {
   return source;
 }
 
+/**
+ * Validate immutable producer evidence after its bytes match the compiled hash.
+ * The producer always records candidate-requires-review; manual review grants
+ * authority through compiled source-reviewed pins, never by editing that receipt.
+ * A producer-supplied status cannot approve its own runtime.
+ */
 export function validateSourceReceipt(receipt: any, runtime: OfficialRuntime) {
   const source = reviewedSource(runtime, "x86_64-apple-darwin");
   if (

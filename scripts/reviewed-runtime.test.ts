@@ -38,6 +38,7 @@ function fixture() {
   };
   const receipt = {
     format_version: 1,
+    status: "candidate-requires-review",
     target: "x86_64-apple-darwin",
     architecture: "x86_64",
     runtime_version: "1.28.0",
@@ -57,6 +58,13 @@ test("reviewed source receipt must match every compiled archive and member pin",
   expect(() => validateSourceReceipt(f.receipt, f.runtime)).toThrow(
     "member mismatch",
   );
+});
+test("only compiled reviewed pins grant authority to immutable producer evidence", () => {
+  const f = fixture();
+  validateSourceReceipt(f.receipt, f.runtime);
+  f.receipt.status = "reviewed";
+  f.runtime.origin = "official";
+  expect(() => validateSourceReceipt(f.receipt, f.runtime)).toThrow("provenance");
 });
 test("source revision, build target, and acquisition origin cannot be substituted", () => {
   const f = fixture();

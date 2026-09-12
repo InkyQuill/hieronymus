@@ -50,6 +50,7 @@ Full review bodies and comments are retained in `pr-29-reviews.json`,
 | 3996969298 | Reviewed runtime inputs were verified after output publication | Verify archive and receipt before packageDesktop writes outputs. |
 | 3997029212 | Raw audit identity could split tray ownership from the validated graphical session | Remove the audit-only shortcut; supervisor and helper use the same logind validation. Check shutdown again immediately before spawning after environment recovery. |
 | 3997029216 | Rejected public runtime downloads remained on disk before CI fallback | Remove the attempt's private temporary directory before creating the independent fallback directory. |
+| 3997214344 | Require a reviewed status inside the retained producer receipt | Not applied: the receipt is immutable build evidence. Explicit approval is the compiled source-reviewed authority plus its exact receipt hash. Changing producer status would alter the retained evidence. Documented this boundary and added a regression showing that producer status cannot grant authority. |
 
 The strengthened skill test initially failed on `hieronymus-remember` because
 its body said “free-text agreement”; it now names the project agreement explicitly.
@@ -155,6 +156,13 @@ uninstall unit tests and all ten worker-lifetime tests executed successfully.
 The subsequent pin-only release change also passed real retained-artifact
 acquisition and strict staging with the canonical pinned model; native
 Hieronymus inference still belongs to the final four-target candidate run.
+
+Candidate attempt 34712698827 used `016d0bb` and was superseded before promotion
+to retain the latest review disposition and authority regression in the source.
+Its artifacts are not final candidates. The regression suite passes 110 tests.
+The new-pin Rust validation separately passed 1,558 tests (17 intentionally
+ignored), Clippy and warning-denied rustdoc; the follow-up changes only document
+and test the existing script authority boundary.
 
 ## Observed run errors
 
