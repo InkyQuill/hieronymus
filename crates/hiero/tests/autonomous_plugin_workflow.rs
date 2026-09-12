@@ -50,6 +50,7 @@ fn first_host_prompt_exposes_actual_identity_without_minting_authority() {
 }
 
 #[test]
+#[cfg(unix)]
 fn generated_optional_prompt_hook_executes_installed_handler() {
     let root = tempfile::tempdir().unwrap();
     let config = hieronymus::data_root::HieronymusConfig::new(root.path());

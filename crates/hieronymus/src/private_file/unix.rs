@@ -49,6 +49,10 @@ pub(super) fn publish_new(source: &Path, destination: &Path) -> io::Result<()> {
     .map_err(Into::into)
 }
 
+pub(super) fn publish_replace(_file: &File, source: &Path, destination: &Path) -> io::Result<()> {
+    crate::atomic::replace_file(source, destination)
+}
+
 pub(super) fn open_coordination(path: &Path) -> io::Result<File> {
     let file = File::from(open(
         path,

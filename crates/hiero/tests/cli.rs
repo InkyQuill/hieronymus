@@ -130,15 +130,13 @@ fn migrate_write_mode_completes_the_cutover_and_reports_resume() {
     let root = tempfile::tempdir().unwrap();
     write_legacy_fixture(root.path());
     let dream_conf = root.path().join("dream.conf");
-    std::fs::write(
+    hieronymus::private_file::create_private_new(
         &dream_conf,
-        "[providers.openai]\nname = \"Openai\"\ntype = \"openai\"\nurl = \"https://api.openai.example/v1\"\napi_key = \"sk-cli-key\"\ntimeout_seconds = 12\n",
+        b"[providers.openai]\nname = \"Openai\"\ntype = \"openai\"\nurl = \"https://api.openai.example/v1\"\napi_key = \"sk-cli-key\"\ntimeout_seconds = 12\n",
     )
     .unwrap();
-    // The legacy payload carries a key, so preflight demands user-only
-    // permissions before anything may be staged.
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&dream_conf, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // The legacy payload carries a key, so preflight demands native owner-only
+    // protection before anything may be staged.
 
     let (stdout, stderr, status) = hiero(&[
         "migrate",

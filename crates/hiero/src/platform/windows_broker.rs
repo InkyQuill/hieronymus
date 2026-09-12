@@ -201,6 +201,16 @@ fn call(
     let result: Result<Value, String> =
         serde_json::from_slice(&line).map_err(|_| "Native broker returned an invalid result")?;
     // The response is sent only after rollback/readback and all gate handles drop.
+    // Windows still keeps the broker's executable mapped until process exit.
+    // Uninstall/update may remove it immediately after this call returns.
+    loop {
+        match child.try_wait().map_err(|_| "Native broker exit could not be verified")? {
+            Some(status) if status.success() => break,
+            Some(_) => return Err("Native broker exited unsuccessfully after reporting its result".into()),
+            None if Instant::now() >= deadline => return Err("Native broker reported its result but did not exit before the deadline; its executable may still be in use".into()),
+            None => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
     result
 }
 fn line_until(
@@ -338,6 +348,46 @@ fn committed(request: &Request, input: &mut impl BufRead) -> Result<Value, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn successful_native_call_waits_until_its_executable_can_be_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let units = temp.path().join("units");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&units).unwrap();
+        let fixture = temp.path().join("delayed-exit.exe");
+        assert!(
+            Command::new("rustc")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args(["--edition=2024", "-Adead_code"])
+                .arg(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/windows-native-broker.rs")
+                )
+                .arg("-o")
+                .arg(&fixture)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let options = ServiceOptions {
+            data_root: root.clone(),
+            unit_dir: units.clone(),
+            binary: fixture.clone(),
+            use_manager: true,
+        };
+        let request = Request {
+            root,
+            directory: units,
+            binary: fixture.clone(),
+            action: Some(TaskAction::Inspect),
+            tray: false,
+            url: None,
+        };
+        call(&options, request, Duration::from_secs(3), None).unwrap();
+        std::fs::remove_file(fixture)
+            .expect("successful broker completion must release its executable");
+    }
     #[test]
     fn native_transport_timeout_before_commit_aborts_and_after_commit_retains_authority() {
         let temp = tempfile::tempdir().unwrap();

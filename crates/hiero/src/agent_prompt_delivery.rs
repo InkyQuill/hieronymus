@@ -88,7 +88,7 @@ fn delivery_path(config: &HieronymusConfig, id: &str) -> Result<PathBuf, Deliver
         .join(format!("{id}.json")))
 }
 fn save(path: &std::path::Path, value: &impl Serialize) -> Result<(), DeliveryError> {
-    hieronymus::atomic::atomic_write(
+    hieronymus::private_file::replace_private(
         path,
         &serde_json::to_vec(value).map_err(|e| invalid(e.to_string()))?,
     )?;
@@ -335,6 +335,21 @@ pub fn hook_output(response: &Value) -> Value {
 #[cfg(test)]
 mod host_tests {
     use super::*;
+
+    #[test]
+    fn saved_prompt_records_remain_private_after_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("deliveries").join("record.json");
+        for value in [
+            json!({"text": "private prompt"}),
+            json!({"response": "acknowledged"}),
+        ] {
+            save(&path, &value).unwrap();
+            let bytes = hieronymus::private_file::read_private(&path).unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), value);
+            assert_eq!(load::<Value>(&path).unwrap(), value);
+        }
+    }
 
     #[test]
     fn passive_pi_is_not_a_trusted_delivery_host() {

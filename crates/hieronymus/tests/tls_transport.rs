@@ -15,7 +15,7 @@ use hieronymus::semantic_model::{HttpModelTransport, ModelTransport};
 use hieronymus::tls::TlsRoots;
 use serde_json::json;
 
-const RESPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"ok\": true, \"x\": 1}";
+const RESPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 20\r\nConnection: close\r\n\r\n{\"ok\": true, \"x\": 1}";
 
 fn transport_trusting(certificate_der: &[u8]) -> BlockingHttpTransport {
     BlockingHttpTransport::new(1 << 20)
@@ -158,7 +158,7 @@ fn model_download_round_trips_over_https() {
     let written = transport
         .download_to(&server.https_url("/model.onnx"), &destination, 1 << 20)
         .expect("download over https");
-    assert_eq!(written, 11);
+    assert_eq!(written, b"onnx-bytes!".len() as u64);
     assert_eq!(std::fs::read(&destination).unwrap(), b"onnx-bytes!");
     assert!(server.requests()[0].starts_with("GET /model.onnx HTTP/1.1\r\n"));
 }

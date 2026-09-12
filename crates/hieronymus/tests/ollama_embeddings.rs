@@ -90,7 +90,11 @@ fn configuration_is_backward_compatible_and_atomic() {
     std::fs::create_dir_all(config.config_root()).unwrap();
     std::fs::write(
         hieronymus::semantic_arming::semantic_config_path(&config),
-        "runtime_library = '/tmp/old.so'\n",
+        toml::to_string(&std::collections::BTreeMap::from([(
+            "runtime_library",
+            dir.path().join("old.so").to_str().unwrap(),
+        )]))
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(

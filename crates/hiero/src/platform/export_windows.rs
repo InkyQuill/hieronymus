@@ -8,14 +8,13 @@ use std::{
     path::{Component, Path, PathBuf, Prefix},
     ptr,
 };
-use windows_sys::Win32::System::SystemServices::MAXIMUM_ALLOWED;
 use windows_sys::{
     Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
             FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_IF,
-            FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NtCreateFile,
-            RtlNtStatusToDosErrorNoTeb,
+            FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+            FileRenameInformation, NtCreateFile, NtSetInformationFile, RtlNtStatusToDosErrorNoTeb,
         },
     },
     Win32::{Foundation::*, Storage::FileSystem::*, System::IO::IO_STATUS_BLOCK},
@@ -50,7 +49,7 @@ impl Destination {
             file_from_handle({
                 CreateFileW(
                     root.as_ptr(),
-                    MAXIMUM_ALLOWED,
+                    FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                     ptr::null(),
                     OPEN_EXISTING,
@@ -154,9 +153,12 @@ fn relative_open(parent: &File, name: &OsStr, directory: bool) -> io::Result<Fil
     let mut handle = ptr::null_mut();
     let mut status = IO_STATUS_BLOCK::default();
     let access = if directory {
-        MAXIMUM_ALLOWED
+        // Traverse without requesting write/delete rights on every ancestor:
+        // normal processes may already hold those directories without sharing
+        // writes or deletion. Synchronous NtCreateFile also needs SYNCHRONIZE.
+        FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
     } else {
-        FILE_GENERIC_WRITE | DELETE
+        FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE
     };
     let options = FILE_OPEN_REPARSE_POINT
         | FILE_SYNCHRONOUS_IO_NONALERT
@@ -194,25 +196,31 @@ fn rename(file: &File, parent: &File, name: &OsStr, replace: bool) -> io::Result
     let name: Vec<u16> = name.encode_wide().collect();
     // Reserve the complete fixed structure as well as the variable UTF-16
     // name and a trailing zero, including for one-character destinations.
-    let size = size_of::<FILE_RENAME_INFO>()
-        .max(std::mem::offset_of!(FILE_RENAME_INFO, FileName) + (name.len() + 1) * 2);
+    let size = size_of::<FILE_RENAME_INFORMATION>()
+        .max(std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName) + (name.len() + 1) * 2);
     let mut buffer = vec![0usize; size.div_ceil(size_of::<usize>())];
-    // SAFETY: allocation is aligned for FILE_RENAME_INFO, includes the variable name,
+    // SAFETY: allocation is aligned for FILE_RENAME_INFORMATION, includes the variable name,
     // and stays live through the syscall. Rename resolves the name relative to parent.
     unsafe {
-        let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
         (*info).Anonymous.ReplaceIfExists = replace;
         (*info).RootDirectory = parent.as_raw_handle();
         (*info).FileNameLength = (name.len() * 2) as u32;
         ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
-        if SetFileInformationByHandle(
+        // The Win32 wrapper interprets FileName as a DOS path. Use the native
+        // operation so the leaf remains relative to our retained parent handle.
+        let mut status = IO_STATUS_BLOCK::default();
+        let result = NtSetInformationFile(
             file.as_raw_handle(),
-            FileRenameInfo,
+            &mut status,
             info.cast(),
             size as u32,
-        ) == 0
-        {
-            return Err(io::Error::last_os_error());
+            FileRenameInformation,
+        );
+        if result < 0 {
+            return Err(io::Error::from_raw_os_error(
+                RtlNtStatusToDosErrorNoTeb(result) as i32,
+            ));
         }
     }
     Ok(())

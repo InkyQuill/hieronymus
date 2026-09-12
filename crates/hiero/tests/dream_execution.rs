@@ -16,7 +16,9 @@ mod common;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(unix)]
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -30,6 +32,7 @@ use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
 use hieronymus::dream_config::{default_dream_config, save_dream_config};
 use hieronymus::dream_workflows::WorkflowResolver;
+#[cfg(unix)]
 use hieronymus::ownership::RootOwnership;
 use hieronymus::provider_config::{
     ProviderCatalog, ProviderProfile, load_provider_catalog, save_provider_catalog,
@@ -101,6 +104,7 @@ impl LoopbackLlm {
             while !thread_stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
                         let requests = Arc::clone(&thread_requests);
                         let gate = Arc::clone(&thread_gate);
                         let fail_after = Arc::clone(&thread_fail);
@@ -624,6 +628,7 @@ fn a_mid_run_failure_leaves_the_remaining_inputs_pending() {
 /// the in-flight batch finishes durably, the drain stops at the batch
 /// boundary, and the process releases the data root.
 #[test]
+#[cfg(unix)]
 fn a_sigterm_joins_the_dream_worker_mid_run() {
     let root = tempfile::tempdir().unwrap();
     let config = config(root.path());

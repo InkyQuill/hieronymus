@@ -10,18 +10,13 @@ acceptance are also outstanding. See the final Linux receipt and limits below.
 
 ## Candidate, evidence, promotion
 
-Windows PR checks defer the original-icon checksum and `private_file::tests`
-to native qualification by default. Set the repository Actions variable
-`RUN_WINDOWS_HOST_CONTRACTS=true` to run both as advisory PR steps; their
-failures remain visible but do not fail the job. Windows helper Clippy, all
-other helper tests, the selected-helper contract, and rustdoc remain required.
-Linux/macOS checks and candidate/release qualification are unchanged. A green
-PR with these checks skipped is not Windows host acceptance.
-
-The Windows run on `8ccce23` passed the original-icon checksum after the Git
-attributes fix. Its private-file path-replacement test failed with Windows
-error 5 (`Access is denied`); this remains an explicit native qualification
-follow-up rather than a prerequisite for every PR build.
+Windows PR checks require the complete helper suite, including the original-icon
+checksum, and the private-file contracts. Native qualification reproduced the
+previous Windows error 5 in credential replacement and fixed it by retaining the
+protected creation handle through publication. The replacement and deny-delete
+reader cases now pass on Windows. These checks no longer depend on the advisory
+`RUN_WINDOWS_HOST_CONTRACTS` repository variable. Candidate/release qualification
+still requires its separate installed-artifact and interactive evidence.
 
 1. Once this workflow has reached the repository default branch, select a branch
    pointing at the reviewed source commit. Dispatch `desktop-candidate.yml`
@@ -268,6 +263,20 @@ The packaged application itself does not require Rust, Bun or Python. Use
 `scripts/check-protobuf.sh` to detect missing standard imports. Check Windows DLL
 load failures/dependencies with the MSVC `dumpbin /DEPENDENTS` tool when available;
 record unavailable diagnostics honestly.
+
+PowerShell does not expand native-command wildcards. Run the script test gate
+with an explicit file list:
+
+```powershell
+$scriptTests = @(Get-ChildItem scripts/*.test.ts | ForEach-Object FullName)
+bun test @scriptTests
+if ($LASTEXITCODE -ne 0) { throw 'Release script tests failed' }
+```
+
+If a portable protobuf installation is used, keep its `include` directory next
+to `bin` and set `PROTOC` to the absolute `protoc.exe` path and `PROTOC_INCLUDE`
+to that include directory. Rust and Bun must also be on the process PATH,
+including for tests that launch compiler or tool subprocesses.
 
 Copy the already-produced canonical model archive plus `common-model.json` into
 `target/common-model` without recompressing. On Windows PowerShell:

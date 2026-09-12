@@ -21,6 +21,7 @@
 mod common;
 
 use std::net::TcpListener;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -370,6 +371,7 @@ fn an_unusable_credential_never_spawns_a_worker() {
     let root = tempfile::tempdir().unwrap();
     let token = root.path().join("daemon.token");
     std::fs::write(&token, "ab".repeat(32)).unwrap();
+    #[cfg(unix)]
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
     let arm = CountingArm::new();
     install_test_arm(root.path(), Arc::clone(&arm) as Arc<dyn SemanticArm>);

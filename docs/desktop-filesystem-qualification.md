@@ -33,17 +33,34 @@ and symbolic/hardlink regressions. The dream suite creates one child test proces
 that exits without dropping its guard, then proves a successor can own the lock.
 
 Windows directory durability requires particular attention. Ordinary atomic and
-private-file publication flush contents, perform write-through `MoveFileExW`, and
-request a directory flush using a write-capable backup-semantics handle. A native
+exclusive private-file publication flush contents, perform write-through
+`MoveFileExW`, and request a directory flush using a write-capable backup-semantics
+handle. Credential replacement retains its owner-protected creation handle and
+uses `SetFileInformationByHandle(FileRenameInfoEx)` with replace/POSIX flags, then
+flushes the file and parent directory. This lets already validated readers retain
+the old bytes while new readers open the replacement. Readers that deny delete
+sharing still block replacement; secret readers still deny concurrent writers.
+The handle-rename behavior is confined to credentials, not executable activation.
+A native
 open/flush failure propagates: there is no success fallback or administrator
 volume-flush requirement. Such a failure can occur **after the new name has been
 published**; inspect state before retrying. Do not report an error as proof that
 the destination stayed unchanged. Upgrade journal/root ownership remains held
 across these operations.
 
+Successful API calls do not establish power-loss durability; that remains a
+separate qualification requirement. The open-reader replacement contract uses
+the Windows 10 version 1607 or later extended rename interface; unsupported
+filesystems or native errors fail rather than falling back to delete-then-create.
+
 Windows export walks components with `NtCreateFile` relative to retained handles,
 rejects reparse points, exclusively creates an owner-protected temporary file,
-flushes it, and renames the opened file with `FILE_RENAME_INFO.RootDirectory`.
+flushes it, and renames the opened file with `NtSetInformationFile` and
+`FILE_RENAME_INFORMATION.RootDirectory`. The NT API preserves the leaf name
+relative to the retained parent; the Win32 wrapper resolves DOS paths instead.
+Directory handles request traversal/read-attribute rights, synchronous relative
+opens explicitly request `SYNCHRONIZE`, and temporary files retain read-attribute
+and delete rights for validation and publication.
 No-clobber uses `ReplaceIfExists = false`. It then flushes the file again. A
 post-rename flush error preserves the published output; cleanup may delete only
 the still-unpublished temporary handle. Native power-loss durability remains a
