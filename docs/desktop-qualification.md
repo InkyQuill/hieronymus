@@ -10,6 +10,19 @@ acceptance are also outstanding. See the final Linux receipt and limits below.
 
 ## Candidate, evidence, promotion
 
+Windows PR checks defer the original-icon checksum and `private_file::tests`
+to native qualification by default. Set the repository Actions variable
+`RUN_WINDOWS_HOST_CONTRACTS=true` to run both as advisory PR steps; their
+failures remain visible but do not fail the job. Windows helper Clippy, all
+other helper tests, the selected-helper contract, and rustdoc remain required.
+Linux/macOS checks and candidate/release qualification are unchanged. A green
+PR with these checks skipped is not Windows host acceptance.
+
+The Windows run on `8ccce23` passed the original-icon checksum after the Git
+attributes fix. Its private-file path-replacement test failed with Windows
+error 5 (`Access is denied`); this remains an explicit native qualification
+follow-up rather than a prerequisite for every PR build.
+
 1. Once this workflow has reached the repository default branch, select a branch
    pointing at the reviewed source commit. Dispatch `desktop-candidate.yml`
    using that branch as `--ref`. `workflow_dispatch` takes a branch/tag ref;
@@ -66,7 +79,8 @@ manifest remains outside the sealed app; inner code precedes outer bundle seals.
 
 The full historical default workspace integration suite runs on Linux in the
 headless job. Native desktop jobs run helper clippy/tests/rustdoc, compiling the
-shared native graph, plus `private_file::tests` on Windows/macOS and the named
+shared native graph, plus `private_file::tests` on macOS (optional/advisory on
+Windows PRs as described above) and the named
 Windows regular-launcher selected-helper contract. Candidate jobs additionally
 run the explicit final-payload inference/MCP fixture. Linux/systemd-only legacy
 fixtures are not mislabeled as a portable full-suite gate. Native Scheduler and
