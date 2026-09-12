@@ -1,7 +1,8 @@
 //! Project agent context: the `.hieronymus.json` marker file that binds an
 //! editor/agent working directory to a Hieronymus series (the Python
 //! `agent_context` behavior, ported). The nearest marker from `cwd` upward
-//! wins; missing fields fall back to the Python defaults.
+//! wins outside CWS; missing fields fall back to the Python defaults. CWS
+//! projects use `hiero project-context` and never receive these defaults.
 
 use std::path::Path;
 
@@ -79,9 +80,29 @@ impl RawContext {
 /// Walks from `cwd` to the filesystem root and returns the context of the
 /// nearest directory containing `.hieronymus.json`; `None` when no marker
 /// exists anywhere up the tree (the hook's unhandled case, not an error).
+/// CWS boundaries and markers return `None`; callers must use `project-context`
+/// for validated CWS metadata and diagnostics instead of legacy language defaults.
 pub fn discover_project_context(
     cwd: &Path,
 ) -> Result<Option<ProjectAgentContext>, AgentContextError> {
+    let cwd = if cwd.is_file() {
+        cwd.parent().unwrap_or(cwd)
+    } else {
+        cwd
+    };
+    // Determine CWS enclosure first so a descendant legacy marker cannot
+    // reintroduce legacy defaults inside a CWS project.
+    for ancestor in cwd.ancestors() {
+        let manifest = ancestor.join("project.md");
+        if crate::cws_project::is_manifest(&manifest).map_err(|error| {
+            AgentContextError::Unreadable {
+                path: manifest,
+                message: error.to_string(),
+            }
+        })? {
+            return Ok(None);
+        }
+    }
     for ancestor in cwd.ancestors() {
         let candidate = ancestor.join(".hieronymus.json");
         if !candidate.is_file() {
@@ -92,9 +113,20 @@ pub fn discover_project_context(
                 path: candidate.clone(),
                 message: error.to_string(),
             })?;
-        let raw: RawContext =
+        let value: serde_json::Value =
             serde_json::from_str(&text).map_err(|error| AgentContextError::Unreadable {
                 path: candidate.clone(),
+                message: error.to_string(),
+            })?;
+        if value
+            .as_object()
+            .is_some_and(|object| object.contains_key("cws"))
+        {
+            return Ok(None);
+        }
+        let raw: RawContext =
+            serde_json::from_value(value).map_err(|error| AgentContextError::Unreadable {
+                path: candidate,
                 message: error.to_string(),
             })?;
         return Ok(Some(raw.into_context()));
@@ -105,6 +137,43 @@ pub fn discover_project_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cws_boundary_does_not_inherit_a_legacy_outer_marker() {
+        let root = tempfile::tempdir().unwrap();
+        let inner = root.path().join("inner");
+        std::fs::create_dir(&inner).unwrap();
+        std::fs::write(
+            root.path().join(".hieronymus.json"),
+            r#"{"series_slug":"outer"}"#,
+        )
+        .unwrap();
+        std::fs::write(inner.join("project.md"), "---\nschema-version: 1\n---\n").unwrap();
+        assert!(discover_project_context(&inner).unwrap().is_none());
+        std::fs::write(inner.join(".hieronymus.json"), r#"{"series_slug":"inner"}"#).unwrap();
+        assert!(discover_project_context(&inner).unwrap().is_none());
+        let below = inner.join("below");
+        std::fs::create_dir(&below).unwrap();
+        std::fs::write(below.join(".hieronymus.json"), r#"{"series_slug":"below"}"#).unwrap();
+        assert!(discover_project_context(&below).unwrap().is_none());
+    }
+
+    #[test]
+    fn cws_marker_never_uses_legacy_language_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        for cws in [
+            r#"{"binding_version":1,"project_contract_version":1,"directions":{}}"#,
+            "null",
+            "false",
+        ] {
+            std::fs::write(
+                root.path().join(".hieronymus.json"),
+                format!(r#"{{"series_slug":"work","cws":{cws}}}"#),
+            )
+            .unwrap();
+            assert!(discover_project_context(root.path()).unwrap().is_none());
+        }
+    }
 
     #[test]
     fn nearest_marker_wins_and_defaults_apply() {
