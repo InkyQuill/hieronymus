@@ -531,3 +531,57 @@ fn relative_cwd_selects_the_same_direction_as_an_absolute_path() {
     assert_eq!(report["direction_id"], "ru-main");
     assert_eq!(report["source_language"], "en");
 }
+
+#[test]
+fn agreement_changes_do_not_rewrite_binding_or_private_lifecycle_state() {
+    let fixture = tempfile::tempdir().unwrap();
+    let project = fixture.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    write_project(&project, 2);
+    let private = project.join(".creative-writing");
+    std::fs::create_dir(&private).unwrap();
+    let sentinel = private.join("state.json");
+    std::fs::write(&sentinel, "deliberately invalid private JSON\n").unwrap();
+    let opaque = project.join("unknown-author-file.txt");
+    std::fs::write(&opaque, "Keep this unmanaged author content.\n").unwrap();
+    let binding = project.join(".hieronymus.json");
+    std::fs::write(
+        &binding,
+        r#"{"series_slug":"synthetic-work","unrelated":{"keep":true},"cws":{"binding_version":1,"project_contract_version":1,"directions":{}}}"#,
+    )
+    .unwrap();
+    let original_binding = std::fs::read(&binding).unwrap();
+    let data_root = fixture.path().join("no-service-data");
+    let mut previous = None;
+    for agreement in [
+        "Files are primary. Preserve the narrator's voice.\n",
+        "Hieronymus replaces term memory. Preserve the narrator's voice.\n",
+        "For this review only, use accepted file terminology.\n",
+    ] {
+        std::fs::write(project.join("AGENTS.md"), agreement).unwrap();
+        let output = cli(&project, &data_root, &["--json"]);
+        assert_eq!(output.status.code(), Some(0));
+        assert!(output.stderr.is_empty());
+        let report = json_stdout(&output);
+        assert_eq!(report["status"], "ready");
+        if let Some(previous) = &previous {
+            assert_eq!(&report, previous);
+        }
+        previous = Some(report);
+        assert_eq!(std::fs::read(&binding).unwrap(), original_binding);
+        assert_eq!(
+            std::fs::read_to_string(project.join("AGENTS.md")).unwrap(),
+            agreement
+        );
+        assert_eq!(
+            std::fs::read_to_string(&sentinel).unwrap(),
+            "deliberately invalid private JSON\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&opaque).unwrap(),
+            "Keep this unmanaged author content.\n"
+        );
+        assert_eq!(std::fs::read_dir(&private).unwrap().count(), 1);
+        assert!(!data_root.exists());
+    }
+}

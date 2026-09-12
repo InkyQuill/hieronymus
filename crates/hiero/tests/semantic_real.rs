@@ -28,7 +28,7 @@
 //! healthy daemon therefore performs the single successful in-process load;
 //! the corrupt-model daemon fails at the model checksum before any dylib is
 //! touched; and the corrupt-runtime daemon runs as a real `hiero daemon`
-//! SUBPROCESS so its failed load can never be masked.
+//! subprocess to verify checksum rejection and recovery before native loading.
 
 mod common;
 
@@ -45,6 +45,7 @@ use hieronymus::semantic_embeddings::{
 use hieronymus::semantic_store::SemanticStore;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use common::{mcp_headers, send_request, start_daemon, wait_until};
 
@@ -227,6 +228,86 @@ fn semantic_enable(root: &Path, runtime: &Path) -> Value {
         .expect("enable --json prints one JSON payload")
 }
 
+fn evidence_snapshot(path: &Path, text: &str) -> Value {
+    std::fs::write(path, text).unwrap();
+    json!({"kind":"file", "path":path, "expected_hash":format!("{:x}", Sha256::digest(text.as_bytes()))})
+}
+
+fn current_scope(
+    daemon: &hiero::daemon::Daemon,
+    id: &mut i64,
+    root: &Path,
+    series_id: i64,
+) -> (Value, Value) {
+    let manifest = json!({"version":1, "series_id":series_id, "timeline_name":"qualification", "positions":[{"volume_key":"I", "chapter_key":"1", "scene_key":"opening"}]}).to_string();
+    *id += 1;
+    let order = call_tool(
+        daemon,
+        *id,
+        "hieronymus_order_register",
+        json!({"series_id":series_id, "expected_revision":0, "snapshot":evidence_snapshot(&root.join(format!("order-{series_id}.json")), &manifest)}),
+    );
+    (
+        json!({"series_id":series_id, "timeline_id":order["timeline_id"], "volume_key":"I", "chapter_key":"1", "scope_predicates":[], "valid_from":null, "valid_until":null, "metadata_state":"Resolved", "knowledge_gates":[{"viewpoint":"All", "known_from":null, "known_until":null}]}),
+        order["positions"][0]["id"].clone(),
+    )
+}
+
+fn activate_evidenced_term(
+    daemon: &hiero::daemon::Daemon,
+    id: &mut i64,
+    root: &Path,
+    term: &TermSpec,
+    scope: &Value,
+    position: &Value,
+    session_id: i64,
+) {
+    let mut invoke = |name, args| {
+        *id += 1;
+        call_tool(daemon, *id, name, args)
+    };
+    let concept = invoke(
+        "hieronymus_concept_create",
+        json!({"canonical_name":term.source_text, "scope_type":"series", "scope_key":format!("series:{}",term.series_slug)}),
+    );
+    let source = format!("{}\n\n{}", term.source_text, term.source_text);
+    let target = format!(
+        "{}\n\n{}",
+        term.canonical_translation, term.canonical_translation
+    );
+    let source_snapshot = evidence_snapshot(&root.join("term-source.txt"), &source);
+    let target_snapshot = evidence_snapshot(&root.join("term-rendering.txt"), &target);
+    let mut references = Vec::new();
+    for (source_start, target_start) in [
+        (0, 0),
+        (
+            term.source_text.len() + 2,
+            term.canonical_translation.len() + 2,
+        ),
+    ] {
+        let mut binding = json!({"concept_id":concept["id"], "source_language":"en", "target_language":"ru", "applicability":scope, "position_id":position, "paragraph_start":0, "paragraph_end":0, "identity_anchor":true, "aligned_source_id":null, "rendering":null, "contradicts_rule":null, "conflict_kind":null});
+        let source = invoke(
+            "hieronymus_evidence_capture",
+            json!({"series_id":scope["series_id"], "snapshot":source_snapshot, "kind":"source_passage", "selection":{"start":source_start,"end":source_start+term.source_text.len(),"expected_text":term.source_text}, "binding":binding}),
+        );
+        binding["aligned_source_id"] = source["reference"]["id"].clone();
+        let aligned = invoke(
+            "hieronymus_evidence_capture",
+            json!({"series_id":scope["series_id"], "snapshot":target_snapshot, "kind":"aligned_rendering", "selection":{"start":target_start,"end":target_start+term.canonical_translation.len(),"expected_text":term.canonical_translation}, "binding":binding}),
+        );
+        references.extend([source["reference"].clone(), aligned["reference"].clone()]);
+    }
+    let proposed = invoke(
+        "hieronymus_termbase_propose",
+        json!({"series_slug":term.series_slug,"category":term.category,"source_text":term.source_text,"canonical_translation":term.canonical_translation,"concept_id":concept["id"]}),
+    );
+    let applied = invoke(
+        "hieronymus_decide",
+        json!({"version":1,"decision_id":"21000000-0000-4000-8000-000000000001","expected_revision":1,"evidence_refs":references,"series_id":scope["series_id"],"concept_id":concept["id"],"source_language":"en","target_language":"ru","applicability":scope,"operation":{"Activate":{"candidate_id":proposed["id"],"candidate_revision":1}},"session_id":session_id}),
+    );
+    assert!(applied.get("Applied").is_some(), "{applied}");
+}
+
 // ------------------------------------------------------------ HTTP helpers
 
 fn tools_call(id: i64, name: &str, arguments: Value) -> Value {
@@ -333,6 +414,8 @@ fn recall(
             "series_slug": series_slug,
             "query": query,
             "limit": 8,
+            "volume": "I",
+            "chapter": "1",
         }),
     )
 }
@@ -365,7 +448,7 @@ fn call_tool_error(
         .to_string()
 }
 
-/// The public semantic RAG search (task C5): a bare row array, no session.
+/// The public semantic RAG search: current rows from its structured envelope.
 fn rag_search(
     daemon: &hiero::daemon::Daemon,
     id: &mut i64,
@@ -377,11 +460,11 @@ fn rag_search(
         daemon,
         *id,
         "hieronymus_rag_search",
-        json!({"series_slug": series_slug, "query": query, "limit": 8}),
+        json!({"series_slug": series_slug, "query": query, "limit": 8, "volume":"I", "chapter":"1"}),
     );
-    payload
+    payload["results"]
         .as_array()
-        .unwrap_or_else(|| panic!("rag search answers a bare row array: {payload}"))
+        .unwrap_or_else(|| panic!("rag search answers a results envelope: {payload}"))
         .clone()
 }
 
@@ -416,12 +499,9 @@ fn real_semantic_qualification() {
     assert_eq!(fixture.adr, "0011");
     assert!(!fixture.purpose.is_empty());
 
-    // -- 1. A corrupt runtime fails readiness, honestly ------------------
-    // This scenario's daemon runs as a real `hiero daemon` SUBPROCESS: ort
-    // keeps the loaded dylib in a process-global `OnceLock`, and a FAILED
-    // dynamic load poisons every later ort use in the same process (the
-    // healthy daemon below must load the real runtime in-process). The
-    // subprocess keeps both verdicts honest.
+    // -- 1. A corrupt runtime fails readiness before native loading ------
+    // Run a real daemon subprocess so the same process must reject the bad
+    // checksum, stay unavailable, and recover when given the verified runtime.
     {
         let root = tempfile::tempdir().unwrap();
         stage_assets(root.path(), &models);
@@ -450,23 +530,13 @@ fn real_semantic_qualification() {
             .to_string();
         let enable = semantic_enable(root.path(), &junk);
         assert_eq!(enable["lane"], json!("disarmed"), "{enable}");
+        assert_eq!(enable["runtime_verified"], json!(false), "{enable}");
         assert!(
             enable["reason"]
                 .as_str()
                 .unwrap()
-                .contains("restart-required"),
+                .contains("checksum mismatch; expected qualified runtime 1.28.0"),
             "{enable}"
-        );
-        // A valid path after the failed native load cannot silently reuse the
-        // process-global poisoned library. The same daemon must request restart.
-        let repaired = semantic_enable(root.path(), &runtime);
-        assert_eq!(repaired["lane"], json!("disarmed"), "{repaired}");
-        assert!(
-            repaired["reason"]
-                .as_str()
-                .unwrap()
-                .contains("restart-required"),
-            "{repaired}"
         );
         let failed = wait_until(
             || {
@@ -498,6 +568,29 @@ fn real_semantic_qualification() {
         let dto: StatusDto = serde_json::from_value(response.body()).unwrap();
         let error = require_semantic_ready(&required_state(&dto.semantic)).unwrap_err();
         assert!(error.contains("semantic retrieval unavailable"), "{error}");
+        // Checksum rejection happened before ort's process-global loader was
+        // called. A verified runtime must recover in this same daemon.
+        let repaired = semantic_enable(root.path(), &runtime);
+        assert_eq!(repaired["runtime_saved"], json!(true), "{repaired}");
+        assert!(
+            wait_until(
+                || {
+                    let response = send_request(
+                        port,
+                        "GET",
+                        "/status",
+                        &[("Authorization".to_string(), format!("Bearer {bearer}"))],
+                        b"",
+                    );
+                    response.status == 200
+                        && serde_json::from_value::<StatusDto>(response.body())
+                            .map(|dto| dto.semantic.state == "ready")
+                            .unwrap_or(false)
+                },
+                Duration::from_secs(120),
+            ),
+            "verified runtime did not recover without restarting: {repaired}"
+        );
         child.kill().unwrap();
         let _ = child.wait();
     }
@@ -554,7 +647,7 @@ fn real_semantic_qualification() {
             &daemon,
             cold,
             "hieronymus_session_start",
-            json!({"series_slug": series.slug}),
+            json!({"series_slug": series.slug, "volume":"I", "chapter":"1"}),
         );
         let session_id = session["session_id"].as_i64().unwrap();
 
@@ -576,7 +669,7 @@ fn real_semantic_qualification() {
         );
         let memory = &fixture.memories[0];
         cold += 1;
-        call_tool(
+        let captured = call_tool(
             &daemon,
             cold,
             "hieronymus_short_term_add",
@@ -607,13 +700,16 @@ fn real_semantic_qualification() {
             "an unconfigured semantic runtime must be reported on recall: {payload}"
         );
         assert!(
-            payload["results"]
+            payload["non_current"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|row| row["text"].as_str() == Some(memory.text.as_str())),
-            "memory must keep serving while semantics is down: {payload}"
+                .any(|row| row["id"] == captured["memory_id"]
+                    && row["claim_annotation"]["disposition"]["status"] == "unknown"
+                    && row["text"] == ""),
+            "unscoped memory must remain retained with its assertion withheld: {payload}"
         );
+        assert!(payload["results"].as_array().unwrap().is_empty());
 
         // The strict semantic search refuses, actionably.
         let error = call_tool_error(
@@ -670,9 +766,10 @@ fn real_semantic_qualification() {
 
     // Series and sessions (normal authenticated MCP operations only).
     let mut sessions = std::collections::HashMap::<String, i64>::new();
+    let mut scopes = std::collections::HashMap::<String, (Value, Value)>::new();
     for series in &fixture.series {
         id += 1;
-        call_tool(
+        let created = call_tool(
             &daemon,
             id,
             "hieronymus_series_create",
@@ -683,14 +780,21 @@ fn real_semantic_qualification() {
                 "target_language": series.target_language,
             }),
         );
+        let (scope, position) = current_scope(
+            &daemon,
+            &mut id,
+            root.path(),
+            created["id"].as_i64().unwrap(),
+        );
         id += 1;
         let session = call_tool(
             &daemon,
             id,
             "hieronymus_session_start",
-            json!({"series_slug": series.slug}),
+            json!({"series_slug": series.slug, "volume":"I", "chapter":"1", "story_timeline_id":scope["timeline_id"], "story_scene_key":"opening"}),
         );
         sessions.insert(series.slug.clone(), session["session_id"].as_i64().unwrap());
+        scopes.insert(series.slug.clone(), (scope, position));
     }
 
     // Documents: one imported .txt per fixture document.
@@ -704,7 +808,11 @@ fn real_semantic_qualification() {
             &daemon,
             id,
             "hieronymus_rag_import",
-            json!({"series_slug": document.series_slug, "path": path.to_str().unwrap()}),
+            json!({"series_slug": document.series_slug, "path": path.to_str().unwrap(), "claims":{"0":[{"text":document.text,"concept_id":null,"applicability":scopes[&document.series_slug].0}]}}),
+        );
+        assert_eq!(
+            imported["chunk_count"], 1,
+            "fixture claim covers one complete document"
         );
         assert!(
             imported["semantic_rebuild_job"].is_string(),
@@ -723,33 +831,22 @@ fn real_semantic_qualification() {
                 "session_id": sessions[&memory.series_slug],
                 "kind": memory.kind,
                 "text": memory.text,
+                "claims": [{"text":memory.text, "concept_id":null, "applicability":scopes[&memory.series_slug].0}],
             }),
         );
     }
 
-    // Active terminology: proposed then approved through the termbase tools.
+    // Evidence-learned terminology, never a forged trusted-user correction.
     for term in &fixture.terms {
-        id += 1;
-        let draft = call_tool(
+        let (scope, position) = &scopes[&term.series_slug];
+        activate_evidenced_term(
             &daemon,
-            id,
-            "hieronymus_termbase_propose",
-            json!({
-                "series_slug": term.series_slug,
-                "category": term.category,
-                "source_text": term.source_text,
-                "canonical_translation": term.canonical_translation,
-            }),
-        );
-        id += 1;
-        call_tool(
-            &daemon,
-            id,
-            "hieronymus_termbase_approve",
-            json!({
-                "series_slug": term.series_slug,
-                "term_id": draft["id"],
-            }),
+            &mut id,
+            root.path(),
+            term,
+            scope,
+            position,
+            sessions[&term.series_slug],
         );
     }
 
@@ -780,7 +877,7 @@ fn real_semantic_qualification() {
         assert_eq!(expectation.context.acceptance, "retrieval");
         assert!(
             expectation.context.viewpoint.is_none() && expectation.context.story_position.is_none(),
-            "viewpoint applicability requires P1 runtime; never silently ignore context"
+            "this corpus qualifies retrieval; no unstated viewpoint or position is inferred"
         );
         let session_id = sessions[&expectation.series_slug];
         let payload = recall(
@@ -898,7 +995,7 @@ fn real_semantic_qualification() {
             &daemon,
             id,
             "hieronymus_session_start",
-            json!({"series_slug": memory.series_slug}),
+            json!({"series_slug": memory.series_slug, "volume":"I", "chapter":"1", "story_timeline_id":scopes[&memory.series_slug].0["timeline_id"], "story_scene_key":"opening"}),
         );
         let next_id = next["session_id"].as_i64().unwrap();
         sessions.insert(memory.series_slug.clone(), next_id);
