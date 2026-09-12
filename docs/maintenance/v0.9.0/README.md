@@ -175,6 +175,14 @@ preserves both errors in an AggregateError instead of obscuring the original.
 Real retained-artifact acquisition also passed after this change and preserved
 the returned archive and receipt for packaging.
 
+CodeRabbit automatically paused GitHub reviews after the active-development
+commit threshold; its green status alone does not review `80555b5`. The installed
+authenticated CLI (0.7.5) then reviewed the committed scripts diff from `075d0b6`
+through `80555b5`, using AGENTS.md, and completed with 0 issues in
+`scripts/reviewed-runtime.ts`. The complete structured result is retained as
+`coderabbit-cleanup-final.ndjson`. This final audit update changes only evidence;
+the reviewed acquisition implementation is unchanged.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)
