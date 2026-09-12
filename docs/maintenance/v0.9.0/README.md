@@ -149,6 +149,13 @@ ENOENT). The fixture now supplies independently hashed synthetic runtime inputs
 and tests archive and receipt substitution, with production callers retaining
 compiled runtime authority. All 109 script tests pass after the fixture fix.
 
+Integration run 34709507741 at `2242c7d` passed frontend, full backend, Linux,
+Windows, Apple Silicon and Intel jobs. Windows logs confirm all five restored
+uninstall unit tests and all ten worker-lifetime tests executed successfully.
+The subsequent pin-only release change also passed real retained-artifact
+acquisition and strict staging with the canonical pinned model; native
+Hieronymus inference still belongs to the final four-target candidate run.
+
 ## Observed run errors
 
 Candidate run [34700290410](https://github.com/InkyQuill/hieronymus/actions/runs/34700290410)
