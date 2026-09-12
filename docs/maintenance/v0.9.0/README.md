@@ -72,3 +72,58 @@ The obsolete candidate run 34700290410 was cancelled after its three failures
 were archived, to allow corrected run 34703835119 to start. Intel build.log
 shows pinned protoc 21.12 with discovered Homebrew Protobuf 36.0.0; commit
 1ff6233 disables dependency package discovery so ONNX uses its pinned sources.
+
+### Follow-up review and integration validation
+
+CodeRabbit follow-up 3996779881 (PR #26) found that the archived record for
+34700290410 still said in progress after cancellation. Its terminal status is
+now recorded as completed/cancelled. The follow-up review snapshot is preserved
+in `review-threads-followup.json`; the original 13 review threads were resolved
+on GitHub by the time of that snapshot.
+
+Diagnostic candidate 34703835119, Windows job 103580591063, reproduced
+`validated_handle_keeps_its_secret_when_the_path_is_replaced`: AccessDenied (5)
+at private_file.rs:130. That candidate was built from the macOS branch and did
+not include PR #27's Windows fix. The integrated branch does include that fix;
+final integrated Windows verification remains required.
+
+Integration validation found and corrected these mismatches:
+
+- The first auth build missed the new LocalConsole case in authority_signal.rs.
+- Desktop-state tests still expected a stopped server to leave a Start tray.
+- The navigation test still expected three links after adding agent connection.
+- The unauthenticated WebSocket handshake test expected 426; the existing route
+  contract returns 400 with websocket_upgrade_required.
+- The distinct-browser-principal authority test needed explicit auth enabled;
+  default local desktop mode intentionally uses local-console attribution.
+- The first graphical-session implementation used a macOS-only libc dependency
+  on Linux; it now uses the already-pinned rustix crate's process feature.
+
+The full normal Rust suite passed after the auth/state fixture fixes. Subsequent
+tray session tests passed (4), and Clippy passed before the final custom desktop
+entry change. Custom registration/native/CLI tests then passed. Frontend typecheck,
+86 tests, and production build passed. Release script tests passed (103).
+These are development-source checks, not final-byte native qualification.
+
+The companion Rust review identified and drove fixes for stale config reads by
+the browser launcher, hidden helper exit errors, custom service directory
+propagation, and the logind identity of user-service children. Live KDE tray
+acceptance is still pending. See `product-direction.md` for the owner's revised
+application contract and practical release scope.
+
+Live development-build checks on CachyOS/KDE Wayland then passed: direct server
+startup and a disposable systemd user service both created an Active
+StatusNotifierItem, served the no-cookie web API, and removed their tray items
+and helper processes after graceful server stop. The user-service test used
+logind's validated graphical-session fallback. No login registration was added;
+the transient test unit finished inactive. The rendered connection page was
+opened in the in-app browser, prepared successfully, and displayed pi setup
+instructions covering MCP and skills. This is not final-release-byte evidence.
+
+Real pinned ONNX/model qualification passed (1 ignored-by-default integrated
+suite explicitly executed, 110.54 seconds), including multilingual corpus and
+failure/recovery scenarios. The stable Linux launcher review fix passed its
+installed-layout regression (6 service CLI tests). Final full-suite revalidation
+then found the tray argument fixture still expecting two argv entries rather
+than the six required for data root, service directory and stable binary; the
+fixture now checks all literal arguments, including spaces and shell-like text.
