@@ -1,6 +1,6 @@
 # Windows desktop lifecycle and native qualification
 
-The Windows adapter is implemented for `x86_64-pc-windows-msvc`. The [2026-09-12 native qualification](desktop-windows-native-2026-09-12.md) exercised Task Scheduler, filesystem contracts, modal menus, packaging, installation, real inference and authenticated MCP on Windows. That receipt distinguishes observed passes from environmental network failures and outstanding session checks. Real logon, Explorer recovery, visual appearance and terminal suppression require their own observations; cross-compilation is not native acceptance.
+The Windows adapter is implemented for `x86_64-pc-windows-msvc`. The [2026-09-12 native qualification](desktop-windows-native-2026-09-12.md) exercised Task Scheduler, filesystem contracts, modal menus, packaging, installation, real inference and authenticated MCP on Windows. It also records Explorer recovery with an unchanged helper identity and user confirmation that the icon and menu returned. That receipt distinguishes observed passes from environmental network failures and outstanding session checks. Fresh logon, full visual appearance coverage and terminal suppression require their own observations; cross-compilation is not native acceptance.
 
 ## Registration and lifecycle
 
