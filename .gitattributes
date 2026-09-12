@@ -1,0 +1,3 @@
+# Preserve the supplied icon bytes: their SHA-256 hashes are part of the asset contract.
+/assets/icons/icon-color.svg -text
+/assets/icons/icon-mono.svg -text
