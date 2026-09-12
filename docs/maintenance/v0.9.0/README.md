@@ -51,6 +51,7 @@ Full review bodies and comments are retained in `pr-29-reviews.json`,
 | 3997029212 | Raw audit identity could split tray ownership from the validated graphical session | Remove the audit-only shortcut; supervisor and helper use the same logind validation. Check shutdown again immediately before spawning after environment recovery. |
 | 3997029216 | Rejected public runtime downloads remained on disk before CI fallback | Remove the attempt's private temporary directory before creating the independent fallback directory. |
 | 3997214344 | Require a reviewed status inside the retained producer receipt | Not applied: the receipt is immutable build evidence. Explicit approval is the compiled source-reviewed authority plus its exact receipt hash. Changing producer status would alter the retained evidence. Documented this boundary and added a regression showing that producer status cannot grant authority. |
+| Review 5187678105, outside-diff comment | Invalid retained artifacts could leave their temporary directory behind | Fixed: clean every failed acquisition/validation path; retain the original error, including when cleanup also fails. Four isolated fault-injection checks pass. |
 
 The strengthened skill test initially failed on `hieronymus-remember` because
 its body said “free-text agreement”; it now names the project agreement explicitly.
@@ -163,6 +164,16 @@ Its artifacts are not final candidates. The regression suite passes 110 tests.
 The new-pin Rust validation separately passed 1,558 tests (17 intentionally
 ignored), Clippy and warning-denied rustdoc; the follow-up changes only document
 and test the existing script authority boundary.
+
+Review 5187678105 identified the retained-download cleanup gap. Candidate attempt
+34712859698 at `075d0b6` was cancelled because this valid fix supersedes its source.
+The full acquisition is now enclosed in failure cleanup, including nonzero
+download exit, missing receipt, corrupt receipt and corrupt archive. An isolated
+fake downloader exercised all four cases: original failures returned and no
+acquisition directories remained. All 110 script tests pass. Cleanup failure
+preserves both errors in an AggregateError instead of obscuring the original.
+Real retained-artifact acquisition also passed after this change and preserved
+the returned archive and receipt for packaging.
 
 ## Observed run errors
 

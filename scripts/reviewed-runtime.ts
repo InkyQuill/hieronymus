@@ -79,53 +79,66 @@ export async function acquireReviewedRuntime(root: string, target: string) {
   const parent = join(root, "target");
   mkdirSync(parent, { recursive: true });
   let directory = mkdtempSync(join(parent, "reviewed-intel-"));
-  // Once published, release attachments outlive temporary CI artifact retention.
-  // Before first publication the same pinned bytes come from their retained run.
   try {
-    const hosts = new Set([
-      "github.com",
-      "release-assets.githubusercontent.com",
-      "objects.githubusercontent.com",
-    ]);
-    const signal = AbortSignal.timeout(300_000);
-    await acquireFile(
-      join(directory, runtime.archive),
-      runtime.sha256,
-      runtime.url,
-      hosts,
-      1024 ** 3,
-      signal,
-    );
-    await acquireFile(
-      join(directory, "source-build-receipt.json"),
-      source.receipt_sha256,
-      new URL("onnxruntime-source-build-receipt.json", runtime.url).href,
-      hosts,
-      1024 ** 2,
-      signal,
-    );
-  } catch {
-    // A public archive may have downloaded before its receipt failed. Keep the
-    // CI extraction empty so gh neither collides with nor trusts partial data.
-    rmSync(directory, { recursive: true, force: true });
-    directory = mkdtempSync(join(parent, "reviewed-intel-ci-"));
-    downloadRetainedArtifact([
-      "gh",
-      "run",
-      "download",
-      source.run,
-      "--repo",
-      "InkyQuill/hieronymus",
-      "--name",
-      "intel-runtime-review",
-      "--dir",
-      directory,
-    ]);
+    // Once published, release attachments outlive temporary CI artifact retention.
+    // Before first publication the same pinned bytes come from their retained run.
+    try {
+      const hosts = new Set([
+        "github.com",
+        "release-assets.githubusercontent.com",
+        "objects.githubusercontent.com",
+      ]);
+      const signal = AbortSignal.timeout(300_000);
+      await acquireFile(
+        join(directory, runtime.archive),
+        runtime.sha256,
+        runtime.url,
+        hosts,
+        1024 ** 3,
+        signal,
+      );
+      await acquireFile(
+        join(directory, "source-build-receipt.json"),
+        source.receipt_sha256,
+        new URL("onnxruntime-source-build-receipt.json", runtime.url).href,
+        hosts,
+        1024 ** 2,
+        signal,
+      );
+    } catch {
+      // A public archive may have downloaded before its receipt failed. Keep the
+      // CI extraction empty so gh neither collides with nor trusts partial data.
+      rmSync(directory, { recursive: true, force: true });
+      directory = mkdtempSync(join(parent, "reviewed-intel-ci-"));
+      downloadRetainedArtifact([
+        "gh",
+        "run",
+        "download",
+        source.run,
+        "--repo",
+        "InkyQuill/hieronymus",
+        "--name",
+        "intel-runtime-review",
+        "--dir",
+        directory,
+      ]);
+    }
+    const receipt = localFile(directory, "source-build-receipt.json");
+    await verify(receipt, source.receipt_sha256);
+    validateSourceReceipt(JSON.parse(readFileSync(receipt, "utf8")), runtime);
+    const archive = localFile(directory, runtime.archive);
+    await verify(archive, runtime.sha256, runtime.size);
+    return { archive, receipt };
+  } catch (error) {
+    try {
+      rmSync(directory, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Runtime acquisition failed and its temporary directory could not be removed",
+        { cause: error },
+      );
+    }
+    throw error;
   }
-  const receipt = localFile(directory, "source-build-receipt.json");
-  await verify(receipt, source.receipt_sha256);
-  validateSourceReceipt(JSON.parse(readFileSync(receipt, "utf8")), runtime);
-  const archive = localFile(directory, runtime.archive);
-  await verify(archive, runtime.sha256, runtime.size);
-  return { archive, receipt };
 }
