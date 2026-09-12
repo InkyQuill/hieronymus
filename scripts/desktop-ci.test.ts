@@ -28,6 +28,19 @@ test("GitHub failures retain bounded diagnostics without tokens or signed URLs",
   expect(detail).toContain("[redacted]");
   expect(detail).toContain("[URL redacted]");
   expect(detail.length).toBe(2000);
+  expect(
+    githubFailureDetail("HTTPS://example.invalid/?signature=private", []),
+  ).toBe("[URL redacted]");
+});
+test("overlapping credentials are fully redacted regardless of configuration order", () => {
+  for (const secrets of [
+    ["abc123", "abc123456"],
+    ["abc123456", "abc123"],
+  ]) {
+    expect(githubFailureDetail("abc123456 and abc123", secrets)).toBe(
+      "[redacted] and [redacted]",
+    );
+  }
 });
 test("run provenance binds exact successful workflow and source", () => {
   expect(

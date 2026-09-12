@@ -49,11 +49,13 @@ export function githubFailureDetail(
   secrets: readonly string[],
 ) {
   let detail = stderr;
-  for (const secret of secrets) {
-    if (secret) detail = detail.replaceAll(secret, "[redacted]");
+  for (const secret of secrets
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)) {
+    detail = detail.replaceAll(secret, "[redacted]");
   }
   return detail
-    .replace(/https?:\/\/\S+/g, "[URL redacted]")
+    .replace(/https?:\/\/\S+/gi, "[URL redacted]")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .trim()
     .slice(0, 2000);
