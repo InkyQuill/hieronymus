@@ -66,8 +66,8 @@ function EnsureWindowsRuntime([string]$directory){
   $installer=Join-Path $directory 'VC_redist.x64.exe'
   Download 'VC_redist.x64.exe' '843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c' $installer 'https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe'
   $result=Start-Process -FilePath $installer -ArgumentList '/install /quiet /norestart' -Verb RunAs -Wait -PassThru
-  if($result.ExitCode -notin @(0,3010,1638) -or (WindowsRuntimeVersion) -lt $required){throw 'The Microsoft Windows runtime could not be installed. Run Setup again and allow the prerequisite when Windows asks.'}
   if($result.ExitCode -eq 3010){throw 'The Microsoft Windows runtime needs a restart. Restart Windows, then run Hieronymus Setup again. Your project data has not been changed.'}
+  if($result.ExitCode -notin @(0,1638) -or (WindowsRuntimeVersion) -lt $required){throw 'The Microsoft Windows runtime could not be installed. Run Setup again and allow the prerequisite when Windows asks.'}
 }
 function CopyStream($reader,$writer,[long]$limit){
   $buffer=New-Object byte[] 65536;$count=0L

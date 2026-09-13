@@ -29,3 +29,10 @@ Windows, and macOS. The generate and native platform logs contain zero Node 20
 deprecation warnings. Its application failures (the known v0.9.0 macOS parser
 and transient Windows removal failure) are distinct from action compatibility.
 New release candidates use the updated source.
+
+A separate upstream warning remains: run 34748241049, Windows job 103700036555,
+reports Node `DEP0005` (`Buffer()` constructor) while download-artifact v8.0.1
+extracts an artifact. The pinned action still contains `new Buffer(...)` in its
+[bundled dependencies](https://github.com/actions/download-artifact/blob/3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/dist/index.js#L14534).
+Artifact download and digest verification complete successfully. This is not
+an obsolete Node runtime pin, and no warning suppression or local fork is used.

@@ -27,12 +27,13 @@ try{
     @{Name='cancelled';Before='0.0';After='0.0';Code=1602;Downloads=1;Starts=1;Failure=$true},
     @{Name='false success';Before='0.0';After='0.0';Code=0;Downloads=1;Starts=1;Failure=$true},
     @{Name='restart';Before='0.0';After='14.51.36247.0';Code=3010;Downloads=1;Starts=1;Failure=$true},
+    @{Name='restart before registry update';Before='0.0';After='0.0';Code=3010;Downloads=1;Starts=1;Failure=$true},
     @{Name='newer installed concurrently';Before='0.0';After='14.60.0.0';Code=1638;Downloads=1;Starts=1;Failure=$false},
     @{Name='unverified download';Before='0.0';After='0.0';Code=0;Downloads=1;Starts=0;Failure=$true}
   )){
     $script:reads=0;$script:downloads=0;$script:starts=0
     $script:before=[version]$case.Before;$script:after=[version]$case.After;$script:code=$case.Code;$script:badHash=$case.Name -eq 'unverified download'
-    $failed=$false;try{EnsureWindowsRuntime $directory}catch{$failed=$true}
+    $failed=$false;try{EnsureWindowsRuntime $directory}catch{$failed=$true;if($script:code -eq 3010 -and $_.Exception.Message -notlike '*Restart Windows*'){throw 'Missing restart guidance'}}
     if($failed -ne $case.Failure -or $script:downloads -ne $case.Downloads -or $script:starts -ne $case.Starts){throw "Runtime policy failed: $($case.Name)"}
     Write-Host "PASS: $($case.Name)"
   }

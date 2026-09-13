@@ -31,6 +31,22 @@ in the test parser; the harness now removes that data-only marker before
 extracting function definitions. This was a test harness failure, not a native
 installer result.
 
+Run 34748305162 passed all nine prerequisite policy cases and the real Microsoft
+download/install, reading installed version 14.51.36247.0 afterward. Windows
+single-file installation and Linux installation passed. NSIS installed and
+started v0.9.0 successfully, then reproduced its previously recorded transient
+removal error 5; the separate diagnostic repeat succeeded four seconds later.
+Both macOS paths reproduced the known v0.9.0 parser failure. These old published
+payloads do not include the prepared Rust fixes, so final validation must use
+new v0.9.1 candidates. Candidate run 34747754991 was superseded because setup now
+includes the missing Windows prerequisite.
+
+CodeRabbit's prerequisite review reported two findings, both fixed: the template
+parser issue above and prioritizing reboot-required guidance before reading the
+runtime registry. The latter has an additional policy case for a registry that
+has not updated before restart. The review is retained in
+`coderabbit-runtime-review.jsonl`.
+
 | Evidence | Finding | Disposition |
 | --- | --- | --- |
 | Actions runs 34745284872 and 34745520245 | Actual macOS package installation failed because `launchctl print` reports a `probabilistic guard malloc policy` dictionary. | Accept this exact diagnostic field while preserving strict ownership and launch-policy validation. The captured native output is a regression fixture. |
