@@ -1,0 +1,79 @@
+#requires -Version 5.1
+[CmdletBinding()]
+param([string]$AppDir="$env:LOCALAPPDATA/Hieronymus/app",[string]$DataRoot="$env:APPDATA/Hieronymus",[string]$UnitDir,[string]$ReleaseDir,[switch]$NoActivate,[switch]$NoOpen)
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version 2.0
+if($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64'){throw 'This installer needs Windows x86_64.'}
+$AppDir=[IO.Path]::GetFullPath($AppDir);$DataRoot=[IO.Path]::GetFullPath($DataRoot)
+@@PAYLOAD@@
+function Download([string]$name,[string]$hash,[string]$destination){
+  if($ReleaseDir){
+    $file=Get-Item -LiteralPath (Join-Path $ReleaseDir $name)
+    if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 1073741824){throw 'Invalid offline download.'}
+    [IO.File]::Copy($file.FullName,$destination)
+  }else{
+    $url=[Uri]("@@RELEASE_URL@@/"+$name)
+    $response=$null
+    [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+    for($redirect=0;$redirect -le 5;$redirect++){
+      if($url.Scheme -ne 'https' -or $url.UserInfo){throw 'Unsafe download address.'}
+      $request=[Net.HttpWebRequest]::Create($url);$request.AllowAutoRedirect=$false;$request.Timeout=30000;$request.ReadWriteTimeout=30000
+      $response=$request.GetResponse()
+      if([int]$response.StatusCode -ge 300 -and [int]$response.StatusCode -lt 400){
+        $location=$response.Headers['Location'];$response.Dispose();$response=$null
+        if(-not $location -or $redirect -eq 5){throw 'Could not resolve the download.'}
+        $url=[Uri]::new($url,$location);continue
+      }
+      break
+    }
+    if(-not $response){throw 'Download did not return a file.'}
+    try{
+      if($response.ContentLength -gt 1073741824){throw 'Download is larger than expected.'}
+      $reader=$response.GetResponseStream();$writer=[IO.File]::Create($destination)
+      try{
+        $buffer=New-Object byte[] 65536;$count=0L;$timer=[Diagnostics.Stopwatch]::StartNew()
+        while(($n=$reader.Read($buffer,0,$buffer.Length)) -gt 0){
+          $count+=$n;if($count -gt 1073741824 -or $timer.Elapsed.TotalMinutes -gt 15){throw 'Download exceeded its size or time limit.'}
+          $writer.Write($buffer,0,$n)
+        }
+      }finally{$reader.Dispose();$writer.Dispose()}
+    }finally{$response.Dispose()}
+  }
+  if((Get-Item -LiteralPath $destination).Length -gt 1073741824 -or (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash){throw 'The download could not be verified. Nothing was installed. Please try again.'}
+}
+function CopyStream($reader,$writer,[long]$limit){
+  $buffer=New-Object byte[] 65536;$count=0L
+  while(($n=$reader.Read($buffer,0,$buffer.Length)) -gt 0){$count+=$n;if($count -gt $limit){throw 'Expanded executable is too large.'};$writer.Write($buffer,0,$n)}
+}
+$work=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($work)
+try{
+  Write-Host 'Installing Hieronymus @@VERSION@@...'
+  [IO.File]::WriteAllBytes((Join-Path $work 'release-x86_64-pc-windows-msvc.json'),[Convert]::FromBase64String($metadataBase64))
+  Write-Host 'Downloading the app...'
+  $platform=Join-Path $work $platformName;Download $platformName $platformHash $platform
+  Write-Host 'Downloading the memory model (this can take a few minutes)...'
+  Download $modelName $modelHash (Join-Path $work $modelName)
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip=[IO.Compression.ZipFile]::OpenRead($platform)
+  try{
+    $entries=@($zip.Entries|Where-Object {$_.FullName -ceq 'hiero.exe'})
+    if($zip.Entries.Count -gt 10000 -or $entries.Count -ne 1 -or $entries[0].Length -gt 536870912 -or (($entries[0].ExternalAttributes -shr 16) -band 0xF000) -notin @(0,0x8000)){throw 'Invalid bootstrap executable.'}
+    $reader=$entries[0].Open();$writer=[IO.File]::Create((Join-Path $work 'hiero.exe'))
+    try{CopyStream $reader $writer 536870912}finally{$reader.Dispose();$writer.Dispose()}
+  }finally{$zip.Dispose()}
+  Write-Host 'Verifying and installing...'
+  $cli=Join-Path $work 'hiero.exe'
+  & $cli release-verify --release-dir $work *> (Join-Path $work 'verify.log')
+  if($LASTEXITCODE -ne 0){Get-Content -LiteralPath (Join-Path $work 'verify.log');throw 'The complete release could not be verified.'}
+  $arguments=@('desktop-bootstrap','--release-dir',$work,'--app-dir',$AppDir,'--data-root',$DataRoot)
+  if($UnitDir){$arguments+=@('--unit-dir',[IO.Path]::GetFullPath($UnitDir))};if($NoActivate){$arguments+='--no-activate'}
+  & $cli @arguments *> (Join-Path $work 'install.log')
+  if($LASTEXITCODE -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');throw 'Installation needs attention. Your existing project data is preserved.'}
+  Write-Host 'Hieronymus is installed.'
+  if(-not $NoActivate -and -not $NoOpen){
+    Write-Host 'Opening Hieronymus. Choose "Connect your agent" to finish setup.'
+    & (Join-Path $AppDir 'bin/hiero.exe') admin --data-root $DataRoot
+    if($LASTEXITCODE -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');Write-Warning 'Could not open the web interface automatically. Use the Hieronymus tray icon to open it.'}
+  }
+}finally{Remove-Item -LiteralPath $work -Recurse -Force}

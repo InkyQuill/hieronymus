@@ -17,7 +17,9 @@ done
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) target=x86_64-unknown-linux-gnu; app="${app:-$HOME/.local/share/hieronymus/app}"; data="${data:-$HOME/.config/hieronymus}";;
   Darwin/arm64) target=aarch64-apple-darwin; app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
-  Darwin/x86_64) target=x86_64-apple-darwin; app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
+  Darwin/x86_64)
+    if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then target=aarch64-apple-darwin; else target=x86_64-apple-darwin; fi
+    app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
   *) echo 'Unsupported desktop OS/architecture' >&2; exit 2;;
 esac
 absolute(){ case "$1" in /*) printf '%s\n' "$1";; *) printf '%s/%s\n' "$PWD" "$1";; esac; }

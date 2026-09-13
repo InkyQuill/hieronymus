@@ -1,0 +1,109 @@
+name: installer-checks
+on:
+  push:
+    branches: [codex/easy-install]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - run: bun test scripts/*.test.ts
+      - name: Acquire existing binaries; no native rebuild
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download v0.9.0 --pattern 'release-*.json' --pattern 'hieronymus-*.tar.gz' --pattern 'hieronymus-*.zip' --dir target/published
+      - run: bun scripts/build-installers.ts target/published target/installers
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: standalone-installers
+          path: target/installers/
+  installed:
+    needs: generate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Deliberately no checkout, Bun, Node, Rust or PowerShell installation here.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: standalone-installers
+          path: installers
+      - name: Install from a single file on Linux/macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash installers/install-hieronymus.sh --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$RUNNER_TEMP/Hieronymus data" --unit-dir "$RUNNER_TEMP/Hieronymus units" --no-activate
+          "$RUNNER_TEMP/Hieronymus app/bin/hiero" version --json
+      - name: Install with built-in Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'This check must exercise built-in Windows PowerShell 5.1' }
+          & ./installers/Install-Hieronymus.ps1 -AppDir "$env:RUNNER_TEMP/Hieronymus app" -DataRoot "$env:RUNNER_TEMP/Hieronymus data" -UnitDir "$env:RUNNER_TEMP/Hieronymus units" -NoActivate
+          if (-not $?) { throw 'Installer failed' }
+          & "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" version --json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed binary did not run' }
+  windows-setup:
+    needs: generate
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: standalone-installers
+          path: target/installers
+      - name: Install NSIS build tool
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --yes --no-progress; if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' } }
+      - run: bun scripts/build-native-installer.ts windows target/installers target/native-installers 0.9.0
+      - name: Exercise the actual setup wizard in silent mode
+        shell: pwsh
+        run: |
+          $appDir = "$env:RUNNER_TEMP\Hieronymus setup app"
+          $result = Start-Process -FilePath ./target/native-installers/Hieronymus-0.9.0-Setup.exe -ArgumentList "/S /NOACTIVATE /D=$appDir" -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "NSIS setup failed: $($result.ExitCode)" }
+          & "$appDir\bin\hiero.exe" version --json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed executable failed' }
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus'
+          if ($entry.InstallLocation -ne $appDir) { throw 'Installed Apps registration mismatch' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-setup
+          path: target/native-installers/*.exe
+          if-no-files-found: error
+  macos-package:
+    needs: generate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: standalone-installers
+          path: target/installers
+      - run: bun scripts/build-native-installer.ts macos target/installers target/native-installers 0.9.0
+      - name: Exercise Installer.app package scripts
+        shell: bash
+        run: |
+          sudo /usr/sbin/installer -pkg target/native-installers/Hieronymus-0.9.0.pkg -target /
+          "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" version --json
+          "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" stop --data-root "$HOME/Library/Application Support/Hieronymus"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-package
+          path: target/native-installers/Hieronymus-*.pkg
+          if-no-files-found: error
