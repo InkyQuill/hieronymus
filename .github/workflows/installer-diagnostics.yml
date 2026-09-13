@@ -1,0 +1,33 @@
+name: installer-diagnostics
+on:
+  push:
+    branches: [codex/installer-diagnostics]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows-locks:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34755165337
+          name: standalone-installers
+          path: installers
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 34755165337
+          name: installer-test-payloads
+          path: payloads
+      - shell: powershell
+        run: ./scripts/setup/diagnose-locks.ps1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: windows-lock-observations
+          path: diagnostics/
