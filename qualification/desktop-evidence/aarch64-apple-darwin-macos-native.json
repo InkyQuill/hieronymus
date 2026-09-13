@@ -1,173 +1,173 @@
 {
-  "candidate_commit": "b4f2cba5204480f56302e0cf537f1b35c32e9e88",
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
   "target": "aarch64-apple-darwin",
-  "artifact_sha256": "81eac8653dedaa754aa63bff4e5477f0b88399ce2d294bd262f424a42f38ec9a",
+  "artifact_sha256": "0ca8040da6010652c5c2d02fa8ff6ec7e9dd9846b08d5694e0a0591edb90452a",
   "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
-  "metadata_sha256": "08bd32ca096fcb48591719174ad894ba398885c317d19a5548830d3ad4a90fbc",
-  "assets_sha256": "d11d6be13fb43e645c482b8ed1d604a55c682002c0e1a0e411e99d7d0d4eb815",
+  "metadata_sha256": "10a98791569ad21bc28e8dac516621f31b4ebbd221732bffcd1c7fc03506e391",
+  "assets_sha256": "df1fcd30602cb3628969876949777571cedf081d647956808988408c14d8d909",
   "signing": "unsigned-waiver",
-  "os_version": "macOS 26.5 M1 user-reported machine; final-byte desktop behavior not observed",
+  "os_version": "User-reported macOS 26.5 M1 machine; final-byte physical desktop behavior not observed",
   "desktop": "macos",
   "session": "native",
   "scale": [],
   "qualification": "unqualified",
-  "qualification_reason": "Final-byte desktop testing was unavailable for this target/session; automated native CI and earlier PR receipts do not qualify the user desktop. Published with the owner-approved explicit coverage gap.",
+  "qualification_reason": "Final-byte physical desktop testing was unavailable for this target/session. Published with the owner-authorized explicit qualification gap.",
   "checks": [
     {
       "name": "native-semantic-mcp",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "startup",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "duplicate-start",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "model-acquisition",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "semantic-failure",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "provider-failure-recovery-untested",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "three-probe-failures",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "restart",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "failed-stop",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "quit-preserves-login",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "login-toggle",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "next-login",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "interactive-menu",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "missing-tray-host",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "host-restart",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "theme",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "dpi",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "console-grant",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "active-upgrade",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "rollback",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "uninstall",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "secret-free-diagnostics",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "pending-native-operation",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "private-storage-failure",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "launchagent-loaded-state",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     },
     {
       "name": "bundle-launch",
       "result": "unavailable",
       "evidence_path": "captures/aarch64-apple-darwin-macos-native.txt",
-      "evidence_sha256": "08c06bf762f588345f757dd9483d86d37a165b65d4aa8e76b7b5bc9e0569b2e7"
+      "evidence_sha256": "ae9b1aa1997870e969747caf017e5c129da43a4809b53f0ccd4e10257f0f2b77"
     }
   ]
 }

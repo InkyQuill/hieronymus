@@ -1,152 +1,256 @@
-Hieronymus v0.9.0 final-byte qualification
-Source: b4f2cba5204480f56302e0cf537f1b35c32e9e88
-Candidate run: https://github.com/InkyQuill/hieronymus/actions/runs/34713682687
+Hieronymus v0.9.0 qualification
+Candidate source: d6d93f766e78cea09fb0573170e5c1019409f422
+Successful run: https://github.com/InkyQuill/hieronymus/actions/runs/34721365040
 Target/session: x86_64-unknown-linux-gnu kde/wayland
-Host: CachyOS rolling Linux; KDE Plasma Wayland; observed 2026-09-12
+Artifact SHA256: 07c9a45ed67fefe80ff5a42d5678f793f82442f480a90a9b841e72642e577f21
 
-PARTIAL. The exact candidate archive was hash-verified, installed into a disposable private root using the shipped v2 installer, and tested on the current KDE Wayland session. No signing or notarization is claimed. Both displays were observed at scale 1.15; this records the current setting, not visual DPI qualification.
+PARTIAL. These are fresh checks of the installed final candidate on the current KDE Wayland session. The recorded display scales describe the session; they do not certify visual DPI behavior. No signing or notarization is claimed.
 
-native-semantic-mcp: PASS. The installed final CLI passed final_native_payload_runs_semantic_inference_and_authenticated_mcp: actual pinned model inference, authenticated MCP, graceful shutdown; 1 passed in 3.30s.
-startup: PASS. The shipped installer verified and installed the candidate; a transient user service started the installed daemon and its tray sidecar. KDE registered the StatusNotifierItem as Active. Server display variables were absent, and the helper recovered the graphical session.
-duplicate-start: PASS. A second installed daemon invocation against the same data root exited 2 with an ownership message naming the running daemon; it did not displace that daemon.
-model-acquisition: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-semantic-failure: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-provider-failure-recovery-untested: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-three-probe-failures: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-restart: PASS. Installed stop released ownership; the original server and helper exited and the transient service became inactive/MainPID 0. Starting again produced a new daemon and helper with recovered graphical environment and HTTP 200 browser dashboard. The second stop also left no server/helper and inactive/MainPID 0.
-failed-stop: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-quit-preserves-login: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-login-toggle: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-next-login: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-interactive-menu: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-missing-tray-host: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-host-restart: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-theme: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-dpi: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-console-grant: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-active-upgrade: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-rollback: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-uninstall: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-secret-free-diagnostics: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-pending-native-operation: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-private-storage-failure: PASS. The exact installed daemon was launched against a disposable root containing a public placeholder daemon.token with mode 0644. It exited 2 with repair guidance, did not publish discovery, did not disclose the placeholder, and did not silently change token permissions.
-native-manager-update: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
-live-tray-replacement: UNAVAILABLE. This specific end-to-end qualification scenario was not performed on the final bytes. No pass is inferred from unit tests, previous-source checks, bundled model installation, tray registration, or the current display scale.
+native-semantic-mcp: PASS. The exact installed replacement CLI passed the explicit final_native_payload_runs_semantic_inference_and_authenticated_mcp fixture (1 passed, 0 failed, 3.43 seconds): pinned native inference, authenticated MCP status and graceful shutdown.
 
-Additional bounded observations (do not upgrade unavailable checks): the fresh browser at / rendered Connect your agent without a login prompt. It offered Codex, Cowork and pi and explained both MCP and skill installation and separate verification. GET /api/admin/dashboard and POST /api/agents/prepare returned HTTP 200 with the matching Origin and no credential/cookie. No actual agent configuration was changed or connection claimed. KDE reported Active for the tray item; visual appearance and mouse/menu behavior were not observed. A deprecated libayatana-appindicator diagnostic and unavailable isolated KDE palette were recorded; the helper reported the tray host available. No desktop session or user login configuration was replaced.
+startup: PASS. The shipped v2 installer verified and installed this archive in a disposable root. Its health check passed. A transient user service started the installed daemon and its own helper, and KDE reported the helper StatusNotifierItem Active. The daemon had no display variables; the helper recovered them from the trusted graphical session.
 
---- final-linux-inventory-verification.json ---
+duplicate-start: PASS. A second installed daemon invocation exited 2 with data-root ownership guidance; the original PID and instance identity remained unchanged.
+
+model-acquisition: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+semantic-failure: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+provider-failure-recovery-untested: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+three-probe-failures: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+restart: PASS. The installed stop command removed the server, its helper and its tray registration. A subsequent start produced a new daemon identity and active helper, recovered graphical settings and returned browser HTTP 200. The second stop again removed both processes and the tray item, leaving the transient unit inactive with MainPID 0.
+
+failed-stop: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+quit-preserves-login: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+login-toggle: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+next-login: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+interactive-menu: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+missing-tray-host: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+host-restart: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+theme: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+dpi: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+console-grant: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+active-upgrade: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+rollback: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+uninstall: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+secret-free-diagnostics: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+pending-native-operation: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+private-storage-failure: PASS. The installed daemon refused a mode-0644 public-placeholder credential in a disposable root with exit 2 and repair guidance. It did not publish discovery, disclose the placeholder, or silently change permissions.
+
+native-manager-update: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+live-tray-replacement: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+Additional observations and limits:
+Only the explicitly named scenarios passed. Browser content and API behavior were checked, but native visual appearance, theme/DPI transitions, menu interaction, login scheduling, failure recovery, upgrade/rollback/uninstall and pending-operation scenarios remain unqualified. No user login configuration or agent host configuration was modified. The isolated KDE palette lookup and upstream AppIndicator deprecation diagnostics are retained in the journal. An initial main-thread-only process lookup incorrectly reported a missing helper; ps --ppid and the systemd cgroup confirmed the helper already running from that same startup. Both transient test services were stopped.
+
+--- linux-inventory-check.json ---
 {
-  "candidate_commit": "b4f2cba5204480f56302e0cf537f1b35c32e9e88",
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
   "target": "x86_64-unknown-linux-gnu",
-  "verified_files": [
-    "assets-x86_64-unknown-linux-gnu.json",
-    "desktop-metadata.awk",
-    "evidence-x86_64-unknown-linux-gnu.json",
-    "hiero-3efef4a0865a93254b3adffb7c18a60c6b2dd20b14789f56237c5444813adef1.debug",
-    "hiero-desktop-37d3aa379ed2d672900038a450ab1ef5ac0838f552effd9a286ee9480b09a015.debug",
-    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz",
-    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz",
-    "install-desktop-x86_64-unknown-linux-gnu.sh",
-    "install.sh",
-    "release-x86_64-unknown-linux-gnu.json"
-  ]
+  "verified_files": {
+    "assets-x86_64-unknown-linux-gnu.json": "cb193c471e721f86981cbabe0fa9efb9bb3a0f2533b3e193cfb9cdec194c3682",
+    "desktop-metadata.awk": "0784453e458c898627c93d37715cd903c8991422d2ba82a3038fea578caa6639",
+    "evidence-x86_64-unknown-linux-gnu.json": "c3a407f8084e5dbba6570ffc36e620b8c62d6d4e8acee2b1b1854c24679f07dc",
+    "hiero-0e55b99700577f488fb17ec1017a8bd1a4369d11232ec7f817a02f10eb2ec3b3.debug": "ec08b0eed511fee1c1f294dafe3b8a1252b39b576dd656bc237850438954efb9",
+    "hiero-desktop-e4b89726c376cc5b382af58a879458e751a70c3e9e7dcb4bd432ae8e81c5e18f.debug": "1e9aa89303a6a756099cb0fcde1f8c499bc4e3eb1b04709c6dfb1a45c1300b09",
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": "07c9a45ed67fefe80ff5a42d5678f793f82442f480a90a9b841e72642e577f21",
+    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+    "install-desktop-x86_64-unknown-linux-gnu.sh": "6be273dc05189bbebe6d4c29e80fc429502471621c73ffa3d8fdf307cd19d0a8",
+    "install.sh": "7c1a6e70847fe5740c7fdfb6154e451eded28a71d3308684c46eebdec165cac5",
+    "release-x86_64-unknown-linux-gnu.json": "60ac425f711f7712f5fc177fc3e03c72b801fbe9145e64a88160660e65bd12a3"
+  }
 }
 
---- final-linux-installer.log ---
+
+--- linux-installer.log ---
 verified split release 0.9.0 (x86_64-unknown-linux-gnu)
 update (updated, version 0.9.0)
-  release resolved: 0.9.0 (archive /tmp/.tmpMBsF7q/hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz)
+  release resolved: 0.9.0 (archive /tmp/.tmpLUYSgi/hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz)
   archive checksum verified
   candidate compatibility: protocol 2026-07-28, schema 5
-  installed into /tmp/hieronymus-v090-linux-install.8W96sc/app/versions/0.9.0 and switched the stable links
-  no manager integration; start the daemon manually with `/tmp/hieronymus-v090-linux-install.8W96sc/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-linux-install.8W96sc/data` (or `hiero service install`)
+  installed into /tmp/hieronymus-v090-d6-linux.aJtBs1/app/versions/0.9.0 and switched the stable links
+  no manager integration; start the daemon manually with `/tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-d6-linux.aJtBs1/data` (or `hiero service install`)
   health check: healthy
   agent integrations keep using the stable hiero/hieronymus links, which now serve the new version; host configuration was not modified
 
-Installed Hieronymus 0.9.0. Commands: /tmp/hieronymus-v090-linux-install.8W96sc/app/bin. Signing: unsigned.
+Installed Hieronymus 0.9.0. Commands: /tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin. Signing: unsigned.
 
 
---- final-linux-native-semantic.log ---
-    Finished `test` profile [unoptimized] target(s) in 0.15s
+--- linux-native-semantic.log ---
+   Compiling hiero v0.9.0 (/home/inky/Development/hieronymus/crates/hiero)
+   Compiling hieronymus v0.9.0 (/home/inky/Development/hieronymus/crates/hieronymus)
+    Finished `test` profile [unoptimized] target(s) in 7.21s
      Running tests/desktop_native.rs (target/debug/deps/desktop_native-61172473da29f58b)
 
 running 1 test
 test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.30s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.43s
 
 
 
---- final-linux-tray-journal.log ---
-Sep 12 23:13:22 dawn systemd[861]: Started [systemd-run] /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY XDG_CONFIG_HOME=/tmp/hieronymus-v090-linux-install.8W96sc/config XDG_DATA_HOME=/tmp/hieronymus-v090-linux-install.8W96sc/share /tmp/hieronymus-v090-linux-install.8W96sc/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-linux-install.8W96sc/data --unit-dir /tmp/hieronymus-v090-linux-install.8W96sc/units --port 0.
-Sep 12 23:13:22 dawn env[381402]: hiero daemon listening on 127.0.0.1:46529 (pid 381402); discovery: /tmp/hieronymus-v090-linux-install.8W96sc/data/daemon.json; ctrl-c to stop
-Sep 12 23:13:22 dawn hiero-desktop[381475]: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
-Sep 12 23:13:22 dawn env[381475]: hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
-Sep 12 23:13:22 dawn env[381475]: hiero-desktop: KDE panel palette unavailable; use the light/dark foreground override for custom panels
-Sep 12 23:13:22 dawn env[381475]: hiero-desktop: Tray host and desktop preferences available
-
-
---- final-linux-tray-status.txt ---
-s "Active"
-
-
---- final-linux-duplicate.log ---
-hiero: another process already owns this data root: another process owns this data root (381402 daemon); stop it before retrying (stop the running daemon or maintenance command first)
-
-
---- final-linux-stop.log ---
-shutdown requested: 127.0.0.1:46529 (instance 277af6a396de83bec9597be549a10140, pid 381402) — stopping
-daemon stopped and released its discovery record and data-root ownership
-
-
---- final-linux-stopped-service.txt ---
-ActiveState=inactive
-MainPID=0
-
-
---- final-linux-stopped-tray.txt ---
-as 8 ":1.43/StatusNotifierItem" "org.kde.StatusNotifierItem-1997-1/StatusNotifierItem" ":1.51/StatusNotifierItem" ":1.77/StatusNotifierItem" ":1.69/org/ayatana/NotificationItem/indicator_solaar" ":1.99/StatusNotifierItem" "org.freedesktop.StatusNotifierItem-1971-1/StatusNotifierItem" ":1.746/org/ayatana/NotificationItem/steam"
-
-
---- final-linux-restart-check.json ---
+--- linux-startup.json ---
 {
-  "candidate_commit": "b4f2cba5204480f56302e0cf537f1b35c32e9e88",
-  "processes": {
-    "server": 384484,
-    "tray": 384566
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "discovery": {
+    "discovery_version": 1,
+    "protocol_version": "2026-07-28",
+    "host": "127.0.0.1",
+    "port": 44093,
+    "pid": 497109,
+    "instance_id": "b48e36e94e400e7d6597e780d9bd8be4",
+    "started_at": "2026-09-12T22:46:10Z"
   },
+  "helper_pid": 497174,
+  "tray_item": ":1.1248/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_497174",
+  "tray_status": "s \"Active\"",
   "graphical_environment_presence": {
     "server": {
       "DISPLAY": false,
       "WAYLAND_DISPLAY": false,
       "XAUTHORITY": false
     },
-    "tray": {
+    "helper": {
       "DISPLAY": true,
       "WAYLAND_DISPLAY": true,
       "XAUTHORITY": true
     }
   },
-  "unauthenticated_browser_dashboard_status": 200
+  "browser_dashboard_status": 200,
+  "prepare_status": 200,
+  "agents": [
+    "codex",
+    "cowork",
+    "pi"
+  ],
+  "credentials_supplied": false,
+  "probe_correction": "An initial main-thread-only /proc children lookup missed a child spawned by another daemon thread. The systemd cgroup and ps --ppid correctly identify the running helper; no application failure occurred."
 }
 
 
---- final-linux-restart-journal.log ---
-Sep 12 23:14:41 dawn systemd[861]: Started [systemd-run] /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY XDG_CONFIG_HOME=/tmp/hieronymus-v090-linux-install.8W96sc/config XDG_DATA_HOME=/tmp/hieronymus-v090-linux-install.8W96sc/share /tmp/hieronymus-v090-linux-install.8W96sc/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-linux-install.8W96sc/data --unit-dir /tmp/hieronymus-v090-linux-install.8W96sc/units --port 0.
-Sep 12 23:14:41 dawn env[384484]: hiero daemon listening on 127.0.0.1:36645 (pid 384484); discovery: /tmp/hieronymus-v090-linux-install.8W96sc/data/daemon.json; ctrl-c to stop
-Sep 12 23:14:41 dawn hiero-desktop[384566]: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
-Sep 12 23:14:41 dawn env[384566]: hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
-Sep 12 23:14:41 dawn env[384566]: hiero-desktop: KDE panel palette unavailable; use the light/dark foreground override for custom panels
-Sep 12 23:14:41 dawn env[384566]: hiero-desktop: Tray host and desktop preferences available
+--- linux-startup-journal.log ---
+Sep 13 01:46:10 dawn systemd[861]: Started [systemd-run] /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY XDG_CONFIG_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/config XDG_DATA_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/share /tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-d6-linux.aJtBs1/data --unit-dir /tmp/hieronymus-v090-d6-linux.aJtBs1/units --port 0.
+Sep 13 01:46:10 dawn env[497109]: hiero daemon listening on 127.0.0.1:44093 (pid 497109); discovery: /tmp/hieronymus-v090-d6-linux.aJtBs1/data/daemon.json; ctrl-c to stop
+Sep 13 01:46:10 dawn hiero-desktop[497174]: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+Sep 13 01:46:10 dawn env[497174]: hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
+Sep 13 01:46:10 dawn env[497174]: hiero-desktop: KDE panel palette unavailable; use the light/dark foreground override for custom panels
+Sep 13 01:46:10 dawn env[497174]: hiero-desktop: Tray host and desktop preferences available
 
 
---- final-linux-restart-stop.log ---
-shutdown requested: 127.0.0.1:36645 (instance 6ffc71d66e59ed9ffaa625bd08f183f7, pid 384484) — stopping
+--- linux-duplicate.json ---
+{
+  "exit_code": 2,
+  "stderr": "hiero: another process already owns this data root: another process owns this data root (497109 daemon); stop it before retrying (stop the running daemon or maintenance command first)",
+  "original_daemon_preserved": true,
+  "pid": 497109
+}
+
+
+--- linux-stop.log ---
+shutdown requested: 127.0.0.1:44093 (instance b48e36e94e400e7d6597e780d9bd8be4, pid 497109) — stopping
 daemon stopped and released its discovery record and data-root ownership
 
 
---- final-linux-os.txt ---
+--- linux-stop-check.json ---
+{
+  "server_pid": 497109,
+  "helper_pid": 497174,
+  "both_processes_gone": true,
+  "owned_tray_item_removed": true,
+  "unit": "ActiveState=inactive\nMainPID=0"
+}
+
+
+--- linux-restart.json ---
+{
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "discovery": {
+    "discovery_version": 1,
+    "protocol_version": "2026-07-28",
+    "host": "127.0.0.1",
+    "port": 37809,
+    "pid": 500345,
+    "instance_id": "c792318c16c91c70674d4a578b9a981c",
+    "started_at": "2026-09-12T22:49:43Z"
+  },
+  "helper_pid": 500420,
+  "tray_item": ":1.1264/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_500420",
+  "tray_status": "s \"Active\"",
+  "graphical_environment_presence": {
+    "server": {
+      "DISPLAY": false,
+      "WAYLAND_DISPLAY": false,
+      "XAUTHORITY": false
+    },
+    "helper": {
+      "DISPLAY": true,
+      "WAYLAND_DISPLAY": true,
+      "XAUTHORITY": true
+    }
+  },
+  "browser_dashboard_status": 200,
+  "credentials_supplied": false
+}
+
+
+--- linux-restart-journal.log ---
+Sep 13 01:49:43 dawn systemd[861]: Started [systemd-run] /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY XDG_CONFIG_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/config XDG_DATA_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/share /tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-d6-linux.aJtBs1/data --unit-dir /tmp/hieronymus-v090-d6-linux.aJtBs1/units --port 0.
+Sep 13 01:49:43 dawn env[500345]: hiero daemon listening on 127.0.0.1:37809 (pid 500345); discovery: /tmp/hieronymus-v090-d6-linux.aJtBs1/data/daemon.json; ctrl-c to stop
+Sep 13 01:49:43 dawn hiero-desktop[500420]: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+Sep 13 01:49:43 dawn env[500420]: hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
+Sep 13 01:49:43 dawn env[500420]: hiero-desktop: KDE panel palette unavailable; use the light/dark foreground override for custom panels
+Sep 13 01:49:43 dawn env[500420]: hiero-desktop: Tray host and desktop preferences available
+
+
+--- linux-restart-stop.log ---
+shutdown requested: 127.0.0.1:37809 (instance c792318c16c91c70674d4a578b9a981c, pid 500345) — stopping
+daemon stopped and released its discovery record and data-root ownership
+
+
+--- linux-restart-stop-check.json ---
+{
+  "server_pid": 500345,
+  "helper_pid": 500420,
+  "both_processes_gone": true,
+  "owned_tray_item_removed": true,
+  "unit": "ActiveState=inactive\nMainPID=0"
+}
+
+
+--- linux-private-storage.json ---
+{
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "exit_code": 2,
+  "stderr": "hiero: daemon cannot use the installation credential: the stored installation token at /tmp/hieronymus-v090-d6-linux.aJtBs1/private-storage-JThSjz/daemon.token is readable beyond its owner or has unsafe aliases; on Unix run `chmod 600 /tmp/hieronymus-v090-d6-linux.aJtBs1/private-storage-JThSjz/daemon.token`; otherwise recreate it with owner-only access",
+  "credential_not_disclosed": true,
+  "discovery_not_published": true,
+  "permissions_not_silently_changed": true
+}
+
+
+--- linux-browser-observation.txt ---
+Fresh in-app browser tabs inspected the replacement installed candidate at http://127.0.0.1:44093/. The initial page showed Connect your agent, Codex/Cowork/pi choices, and both MCP and Hieronymus skills setup with separate verification. /admin loaded memory statistics and Local service: Ready. /admin/memory completed loading with the empty Crystals view and record-context guidance. No login or launch grant was supplied. Independent browser API requests omitted credentials; GET also omitted Origin and returned 200. POST prepare used the matching Origin and returned three agent setup requests. No actual agent host was configured or claimed connected.
+
+
+--- linux-os.txt ---
 NAME="CachyOS Linux"
 PRETTY_NAME="CachyOS"
 ID=cachyos
@@ -161,7 +265,7 @@ PRIVACY_POLICY_URL="https://terms.archlinux.org/docs/privacy-policy/"
 LOGO=cachyos
 
 
---- final-linux-displays.txt ---
+--- linux-displays.txt ---
 [01;32mOutput: [0;0m1 DP-5 938554d2-d08c-4b9e-92b7-ca2e936159b2
 	[01;32menabled[0;0m
 	[01;32mconnected[0;0m
@@ -219,36 +323,13 @@ LOGO=cachyos
 
 
 --- final-main-linux-build.log ---
-   Compiling hieronymus v0.9.0 (/home/inky/Development/hieronymus/crates/hieronymus)
-   Compiling hiero v0.9.0 (/home/inky/Development/hieronymus/crates/hiero)
-   Compiling hiero-desktop v0.9.0 (/home/inky/Development/hieronymus/crates/hiero-desktop)
-    Finished `release` profile [optimized] target(s) in 25.53s
+    Finished `release` profile [optimized] target(s) in 0.24s
 
 
---- final-linux-private-storage.json ---
-{
-  "candidate_commit": "b4f2cba5204480f56302e0cf537f1b35c32e9e88",
-  "scenario": "Final installed daemon refuses a preexisting world-readable installation token in a disposable private root",
-  "exit_code": 2,
-  "stderr": "hiero: daemon cannot use the installation credential: the stored installation token at /tmp/hieronymus-v090-private-storage.iwrMuI/daemon.token is readable beyond its owner or has unsafe aliases; on Unix run `chmod 600 /tmp/hieronymus-v090-private-storage.iwrMuI/daemon.token`; otherwise recreate it with owner-only access",
-  "credential_not_disclosed": true,
-  "discovery_not_published": true,
-  "token_permissions_not_silently_rewritten": true
-}
-
-
---- final-linux-browser-observation.txt ---
-Observed final installed candidate b4f2cba5204480f56302e0cf537f1b35c32e9e88 at 2026-09-12 21:12 UTC in fresh in-app browser tabs. /admin loaded memory statistics and Local service: Ready without a login. /admin/memory finished loading and displayed the empty Crystals list, record-context guidance and Add Memory. No authentication cookie or launch grant was supplied. An independent GET /api/admin/dashboard without Origin, Authorization or Cookie returned HTTP 200. No records or agent configuration were modified. Browser locator correction: the tab API requires the string id from its inventory; numeric 4 returned not found and string "4" in browser "1" resolved the loaded page.
-
-
-Final restart stop was independently rechecked: ActiveState=inactive, MainPID=0; ps returned no PID 384484 or 384566. The initial stop similarly removed PID 381402 and helper 381475. The KDE watcher had eight unrelated items after stop (Steam started since the earlier seven-item development baseline).
-
-Execution-only correction: the first Apple candidate download requested desktop-candidate-aarch64-apple-darwin and returned no matching artifact. Listing the run showed candidate-aarch64-apple-darwin; acquisition was retried with that observed name. This was an operator lookup error, not a package failure. A read-only attempt to fetch the still-running Intel job log returned HTTP 404 because GitHub had not exposed that log; no build was restarted. Intermittent GitHub API connection errors were retried against the same run. An optional shell glob lookup found no source path; the private-storage check used the verified data_root.rs path instead. Other maintenance failures and review dispositions are recorded in docs/maintenance/v0.9.0 at the source commit.
-
-Separate final-candidate CI evidence: all four native jobs in run 34713682687 completed successfully. The following is the target-specific packaged inference/MCP log. It establishes the automated native fixture only; it does not upgrade unavailable desktop-session checks.
+Separate automated CI evidence for this target: the final extracted package passed real model inference and authenticated MCP in the candidate run above. This does not upgrade unavailable desktop-session checks.
 
 running 1 test
 test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.88s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s
 

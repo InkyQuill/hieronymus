@@ -1,173 +1,173 @@
 {
-  "candidate_commit": "b4f2cba5204480f56302e0cf537f1b35c32e9e88",
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
   "target": "x86_64-unknown-linux-gnu",
-  "artifact_sha256": "57430feaac1b3969fcd95cb1bec5ef15b076ff61acf9d9b53360856cd559e789",
+  "artifact_sha256": "07c9a45ed67fefe80ff5a42d5678f793f82442f480a90a9b841e72642e577f21",
   "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
-  "metadata_sha256": "11f9e8f2c2635b4af99283a254b95a7bd13c1e225a4c370dfe14e9511be8504d",
-  "assets_sha256": "d8789795f755607a13a75b6c44c928bccc3ec0e3b4ed3081c4b07f83fe68f37c",
+  "metadata_sha256": "60ac425f711f7712f5fc177fc3e03c72b801fbe9145e64a88160660e65bd12a3",
+  "assets_sha256": "cb193c471e721f86981cbabe0fa9efb9bb3a0f2533b3e193cfb9cdec194c3682",
   "signing": "unsigned-waiver",
-  "os_version": "Unavailable: no GNOME Wayland machine/session was available",
+  "os_version": "Unavailable: no GNOME Wayland session was available",
   "desktop": "gnome-appindicator",
   "session": "wayland",
   "scale": [],
   "qualification": "unqualified",
-  "qualification_reason": "Final-byte desktop testing was unavailable for this target/session; automated native CI and earlier PR receipts do not qualify the user desktop. Published with the owner-approved explicit coverage gap.",
+  "qualification_reason": "Final-byte physical desktop testing was unavailable for this target/session. Published with the owner-authorized explicit qualification gap.",
   "checks": [
     {
       "name": "native-semantic-mcp",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "startup",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "duplicate-start",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "model-acquisition",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "semantic-failure",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "provider-failure-recovery-untested",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "three-probe-failures",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "restart",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "failed-stop",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "quit-preserves-login",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "login-toggle",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "next-login",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "interactive-menu",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "missing-tray-host",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "host-restart",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "theme",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "dpi",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "console-grant",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "active-upgrade",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "rollback",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "uninstall",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "secret-free-diagnostics",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "pending-native-operation",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "private-storage-failure",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "native-manager-update",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     },
     {
       "name": "live-tray-replacement",
       "result": "unavailable",
       "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
-      "evidence_sha256": "e8755e320c0480236ed4764ad4ff518630d30614434f1ea646dde132ac28a3ee"
+      "evidence_sha256": "8852520caf62cd522f36cad0f3534072b37cf0540f5f298425928b1241ecfe36"
     }
   ]
 }
