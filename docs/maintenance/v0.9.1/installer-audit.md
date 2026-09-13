@@ -269,3 +269,25 @@ The complete local Rust verification chain also passed for the combined amendmen
 formatting, all-target/all-feature Clippy, all-feature tests and warnings-denied
 rustdoc. Native Windows and macOS installer results must still come from the next
 source-matched candidate run; a99a305 observations are not reused for new bytes.
+
+## Discovery-port assertion false positive
+
+Backend job 103721180100 in PR run
+[34756320568](https://github.com/InkyQuill/hieronymus/actions/runs/34756320568)
+failed `discovery_consumers_read_the_published_port_and_never_assume_9768` on
+source `92df1cfd01f8aa39b73b9bec8fcf75444192d9b3`. The actual hook JSON correctly
+advertised `http://127.0.0.1:39777`; its unrelated process ID was `19768`.
+The test's whole-output substring check for `9768` matched the PID. The assertion
+now parses the JSON and compares only `service.base_url` with the actual bound
+nondefault port. This retains the port-discovery contract without depending on
+unrelated numeric fields. All 24 focused runtime/shutdown tests passed locally;
+companion Rust review found no issue. Production behavior is unchanged.
+
+Candidate run 34756328507 was cancelled after this test-source amendment so the
+release candidate can carry the same source revision as the corrected test suite.
+The cancelled run supplies no final-byte qualification for the next revision.
+
+The complete local Rust verification chain passed for the assertion amendment:
+formatting, all-target/all-feature Clippy, all-feature tests, and warnings-denied
+rustdoc. CodeRabbit local review reported zero findings
+(`coderabbit-discovery-assertion-review.jsonl`).

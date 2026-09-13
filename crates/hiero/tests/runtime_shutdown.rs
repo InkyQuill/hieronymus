@@ -644,15 +644,11 @@ fn discovery_consumers_read_the_published_port_and_never_assume_9768() {
     assert!(lifecycle::probe(&config).is_live());
     // ... and the generated agent-hook integration payload advertises it.
     let output = hiero::agent_hook::session_end(&config);
-    assert!(
-        output.json.contains(&format!("http://127.0.0.1:{port}")),
-        "{}",
-        output.json
-    );
-    assert!(
-        !output.json.contains("9768"),
-        "integrations must not hard-code the default port: {}",
-        output.json
+    let payload: serde_json::Value = serde_json::from_str(&output.json).unwrap();
+    assert_eq!(
+        payload["service"]["base_url"],
+        format!("http://127.0.0.1:{port}"),
+        "integrations must advertise the bound port"
     );
     daemon.shutdown().unwrap();
 }
