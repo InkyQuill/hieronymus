@@ -321,3 +321,42 @@ All 133 release-script tests passed, including four focused cleanup tests.
 CodeRabbit reviewed the workflow and cleanup implementation; its single minor
 finding asked for more precise coverage wording, which is corrected above.
 The persistent-busy deadline is not claimed as a tested fixture.
+
+## Final release result
+
+PR #30 was merged by fast-forward to
+`a2d3496aea8d8579eca0efffeb61630c02e70f47`, which remains the immutable v0.9.1 tag.
+The subsequent main-branch changes affect CI cleanup and maintenance records only.
+
+- [PR CI 34757344545](https://github.com/InkyQuill/hieronymus/actions/runs/34757344545): all six jobs passed.
+- [Native candidates 34757351358](https://github.com/InkyQuill/hieronymus/actions/runs/34757351358): all four targets passed real model inference and authenticated MCP.
+- [Installers 34765431342](https://github.com/InkyQuill/hieronymus/actions/runs/34765431342): all six jobs passed, including NSIS and PKG installation.
+- [Qualification 34765759689](https://github.com/InkyQuill/hieronymus/actions/runs/34765759689): the seven-session matrix validated against the exact candidates and [data commit bc03570](https://github.com/InkyQuill/hieronymus/tree/bc03570d67e6f4be0df1c9894af75d9526935841/qualification/desktop-evidence).
+- [Publisher 34765897982](https://github.com/InkyQuill/hieronymus/actions/runs/34765897982): attempt 2 passed and published v0.9.1; the first-attempt cleanup conflict is recorded above.
+- [Public-download installer checks 34766696167](https://github.com/InkyQuill/hieronymus/actions/runs/34766696167): all six jobs passed, including the revised macOS cleanup helper on main.
+
+The published release contains exactly 12 allowed assets. All downloaded assets
+matched their GitHub SHA-256 digests; application/model/metadata files also matched
+the retained candidates, and the public shell installer matched its deterministic
+rendering. The release links immutable qualification records instead of attaching
+evidence or debug files. Windows and macOS remain unsigned; Intel macOS remains
+explicitly unqualified for physical desktop use.
+
+The normal public Linux one-liner installed the release on the local CachyOS host.
+The installed binaries match the qualified Linux candidate, the user service is
+running without restarts, doctor reports healthy, the server-owned KDE tray is
+Active, and the author interface responds with HTTP 200. See
+`linux-installed-release.json` for the bounded observation record. No visual DPI,
+theme, menu, or new-login behavior is inferred from these checks.
+
+The local legacy setup needed two maintenance steps. Archiving its obsolete test
+unit initially left its login symlink dangling, causing an ENOENT rollback; the
+owned dangling link was then archived too. The old database lacked
+`dream_audit_entries`, so the migration dry-run refused it. A read-only inventory
+confirmed every business table had zero rows (only FTS internal bookkeeping was
+nonempty). The complete database was archived intact, configuration was retained,
+and the new daemon initialized schema 5. No project or memory records were lost.
+
+The original Node.js 20 action warnings are gone. The separate upstream
+`download-artifact` Buffer deprecation notice remains documented and was not
+suppressed; it did not fail the installer or publisher jobs.

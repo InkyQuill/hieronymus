@@ -1,0 +1,16 @@
+{
+  "checked_at": "2026-09-13T15:57:33.316Z",
+  "release": "v0.9.1",
+  "candidate_commit": "a2d3496aea8d8579eca0efffeb61630c02e70f47",
+  "artifact_sha256": "e312dc44120b104932e54425a2820e682be79052bf74769f62244edc281d019a",
+  "public_online_installer": true,
+  "default_user_service": "running",
+  "doctor": "healthy",
+  "tray_status": "Active",
+  "web_admin_status": 200,
+  "server_pid": 1351918,
+  "helper_pid": 1351932,
+  "installed_binaries_match_candidate": true,
+  "legacy_database_business_rows": 0,
+  "legacy_database_archived": true
+}
