@@ -1,0 +1,173 @@
+{
+  "candidate_commit": "a2d3496aea8d8579eca0efffeb61630c02e70f47",
+  "target": "x86_64-unknown-linux-gnu",
+  "artifact_sha256": "e312dc44120b104932e54425a2820e682be79052bf74769f62244edc281d019a",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "metadata_sha256": "a3138357bad372efd378cac4be28afb621a289d23d2d55650b44922f423a3b12",
+  "assets_sha256": "12e57b63af57be56a37835aa91af6103b6e4df75daff0877cb75a7d6bad12e28",
+  "signing": "unsigned-waiver",
+  "os_version": "Unavailable: no final-byte KDE X11 session was exercised",
+  "desktop": "kde",
+  "session": "x11",
+  "scale": [],
+  "qualification": "unqualified",
+  "qualification_reason": "Final-byte physical desktop testing was unavailable for this target/session. Published with the owner-authorized explicit qualification gap.",
+  "checks": [
+    {
+      "name": "native-semantic-mcp",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "startup",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "duplicate-start",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "model-acquisition",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "semantic-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "provider-failure-recovery-untested",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "three-probe-failures",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "failed-stop",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "quit-preserves-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "login-toggle",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "next-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "interactive-menu",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "missing-tray-host",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "host-restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "theme",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "dpi",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "console-grant",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "active-upgrade",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "rollback",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "uninstall",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "secret-free-diagnostics",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "pending-native-operation",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "private-storage-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "native-manager-update",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    },
+    {
+      "name": "live-tray-replacement",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-kde-x11.txt",
+      "evidence_sha256": "0a94927639ef3b1248a7a7d330da165a76e6de67caac8fb1505f6b16c6949762"
+    }
+  ]
+}

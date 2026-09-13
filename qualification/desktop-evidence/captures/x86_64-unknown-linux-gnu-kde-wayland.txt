@@ -1,0 +1,271 @@
+Hieronymus v0.9.1 qualification
+Candidate source: a2d3496aea8d8579eca0efffeb61630c02e70f47
+Successful run: https://github.com/InkyQuill/hieronymus/actions/runs/34757351358
+Target/session: x86_64-unknown-linux-gnu kde/wayland
+Artifact SHA256: e312dc44120b104932e54425a2820e682be79052bf74769f62244edc281d019a
+
+PARTIAL. These are fresh checks of the installed final candidate on the current KDE Wayland session. The recorded display scales describe the session; they do not certify visual DPI behavior. No signing or notarization is claimed.
+
+native-semantic-mcp: PASS. Verified final CI package ran real model inference, reached semantic readiness, served authenticated hieronymus_status MCP and shut down cleanly in desktop_native integration test (1 passed).
+
+startup: PASS. Two final-payload daemon starts recovered the GUI environment with DISPLAY/WAYLAND_DISPLAY/XAUTHORITY unset, registered an Active KDE StatusNotifier tray, and served the author interface at HTTP 200.
+
+duplicate-start: PASS. Both cycles refused a second daemon for the same data root and preserved the original PID and instance identity.
+
+model-acquisition: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+semantic-failure: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+provider-failure-recovery-untested: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+three-probe-failures: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+restart: PASS. Two explicit start/stop cycles used distinct identities; each stop removed both daemon/helper processes and the tray registration.
+
+failed-stop: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+quit-preserves-login: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+login-toggle: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+next-login: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+interactive-menu: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+missing-tray-host: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+host-restart: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+theme: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+dpi: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+console-grant: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+active-upgrade: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+rollback: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+uninstall: PASS. The generated one-file installer matched a fresh rendering from the verified four-platform candidates and was piped to Bash with isolated app/data/unit directories and --no-activate. Its installed launcher passed two server/tray lifecycle cycles. Uninstall removed the app, service unit, and owned desktop registration while preserving the data root.
+
+secret-free-diagnostics: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+pending-native-operation: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+private-storage-failure: PASS. An owner-readable but group/world-readable disposable token (0644) was refused before discovery publication without disclosing its value or changing permissions.
+
+native-manager-update: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+live-tray-replacement: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+Additional observations and limits:
+Fresh verified final Linux CI payload. Tray registration and Active status were observed over D-Bus; no visual theme, interactive menu or DPI quality is inferred. Display scale 1.15 was observed; no scale change was tested. Generated installer, public online download, normal manager activation, and uninstall remain separate checks and are not inferred from these direct-payload observations. The final generated Linux installer and preserving uninstall subsequently passed in the isolated offline fixture; normal user-manager activation and public online URLs are not inferred from that fixture.
+
+--- final-linux-verification.log ---
+verified split release 0.9.1 (x86_64-unknown-linux-gnu)
+
+
+--- final-linux-semantic.log ---
+    Finished `test` profile [unoptimized] target(s) in 0.14s
+     Running tests/desktop_native.rs (target/debug/deps/desktop_native-b5ba1fc1f4b9baed)
+
+running 1 test
+test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.70s
+
+
+
+--- final-linux-desktop.log ---
+Two complete startup/duplicate/stop cycles, tray lifecycle, browser access and private-storage refusal passed.
+
+
+--- final-linux-desktop/linux-desktop-smoke.json ---
+{
+  "candidate_commit": "a2d3496aea8d8579eca0efffeb61630c02e70f47",
+  "cycles": [
+    {
+      "discovery": {
+        "discovery_version": 1,
+        "protocol_version": "2026-07-28",
+        "host": "127.0.0.1",
+        "port": 41787,
+        "pid": 1222366,
+        "instance_id": "6f5ff80ddaf606e981036e38b882f895",
+        "started_at": "2026-09-13T13:14:33Z"
+      },
+      "helper_pid": 1222380,
+      "tray_item": ":1.3184/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_1222380",
+      "tray_status": "s \"Active\"",
+      "browser_status": 200,
+      "duplicate": {
+        "exit_code": 2,
+        "stdout": "",
+        "stderr": "hiero: another process already owns this data root: another process owns this data root (1222366 daemon); stop it before retrying (stop the running daemon or maintenance command first)\n"
+      },
+      "stop": {
+        "exit_code": 0,
+        "stdout": "shutdown requested: 127.0.0.1:41787 (instance 6f5ff80ddaf606e981036e38b882f895, pid 1222366) — stopping\ndaemon stopped and released its discovery record and data-root ownership\n",
+        "stderr": ""
+      },
+      "both_processes_gone": true,
+      "tray_removed": true
+    },
+    {
+      "discovery": {
+        "discovery_version": 1,
+        "protocol_version": "2026-07-28",
+        "host": "127.0.0.1",
+        "port": 43127,
+        "pid": 1222514,
+        "instance_id": "06f7ef05f224ec75f31e24981a8029fc",
+        "started_at": "2026-09-13T13:14:37Z"
+      },
+      "helper_pid": 1222531,
+      "tray_item": ":1.3188/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_1222531",
+      "tray_status": "s \"Active\"",
+      "browser_status": 200,
+      "duplicate": {
+        "exit_code": 2,
+        "stdout": "",
+        "stderr": "hiero: another process already owns this data root: another process owns this data root (1222514 daemon); stop it before retrying (stop the running daemon or maintenance command first)\n"
+      },
+      "stop": {
+        "exit_code": 0,
+        "stdout": "shutdown requested: 127.0.0.1:43127 (instance 06f7ef05f224ec75f31e24981a8029fc, pid 1222514) — stopping\ndaemon stopped and released its discovery record and data-root ownership\n",
+        "stderr": ""
+      },
+      "both_processes_gone": true,
+      "tray_removed": true
+    }
+  ],
+  "private_storage": {
+    "exit_code": 2,
+    "stdout": "",
+    "stderr": "hiero: daemon cannot use the installation credential: the stored installation token at /tmp/hieronymus-v091-final/final-linux-desktop/private-storage-smoke/daemon.token is readable beyond its owner or has unsafe aliases; on Unix run `chmod 600 /tmp/hieronymus-v091-final/final-linux-desktop/private-storage-smoke/daemon.token`; otherwise recreate it with owner-only access\n"
+  },
+  "success": true
+}
+
+
+--- final-linux-desktop/linux-daemon-0.log ---
+hiero daemon listening on 127.0.0.1:41787 (pid 1222366); discovery: /tmp/hieronymus-v091-final/final-linux-desktop/desktop-smoke-data/daemon.json; ctrl-c to stop
+
+
+--- final-linux-desktop/linux-daemon-0-stderr.log ---
+
+(hiero-desktop:1222380): libayatana-appindicator-WARNING **: 16:14:33.908: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
+hiero-desktop: Tray host and desktop preferences available
+
+
+--- final-linux-desktop/linux-daemon-1.log ---
+hiero daemon listening on 127.0.0.1:43127 (pid 1222514); discovery: /tmp/hieronymus-v091-final/final-linux-desktop/desktop-smoke-data/daemon.json; ctrl-c to stop
+
+
+--- final-linux-desktop/linux-daemon-1-stderr.log ---
+
+(hiero-desktop:1222531): libayatana-appindicator-WARNING **: 16:14:37.181: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
+hiero-desktop: Tray host and desktop preferences available
+
+
+--- final-linux-installer.log ---
+Installing Hieronymus 0.9.1…
+Downloading the app…
+Downloading the memory model (this can take a few minutes)…
+Verifying and installing…
+Hieronymus is installed.
+
+
+--- final-installed-version.json ---
+{"version": "0.9.1", "protocol_revision": "2026-07-28", "supported_schema_version": 5}
+
+
+--- final-installed-desktop.log ---
+Two complete startup/duplicate/stop cycles, tray lifecycle, browser access and private-storage refusal passed.
+
+
+--- final-installed-desktop/linux-desktop-smoke.json ---
+{
+  "candidate_commit": "a2d3496aea8d8579eca0efffeb61630c02e70f47",
+  "cycles": [
+    {
+      "discovery": {
+        "discovery_version": 1,
+        "protocol_version": "2026-07-28",
+        "host": "127.0.0.1",
+        "port": 35515,
+        "pid": 1327286,
+        "instance_id": "40c930cf4c717e60bf2e1aba280b9eca",
+        "started_at": "2026-09-13T15:28:13Z"
+      },
+      "helper_pid": 1327300,
+      "tray_item": ":1.3632/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_1327300",
+      "tray_status": "s \"Active\"",
+      "browser_status": 200,
+      "duplicate": {
+        "exit_code": 2,
+        "stdout": "",
+        "stderr": "hiero: another process already owns this data root: another process owns this data root (1327286 daemon); stop it before retrying (stop the running daemon or maintenance command first)\n"
+      },
+      "stop": {
+        "exit_code": 0,
+        "stdout": "shutdown requested: 127.0.0.1:35515 (instance 40c930cf4c717e60bf2e1aba280b9eca, pid 1327286) — stopping\ndaemon stopped and released its discovery record and data-root ownership\n",
+        "stderr": ""
+      },
+      "both_processes_gone": true,
+      "tray_removed": true
+    },
+    {
+      "discovery": {
+        "discovery_version": 1,
+        "protocol_version": "2026-07-28",
+        "host": "127.0.0.1",
+        "port": 43459,
+        "pid": 1327533,
+        "instance_id": "6615e52ee14c04d6a8c3f090bef3b641",
+        "started_at": "2026-09-13T15:28:16Z"
+      },
+      "helper_pid": 1327547,
+      "tray_item": ":1.3637/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_1327547",
+      "tray_status": "s \"Active\"",
+      "browser_status": 200,
+      "duplicate": {
+        "exit_code": 2,
+        "stdout": "",
+        "stderr": "hiero: another process already owns this data root: another process owns this data root (1327533 daemon); stop it before retrying (stop the running daemon or maintenance command first)\n"
+      },
+      "stop": {
+        "exit_code": 0,
+        "stdout": "shutdown requested: 127.0.0.1:43459 (instance 6615e52ee14c04d6a8c3f090bef3b641, pid 1327533) — stopping\ndaemon stopped and released its discovery record and data-root ownership\n",
+        "stderr": ""
+      },
+      "both_processes_gone": true,
+      "tray_removed": true
+    }
+  ],
+  "private_storage": {
+    "exit_code": 2,
+    "stdout": "",
+    "stderr": "hiero: daemon cannot use the installation credential: the stored installation token at /tmp/hieronymus-v091-final/final-installed-desktop/private-storage-smoke/daemon.token is readable beyond its owner or has unsafe aliases; on Unix run `chmod 600 /tmp/hieronymus-v091-final/final-installed-desktop/private-storage-smoke/daemon.token`; otherwise recreate it with owner-only access\n"
+  },
+  "success": true
+}
+
+
+--- final-linux-uninstall.log ---
+removed: owned desktop login entry, launcher, icon and registration record
+removed: service unit removed: /tmp/hieronymus-v091-final/final-setup-units/hieronymus.service
+removed: application directory (binaries and command links): /tmp/hieronymus-v091-final/final-setup-app
+preserved: configuration: /tmp/hieronymus-v091-final/final-setup-data
+data root preserved: /tmp/hieronymus-v091-final/final-setup-data
+
+
+Separate automated CI evidence for this target: the final extracted package passed real model inference and authenticated MCP in the candidate run above. This does not upgrade unavailable desktop-session checks.
+
+running 1 test
+test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.76s
+
