@@ -84,3 +84,28 @@ All local Rust checks passed after the diagnostic-only promotion error amendment
 Superseded candidate runs 34746871118, 34747006839, and 34747193074 were cancelled
 when installer fixes or the owner-requested Node 24 migration changed the source.
 Cancelled runs do not qualify the final release.
+
+## Windows file lifetime follow-up
+
+In run [34747514646](https://github.com/InkyQuill/hieronymus/actions/runs/34747514646),
+job 103698071164 first failed removal with Win32 error 5 at 08:24:16 UTC.
+No owned process was visible in the subsequent snapshot. A separate diagnostic
+repeat removed the app successfully at 08:24:20, preserving the same data root.
+The primary workflow failure remains recorded. No Defender threat was reported.
+
+Read-only Rust review found that daemon ownership/session locks may be released
+before the corresponding Windows process fully exits. Executable mappings may
+therefore remain briefly live. This supports a file-lifetime race as an explanation
+for removal; the earlier combined install error does not establish the exact
+installation operation or prove antivirus involvement.
+
+Only staging-directory promotion and owned application-tree removal now retry
+Windows errors 5/32/33 for up to three seconds, under the existing lifecycle and
+retirement guards. Permissions and authority checks are unchanged. Other errors
+return immediately; exhausted failures include the operation and path. Unix
+operations remain single-attempt. The full transaction is never replayed.
+
+Focused tests cover transient success, persistent/deadline failure, immediate
+non-retryable failure, and path context. The native Windows candidate job also
+exercises promotion/removal while a real non-delete-sharing file handle is held.
+The companion Rust review found no actionable regression in the bounded retry.

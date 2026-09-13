@@ -96,6 +96,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cargo test -p hiero --all-features --locked --lib uninstall::tests
+          cargo test -p hiero --all-features --locked --lib platform::managed_files
           cargo test -p hiero --all-features --locked --test worker_lifetime
       - name: Helper rustdoc (Unix)
         if: runner.os != 'Windows'

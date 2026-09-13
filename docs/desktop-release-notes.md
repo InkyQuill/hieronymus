@@ -21,8 +21,9 @@ The web interface opens after installation. Use it to inspect your agent's memor
 add pointers, and flag stale or wrong entries. Browser authentication is optional
 and off by default; MCP access remains authenticated.
 
-This update adds the simple installers and fixes macOS installation failing on
-allocator diagnostics reported by `launchctl`.
+This update adds the simple installers, fixes macOS installation failing on
+allocator diagnostics reported by `launchctl`, and handles short-lived Windows
+file locks during installation and removal.
 
 ## Platform notes
 
