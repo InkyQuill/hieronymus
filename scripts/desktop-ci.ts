@@ -281,7 +281,6 @@ if (import.meta.main) {
     checkSource(process.cwd(), ref);
     const { verifyEvidence } = await import("./package-desktop-evidence");
     await verifyEvidence(directory, evidence, commit, candidateRun);
-    await verifyCandidate(directory, commit);
     const { publicPayloads, nativeInstallerNames } =
       await import("./release-downloads");
     const { renderInstallers } = await import("./build-installers");

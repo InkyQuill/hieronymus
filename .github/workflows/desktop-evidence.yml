@@ -22,7 +22,7 @@ jobs:
       CANDIDATE_RUN: ${{ inputs.candidate_run }}
       EVIDENCE_COMMIT: ${{ inputs.evidence_commit }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -38,7 +38,7 @@ jobs:
           [[ "$EVIDENCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
       - name: Download same-source successful candidates
         run: bun scripts/desktop-ci.ts download "$CANDIDATE_RUN" desktop-candidate target/candidate "$GITHUB_SHA"
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.evidence_commit }}
           path: evidence-source
@@ -46,7 +46,7 @@ jobs:
           sparse-checkout: qualification/desktop-evidence
       - name: Validate and copy only bounded evidence data
         run: bun scripts/package-desktop-evidence.ts target/candidate evidence-source/qualification/desktop-evidence target/evidence "$GITHUB_SHA" "$CANDIDATE_RUN" "$EVIDENCE_COMMIT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-evidence
           path: target/evidence/

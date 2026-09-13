@@ -6,6 +6,9 @@ For the long-term memory workflow, see [Memory Dreaming](memory-dreaming.md).
 
 Use the [Windows installer, macOS package, or Linux one-liner](../README.md#install). You do not need to clone this repository or install developer tools. Setup downloads and verifies the app and its memory model, starts the local server, and opens the web interface.
 
+Windows and macOS installers are unsigned. On macOS, you may need to choose
+**Open Anyway** in System Settings → Privacy & Security after opening the package.
+
 Choose **Connect your agent** to add both the MCP connection and Hieronymus skills, then continue writing in your agent. Use the web interface to inspect memories, add pointers, and flag stale or wrong entries.
 
 Run the latest installer again to update. Your memories and configuration are kept. See [Distribution](distribution.md) for advanced offline installation, custom directories, and recovery.
