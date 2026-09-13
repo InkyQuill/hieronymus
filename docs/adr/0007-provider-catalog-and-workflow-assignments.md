@@ -160,3 +160,23 @@ ADR 0001 remains in force for plaintext local configuration and redaction. This
 ADR narrows ownership: provider credentials move from `dream.conf` to
 `provider.conf`; they remain local plaintext secrets with strict redaction in
 UI, JSON bridge payloads, logs, doctor output, provider checks, and audit data.
+
+## Amendment: provider context budget (2026-09-13)
+
+Provider profiles may set `context_window` to an integer token limit (at least
+1024), editable as **Context window (tokens)** in the provider settings. The
+limit includes both input and output; choose a value supported by every model
+assigned to that profile. Omitting it preserves old profiles.
+
+Dream selects the largest prefix of whole records fitting every enabled phase's
+budget, within the existing item-count cap. It estimates input conservatively
+from UTF-8 bytes, includes template overhead, and reserves up to 4096 tokens
+(one quarter of the window) for output. Remaining records stay pending. A single
+record that cannot fit fails explicitly without consuming it.
+
+Native Ollama discovers the model's context length with `/api/show`; the profile
+limit and any lower Modelfile `num_ctx` bound that value. It requests only the
+window needed for the batch, with explicit `num_ctx` and `num_predict`, and
+turns off truncation and context shifting. Incomplete generations fail instead
+of being accepted as empty extraction. Other providers use `context_window`
+when supplied; without it they retain the existing item-count selection.

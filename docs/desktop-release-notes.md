@@ -31,6 +31,11 @@ version negotiation before exposing tool schemas and forwarding tool calls.
 Existing clients using MCP `2026-07-28` continue to work. Restart your agent's
 MCP connection after updating Hieronymus.
 
+Dream now sizes batches to the provider’s context window. Set **Context window
+(tokens)** in provider settings to control the budget; native Ollama also checks
+the model’s limit and explicitly requests enough context without silently
+truncating memories. Failed or incomplete generations remain visible as errors.
+
 ## Platform notes
 
 The Windows and macOS installers are unsigned. macOS may require **Open Anyway**

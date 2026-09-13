@@ -74,6 +74,7 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
         // protocol revision, timestamps, and runtime paths are structural data;
         // even a short configured key must never corrupt authenticated discovery.
         redact_status_strings(&mut payload["providers"], &secrets);
+        redact_status_strings(&mut payload["dreaming"]["last_error"], &secrets);
         redact_status_strings(&mut payload["semantic"]["detail"], &secrets);
     }
     payload
@@ -228,6 +229,25 @@ fn model_for_profile(dream_config: &DreamConfig, profile_name: &str) -> String {
 fn dreaming_payload(config: &HieronymusConfig) -> Value {
     let (dream_config, catalog) = safe_config_state(config);
     let state = load_autostart_state(config);
+    let last_error = hieronymus::db::open_migrated(&config.database_path())
+        .ok()
+        .and_then(|connection| {
+            connection
+                .query_row(
+                    "select case when status = 'failed' then error else '' end from dream_runs
+             where status in ('completed', 'failed') order by id desc limit 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok()
+        })
+        .unwrap_or_else(|| {
+            if state.last_error.is_empty() {
+                String::new()
+            } else {
+                "Previous dream run failed".into()
+            }
+        });
     let (pending_completed_sessions, pending_short_term_memories) = pending_counts(config);
     let cycle_active = hieronymus::dream_locks::read_dream_cycle_state(config);
     json!({
@@ -241,7 +261,7 @@ fn dreaming_payload(config: &HieronymusConfig) -> Value {
         "pending_completed_sessions": pending_completed_sessions,
         "pending_short_term_memories": pending_short_term_memories,
         "last_started_at": state.last_started_at,
-        "last_error": if state.last_error.is_empty() { "" } else { "Previous dream run failed" },
+        "last_error": last_error,
         "last_skipped_at": state.last_skipped_at,
         "last_skip_reason": state.last_skip_reason,
         "not_enough_memories_skipped_count": state.not_enough_memories_skipped_count,
@@ -393,5 +413,24 @@ fn redact_status_strings(value: &mut Value, secrets: &[&str]) {
             .values_mut()
             .for_each(|value| redact_status_strings(value, secrets)),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn status_reports_persisted_dream_failure_and_clears_after_success() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let connection = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+        connection.execute("insert into dream_runs(cycle_id,status,provider,error,created_at) values(1,'failed','ollama','Model context exceeded','2026-09-13')", []).unwrap();
+        assert_eq!(
+            dreaming_payload(&config)["last_error"],
+            "Model context exceeded"
+        );
+        connection.execute("insert into dream_runs(cycle_id,status,provider,created_at) values(2,'completed','ollama','2026-09-13')", []).unwrap();
+        assert_eq!(dreaming_payload(&config)["last_error"], "");
     }
 }

@@ -15,7 +15,7 @@
   };
 
   let { provider = null, models = [], busy = false, error = "", onSave, onDelete, onRefreshModels, onCheck, onClose }: Props = $props();
-  const blankDraft = (): ProviderDraft => ({ id: "", name: "", type: "openai", url: "", key: "", timeout_seconds: "30" });
+  const blankDraft = (): ProviderDraft => ({ id: "", name: "", type: "openai", url: "", key: "", timeout_seconds: "30", context_window: "" });
   let draft = $state<ProviderDraft>(blankDraft());
   let dialog: HTMLDialogElement;
   let previouslyFocused: HTMLElement | null = null;
@@ -30,6 +30,7 @@
           url: provider.url,
           key: "",
           timeout_seconds: String(provider.timeout_seconds),
+          context_window: provider.context_window == null ? "" : String(provider.context_window),
         }
       : blankDraft();
     dialog.showModal();
@@ -49,6 +50,8 @@
     <label class="grid gap-1.5 text-caption text-secondary">Endpoint<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.url} required placeholder="https://api.example.com/v1" /></label>
     <label class="grid gap-1.5 text-caption text-secondary">API key<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.key} type="password" placeholder={provider?.key_configured ? "Stored key (leave blank to keep)" : "Required for remote providers"} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Timeout (seconds)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.timeout_seconds} inputmode="numeric" required /></label>
+    <label class="grid gap-1.5 text-caption text-secondary">Context window (tokens)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.context_window} inputmode="numeric" pattern="[0-9]+" placeholder="Automatic" aria-describedby="context-window-help" /></label>
+    <p id="context-window-help" class="text-body-sm text-secondary">Dream fits whole memories into this limit, reserving room for the reply. Use a limit supported by every model assigned to this profile. Blank uses model discovery for native Ollama; other providers keep the batch count limit.</p>
     {#if error}<p class="border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
     <div class="flex flex-wrap gap-2"><button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy}>Save profile</button>{#if provider}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-body-sm text-primary hover:bg-raised disabled:cursor-not-allowed disabled:opacity-60" type="button" onclick={onCheck} disabled={busy}>Check connection</button><button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-body-sm text-primary hover:bg-raised disabled:cursor-not-allowed disabled:opacity-60" type="button" onclick={onRefreshModels} disabled={busy}>Refresh models</button>{/if}</div>
   </form>

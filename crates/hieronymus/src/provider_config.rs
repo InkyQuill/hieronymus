@@ -8,7 +8,14 @@ use crate::secret::Secret;
 
 pub const SUPPORTED_PROVIDER_TYPES: [&str; 4] = ["anthropic", "google", "ollama", "openai"];
 
-const PROFILE_FIELDS: [&str; 5] = ["name", "type", "url", "key", "timeout_seconds"];
+const PROFILE_FIELDS: [&str; 6] = [
+    "name",
+    "type",
+    "url",
+    "key",
+    "timeout_seconds",
+    "context_window",
+];
 const DEFAULTS_FIELDS: [&str; 2] = ["provider", "model"];
 const LEGACY_DREAM_PROFILE_FIELDS: [&str; 7] = [
     "name",
@@ -61,6 +68,7 @@ pub struct ProviderProfile {
     url: String,
     key: Secret<String>,
     timeout_seconds: f64,
+    context_window: Option<u32>,
 }
 
 impl ProviderProfile {
@@ -77,7 +85,18 @@ impl ProviderProfile {
             url: url.into(),
             key: Secret::new(key.into()),
             timeout_seconds,
+            context_window: None,
         }
+    }
+
+    /// Optional total token budget, including prompt and response.
+    pub fn with_context_window(mut self, limit: Option<u32>) -> Self {
+        self.context_window = limit;
+        self
+    }
+
+    pub fn context_window(&self) -> Option<u32> {
+        self.context_window
     }
 
     pub fn name(&self) -> &str {
@@ -249,6 +268,9 @@ fn profile_payload(provider: &ProviderProfile, redact: bool) -> Table {
     payload.insert("url".into(), provider.url.clone().into());
     payload.insert("key".into(), key_value.into());
     payload.insert("timeout_seconds".into(), provider.timeout_seconds.into());
+    if let Some(limit) = provider.context_window {
+        payload.insert("context_window".into(), i64::from(limit).into());
+    }
     payload
 }
 
@@ -331,7 +353,8 @@ pub fn migrate_dream_provider_payload(
             url.unwrap_or_default(),
             key.unwrap_or_default(),
             timeout.unwrap_or(30.0),
-        );
+        )
+        .with_context_window(existing_profile.and_then(ProviderProfile::context_window));
         if let Some(existing_profile) = existing_profile
             && *existing_profile != profile
         {
@@ -385,6 +408,7 @@ fn provider_catalog_from_payload(payload: &Table) -> Result<ProviderCatalog, Pro
         let mut url_value: Option<String> = None;
         let mut key_value: Option<String> = None;
         let mut timeout_value: Option<f64> = None;
+        let mut context_window = None;
         for (field_name, value) in provider_payload {
             match field_name.as_str() {
                 "name" => {
@@ -404,6 +428,12 @@ fn provider_catalog_from_payload(payload: &Table) -> Result<ProviderCatalog, Pro
                         &format!("providers.{name}.timeout_seconds"),
                         value,
                     )?);
+                }
+                "context_window" => {
+                    context_window = Some(value.as_integer().and_then(|v| u32::try_from(v).ok())
+                        .filter(|v| *v >= 1024).ok_or_else(|| ProviderCatalogError::new(
+                            format!("providers.{name}.context_window must be an integer of at least 1024")
+                        ))?);
                 }
                 _ => unreachable!("rejected by unknown-key check"),
             }
@@ -430,7 +460,7 @@ fn provider_catalog_from_payload(payload: &Table) -> Result<ProviderCatalog, Pro
                 profile.timeout_seconds(),
             );
         }
-        providers.insert(name.clone(), profile);
+        providers.insert(name.clone(), profile.with_context_window(context_window));
     }
 
     Ok(ProviderCatalog {
@@ -444,6 +474,11 @@ fn validate_provider_profile(
     provider: &ProviderProfile,
 ) -> Result<(), ProviderCatalogError> {
     let prefix = format!("providers.{name}");
+    if provider.context_window.is_some_and(|limit| limit < 1024) {
+        return Err(ProviderCatalogError::new(format!(
+            "{prefix}.context_window must be at least 1024"
+        )));
+    }
     if provider.name.is_empty() {
         return Err(ProviderCatalogError::new(format!(
             "{prefix}.name is required"

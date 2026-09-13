@@ -634,6 +634,9 @@ fn stage_configs(
                 "timeout_seconds",
                 toml_edit::value(profile.timeout_seconds()),
             );
+            if let Some(limit) = profile.context_window() {
+                table.insert("context_window", toml_edit::value(i64::from(limit)));
+            }
             document.insert(id, toml_edit::Item::Table(table));
         }
         let text = document.to_string();

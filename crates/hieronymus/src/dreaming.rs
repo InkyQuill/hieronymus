@@ -347,6 +347,17 @@ pub fn resolved_provider_label(config: &HieronymusConfig) -> Result<String, Drea
 pub trait DreamProvider {
     fn name(&self) -> &str;
 
+    /// Number of complete records fitting the provider's context window.
+    /// Providers without context discovery retain the configured item cap.
+    fn fitting_memory_count(
+        &self,
+        _pass_name: &str,
+        _context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<usize, DreamError> {
+        Ok(memories.len())
+    }
+
     /// Provider profile id recorded on phase runs and audit entries.
     fn profile_name(&self) -> &str {
         self.name()
@@ -941,7 +952,7 @@ impl DreamService {
 
         // Selection: the bounded affected-memory set. One snapshot feeds
         // every pass, capped by max_short_term_memories_per_run.
-        let groups = self.select_pending_completed_groups(
+        let mut groups = self.select_pending_completed_groups(
             self.dream_config.max_short_term_memories_per_run as usize,
         )?;
         if groups.is_empty() {
@@ -955,16 +966,40 @@ impl DreamService {
                 0,
             );
         }
+        let providers = selected
+            .iter()
+            .map(|choice| self.resolver.provider(choice))
+            .collect::<Result<Vec<_>, _>>()?;
+        let selection_context = groups[0].context.clone();
+        let mut selected_memories: Vec<ShortTermMemoryRecord> = groups
+            .iter()
+            .flat_map(|group| group.memories.iter().cloned())
+            .collect();
+        for (choice, provider) in selected.iter().zip(&providers) {
+            let count = provider.fitting_memory_count(
+                &choice.name,
+                &selection_context,
+                &selected_memories,
+            )?;
+            if count == 0 {
+                return Err(DreamError::Provider(format!(
+                    "{} context cannot fit one complete memory and its response budget",
+                    choice.name
+                )));
+            }
+            selected_memories.truncate(count);
+        }
+        let mut remaining = selected_memories.len();
+        for group in &mut groups {
+            group.memories.truncate(remaining);
+            remaining -= group.memories.len();
+        }
+        groups.retain(|group| !group.memories.is_empty());
         let selected_memory_ids: Vec<i64> = groups
             .iter()
             .flat_map(|group| group.memories.iter().map(|memory| memory.id))
             .collect();
         let allowed_memory_ids: HashSet<i64> = selected_memory_ids.iter().copied().collect();
-        let selection_context = groups[0].context.clone();
-        let selected_memories: Vec<ShortTermMemoryRecord> = groups
-            .iter()
-            .flat_map(|group| group.memories.iter().cloned())
-            .collect();
         let valid_concept_ids = self.valid_concept_ids()?;
         // Same-context authorization sets (ruling: derived from the selected
         // affected-memory context BEFORE any store call): the crystals scoped
@@ -976,13 +1011,8 @@ impl DreamService {
         let mut covered_memory_ids: HashSet<i64> = HashSet::new();
         let mut staged: Vec<NormalizedOutput> = Vec::new();
 
-        for choice in &selected {
-            // A fresh provider per selected workflow, resolved inside the run
-            // and dropped when the pass ends (worker-local: instances are
-            // never stored on the service across threads). Disabled
-            // assignments never reach this line, so they never require a
-            // provider.
-            let provider = self.resolver.provider(choice)?;
+        for (choice, provider) in selected.iter().zip(&providers) {
+            // Reuse the worker-local provider that budgeted this batch.
             let identity = self.resolver.identity(choice)?;
             let phase_run_id = self.start_phase_run(
                 run_id,

@@ -526,3 +526,29 @@ extra = "nope"
         "unknown provider config setting: providers.openai.extra"
     );
 }
+
+#[test]
+fn context_window_round_trips_and_rejects_invalid_limits() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let catalog = ProviderCatalog::default().with_provider(
+        "local",
+        profile("Local", "ollama", "http://localhost:11434").with_context_window(Some(16384)),
+    );
+    save_provider_catalog(&config, &catalog).unwrap();
+    assert_eq!(load_provider_catalog(&config).unwrap(), catalog);
+    for invalid in ["0", "-1", "1023", "4096.5", "true", "4294967296"] {
+        write_provider_config(
+            &config,
+            &format!(
+                "[local]\ntype='ollama'\nurl='http://localhost:11434'\ncontext_window={invalid}\n"
+            ),
+        );
+        assert!(
+            load_provider_catalog(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("context_window")
+        );
+    }
+}

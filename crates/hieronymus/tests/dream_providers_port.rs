@@ -960,11 +960,17 @@ fn provider_pass_builds_each_provider_types_payload() {
     assert!(headers.contains(&("x-api-key".to_string(), SECRET_KEY.to_string())));
     assert!(headers.contains(&("anthropic-version".to_string(), "2023-06-01".to_string())));
 
-    // native ollama wire shape: no auth header, chat payload with json format.
-    let transport = FakeTransport::new(vec![Ok(HttpResponse {
-        status: 200,
-        body: json!({"message": {"content": "{}"}}).to_string(),
-    })]);
+    // Native Ollama discovers its model limit before setting the chat context.
+    let transport = FakeTransport::new(vec![
+        Ok(HttpResponse {
+            status: 200,
+            body: ollama_metadata(8192),
+        }),
+        Ok(HttpResponse {
+            status: 200,
+            body: ollama_envelope(json!({"crystals": []})),
+        }),
+    ]);
     let provider = LlmDreamProvider::new(
         "local-ollama",
         ProviderProfile::new("Ollama", "ollama", "http://ollama.invalid:11434", "", 5.0),
@@ -975,7 +981,7 @@ fn provider_pass_builds_each_provider_types_payload() {
     provider
         .run_pass("rule_crystals", &context("book"), &[])
         .unwrap();
-    let (url, headers) = &transport.calls.lock().unwrap()[0];
+    let (url, headers) = &transport.calls.lock().unwrap()[1];
     assert_eq!(url, "http://ollama.invalid:11434/api/chat");
     assert!(
         !headers.iter().any(|(name, _)| name == "authorization"),
@@ -1334,4 +1340,182 @@ fn probe_models_unavailable_endpoint_falls_back_to_defaults() {
     assert_eq!(probe.models, vec!["gpt-4.1-mini", "gpt-4.1", "o4-mini"]);
     assert_eq!(probe.source, "defaults");
     assert_eq!(probe.error, "model suggestions unavailable");
+}
+
+fn ollama_metadata(limit: usize) -> String {
+    json!({"model_info": {"general.architecture": "test", "test.context_length": limit}, "template": "{{ .Prompt }}"}).to_string()
+}
+
+fn ollama_envelope(content: Value) -> String {
+    json!({"message": {"content": content.to_string()}, "done": true, "done_reason": "stop"})
+        .to_string()
+}
+
+#[test]
+fn ollama_batches_fit_model_context_without_losing_pending_memories() {
+    let server = LoopbackLlm::start(Box::new(|request| {
+        if request.path == "/api/show" {
+            return (200, ollama_metadata(131072));
+        }
+        let body = request.json();
+        let prompt = dream_prompt_of(request);
+        let text = body["messages"][0]["content"].as_str().unwrap();
+        let ctx = body["options"]["num_ctx"].as_u64().unwrap() as usize;
+        assert!(ctx <= 8192);
+        assert!(text.len() + 512 + 2048 <= ctx);
+        assert_eq!(body["options"]["num_predict"], 2048);
+        assert_eq!(body["truncate"], false);
+        assert_eq!(body["shift"], false);
+        let ids: Vec<_> = prompt["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].clone())
+            .collect();
+        assert!(!ids.is_empty() && ids.len() < 22);
+        let result = if prompt["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("coverage_audit")
+        {
+            json!({"covered_memory_ids": ids})
+        } else {
+            json!({"crystals": []})
+        };
+        (200, ollama_envelope(result))
+    }));
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let text = "A complete memory about a fictional character. ".repeat(12);
+    let memories = completed_session(&config, "book", &vec![text.as_str(); 22]);
+    save_catalog(
+        &config,
+        vec![(
+            "local-llm",
+            ProviderProfile::new("Ollama", "ollama", server.url(""), "", 5.0)
+                .with_context_window(Some(8192)),
+        )],
+    );
+    with_enabled_workflow(&config, "knowledge_crystals", "local-llm", "test-model");
+    with_enabled_workflow(&config, "coverage_audit", "local-llm", "test-model");
+    let service = DreamService::open(&config, catalog_resolver(&config)).unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..22 {
+        let before = server.request_count();
+        let run = service.run_cycle("manual", false).unwrap();
+        assert_eq!(run.status, "completed");
+        let requests = server.requests.lock().unwrap();
+        let prompts: Vec<_> = requests[before..]
+            .iter()
+            .filter(|r| r.path == "/api/chat")
+            .map(dream_prompt_of)
+            .collect();
+        if prompts.is_empty() {
+            break;
+        }
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0]["memories"], prompts[1]["memories"]);
+        for memory in prompts[0]["memories"].as_array().unwrap() {
+            assert_eq!(memory["text"], text.trim());
+            seen.push(memory["id"].as_i64().unwrap());
+        }
+    }
+    assert_eq!(seen, memories.iter().map(|m| m.id).collect::<Vec<_>>());
+}
+
+#[test]
+fn ollama_rejects_oversized_memory_and_incomplete_generation() {
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let memories = completed_session(&config, "book", &[&"x".repeat(9000)]);
+    let transport = FakeTransport::new(vec![Ok(HttpResponse {
+        status: 200,
+        body: ollama_metadata(8192),
+    })]);
+    let provider = LlmDreamProvider::new(
+        "local",
+        ProviderProfile::new("Ollama", "ollama", "http://local", "", 5.0),
+        "model",
+    )
+    .unwrap()
+    .with_transport(transport.clone());
+    assert_eq!(
+        provider
+            .fitting_memory_count("coverage_audit", &context("book"), &memories)
+            .unwrap(),
+        0
+    );
+    assert!(
+        provider
+            .run_pass("coverage_audit", &context("book"), &memories)
+            .unwrap_err()
+            .to_string()
+            .contains("context limit")
+    );
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    for (done, reason) in [(false, "stop"), (true, "length")] {
+        let transport = FakeTransport::new(vec![
+            Ok(HttpResponse {
+                status: 200,
+                body: ollama_metadata(8192),
+            }),
+            Ok(HttpResponse {
+                status: 200,
+                body: json!({"message":{"content":"{}"}, "done":done, "done_reason":reason})
+                    .to_string(),
+            }),
+        ]);
+        let provider = LlmDreamProvider::new(
+            "local",
+            ProviderProfile::new("Ollama", "ollama", "http://local", "", 5.0),
+            "model",
+        )
+        .unwrap()
+        .with_transport(transport);
+        assert!(
+            provider
+                .run_pass("coverage_audit", &context("book"), &[])
+                .unwrap_err()
+                .to_string()
+                .contains("did not complete")
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires HIERO_TEST_OLLAMA_URL and HIERO_TEST_OLLAMA_MODEL; synthetic records only"]
+fn real_ollama_coverage_fits_configured_context() {
+    let url = std::env::var("HIERO_TEST_OLLAMA_URL").expect("HIERO_TEST_OLLAMA_URL required");
+    let model = std::env::var("HIERO_TEST_OLLAMA_MODEL").expect("HIERO_TEST_OLLAMA_MODEL required");
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let text = "In this fictional story, Mira keeps a blue notebook and records the weather each morning. ".repeat(8);
+    let memories = completed_session(&config, "book", &vec![text.as_str(); 22]);
+    let provider = LlmDreamProvider::new(
+        "local",
+        ProviderProfile::new("Ollama", "ollama", url, "", 300.0).with_context_window(Some(16384)),
+        model,
+    )
+    .unwrap();
+    let count = provider
+        .fitting_memory_count("coverage_audit", &context("book"), &memories)
+        .unwrap();
+    assert!(count > 0 && count < memories.len());
+    let output = provider
+        .run_pass("coverage_audit", &context("book"), &memories[..count])
+        .unwrap();
+    let mut actual: Vec<_> = output["covered_memory_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_i64().unwrap())
+        .collect();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        memories[..count]
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>()
+    );
 }

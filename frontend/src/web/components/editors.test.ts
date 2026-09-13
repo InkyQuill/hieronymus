@@ -75,6 +75,7 @@ test("provider editor opens, submits edited fields, and closes", async () => {
   const name = screen.getByLabelText("Display name");
   await user.clear(name);
   await user.type(name, "Primary OpenAI");
+  await user.type(screen.getByLabelText("Context window (tokens)"), "16384");
   await user.click(screen.getByRole("button", { name: "Save profile" }));
   expect(onSave).toHaveBeenCalledWith({
     id: "openai-main",
@@ -83,6 +84,7 @@ test("provider editor opens, submits edited fields, and closes", async () => {
     url: "https://api.openai.com/v1",
     key: "",
     timeout_seconds: "30",
+    context_window: "16384",
   });
 
   await user.click(screen.getByRole("button", { name: "Close editor" }));

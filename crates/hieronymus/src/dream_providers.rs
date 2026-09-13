@@ -10,6 +10,7 @@
 //! provider probes port `ProviderRegistry.list_profile_model_suggestions`
 //! and `check_profile_connection`.
 
+use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,8 +67,8 @@ fn phase_instruction(pass_name: &str) -> Option<&'static str> {
              strength_delta, and confidence_delta. Return JSON.",
         ),
         "coverage_audit" => Some(
-            "Account for every selected short-term memory ID. Return \
-             covered_memory_ids and source_memory_ids for every audit item. Return JSON.",
+            "Return covered_memory_ids containing every input memory ID exactly once, \
+             even when records have identical text. Use actual input IDs, not example IDs. Return JSON.",
         ),
         _ => None,
     }
@@ -284,6 +285,28 @@ pub struct LlmDreamProvider {
     model: String,
     core: HttpClientCore,
     observation: Option<Observation>,
+    ollama_context: OnceCell<PromptBudget>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PromptBudget {
+    limit: usize,
+    template_budget: usize,
+}
+
+impl PromptBudget {
+    fn output_budget(self) -> usize {
+        (self.limit / 4).min(4096)
+    }
+
+    fn required_context(self, prompt: &str) -> usize {
+        // UTF-8 bytes are a conservative token estimate. Include the model's
+        // chat template, control tokens and output; never cut source text.
+        prompt
+            .len()
+            .saturating_add(self.template_budget)
+            .saturating_add(self.output_budget())
+    }
 }
 
 impl LlmDreamProvider {
@@ -307,6 +330,7 @@ impl LlmDreamProvider {
         Ok(Self {
             profile_id,
             observation: None,
+            ollama_context: OnceCell::new(),
             profile,
             model,
             core: HttpClientCore::new(Arc::new(BlockingHttpTransport::default())),
@@ -356,7 +380,36 @@ impl LlmDreamProvider {
         timeout: Duration,
     ) -> Result<Value, DreamError> {
         let wire = self.wire()?;
-        let plan = pass_request(&self.profile, wire, &self.model, prompt)?;
+        let mut plan = pass_request(&self.profile, wire, &self.model, prompt)?;
+        if let Some(context) = self.prompt_budget()? {
+            let required = context.required_context(prompt);
+            if required > context.limit {
+                return Err(DreamError::Provider(format!(
+                    "Prompt and response budget exceed model context limit {}",
+                    context.limit
+                )));
+            }
+            match wire {
+                Wire::Ollama => {
+                    plan.payload["options"]["num_ctx"] = json!(
+                        required
+                            .div_ceil(1024)
+                            .saturating_mul(1024)
+                            .min(context.limit)
+                    );
+                    plan.payload["options"]["num_predict"] = json!(context.output_budget());
+                    plan.payload["truncate"] = json!(false);
+                    plan.payload["shift"] = json!(false);
+                }
+                Wire::OpenAi | Wire::Anthropic => {
+                    plan.payload["max_tokens"] = json!(context.output_budget());
+                }
+                Wire::Gemini => {
+                    plan.payload["generationConfig"]["maxOutputTokens"] =
+                        json!(context.output_budget());
+                }
+            }
+        }
         // Planning/invalid caller input never publishes provider health. Classify
         // typed transport/status/parse results before DreamError flattens them.
         let sequence = self.observation.as_ref().map(Observation::start);
@@ -406,6 +459,30 @@ impl LlmDreamProvider {
                     wire.name()
                 )));
             }
+            if wire == Wire::Ollama && pass_name != "correction decisions" {
+                let keys: &[&str] = if pass_name == "coverage_audit" {
+                    &["covered_memory_ids"]
+                } else {
+                    &[
+                        "crystals",
+                        "concept_proposals",
+                        "concepts",
+                        "facets",
+                        "rule_crystals",
+                        "thoughts",
+                        "inferred_additions",
+                        "supersede",
+                        "supersede_actions",
+                        "reinforce",
+                        "reinforce_actions",
+                    ]
+                };
+                if !keys.iter().any(|key| payload[*key].is_array()) {
+                    return Err(DreamError::Provider(format!(
+                        "Ollama returned an unexpected {pass_name} response shape"
+                    )));
+                }
+            }
             Ok(payload)
         })();
         finish(if parsed.is_ok() {
@@ -418,6 +495,77 @@ impl LlmDreamProvider {
 
     fn timeout(&self) -> Duration {
         Duration::from_secs_f64(self.profile.timeout_seconds())
+    }
+
+    fn prompt_budget(&self) -> Result<Option<PromptBudget>, DreamError> {
+        if self.wire()? == Wire::Ollama {
+            return self.ollama_context().map(Some);
+        }
+        Ok(self.profile.context_window().map(|limit| PromptBudget {
+            limit: limit as usize,
+            template_budget: 512,
+        }))
+    }
+
+    fn ollama_context(&self) -> Result<PromptBudget, DreamError> {
+        if let Some(context) = self.ollama_context.get() {
+            return Ok(*context);
+        }
+        let response = self
+            .core
+            .post_json(
+                &format!("{}/api/show", base_url(&self.profile)),
+                &auth_headers(Wire::Ollama, &self.profile),
+                &json!({"model": self.model}),
+                self.timeout(),
+            )
+            .map_err(|_| {
+                DreamError::Provider("Cannot discover Ollama model context limit".into())
+            })?;
+        if !(200..300).contains(&response.status) {
+            return Err(DreamError::Provider(format!(
+                "Ollama model context discovery returned HTTP {}",
+                response.status
+            )));
+        }
+        let payload: Value = serde_json::from_str(&response.body)
+            .map_err(|_| DreamError::Provider("Invalid Ollama model metadata".into()))?;
+        let info = &payload["model_info"];
+        let limit = info["general.architecture"]
+            .as_str()
+            .and_then(|architecture| info[format!("{architecture}.context_length")].as_u64())
+            .and_then(|limit| usize::try_from(limit).ok())
+            .filter(|limit| *limit > 0)
+            .ok_or_else(|| {
+                DreamError::Provider("Ollama model metadata has no context limit".into())
+            })?;
+        // Respect a lower limit explicitly saved in the model's Modelfile.
+        let configured = payload["parameters"]
+            .as_str()
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                (fields.next()? == "num_ctx")
+                    .then(|| fields.next()?.parse::<usize>().ok())
+                    .flatten()
+            })
+            .rfind(|limit| *limit > 0)
+            .unwrap_or(limit);
+        let context = PromptBudget {
+            limit: limit.min(configured).min(
+                self.profile
+                    .context_window()
+                    .map_or(limit, |value| value as usize),
+            ),
+            template_budget: payload["template"]
+                .as_str()
+                .unwrap_or_default()
+                .len()
+                .saturating_add(512),
+        };
+        let _ = self.ollama_context.set(context);
+        Ok(context)
     }
 
     fn wire(&self) -> Result<Wire, DreamError> {
@@ -498,6 +646,24 @@ fn correction_protocol_examples() -> Value {
 impl DreamProvider for LlmDreamProvider {
     fn name(&self) -> &str {
         self.profile.provider_type()
+    }
+
+    fn fitting_memory_count(
+        &self,
+        pass_name: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<usize, DreamError> {
+        let Some(budget) = self.prompt_budget()? else {
+            return Ok(memories.len());
+        };
+        for count in (1..=memories.len()).rev() {
+            let prompt = self.render_pass_prompt(pass_name, context, &memories[..count])?;
+            if budget.required_context(&prompt) <= budget.limit {
+                return Ok(count);
+            }
+        }
+        Ok(0)
     }
 
     fn profile_name(&self) -> &str {
@@ -601,6 +767,11 @@ fn envelope_text(wire: Wire, body: &str) -> Result<String, String> {
     let payload: Value = serde_json::from_str(body).map_err(|_| mismatch())?;
     if !payload.is_object() {
         return Err(mismatch());
+    }
+    if wire == Wire::Ollama && (payload["done"] != true || payload["done_reason"] != "stop") {
+        return Err(
+            "Ollama generation did not complete; check model context and output limits".into(),
+        );
     }
     let pointer = match wire {
         Wire::OpenAi => "/choices/0/message/content",

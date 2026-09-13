@@ -6,6 +6,7 @@ export type ProviderProfile = {
   key_configured: boolean;
   model: string;
   timeout_seconds: number;
+  context_window?: number | null;
 };
 
 export type ProviderDraft = {
@@ -15,6 +16,7 @@ export type ProviderDraft = {
   url: string;
   key: string;
   timeout_seconds: string;
+  context_window: string;
 };
 
 export type ProviderCheck = {

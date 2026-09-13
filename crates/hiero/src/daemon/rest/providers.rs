@@ -285,7 +285,7 @@ pub(super) fn editor_payload(catalog: &ProviderCatalog, provider_id: &str) -> Va
     } else {
         String::new()
     };
-    json!({
+    let mut payload = json!({
         "id": provider_id,
         "name": profile.name(),
         "type": profile.provider_type(),
@@ -293,7 +293,11 @@ pub(super) fn editor_payload(catalog: &ProviderCatalog, provider_id: &str) -> Va
         "key_configured": !profile.key().expose_secret().is_empty(),
         "model": model,
         "timeout_seconds": profile.timeout_seconds(),
-    })
+    });
+    if let Some(limit) = profile.context_window() {
+        payload["context_window"] = json!(limit);
+    }
+    payload
 }
 
 fn envelope_400(error: &str) -> Response {
@@ -354,5 +358,57 @@ fn draft_profile(
     if !timeout.is_finite() || timeout <= 0.0 {
         return Err("timeout_seconds must be greater than zero".to_string());
     }
-    Ok(ProviderProfile::new(name, provider_type, url, key, timeout))
+    let context_window = match raw.get("context_window") {
+        None => existing.and_then(ProviderProfile::context_window),
+        Some(Value::Null) => None,
+        Some(Value::String(text)) if text.trim().is_empty() => None,
+        Some(value) => {
+            let text = value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string());
+            Some(
+                text.trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|limit| *limit >= 1024)
+                    .ok_or_else(|| {
+                        "context_window must be an integer of at least 1024".to_string()
+                    })?,
+            )
+        }
+    };
+    Ok(ProviderProfile::new(name, provider_type, url, key, timeout)
+        .with_context_window(context_window))
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn editor_context_limit_can_be_saved_preserved_and_cleared() {
+        let mut draft = json!({"name":"Local", "type":"ollama", "url":"http://localhost:11434", "timeout_seconds":"30", "context_window":"16384"});
+        let profile = draft_profile(&draft, &ProviderCatalog::default(), "local").unwrap();
+        assert_eq!(profile.context_window(), Some(16384));
+        let catalog = ProviderCatalog::default().with_provider("local", profile);
+        draft.as_object_mut().unwrap().remove("context_window");
+        assert_eq!(
+            draft_profile(&draft, &catalog, "local")
+                .unwrap()
+                .context_window(),
+            Some(16384)
+        );
+        draft["context_window"] = json!("");
+        assert_eq!(
+            draft_profile(&draft, &catalog, "local")
+                .unwrap()
+                .context_window(),
+            None
+        );
+        for invalid in [json!(1023), json!(12.5), json!(true), json!("no")] {
+            draft["context_window"] = invalid;
+            assert!(draft_profile(&draft, &catalog, "local").is_err());
+        }
+    }
 }
