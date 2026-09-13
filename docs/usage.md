@@ -16,7 +16,7 @@ The tray icon opens the web interface while the server is running. Browser authe
 
 The default data directory is `~/.config/hieronymus` on Linux,
 `~/Library/Application Support/Hieronymus` on macOS, and
-`%APPDATA%\\Hieronymus` on Windows. Set `HIERONYMUS_DATA_ROOT` to use a
+`%APPDATA%\Hieronymus` on Windows. Set `HIERONYMUS_DATA_ROOT` to use a
 different data root:
 
 ```bash
@@ -28,7 +28,9 @@ export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memo
 On Windows, remove Hieronymus through **Settings → Apps → Installed apps**.
 The uninstaller preserves memories and configuration.
 
-On Linux and macOS, `hiero uninstall --yes` removes the owned application, service unit and generated
+On Linux, run `hiero uninstall --yes`. On macOS, run
+`hiero uninstall --yes --data-root "$HOME/Library/Application Support/Hieronymus"`.
+These commands remove the owned application, service unit and generated
 integration entries; it preserves databases and configuration by default. Add
 `--delete-data` only to clear user contents from the explicitly configured data
 root, including models, backups and audit data. A small coordination-only directory

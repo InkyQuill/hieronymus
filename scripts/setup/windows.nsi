@@ -32,7 +32,7 @@ Var ExtraOptions
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TEXT "Hieronymus is installed. Open it and choose Connect your agent to add its MCP connection and skills. Then continue writing in your agent."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\bin\hiero.exe"
-!define MUI_FINISHPAGE_RUN_PARAMETERS "admin"
+!define MUI_FINISHPAGE_RUN_PARAMETERS 'admin --data-root "$APPDATA\Hieronymus"'
 !define MUI_FINISHPAGE_RUN_TEXT "Open Hieronymus"
 !insertmacro MUI_PAGE_FINISH
 !define MUI_UNCONFIRMPAGE_TEXT_TOP "Remove Hieronymus from this Windows account? Your project data and memories will be kept."
@@ -72,7 +72,7 @@ Section "Hieronymus"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus" "UninstallString" '$\"$LOCALAPPDATA\Hieronymus\Uninstall.exe$\"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus" "NoRepair" 1
-  CreateShortcut "$SMPROGRAMS\Hieronymus.lnk" "$INSTDIR\bin\hiero.exe" "admin"
+  CreateShortcut "$SMPROGRAMS\Hieronymus.lnk" "$INSTDIR\bin\hiero.exe" 'admin --data-root "$APPDATA\Hieronymus"'
 SectionEnd
 Section "Uninstall"
   SetShellVarContext current
@@ -80,7 +80,7 @@ Section "Uninstall"
   ${If} $INSTDIR == ""
     Abort "The installation location could not be found. Your data has not been changed."
   ${EndIf}
-  nsExec::ExecToStack /TIMEOUT=120000 '"$LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$INSTDIR"'
+  nsExec::ExecToStack /TIMEOUT=120000 '"$LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$INSTDIR" --data-root "$APPDATA\Hieronymus"'
   Pop $0
   Pop $1
   DetailPrint $1
