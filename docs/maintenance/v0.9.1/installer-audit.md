@@ -47,6 +47,23 @@ runtime registry. The latter has an additional policy case for a registry that
 has not updated before restart. The review is retained in
 `coderabbit-runtime-review.jsonl`.
 
+The follow-up review (`coderabbit-runtime-recheck.jsonl`) found no remaining
+installer defect and requested only replacing the local working-directory path
+in review metadata with a relative path; that cleanup is applied. All 129 Bun
+script tests pass after the restart-message correction.
+
+### Pending final candidate dispatch
+
+On 2026-09-13 at approximately 08:44–08:48 UTC, GitHub rejected three attempts
+to dispatch `desktop-candidate.yml` on `codex/easy-install` (then source
+0bcbf72d32db8216ff33b9be5fcf3373f8e78563), returning HTTP 500,
+`Failed to run workflow dispatch`. Both `gh workflow run` and the direct REST
+endpoint failed; run listings confirmed that none created a new candidate run.
+GitHub's status API reported Actions operational, so no public incident is
+inferred. The workflow itself remained active. A new successful candidate run
+is still required before installer qualification, promotion, and v0.9.1
+publication. No release tag or release is created for these unqualified changes.
+
 | Evidence | Finding | Disposition |
 | --- | --- | --- |
 | Actions runs 34745284872 and 34745520245 | Actual macOS package installation failed because `launchctl print` reports a `probabilistic guard malloc policy` dictionary. | Accept this exact diagnostic field while preserving strict ownership and launch-policy validation. The captured native output is a regression fixture. |
