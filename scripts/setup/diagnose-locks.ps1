@@ -72,4 +72,32 @@ $child.WaitForExit()
 "Installer exit=$($child.ExitCode)" | Tee-Object -FilePath diagnostics/result.log
 Get-Content diagnostics/install-out.log,diagnostics/install-err.log
 if(Test-Path $app) { Get-ChildItem $app -Recurse | Select-Object FullName,Attributes | ConvertTo-Json | Set-Content diagnostics/remaining-files.json }
-if($child.ExitCode -ne 0) { throw 'Installer reproduced failure; see lock observations' }
+# Separate disposable probe: measure file-lock lifetime after the same verified
+# executable probes, without service registration or weakening installer results.
+$manifest=Get-Content payloads/release-x86_64-pc-windows-msvc.json -Raw | ConvertFrom-Json
+$archive=Join-Path $payload $manifest.platform.archive
+if((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.platform.sha256) { throw 'Probe archive hash mismatch' }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$bootstrap=Join-Path $env:RUNNER_TEMP 'probe-bootstrap.exe'
+$zip=[IO.Compression.ZipFile]::OpenRead($archive)
+try { [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('hiero.exe'),$bootstrap,$false) } finally { $zip.Dispose() }
+$stage=Join-Path $env:RUNNER_TEMP 'probe-staging'
+& $bootstrap release-verify --release-dir $payload --output $stage
+if($LASTEXITCODE -ne 0) { throw 'Probe assembly failed' }
+& (Join-Path $stage 'hiero.exe') release-assets --output $stage
+& (Join-Path $stage 'hiero.exe') version --json
+& (Join-Path $stage 'hiero-desktop.exe') version --json
+$timer=[Diagnostics.Stopwatch]::StartNew()
+$files=@(Get-ChildItem $stage -Recurse -File | Where-Object {$_.Extension -in '.exe','.dll'} | ForEach-Object {$_.FullName})
+while($timer.Elapsed.TotalSeconds -lt 30) {
+ try {
+  [IO.Directory]::Move($stage,"$stage-promoted")
+  "Probe promotion passed after $($timer.Elapsed.TotalSeconds) seconds" | Tee-Object -FilePath diagnostics/probe.log -Append
+  break
+ } catch {
+  "Probe promotion at $($timer.Elapsed.TotalSeconds): $($_.Exception.Message); $([Locks]::Query([string[]]$files))" | Tee-Object -FilePath diagnostics/probe.log -Append
+  Start-Sleep -Milliseconds 500
+ }
+}
+if(Test-Path $stage) { throw 'Probe still locked after 30 seconds' }
+throw 'Primary installer reproduced failure; probe is diagnostic only'
