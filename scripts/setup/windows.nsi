@@ -2,6 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
+!include "x64.nsh"
 !ifndef VERSION
   !error "VERSION is required"
 !endif
@@ -53,8 +54,10 @@ Section "Hieronymus"
   SetOutPath "$PLUGINSDIR"
   File /oname=install.ps1 "${PAYLOAD}"
   DetailPrint "Downloading and installing Hieronymus. Please keep your internet connection on."
+  ${DisableX64FSRedirection}
   nsExec::ExecToLog /TIMEOUT=1200000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\install.ps1" -AppDir "$INSTDIR" -LogPath "$LOCALAPPDATA\Hieronymus\setup.log" -NoOpen $ExtraOptions'
   Pop $0
+  ${EnableX64FSRedirection}
   ${If} $0 != 0
     SetErrorLevel 1
     Abort "Setup could not finish. See the details above, check your connection, and run Setup again."
@@ -77,7 +80,7 @@ Section "Uninstall"
   ${If} $INSTDIR == ""
     Abort "The installation location could not be found. Your data has not been changed."
   ${EndIf}
-  nsExec::ExecToLog /TIMEOUT=120000 '"$INSTDIR\bin\hiero.exe" uninstall --yes --app-dir "$INSTDIR"'
+  nsExec::ExecToLog /TIMEOUT=120000 '"$LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$INSTDIR"'
   Pop $0
   ${If} $0 != 0
     SetErrorLevel 1
@@ -87,4 +90,5 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus"
   DeleteRegKey HKCU "Software\Hieronymus"
   Delete "$LOCALAPPDATA\Hieronymus\Uninstall.exe"
+  Delete "$LOCALAPPDATA\Hieronymus\uninstall-hiero.exe"
 SectionEnd

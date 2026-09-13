@@ -327,6 +327,8 @@ pub fn loaded_state(text: &str, path: &Path, expected: &[String]) -> Result<Load
         "jetsamproperties category",
         "jetsam thread limit",
         "cpumon",
+        // Observed allocator diagnostics do not change job ownership or startup policy.
+        "probabilistic guard malloc policy",
         "resource coalition",
         "jetsam coalition",
         "spawn type",

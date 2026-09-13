@@ -7,7 +7,7 @@ exclude = ["qualification"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.96"
-version = "0.9.0"
+version = "0.9.1"
 license = "MIT"
 
 [workspace.dependencies]
@@ -41,4 +41,3 @@ rustls = { version = "0.23", default-features = false, features = [
 webpki-roots = "0.26"
 # Dev-only certificate generation for loopback TLS tests.
 rcgen = "0.13"
-

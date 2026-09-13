@@ -124,6 +124,32 @@ fn native_disposable_launchagents_register_toggle_readback_and_remove() {
 }
 
 #[test]
+fn loaded_readback_accepts_observed_allocator_diagnostics_and_still_checks_ownership() {
+    // Captured from the failed macOS installer run 34745520245, not invented launchctl syntax.
+    let text = include_str!("fixtures/macos-sequoia-loaded.txt");
+    let path = std::path::Path::new(
+        "/Users/runner/Library/LaunchAgents/net.inkyquill.hieronymus.daemon.55303ee083ef2efe2f8d92f68481f943065e6ae63e61bec74c760a120bff47a1.plist",
+    );
+    let args = vec![
+        "/Users/runner/Library/Application Support/Hieronymus/app/bin/hiero".into(),
+        "daemon".into(),
+        "--data-root".into(),
+        "/Users/runner/Library/Application Support/Hieronymus".into(),
+    ];
+    assert!(macos_agent::loaded_state(text, path, &args).unwrap().idle);
+    for changed in [
+        text.replace("program = /Users/runner", "program = /Users/foreign"),
+        text.replace("inferred program |", "keepalive | inferred program |"),
+        text.replace(
+            "activation rate = 1/1000",
+            "activation rate = 1/1000\n\t\tactivation rate = 1/10",
+        ),
+    ] {
+        assert!(macos_agent::loaded_state(&changed, path, &args).is_err());
+    }
+}
+
+#[test]
 fn loaded_readback_refuses_foreign_paths_arguments_recovery_and_unknown_formats() {
     let path = std::path::Path::new("/tmp/owned.plist");
     let args = vec![

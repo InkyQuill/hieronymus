@@ -41,12 +41,17 @@ main() {
 @@PAYLOAD@@
   printf 'Installing Hieronymus @@VERSION@@…\n'
   if [ "$target" = x86_64-apple-darwin ]; then printf 'Intel Mac build: desktop testing is incomplete.\n'; fi
-  local name expected actual
+  local name expected actual cached
   for name in "$platform" "$model"; do
     if [ "$name" = "$platform" ]; then expected="$platform_hash"; printf 'Downloading the app…\n'; else expected="$model_hash"; printf 'Downloading the memory model (this can take a few minutes)…\n'; fi
-    if [ -n "$source" ]; then
-      [ -f "$source/$name" ] && [ ! -L "$source/$name" ] || { printf 'Missing offline download: %s\n' "$name" >&2; return 1; }
-      head -c 1073741825 "$source/$name" > "$work/$name"
+    cached=''
+    if [ -n "$source" ]; then cached="$source/$name"
+    elif [ -f "$app/cache/downloads/$name" ]; then cached="$app/cache/downloads/$name"
+    elif [ "$name" = "$model" ] && [ -f "$app/cache/models/$model_hash.tar.gz" ]; then cached="$app/cache/models/$model_hash.tar.gz"
+    fi
+    if [ -n "$cached" ]; then
+      [ -f "$cached" ] && [ ! -L "$cached" ] || { printf 'Invalid cached download: %s\n' "$name" >&2; return 1; }
+      head -c 1073741825 "$cached" > "$work/$name"
     else
       curl --proto '=https' --proto-redir '=https' --location --fail --silent --show-error --retry 3 --connect-timeout 20 --max-time 900 --max-filesize 1073741824 "@@RELEASE_URL@@/$name" --output "$work/$name" || { printf 'Download failed. Please check your connection and run the installer again.\n' >&2; return 1; }
     fi

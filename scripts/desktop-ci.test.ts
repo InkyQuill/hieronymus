@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { checkSource } from "./check-rust-release";
 import {
   numericRun,
   validateRun,
@@ -236,6 +237,7 @@ test("production acquisition passes repository, artifact and isolated extraction
 });
 
 test("candidate inventory binds all four exact payloads and rejects extra or changed attachments", async () => {
+  const version = checkSource(process.cwd(), undefined, true);
   const root = mkdtempSync(join(tmpdir(), "candidate-inventory-"));
   const merged = join(root, "merged");
   mkdirSync(merged);
@@ -268,12 +270,12 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
       mkdirSync(directory);
       const metadata = {
         format_version: 2,
-        version: "0.9.0",
+        version,
         target,
         channel: "stable",
         signature: null,
         platform: {
-          archive: platformArtifactName("0.9.0", target),
+          archive: platformArtifactName(version, target),
           sha256: hash(target),
         },
         model: {

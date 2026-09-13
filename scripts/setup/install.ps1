@@ -8,8 +8,12 @@ if($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or $
 $AppDir=[IO.Path]::GetFullPath($AppDir);$DataRoot=[IO.Path]::GetFullPath($DataRoot)
 @@PAYLOAD@@
 function Download([string]$name,[string]$hash,[string]$destination){
-  if($ReleaseDir){
-    $file=Get-Item -LiteralPath (Join-Path $ReleaseDir $name)
+  $cached=$null
+  if($ReleaseDir){$cached=Join-Path $ReleaseDir $name}
+  elseif([IO.File]::Exists((Join-Path $AppDir "cache/downloads/$name"))){$cached=Join-Path $AppDir "cache/downloads/$name"}
+  elseif($name -eq $modelName -and [IO.File]::Exists((Join-Path $AppDir "cache/models/$hash.tar.gz"))){$cached=Join-Path $AppDir "cache/models/$hash.tar.gz"}
+  if($cached){
+    $file=Get-Item -LiteralPath $cached
     if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 1073741824){throw 'Invalid offline download.'}
     [IO.File]::Copy($file.FullName,$destination)
   }else{
@@ -40,7 +44,9 @@ function Download([string]$name,[string]$hash,[string]$destination){
       }finally{$reader.Dispose();$writer.Dispose()}
     }finally{$response.Dispose()}
   }
-  if((Get-Item -LiteralPath $destination).Length -gt 1073741824 -or (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash){throw 'The download could not be verified. Nothing was installed. Please try again.'}
+  $reader=[IO.File]::OpenRead($destination);$sha=[Security.Cryptography.SHA256]::Create()
+  try{$actual=[BitConverter]::ToString($sha.ComputeHash($reader)).Replace('-','').ToLowerInvariant()}finally{$reader.Dispose();$sha.Dispose()}
+  if((Get-Item -LiteralPath $destination).Length -gt 1073741824 -or $actual -cne $hash){throw 'The download could not be verified. Nothing was installed. Please try again.'}
 }
 function CopyStream($reader,$writer,[long]$limit){
   $buffer=New-Object byte[] 65536;$count=0L
@@ -71,6 +77,11 @@ try{
   if($UnitDir){$arguments+=@('--unit-dir',[IO.Path]::GetFullPath($UnitDir))};if($NoActivate){$arguments+='--no-activate'}
   & $cli @arguments *> (Join-Path $work 'install.log')
   if($LASTEXITCODE -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');throw 'Installation needs attention. Your existing project data is preserved.'}
+  # Windows cannot remove the executable that is currently running. Keep the
+  # verified real CLI outside the managed app directory for the native uninstaller.
+  $uninstallRoot=Join-Path $env:LOCALAPPDATA 'Hieronymus'
+  [void][IO.Directory]::CreateDirectory($uninstallRoot)
+  [IO.File]::Copy($cli,(Join-Path $uninstallRoot 'uninstall-hiero.exe'),$true)
   Write-Host 'Hieronymus is installed.'
   if(-not $NoActivate -and -not $NoOpen){
     Write-Host 'Opening Hieronymus. Choose "Connect your agent" to finish setup.'
