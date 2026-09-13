@@ -757,8 +757,12 @@ fn run_update_guarded_impl(
         // Promote the staged directory and switch the stable links.
         (|| -> std::io::Result<()> {
             if version_dir.try_exists()? { return Err(std::io::Error::other("immutable candidate version already exists; inspect the interrupted attempt before retrying")); }
-            std::fs::rename(&staging, &version_dir)?;
-            layout.switch_stable_links(&release.version)
+            std::fs::rename(&staging, &version_dir).map_err(|error| {
+                std::io::Error::new(error.kind(), format!("promoting staged application directory: {error}"))
+            })?;
+            layout.switch_stable_links(&release.version).map_err(|error| {
+                std::io::Error::new(error.kind(), format!("publishing stable command launchers: {error}"))
+            })
         })()
         .map_err(|error| format!("install/link switch failed ({error})"))?;
         lines.push(format!(
