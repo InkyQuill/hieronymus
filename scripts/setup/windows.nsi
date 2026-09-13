@@ -53,7 +53,7 @@ Section "Hieronymus"
   SetOutPath "$PLUGINSDIR"
   File /oname=install.ps1 "${PAYLOAD}"
   DetailPrint "Downloading and installing Hieronymus. Please keep your internet connection on."
-  nsExec::ExecToLog /TIMEOUT=1200000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\install.ps1" -AppDir "$INSTDIR" -NoOpen $ExtraOptions'
+  nsExec::ExecToLog /TIMEOUT=1200000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\install.ps1" -AppDir "$INSTDIR" -LogPath "$LOCALAPPDATA\Hieronymus\setup.log" -NoOpen $ExtraOptions'
   Pop $0
   ${If} $0 != 0
     SetErrorLevel 1

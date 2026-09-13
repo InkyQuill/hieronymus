@@ -1,8 +1,9 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([string]$AppDir="$env:LOCALAPPDATA/Hieronymus/app",[string]$DataRoot="$env:APPDATA/Hieronymus",[string]$UnitDir,[string]$ReleaseDir,[switch]$NoActivate,[switch]$NoOpen)
+param([string]$AppDir="$env:LOCALAPPDATA/Hieronymus/app",[string]$DataRoot="$env:APPDATA/Hieronymus",[string]$UnitDir,[string]$ReleaseDir,[string]$LogPath,[switch]$NoActivate,[switch]$NoOpen)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
+if($LogPath){[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($LogPath)));Start-Transcript -LiteralPath $LogPath -Force|Out-Null}
 if($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64'){throw 'This installer needs Windows x86_64.'}
 $AppDir=[IO.Path]::GetFullPath($AppDir);$DataRoot=[IO.Path]::GetFullPath($DataRoot)
 @@PAYLOAD@@
@@ -76,4 +77,4 @@ try{
     & (Join-Path $AppDir 'bin/hiero.exe') admin --data-root $DataRoot
     if($LASTEXITCODE -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');Write-Warning 'Could not open the web interface automatically. Use the Hieronymus tray icon to open it.'}
   }
-}finally{Remove-Item -LiteralPath $work -Recurse -Force}
+}finally{Remove-Item -LiteralPath $work -Recurse -Force;if($LogPath){Stop-Transcript|Out-Null}}

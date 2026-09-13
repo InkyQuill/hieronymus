@@ -40,6 +40,8 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          diagnostics() { if [ "$(uname -s)" = Darwin ]; then for label in $(launchctl list | awk '$3 ~ /hieronymus/ {print $3}'); do launchctl print "gui/$(id -u)/$label" || true; done; fi; }
+          trap diagnostics EXIT
           bash installers/install-hieronymus.sh --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$RUNNER_TEMP/Hieronymus data" --unit-dir "$RUNNER_TEMP/Hieronymus units" --no-activate
           "$RUNNER_TEMP/Hieronymus app/bin/hiero" version --json
       - name: Install with built-in Windows PowerShell 5.1
@@ -73,7 +75,7 @@ jobs:
         run: |
           $appDir = "$env:RUNNER_TEMP\Hieronymus setup app"
           $result = Start-Process -FilePath ./target/native-installers/Hieronymus-0.9.0-Setup.exe -ArgumentList "/S /NOACTIVATE /D=$appDir" -Wait -PassThru
-          if ($result.ExitCode -ne 0) { throw "NSIS setup failed: $($result.ExitCode)" }
+          if ($result.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Hieronymus\setup.log" -ErrorAction Continue; throw "NSIS setup failed: $($result.ExitCode)" }
           & "$appDir\bin\hiero.exe" version --json
           if ($LASTEXITCODE -ne 0) { throw 'Installed executable failed' }
           $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus'
@@ -99,7 +101,9 @@ jobs:
       - name: Exercise Installer.app package scripts
         shell: bash
         run: |
-          sudo /usr/sbin/installer -pkg target/native-installers/Hieronymus-0.9.0.pkg -target /
+          diagnostics() { sudo tail -n 160 /var/log/install.log; for label in $(launchctl list | awk '$3 ~ /hieronymus/ {print $3}'); do launchctl print "gui/$(id -u)/$label" || true; done; }
+          trap diagnostics EXIT
+          sudo /usr/sbin/installer -verboseR -pkg target/native-installers/Hieronymus-0.9.0.pkg -target /
           "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" version --json
           "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" stop --data-root "$HOME/Library/Application Support/Hieronymus"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
