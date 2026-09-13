@@ -4,7 +4,8 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 # Load only function definitions: never execute the installer while testing policy.
 $tokens=$null;$errors=$null
-$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'install.ps1'),[ref]$tokens,[ref]$errors)
+$source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install.ps1')).Replace('@@PAYLOAD@@','')
+$ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw ($errors|Out-String)}
 foreach($name in @('Download','WindowsRuntimeVersion','EnsureWindowsRuntime')){
   $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)

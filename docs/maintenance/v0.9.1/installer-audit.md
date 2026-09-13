@@ -26,6 +26,10 @@ Hieronymus release asset is needed. A PowerShell 5.1 policy test covers existing
 newer, absent and old runtimes, cancellation, failed verification, false success,
 concurrent upgrade, and reboot-required results; native CI also exercises the
 real download and installer without removing shared runner prerequisites.
+Its first harness run (34748241049) caught an unexpanded template placeholder
+in the test parser; the harness now removes that data-only marker before
+extracting function definitions. This was a test harness failure, not a native
+installer result.
 
 | Evidence | Finding | Disposition |
 | --- | --- | --- |

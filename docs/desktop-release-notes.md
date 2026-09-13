@@ -16,6 +16,8 @@ curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/inst
 The installers download the app and its memory model, verify the files, and install
 for your user account. Keep your internet connection on during setup. No Git clone,
 compiler, Bun, Node, Python, or separate PowerShell installation is needed.
+On Windows, Setup also installs Microsoft's runtime if needed; Windows may ask
+you to allow that step.
 
 The web interface opens after installation. Use it to inspect your agent's memory,
 add pointers, and flag stale or wrong entries. Browser authentication is optional

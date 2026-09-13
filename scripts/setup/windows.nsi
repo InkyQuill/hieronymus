@@ -26,7 +26,7 @@ VIAddVersionKey "LegalCopyright" "Pavel Obruchnikov"
 Var ExtraOptions
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Welcome to Hieronymus"
-!define MUI_WELCOMEPAGE_TEXT "Give your writing agent a memory.$\r$\n$\r$\nSetup downloads the app and its memory model, verifies them, and installs Hieronymus for your Windows account.$\r$\n$\r$\nKeep your internet connection on. The model download can take a few minutes."
+!define MUI_WELCOMEPAGE_TEXT "Give your writing agent a memory.$\r$\n$\r$\nSetup downloads the app and its memory model, verifies them, and installs Hieronymus for your Windows account. Windows may ask you to allow installation of Microsoft's runtime if it is needed.$\r$\n$\r$\nKeep your internet connection on. The model download can take a few minutes."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
