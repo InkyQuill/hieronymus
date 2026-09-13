@@ -32,13 +32,16 @@ Var ExtraOptions
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TEXT "Hieronymus is installed. Open it and choose Connect your agent to add its MCP connection and skills. Then continue writing in your agent."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\bin\hiero.exe"
-!define MUI_FINISHPAGE_RUN_PARAMETERS 'admin --data-root "$APPDATA\Hieronymus"'
+!define MUI_FINISHPAGE_RUN_FUNCTION OpenHieronymus
 !define MUI_FINISHPAGE_RUN_TEXT "Open Hieronymus"
 !insertmacro MUI_PAGE_FINISH
 !define MUI_UNCONFIRMPAGE_TEXT_TOP "Remove Hieronymus from this Windows account? Your project data and memories will be kept."
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+Function OpenHieronymus
+  Exec '"$INSTDIR\bin\hiero.exe" admin --data-root "$APPDATA\Hieronymus"'
+FunctionEnd
 Function .onInit
   SetShellVarContext current
   StrCpy $ExtraOptions ""
