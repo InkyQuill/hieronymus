@@ -477,7 +477,11 @@ impl LlmDreamProvider {
                         "reinforce_actions",
                     ]
                 };
-                if !keys.iter().any(|key| payload[*key].is_array()) {
+                // Preserve a completed empty extraction, but do not silently
+                // discard a nonempty response in an unrecognized shape.
+                let empty_extraction = pass_name != "coverage_audit"
+                    && payload.as_object().is_some_and(serde_json::Map::is_empty);
+                if !empty_extraction && !keys.iter().any(|key| payload[*key].is_array()) {
                     return Err(DreamError::Provider(format!(
                         "Ollama returned an unexpected {pass_name} response shape"
                     )));
@@ -657,13 +661,17 @@ impl DreamProvider for LlmDreamProvider {
         let Some(budget) = self.prompt_budget()? else {
             return Ok(memories.len());
         };
-        for count in (1..=memories.len()).rev() {
+        let (mut fits, mut upper) = (0, memories.len());
+        while fits < upper {
+            let count = fits + (upper - fits).div_ceil(2);
             let prompt = self.render_pass_prompt(pass_name, context, &memories[..count])?;
             if budget.required_context(&prompt) <= budget.limit {
-                return Ok(count);
+                fits = count;
+            } else {
+                upper = count - 1;
             }
         }
-        Ok(0)
+        Ok(fits)
     }
 
     fn profile_name(&self) -> &str {

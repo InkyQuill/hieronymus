@@ -1519,3 +1519,35 @@ fn real_ollama_coverage_fits_configured_context() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn completed_ollama_empty_extraction_is_valid_but_unknown_shapes_are_not() {
+    for (pass, output, valid) in [
+        ("knowledge_crystals", json!({}), true),
+        ("knowledge_crystals", json!({"crystals": []}), true),
+        ("knowledge_crystals", json!({"unrecognized": []}), false),
+        ("coverage_audit", json!({}), false),
+    ] {
+        let transport = FakeTransport::new(vec![
+            Ok(HttpResponse {
+                status: 200,
+                body: ollama_metadata(8192),
+            }),
+            Ok(HttpResponse {
+                status: 200,
+                body: ollama_envelope(output),
+            }),
+        ]);
+        let provider = LlmDreamProvider::new(
+            "local",
+            ProviderProfile::new("Ollama", "ollama", "http://local", "", 5.0),
+            "model",
+        )
+        .unwrap()
+        .with_transport(transport);
+        assert_eq!(
+            provider.run_pass(pass, &context("book"), &[]).is_ok(),
+            valid
+        );
+    }
+}
