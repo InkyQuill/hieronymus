@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 public static class Locks {
- [StructLayout(LayoutKind.Sequential)] public struct Unique { public uint Id; public FILETIME Started; }
+ [StructLayout(LayoutKind.Sequential)] public struct Unique { public uint Id; public System.Runtime.InteropServices.ComTypes.FILETIME Started; }
  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] public struct Info {
   public Unique Process;
   [MarshalAs(UnmanagedType.ByValTStr,SizeConst=256)] public string Name;
