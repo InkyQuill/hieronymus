@@ -110,4 +110,4 @@ try{
     $opened=Start-Process -FilePath (Join-Path $AppDir 'bin/hiero.exe') -ArgumentList @('admin','--data-root',('"'+$DataRoot+'"')) -Wait -PassThru
     if($opened.ExitCode -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');Write-Warning 'Could not open the web interface automatically. Use the Hieronymus tray icon to open it.'}
   }
-}finally{Remove-Item -LiteralPath $work -Recurse -Force;if($LogPath){Stop-Transcript|Out-Null}}
+}finally{Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue;if($LogPath){Stop-Transcript -ErrorAction SilentlyContinue|Out-Null}}

@@ -64,6 +64,21 @@ inferred. The workflow itself remained active. A new successful candidate run
 is still required before installer qualification, promotion, and v0.9.1
 publication. No release tag or release is created for these unqualified changes.
 
+Dispatch recovered at 08:55:52 UTC by explicitly sending the REST body
+`{"ref":"codex/easy-install","inputs":{}}`. GitHub returned 204 and created
+run 34748689507 at source 5e928e3c0ce2d76a147814218ecdd9d6b678a9c9.
+The request-body difference is observed; no internal GitHub cause is claimed.
+
+PR #30's initial CodeRabbit review (5190280607) is retained in
+`coderabbit-pr30-initial.json`. Three findings were addressed: installer workflow
+checkouts disable credential persistence; PowerShell temporary-directory and
+transcript cleanup cannot replace the original error; older review metadata
+uses repository-relative working-directory values. Its remaining finding about
+`@@EVIDENCE_URL@@` is inapplicable to published notes: `desktop-ci.ts` replaces
+the placeholder with the verified immutable evidence-data commit URL before
+calling `gh release create`. The Markdown file is now explicitly marked as a
+publication template. New native candidates must include these review fixes.
+
 | Evidence | Finding | Disposition |
 | --- | --- | --- |
 | Actions runs 34745284872 and 34745520245 | Actual macOS package installation failed because `launchctl print` reports a `probabilistic guard malloc policy` dictionary. | Accept this exact diagnostic field while preserving strict ownership and launch-policy validation. The captured native output is a regression fixture. |

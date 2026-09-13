@@ -1,5 +1,7 @@
 # Hieronymus v0.9.1
 
+<!-- Publication template: desktop-ci.ts replaces @@EVIDENCE_URL@@ with the verified immutable qualification-data URL before creating the GitHub release. -->
+
 Give your writing agent a memory. Install Hieronymus, choose **Connect your agent**,
 add its MCP connection and Hieronymus skills, then continue writing in your agent.
 

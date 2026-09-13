@@ -1,4 +1,4 @@
-{"type":"review_context","reviewType":"committed","currentBranch":"codex/easy-install","baseBranch":"main","workingDirectory":"/home/inky/Development/hieronymus"}
+{"type":"review_context","reviewType":"committed","currentBranch":"codex/easy-install","baseBranch":"main","workingDirectory":"."}
 {"type":"status","phase":"connecting","status":"connecting_to_review_service"}
 {"type":"status","phase":"setup","status":"setting_up"}
 {"type":"status","phase":"setup","status":"preparing_sandbox"}
