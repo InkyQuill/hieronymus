@@ -165,7 +165,7 @@ jobs:
           if [ -n "$CANDIDATE_RUN" ]; then bun scripts/stage-installer-cache.ts target/payloads "$HOME/Library/Application Support/Hieronymus/app"; fi
           sudo /usr/sbin/installer -verboseR -pkg "target/native-installers/Hieronymus-$INSTALLER_VERSION.pkg" -target /
           "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" version --json
-          "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" stop --data-root "$HOME/Library/Application Support/Hieronymus"
+          bash scripts/stop-installed.sh "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" "$HOME/Library/Application Support/Hieronymus" "$RUNNER_TEMP/installed-stop.log"
       - name: Windows failure diagnostics
         if: failure() && runner.os == 'Windows'
         shell: pwsh

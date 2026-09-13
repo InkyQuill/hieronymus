@@ -291,3 +291,33 @@ The complete local Rust verification chain passed for the assertion amendment:
 formatting, all-target/all-feature Clippy, all-feature tests, and warnings-denied
 rustdoc. CodeRabbit local review reported zero findings
 (`coderabbit-discovery-assertion-review.jsonl`).
+
+## Publisher cleanup raced with a lifecycle operation
+
+The first attempt of publisher run
+[34765897982](https://github.com/InkyQuill/hieronymus/actions/runs/34765897982)
+installed the macOS PKG successfully and printed version 0.9.1. Its immediate
+`hiero stop` cleanup then exited 2 with the exact diagnostic
+`another lifecycle operation is in progress for this data root; retry after it finishes`.
+The captured launchctl state showed the installed daemon running. This was a
+cleanup conflict, not the earlier foreign-launcher failure. The log does not
+identify which concurrent client held the lifecycle lock.
+
+`LifecycleOperation::acquire` returns this refusal before service-manager actions.
+The CI cleanup helper now waits at most 30 seconds for that exact exit-code/message
+pair. Foreign registrations, additional diagnostics, other exit codes, and a
+persistent busy condition still fail. Tests cover one busy refusal followed by
+success and immediate failure for other messages or exit codes, including paths
+containing spaces. This changes CI cleanup only; released binary
+behavior and the immutable v0.9.1 tag remain unchanged.
+
+The same publisher's single failed-job retry passed the macOS PKG check on the
+unchanged candidate. The earlier complete installer run
+[34765431342](https://github.com/InkyQuill/hieronymus/actions/runs/34765431342)
+also passed all six jobs. Both the initial failure and retry are retained rather
+than describing the first attempt as green.
+
+All 133 release-script tests passed, including four focused cleanup tests.
+CodeRabbit reviewed the workflow and cleanup implementation; its single minor
+finding asked for more precise coverage wording, which is corrected above.
+The persistent-busy deadline is not claimed as a tested fixture.
