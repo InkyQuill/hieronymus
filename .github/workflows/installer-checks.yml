@@ -134,7 +134,7 @@ jobs:
         run: |
           $appDir="$env:RUNNER_TEMP\Hieronymus setup app"
           if ($env:CANDIDATE_RUN) { bun scripts/stage-installer-cache.ts target/payloads "$appDir"; if ($LASTEXITCODE -ne 0) { throw 'Cache preparation failed' } }
-          $result=Start-Process -FilePath "./target/native-installers/Hieronymus-${env:INSTALLER_VERSION}-Setup.exe" -ArgumentList "/S /NOACTIVATE /D=$appDir" -Wait -PassThru
+          $result=Start-Process -FilePath "./target/native-installers/Hieronymus-${env:INSTALLER_VERSION}-Setup.exe" -ArgumentList "/S /D=$appDir" -Wait -PassThru
           if ($result.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Hieronymus\setup.log" -ErrorAction Continue; throw "NSIS setup failed: $($result.ExitCode)" }
           $result=Start-Process -FilePath "$appDir\bin\hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/setup-version.json"
           Get-Content "$env:RUNNER_TEMP/setup-version.json"
