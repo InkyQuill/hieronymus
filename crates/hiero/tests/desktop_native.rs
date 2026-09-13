@@ -2,6 +2,7 @@
 use hiero::daemon_client::DaemonClient;
 use hieronymus::data_root::HieronymusConfig;
 use std::{
+    io::{BufRead, BufReader, Write},
     path::PathBuf,
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -91,6 +92,91 @@ fn final_native_payload_runs_semantic_inference_and_authenticated_mcp() {
         status["result"]["structuredContent"]["service"]["mode"],
         "local-http"
     );
+    // Qualify the ordinary host handshake using the final packaged executable,
+    // not only the internal HTTP client that already supplies daemon metadata.
+    let mut adapter = Owned(
+        command()
+            .args(["mcp", "--data-root"])
+            .arg(root.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    let output = adapter.0.stdout.take().unwrap();
+    let (sender, responses) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(output).lines() {
+            let response: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
+            if sender.send(response).is_err() {
+                break;
+            }
+        }
+    });
+    let mut input = adapter.0.stdin.take().unwrap();
+    let receive = || responses.recv_timeout(Duration::from_secs(10)).unwrap();
+    writeln!(
+        input,
+        "{}",
+        serde_json::json!({
+            "jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-06-18","capabilities":{},
+                "clientInfo":{"name":"installed-host-smoke","version":"1"}
+            }
+        })
+    )
+    .unwrap();
+    assert_eq!(receive()["result"]["protocolVersion"], "2025-06-18");
+    writeln!(
+        input,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+    )
+    .unwrap();
+    writeln!(
+        input,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+    )
+    .unwrap();
+    let response = receive();
+    assert_eq!(response["id"], 2);
+    assert!(
+        response["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "hieronymus_status")
+    );
+    writeln!(
+        input,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+            "name":"hieronymus_status","arguments":{}
+        }})
+    )
+    .unwrap();
+    let response = receive();
+    assert_eq!(response["id"], 3);
+    assert_eq!(
+        response["result"]["structuredContent"]["service"]["mode"],
+        "local-http"
+    );
+    drop(input);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = adapter.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "stdio adapter did not exit on EOF"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    reader.join().unwrap();
     client.post("/shutdown", &serde_json::json!({})).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {

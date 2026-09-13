@@ -108,8 +108,12 @@ unresolved remains that exact result; it is not reported as a successful replace
 
 The stable `hieronymus-mcp` command discovers the daemon; generated JSON contains no
 port or credential. A custom installation sets `HIERONYMUS_DATA_ROOT` and places its
-installed `bin` directory on PATH. Use each host's explicit MCP `2026-07-28` opt-in;
-never downgrade silently. Claude requires launcher environment `MCP_SDK_GENERATION=v2`
+installed `bin` directory on PATH. From v0.9.2, ordinary stdio clients can initialize
+with MCP `2024-11-05`, `2025-03-26`, `2025-06-18`, or `2025-11-25`; the adapter
+negotiates the host version and bridges tools to the authenticated daemon.
+No protocol opt-in is required for that path. Existing generated integrations can
+continue using the direct `2026-07-28` path with explicit opt-in.
+For that direct path, Claude uses launcher environment `MCP_SDK_GENERATION=v2`
 and `MCP_PROTOCOL_NEGOTIATION=auto`. Codex requires `[features] mcp_2026_07_28=true`;
 the generated Codex server environment supplies `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`.
 zCode exposes a supported per-server `protocolVersion=2026-07-28` override outside the

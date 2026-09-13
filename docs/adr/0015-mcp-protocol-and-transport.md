@@ -50,3 +50,23 @@ MCP parity means semantic parity for the same registry plus conformance to an
 exact protocol revision, not path parity with the private Python bridge. A
 future protocol revision, compatibility window, or transport removal requires
 an ADR and fixtures; an SDK crate upgrade alone cannot change the contract.
+
+## Amendment — standard stdio initialization (2026-09-13, issue #31)
+
+The stdio adapter also supports the tools lifecycle of revisions `2024-11-05`,
+`2025-03-26`, `2025-06-18`, and `2025-11-25`. It handles `initialize`,
+`notifications/initialized`, and `ping` locally. Initialization echoes a supported
+requested version or proposes `2025-11-25`, following the
+[MCP lifecycle negotiation](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle).
+This is explicit negotiation, not a silent downgrade of the daemon protocol.
+
+After initialization, the adapter translates `tools/list` and `tools/call` into
+the daemon's authenticated `2026-07-28` requests, including matching body metadata
+and HTTP headers. It advertises only tools, disables internal callback capabilities,
+and does not create domain or authority sessions. Existing stateless clients keep
+their direct protocol path. The daemon's `/mcp` contract remains `2026-07-28`.
+
+Regression coverage includes real executable initialization, discovery, successful
+tool execution, malformed and duplicate initialization, pipelined notification
+ordering, and the existing stateless framing contract. Native candidate qualification
+also runs the standard handshake against the final packaged executable.

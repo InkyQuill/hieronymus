@@ -17,12 +17,12 @@ CLI provides shortcuts for quick tasks.
 
 ## Install
 
-- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/Hieronymus-0.9.1-Setup.exe), open it, and follow the steps.
-- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/Hieronymus-0.9.1.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
+- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2-Setup.exe), open it, and follow the steps.
+- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
 - **Linux x86_64:** paste this into a terminal:
 
 ```bash
-curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/install-hieronymus.sh | bash
+curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/install-hieronymus.sh | bash
 ```
 
 The installers download the app and its memory model, verify the files, and install

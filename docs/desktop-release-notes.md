@@ -1,4 +1,4 @@
-# Hieronymus v0.9.1
+# Hieronymus v0.9.2
 
 <!-- Publication template: desktop-ci.ts replaces @@EVIDENCE_URL@@ with the verified immutable qualification-data URL before creating the GitHub release. -->
 
@@ -7,12 +7,12 @@ add its MCP connection and Hieronymus skills, then continue writing in your agen
 
 ## Install
 
-- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/Hieronymus-0.9.1-Setup.exe), open it, and follow the steps.
-- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/Hieronymus-0.9.1.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
+- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2-Setup.exe), open it, and follow the steps.
+- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
 - **Linux x86_64:** paste this into a terminal:
 
 ```bash
-curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.1/install-hieronymus.sh | bash
+curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/install-hieronymus.sh | bash
 ```
 
 The installers download the app and its memory model, verify the files, and install
@@ -25,12 +25,11 @@ The web interface opens after installation. Use it to inspect your agent's memor
 add pointers, and flag stale or wrong entries. Browser authentication is optional
 and off by default; MCP access remains authenticated.
 
-This update adds the simple installers, fixes macOS installation failing on
-allocator diagnostics reported by `launchctl`, and handles short-lived Windows
-file locks during installation and removal.
-It also fixes macOS start/stop commands failing to recognize the installed launcher.
-It also fixes occasional feedback failures when an agent reports on recalled
-memories while background processing updates the database.
+This update fixes Codex and other ordinary MCP clients failing to connect with
+`Header mismatch`. The installed stdio adapter now handles initialization and
+version negotiation before exposing tool schemas and forwarding tool calls.
+Existing clients using MCP `2026-07-28` continue to work. Restart your agent's
+MCP connection after updating Hieronymus.
 
 ## Platform notes
 

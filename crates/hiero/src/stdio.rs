@@ -1,8 +1,8 @@
 //! `hiero mcp`: the stdio MCP adapter (ADR 0009/0015). It exchanges
 //! newline-delimited JSON-RPC on stdin/stdout, discovers and authenticates to
-//! the local daemon, and proxies every request to `POST /mcp`. It never opens
-//! SQLite and never invents protocol behavior; the daemon is the contract
-//! enforcement point. Diagnostics go to stderr and are bounded.
+//! the local daemon, and bridges host initialization to its stateless protocol.
+//! Tool requests go to `POST /mcp`; the daemon enforces authentication and domain
+//! contracts. The adapter never opens SQLite. Diagnostics go to stderr and are bounded.
 //!
 //! Startup: run the shared authenticated discovery probe (ADR 0009 — a live
 //! endpoint is one that answers the authenticated `GET /status` with the same
@@ -20,6 +20,8 @@ use hieronymus::data_root::load_config;
 
 use crate::daemon::discovery::{CredentialError, DiscoveryError};
 use crate::lifecycle;
+
+mod handshake;
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 480;
@@ -127,6 +129,7 @@ where
             });
         }
         let reading = (|| -> Result<(), StdioError> {
+            let mut session = handshake::HostSession::default();
             while let Some(frame) = read_frame(reader)? {
                 let bytes = match frame {
                     Frame::TooLarge => {
@@ -159,6 +162,9 @@ where
                     && body.get("jsonrpc") == Some(&serde_json::json!("2.0"))
                     && body.get("method").is_some_and(serde_json::Value::is_string)
                 {
+                    if body["method"] == "notifications/initialized" {
+                        session.initialized();
+                    }
                     if body["method"] == "notifications/cancelled"
                         && let Some(id) = body
                             .pointer("/params/requestId")
@@ -181,6 +187,13 @@ where
                     ))?;
                     continue;
                 }
+                let body = match session.prepare(body) {
+                    handshake::Action::Forward(body) => body,
+                    handshake::Action::Reply(response) => {
+                        emit(&response)?;
+                        continue;
+                    }
+                };
                 let cancellation = Arc::new(crate::client::Cancellation::default());
                 active.insert(key, cancellation.clone());
                 sender
