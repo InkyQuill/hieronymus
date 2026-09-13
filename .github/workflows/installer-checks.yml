@@ -141,7 +141,9 @@ jobs:
           if ($result.ExitCode -ne 0) { throw "Installed executable failed: $($result.ExitCode)" }
           $entry=Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus'
           if ($entry.InstallLocation -ne $appDir) { throw 'Installed Apps registration mismatch' }
-          $result=Start-Process -FilePath "$env:LOCALAPPDATA\Hieronymus\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
+          # NSIS normally re-executes its uninstaller from Temp. Disable that
+          # copy in CI so the process we wait on reports the actual removal result.
+          $result=Start-Process -FilePath "$env:LOCALAPPDATA\Hieronymus\Uninstall.exe" -ArgumentList "/S _?=$env:LOCALAPPDATA\Hieronymus" -Wait -PassThru
           if ($result.ExitCode -ne 0) { throw "NSIS removal failed: $($result.ExitCode)" }
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus') { throw 'Installed Apps entry survived removal' }
           if (Test-Path "$appDir\bin\hiero.exe") { throw 'Installed launcher survived removal' }
@@ -160,7 +162,7 @@ jobs:
         shell: pwsh
         run: |
           Get-MpThreatDetection -ErrorAction Continue | Select-Object InitialDetectionTime,ThreatID,ActionSuccess,Resources | Format-List
-          Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117; StartTime=(Get-Date).AddHours(-1)} -ErrorAction Continue | Select-Object TimeCreated,Id,Message | Format-List
+          Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117; StartTime=(Get-Date).AddHours(-1)} -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,Message | Format-List
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-installer-${{ matrix.kind }}

@@ -80,8 +80,13 @@ Section "Uninstall"
   ${If} $INSTDIR == ""
     Abort "The installation location could not be found. Your data has not been changed."
   ${EndIf}
-  nsExec::ExecToLog /TIMEOUT=120000 '"$LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$INSTDIR"'
+  nsExec::ExecToStack /TIMEOUT=120000 '"$LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$INSTDIR"'
   Pop $0
+  Pop $1
+  DetailPrint $1
+  FileOpen $2 "$LOCALAPPDATA\Hieronymus\uninstall.log" w
+  FileWrite $2 $1
+  FileClose $2
   ${If} $0 != 0
     SetErrorLevel 1
     Abort "Hieronymus could not be removed. See the details above. Your data has been kept."
