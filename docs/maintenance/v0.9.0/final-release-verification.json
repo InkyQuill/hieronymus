@@ -1,0 +1,149 @@
+{
+  "success": true,
+  "url": "https://github.com/InkyQuill/hieronymus/releases/tag/v0.9.0",
+  "published_at": "2026-09-13T00:06:42Z",
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "candidate_run": "34721365040",
+  "assets": [
+    {
+      "name": "assets-aarch64-apple-darwin.json",
+      "sha256": "df1fcd30602cb3628969876949777571cedf081d647956808988408c14d8d909",
+      "size": 1454
+    },
+    {
+      "name": "assets-x86_64-apple-darwin.json",
+      "sha256": "2f5db751888f8af263f894b4832cbe13f23f4498285f20399981d75d88b9d48b",
+      "size": 1453
+    },
+    {
+      "name": "assets-x86_64-pc-windows-msvc.json",
+      "sha256": "b6796ad613e0c867239f882cfa2162214533491ae2bd22bbb367f983d02b05c3",
+      "size": 1400
+    },
+    {
+      "name": "assets-x86_64-unknown-linux-gnu.json",
+      "sha256": "cb193c471e721f86981cbabe0fa9efb9bb3a0f2533b3e193cfb9cdec194c3682",
+      "size": 1190
+    },
+    {
+      "name": "desktop-metadata.awk",
+      "sha256": "0784453e458c898627c93d37715cd903c8991422d2ba82a3038fea578caa6639",
+      "size": 2802
+    },
+    {
+      "name": "evidence-aarch64-apple-darwin.json",
+      "sha256": "c74bf5ebbacf7c52181a7ea8ad183ed3c9fc3773a2f755feb61a11472a42d7ad",
+      "size": 802
+    },
+    {
+      "name": "evidence-x86_64-apple-darwin.json",
+      "sha256": "cc440d2c98650030276f310ce30f794c6aa31b24bbccbca6352b756904a85311",
+      "size": 801
+    },
+    {
+      "name": "evidence-x86_64-pc-windows-msvc.json",
+      "sha256": "538b889aabf06552fc01485d1a0370399a05e14eb17aa5f373a82609ae6dad41",
+      "size": 1089
+    },
+    {
+      "name": "evidence-x86_64-unknown-linux-gnu.json",
+      "sha256": "c3a407f8084e5dbba6570ffc36e620b8c62d6d4e8acee2b1b1854c24679f07dc",
+      "size": 1076
+    },
+    {
+      "name": "hiero-0e55b99700577f488fb17ec1017a8bd1a4369d11232ec7f817a02f10eb2ec3b3.debug",
+      "sha256": "ec08b0eed511fee1c1f294dafe3b8a1252b39b576dd656bc237850438954efb9",
+      "size": 41900744
+    },
+    {
+      "name": "hiero-desktop-e4b89726c376cc5b382af58a879458e751a70c3e9e7dcb4bd432ae8e81c5e18f.debug",
+      "sha256": "1e9aa89303a6a756099cb0fcde1f8c499bc4e3eb1b04709c6dfb1a45c1300b09",
+      "size": 4925096
+    },
+    {
+      "name": "hieronymus-0.9.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "0ca8040da6010652c5c2d02fa8ff6ec7e9dd9846b08d5694e0a0591edb90452a",
+      "size": 93290510
+    },
+    {
+      "name": "hieronymus-0.9.0-x86_64-apple-darwin.tar.gz",
+      "sha256": "a3839ef78fa6db05f4322081ef558f79c13b89d85ac5a49cb7fcf8734a537c5c",
+      "size": 94072609
+    },
+    {
+      "name": "hieronymus-0.9.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "28034e9c78ca3c11d139d336859a3f4b6986bf935f15cc3303fdac5b4d8cc79d",
+      "size": 91985832
+    },
+    {
+      "name": "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "07c9a45ed67fefe80ff5a42d5678f793f82442f480a90a9b841e72642e577f21",
+      "size": 97771796
+    },
+    {
+      "name": "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz",
+      "sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+      "size": 435109879
+    },
+    {
+      "name": "install-desktop-aarch64-apple-darwin.sh",
+      "sha256": "6be273dc05189bbebe6d4c29e80fc429502471621c73ffa3d8fdf307cd19d0a8",
+      "size": 4551
+    },
+    {
+      "name": "install-desktop-x86_64-apple-darwin.sh",
+      "sha256": "6be273dc05189bbebe6d4c29e80fc429502471621c73ffa3d8fdf307cd19d0a8",
+      "size": 4551
+    },
+    {
+      "name": "install-desktop-x86_64-pc-windows-msvc.ps1",
+      "sha256": "7d255f3cb575bb78ae8bc3dda0b2d85da0541bd378173acfb89f7891577a9e51",
+      "size": 6999
+    },
+    {
+      "name": "install-desktop-x86_64-unknown-linux-gnu.sh",
+      "sha256": "6be273dc05189bbebe6d4c29e80fc429502471621c73ffa3d8fdf307cd19d0a8",
+      "size": 4551
+    },
+    {
+      "name": "install.sh",
+      "sha256": "7c1a6e70847fe5740c7fdfb6154e451eded28a71d3308684c46eebdec165cac5",
+      "size": 17916
+    },
+    {
+      "name": "native-qualification.json",
+      "sha256": "5999b991e43af468059ed36e054b84f2556b2cb74b7dde7eac98e0774ba259e4",
+      "size": 58213
+    },
+    {
+      "name": "onnxruntime-osx-x86_64-1.28.0-source.tgz",
+      "sha256": "ff8befc83b955526ccf4062686d50d86796c9123d712ec1ec6c671fc97f330eb",
+      "size": 8051144
+    },
+    {
+      "name": "onnxruntime-source-build-receipt.json",
+      "sha256": "331a510ab904dfde7e6fdc8fd692046e4f548d6c57428ef205bef471a1588994",
+      "size": 2622
+    },
+    {
+      "name": "release-aarch64-apple-darwin.json",
+      "sha256": "10a98791569ad21bc28e8dac516621f31b4ebbd221732bffcd1c7fc03506e391",
+      "size": 1057
+    },
+    {
+      "name": "release-x86_64-apple-darwin.json",
+      "sha256": "f8589060f459da1e6d622d30c8ff8c89373d4499c6496db313b82093526cf922",
+      "size": 1055
+    },
+    {
+      "name": "release-x86_64-pc-windows-msvc.json",
+      "sha256": "90473339db3ac44b3a458ec3c4a562bca1a123c11720a7ece235e729ec90f0a2",
+      "size": 1058
+    },
+    {
+      "name": "release-x86_64-unknown-linux-gnu.json",
+      "sha256": "60ac425f711f7712f5fc177fc3e03c72b801fbe9145e64a88160660e65bd12a3",
+      "size": 1065
+    }
+  ]
+}

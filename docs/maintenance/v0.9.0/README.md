@@ -1,5 +1,46 @@
 # v0.9.0 maintenance and release evidence
 
+## Published and verified (2026-09-13)
+
+[v0.9.0](https://github.com/InkyQuill/hieronymus/releases/tag/v0.9.0) is published
+from source/tag `d6d93f766e78cea09fb0573170e5c1019409f422`. PRs #26, #27, #28
+and integration PR #29 are merged. Main was pulled locally and the Linux release
+build completed successfully. This final audit update changes documentation only;
+the release tag continues to identify the tested source.
+
+- [Candidate run 34721365040](https://github.com/InkyQuill/hieronymus/actions/runs/34721365040)
+  passed all four targets. Each extracted native package passed real model inference
+  and authenticated MCP; Windows took 8.84 seconds, Apple Silicon 16.21 seconds,
+  and Intel macOS 26.72 seconds for that explicit test.
+- [Evidence run 34726943938](https://github.com/InkyQuill/hieronymus/actions/runs/34726943938)
+  passed using immutable data commit `7bdea928a511b7acddde3d236356740e5311e158`.
+  Its retained artifact exactly matched the locally validated evidence package.
+- [Publisher run 34727072266](https://github.com/InkyQuill/hieronymus/actions/runs/34727072266)
+  passed, promoting the retained bytes without rebuilding. All 28 published asset
+  SHA-256 digests matched the expected candidates and qualification summary; see
+  [final-release-verification.json](final-release-verification.json).
+
+The current standalone installer installed the final Linux archive into a fresh
+disposable root. Its installed-binary real inference/MCP test passed in 3.43 seconds.
+Fresh KDE Wayland checks passed startup, duplicate-start protection, restart and
+private-storage failure handling. A server started without graphical environment
+variables owned an Active tray item through its helper; stop and restart cleaned up
+the owned processes and tray items. Fresh browser pages loaded the author dashboard,
+memory view and MCP-plus-skills connection flow without browser authentication.
+No real agent host was configured or claimed connected by those browser checks.
+
+Qualification remains partial on KDE Wayland and unqualified for the other six
+desktop/session records. CI package tests do not establish physical Windows 11,
+macOS 26.5 M1, Intel macOS, GNOME or KDE X11 desktop acceptance. Intel macOS is built
+and explicitly unqualified, as requested. The published `native-qualification.json`
+contains the exact passed checks and unavailable scenarios. Temporary local test
+services and their tray helpers were stopped after testing.
+
+Intermittent GitHub API polling connection failures were retried against the same
+run; they did not fail or restart the candidate jobs. A local staging-directory
+inspection used an unmatched shell glob; listing the directory corrected that
+inspection without changing artifacts or qualification results.
+
 ## Final artifact transport correction (2026-09-12, 21:24 UTC)
 
 PRs #26–#29 are merged. Source `b4f2cba5204480f56302e0cf537f1b35c32e9e88`
@@ -46,7 +87,7 @@ commit. An earlier real acquisition attempt returned `gh run download` exit 1
 without the underlying diagnostic; its cause was not established. That attempt
 left no output. The clean retry completed after bounded diagnostic reporting was
 added.
-The release tag has not been created. The transport correction requires a new
+At that checkpoint the release tag had not been created. The transport correction required a new
 same-source candidate/evidence chain; the older successful binaries are retained
 as diagnostic evidence rather than relabelled with a new source commit.
 
