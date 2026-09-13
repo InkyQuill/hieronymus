@@ -85,7 +85,7 @@ try{
   Write-Host 'Hieronymus is installed.'
   if(-not $NoActivate -and -not $NoOpen){
     Write-Host 'Opening Hieronymus. Choose "Connect your agent" to finish setup.'
-    & (Join-Path $AppDir 'bin/hiero.exe') admin --data-root $DataRoot
-    if($LASTEXITCODE -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');Write-Warning 'Could not open the web interface automatically. Use the Hieronymus tray icon to open it.'}
+    $opened=Start-Process -FilePath (Join-Path $AppDir 'bin/hiero.exe') -ArgumentList @('admin','--data-root',('"'+$DataRoot+'"')) -Wait -PassThru
+    if($opened.ExitCode -ne 0){Get-Content -LiteralPath (Join-Path $work 'install.log');Write-Warning 'Could not open the web interface automatically. Use the Hieronymus tray icon to open it.'}
   }
 }finally{Remove-Item -LiteralPath $work -Recurse -Force;if($LogPath){Stop-Transcript|Out-Null}}

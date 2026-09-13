@@ -13,7 +13,7 @@ on:
       release_tag:
         description: Published release to test online when candidate_run is empty
         type: string
-        default: v0.9.0
+        default: v0.9.1
 permissions:
   contents: read
   actions: read
@@ -90,8 +90,9 @@ jobs:
           $extra=@{}; if ($env:CANDIDATE_RUN) { $extra.ReleaseDir="$PWD/payloads" }
           & ./installers/Install-Hieronymus.ps1 @extra -AppDir "$env:RUNNER_TEMP/Hieronymus app" -DataRoot "$env:RUNNER_TEMP/Hieronymus data" -UnitDir "$env:RUNNER_TEMP/Hieronymus units" -NoActivate
           if (-not $?) { throw 'Installer failed' }
-          & "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" version --json
-          if ($LASTEXITCODE -ne 0) { throw 'Installed binary did not run' }
+          $result=Start-Process -FilePath "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installed-version.json"
+          Get-Content "$env:RUNNER_TEMP/installed-version.json"
+          if ($result.ExitCode -ne 0) { throw "Installed binary failed: $($result.ExitCode)" }
   native-package:
     needs: generate
     strategy:
@@ -135,8 +136,9 @@ jobs:
           if ($env:CANDIDATE_RUN) { bun scripts/stage-installer-cache.ts target/payloads "$appDir"; if ($LASTEXITCODE -ne 0) { throw 'Cache preparation failed' } }
           $result=Start-Process -FilePath "./target/native-installers/Hieronymus-${env:INSTALLER_VERSION}-Setup.exe" -ArgumentList "/S /NOACTIVATE /D=$appDir" -Wait -PassThru
           if ($result.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Hieronymus\setup.log" -ErrorAction Continue; throw "NSIS setup failed: $($result.ExitCode)" }
-          & "$appDir\bin\hiero.exe" version --json
-          if ($LASTEXITCODE -ne 0) { throw 'Installed executable failed' }
+          $result=Start-Process -FilePath "$appDir\bin\hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/setup-version.json"
+          Get-Content "$env:RUNNER_TEMP/setup-version.json"
+          if ($result.ExitCode -ne 0) { throw "Installed executable failed: $($result.ExitCode)" }
           $entry=Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus'
           if ($entry.InstallLocation -ne $appDir) { throw 'Installed Apps registration mismatch' }
           $result=Start-Process -FilePath "$env:LOCALAPPDATA\Hieronymus\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
