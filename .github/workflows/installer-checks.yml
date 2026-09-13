@@ -162,8 +162,17 @@ jobs:
         if: failure() && runner.os == 'Windows'
         shell: pwsh
         run: |
+          $appDir="$env:RUNNER_TEMP\Hieronymus setup app"
+          Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($appDir) } | Select-Object Id,ProcessName,Path | Format-List
+          if (Test-Path $appDir) { Get-ChildItem -LiteralPath $appDir -Recurse -ErrorAction Continue | Select-Object -First 50 FullName,Attributes | Format-Table -AutoSize }
           Get-MpThreatDetection -ErrorAction Continue | Select-Object InitialDetectionTime,ThreatID,ActionSuccess,Resources | Format-List
           Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117; StartTime=(Get-Date).AddHours(-1)} -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,Message | Format-List
+          # Keep the primary failure above. This separate diagnostic determines
+          # whether removal becomes possible after process/file handles settle.
+          if ((Test-Path $appDir) -and (Test-Path "$env:LOCALAPPDATA\Hieronymus\uninstall-hiero.exe")) {
+            & "$env:LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$appDir" --data-root "$env:APPDATA\Hieronymus"
+            Write-Output "Diagnostic removal repeat exit: $LASTEXITCODE"
+          }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-installer-${{ matrix.kind }}
