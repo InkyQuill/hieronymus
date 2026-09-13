@@ -1,0 +1,8 @@
+{"type":"review_context","reviewType":"uncommitted","currentBranch":"codex/easy-install","baseBranch":"main","workingDirectory":"."}
+{"type":"status","phase":"connecting","status":"connecting_to_review_service"}
+{"type":"status","phase":"setup","status":"setting_up"}
+{"type":"status","phase":"setup","status":"preparing_sandbox"}
+{"type":"status","phase":"analyzing","status":"summarizing"}
+{"type":"status","phase":"analyzing","status":"tools_completed"}
+{"type":"status","phase":"analyzing","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["crates/hiero/tests/recall_feedback_surfaces.rs","crates/hieronymus/src/feedback.rs"]}

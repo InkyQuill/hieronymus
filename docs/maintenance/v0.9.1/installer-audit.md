@@ -4,6 +4,32 @@ The owner requested a Windows installer, a macOS package, and a Linux one-liner.
 No repository clone or developer runtime is required. Windows and macOS signing
 are explicitly waived. Intel macOS remains unqualified for physical desktop use.
 
+## Feedback contention found by full PR CI
+
+PR run 34749181126, backend job 103702491615, failed
+`rest_route_applies_replays_and_rejects_mismatches` on source 40e2ad1: the first
+authenticated feedback request returned HTTP 400 with `database is locked`
+instead of HTTP 200. An ordinary local rerun passed, so that rerun alone was
+not accepted as a resolution.
+
+A controlled competing-writer regression reproduced `DatabaseBusy` before the
+fix. `FeedbackStore::record_recall_outcome` used a deferred transaction, reading
+its ledger and scoring snapshot before obtaining writer authority. The store
+now begins an immediate transaction, allowing SQLite's existing busy timeout to
+wait for the writer before reading. The regression then passes and verifies the
+feedback delta is applied to the other writer's committed score exactly once,
+including replay and ledger count. All five feedback-surface tests pass.
+SQLite documents this read-to-write upgrade behavior in its
+[isolation guide](https://www.sqlite.org/isolation.html).
+
+The required Rust companion review found no actionable issues in the change
+or its adjacent correction caller, which already owns a write transaction.
+CodeRabbit also reported zero findings; its receipt is retained in
+`coderabbit-feedback-review.jsonl`. Formatting, Clippy, the full Rust test suite,
+and rustdoc with warnings denied all passed after this fix. This
+product fix must be included in a new candidate; the earlier 5e928e3 and
+40e2ad1 candidates do not qualify the release containing it.
+
 ## Failures and fixes
 
 ### Windows runtime prerequisite

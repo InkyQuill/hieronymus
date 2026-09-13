@@ -28,6 +28,8 @@ and off by default; MCP access remains authenticated.
 This update adds the simple installers, fixes macOS installation failing on
 allocator diagnostics reported by `launchctl`, and handles short-lived Windows
 file locks during installation and removal.
+It also fixes occasional feedback failures when an agent reports on recalled
+memories while background processing updates the database.
 
 ## Platform notes
 
