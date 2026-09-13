@@ -155,6 +155,12 @@ jobs:
           sudo /usr/sbin/installer -verboseR -pkg "target/native-installers/Hieronymus-$INSTALLER_VERSION.pkg" -target /
           "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" version --json
           "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" stop --data-root "$HOME/Library/Application Support/Hieronymus"
+      - name: Windows failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-MpThreatDetection -ErrorAction Continue | Select-Object InitialDetectionTime,ThreatID,ActionSuccess,Resources | Format-List
+          Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117; StartTime=(Get-Date).AddHours(-1)} -ErrorAction Continue | Select-Object TimeCreated,Id,Message | Format-List
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-installer-${{ matrix.kind }}
