@@ -125,6 +125,10 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --yes --no-progress; if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' } }
+      - name: Verify Windows runtime prerequisite installation
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/setup/windows-runtime.test.ps1 -NativeIntegration
       - name: Build unsigned native installer
         shell: bash
         run: bun scripts/build-native-installer.ts '${{ matrix.kind }}' target/installers target/native-installers "$INSTALLER_VERSION"

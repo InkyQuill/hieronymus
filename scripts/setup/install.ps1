@@ -7,9 +7,9 @@ if($LogPath){[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([
 if($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64'){throw 'This installer needs Windows x86_64.'}
 $AppDir=[IO.Path]::GetFullPath($AppDir);$DataRoot=[IO.Path]::GetFullPath($DataRoot)
 @@PAYLOAD@@
-function Download([string]$name,[string]$hash,[string]$destination){
+function Download([string]$name,[string]$hash,[string]$destination,[string]$sourceUrl){
   $cached=$null
-  if($ReleaseDir){$cached=Join-Path $ReleaseDir $name}
+  if($ReleaseDir -and -not $sourceUrl){$cached=Join-Path $ReleaseDir $name}
   elseif([IO.File]::Exists((Join-Path $AppDir "cache/downloads/$name"))){$cached=Join-Path $AppDir "cache/downloads/$name"}
   elseif($name -eq $modelName -and [IO.File]::Exists((Join-Path $AppDir "cache/models/$hash.tar.gz"))){$cached=Join-Path $AppDir "cache/models/$hash.tar.gz"}
   if($cached){
@@ -17,7 +17,7 @@ function Download([string]$name,[string]$hash,[string]$destination){
     if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 1073741824){throw 'Invalid offline download.'}
     [IO.File]::Copy($file.FullName,$destination)
   }else{
-    $url=[Uri]("@@RELEASE_URL@@/"+$name)
+    $url=if($sourceUrl){[Uri]$sourceUrl}else{[Uri]("@@RELEASE_URL@@/"+$name)}
     $response=$null
     [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
     for($redirect=0;$redirect -le 5;$redirect++){
@@ -48,6 +48,27 @@ function Download([string]$name,[string]$hash,[string]$destination){
   try{$actual=[BitConverter]::ToString($sha.ComputeHash($reader)).Replace('-','').ToLowerInvariant()}finally{$reader.Dispose();$sha.Dispose()}
   if((Get-Item -LiteralPath $destination).Length -gt 1073741824 -or $actual -cne $hash){throw 'The download could not be verified. Nothing was installed. Please try again.'}
 }
+function WindowsRuntimeVersion {
+  $registry=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryView]::Registry64)
+  try{
+    $key=$registry.OpenSubKey('SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64')
+    if(-not $key){return [version]'0.0.0.0'}
+    try{
+      if($key.GetValue('Installed',0) -ne 1){return [version]'0.0.0.0'}
+      return [version]::new([int]$key.GetValue('Major',0),[int]$key.GetValue('Minor',0),[int]$key.GetValue('Bld',0),[int]$key.GetValue('Rbld',0))
+    }finally{$key.Dispose()}
+  }finally{$registry.Dispose()}
+}
+function EnsureWindowsRuntime([string]$directory){
+  $required=[version]'14.51.36247.0'
+  if((WindowsRuntimeVersion) -ge $required){return}
+  Write-Host 'Installing the Microsoft Windows runtime. Windows may ask you to allow this prerequisite.'
+  $installer=Join-Path $directory 'VC_redist.x64.exe'
+  Download 'VC_redist.x64.exe' '843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c' $installer 'https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe'
+  $result=Start-Process -FilePath $installer -ArgumentList '/install /quiet /norestart' -Verb RunAs -Wait -PassThru
+  if($result.ExitCode -notin @(0,3010,1638) -or (WindowsRuntimeVersion) -lt $required){throw 'The Microsoft Windows runtime could not be installed. Run Setup again and allow the prerequisite when Windows asks.'}
+  if($result.ExitCode -eq 3010){throw 'The Microsoft Windows runtime needs a restart. Restart Windows, then run Hieronymus Setup again. Your project data has not been changed.'}
+}
 function CopyStream($reader,$writer,[long]$limit){
   $buffer=New-Object byte[] 65536;$count=0L
   while(($n=$reader.Read($buffer,0,$buffer.Length)) -gt 0){$count+=$n;if($count -gt $limit){throw 'Expanded executable is too large.'};$writer.Write($buffer,0,$n)}
@@ -56,6 +77,7 @@ $work=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($work)
 try{
   Write-Host 'Installing Hieronymus @@VERSION@@...'
+  EnsureWindowsRuntime $work
   [IO.File]::WriteAllBytes((Join-Path $work 'release-x86_64-pc-windows-msvc.json'),[Convert]::FromBase64String($metadataBase64))
   Write-Host 'Downloading the app...'
   $platform=Join-Path $work $platformName;Download $platformName $platformHash $platform

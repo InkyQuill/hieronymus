@@ -24,6 +24,8 @@ Sources: [GitHub's migration notice](https://github.blog/changelog/2025-09-19-de
 [upload-artifact](https://github.com/actions/upload-artifact/releases/tag/v7.0.1),
 [download-artifact](https://github.com/actions/download-artifact/releases/tag/v8.0.1).
 
-The installer workflow will verify the new upload/download path on Linux,
-Windows, and macOS; its known v0.9.0 macOS runtime failures are distinct from
-action compatibility. New release candidates must use the updated source.
+Installer run 34747336592 verified the new upload/download path on Linux,
+Windows, and macOS. The generate and native platform logs contain zero Node 20
+deprecation warnings. Its application failures (the known v0.9.0 macOS parser
+and transient Windows removal failure) are distinct from action compatibility.
+New release candidates use the updated source.

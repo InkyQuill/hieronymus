@@ -6,6 +6,27 @@ are explicitly waived. Intel macOS remains unqualified for physical desktop use.
 
 ## Failures and fixes
 
+### Windows runtime prerequisite
+
+Inspection of the actual Windows payload imports found `VCRUNTIME140.dll` in
+the CLI and `MSVCP140.dll`, `MSVCP140_1.dll`, `VCRUNTIME140_1.dll`, and
+`VCRUNTIME140.dll` in ONNX Runtime. Hosted runners already contain these files;
+their previous passing smoke tests did not establish installation on a clean PC.
+Setup now checks the x64 Visual C++ runtime registry explicitly in the 64-bit
+view, downloads Microsoft's pinned redistributable when missing or older,
+checks SHA-256 before execution, and invokes its normal elevated installer.
+The app remains installed for the original Windows account. Reboot-required
+results stop before app installation with instructions to restart and rerun.
+
+The official [Microsoft runtime download](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+resolved on 2026-09-13 to version **14.51.36247.0**, size **18731856**, SHA-256
+`843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c`.
+The immutable Microsoft URL and hash are embedded in setup. No new public
+Hieronymus release asset is needed. A PowerShell 5.1 policy test covers existing,
+newer, absent and old runtimes, cancellation, failed verification, false success,
+concurrent upgrade, and reboot-required results; native CI also exercises the
+real download and installer without removing shared runner prerequisites.
+
 | Evidence | Finding | Disposition |
 | --- | --- | --- |
 | Actions runs 34745284872 and 34745520245 | Actual macOS package installation failed because `launchctl print` reports a `probabilistic guard malloc policy` dictionary. | Accept this exact diagnostic field while preserving strict ownership and launch-policy validation. The captured native output is a regression fixture. |
