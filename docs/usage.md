@@ -4,49 +4,22 @@ For the long-term memory workflow, see [Memory Dreaming](memory-dreaming.md).
 
 ## Installation and Updates
 
-The Rust candidate is a Linux x86_64 archive with one native executable, four
-command names, an embedded console, and pinned semantic model/runtime assets.
-It needs no Python, Node or Bun at runtime. It is not yet cleared for product
-cutover: [the rehearsal](rust-cutover-rehearsal.md) records actual results and
-open authority, native agent-host and service-manager gates.
+Use the [Windows installer, macOS package, or Linux one-liner](../README.md#install). You do not need to clone this repository or install developer tools. Setup downloads and verifies the app and its memory model, starts the local server, and opens the web interface.
 
-Install a locally built, verified release into disposable roots:
+Windows and macOS installers are unsigned. On macOS, you may need to choose
+**Open Anyway** in System Settings → Privacy & Security after opening the package.
 
-```bash
-scripts/install.sh --release-dir /path/to/release-dist \
-  --app-dir /tmp/hiero-rehearsal/app --data-root /tmp/hiero-rehearsal/data \
-  --unit-dir /tmp/hiero-rehearsal/units --no-activate
-/tmp/hiero-rehearsal/app/bin/hiero version --json
-```
+Choose **Connect your agent** to add both the MCP connection and Hieronymus skills, then continue writing in your agent. Use the web interface to inspect memories, add pointers, and flag stale or wrong entries.
 
-The installer places each release under `app/versions/<version>` and switches
-all stable `app/bin` aliases together. `--no-activate` stages the application
-without contacting the user service manager. Launch the foreground daemon
-for a disposable rehearsal:
+Run the latest installer again to update. Your memories and configuration are kept. See [Distribution](distribution.md) for advanced offline installation, custom directories, and recovery.
 
-```bash
-/tmp/hiero-rehearsal/app/bin/hiero daemon --data-root /tmp/hiero-rehearsal/data --port 0
-```
-
-In another terminal, `hiero status --json --data-root <root>` reports the
-authenticated daemon's semantic state. Only `ready` satisfies required
-semantic readiness; acquiring, rebuilding and failed do not. `hiero stop
---data-root <root>` shuts down the owner. See [Distribution](distribution.md)
-for verified source configuration, update options and recovery boundaries.
-No public release URL is inferred from these local tests.
-
-`hiero admin --data-root <root>` and `hiero config --data-root <root>` open
-the embedded browser console through a single-use launch grant. Refreshes
-reuse the browser cookie; restarting the daemon invalidates that session and
-requires another launch. Explicit foreign Origins are refused. Generated
-plugins use the stable `hieronymus-mcp` command, but current Claude/Codex
-initialize requests are incompatible with mandatory MCP 2026-07-28; see
-[actual host evidence](agent-host-acceptance.md).
+The tray icon opens the web interface while the server is running. Browser authentication is off by default; it can be enabled in configuration. MCP access remains authenticated. The optional CLI helpers `hiero admin` and `hiero config` also open the interface.
 
 ## Data Root
 
-By default, Hieronymus stores one global database at
-`~/.config/hieronymus/hieronymus.sqlite`. Set `HIERONYMUS_DATA_ROOT` to use a
+The default data directory is `~/.config/hieronymus` on Linux,
+`~/Library/Application Support/Hieronymus` on macOS, and
+`%APPDATA%\Hieronymus` on Windows. Set `HIERONYMUS_DATA_ROOT` to use a
 different data root:
 
 ```bash
@@ -55,7 +28,12 @@ export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memo
 
 ## Uninstall
 
-`hiero uninstall --yes` removes the owned application, service unit and generated
+On Windows, remove Hieronymus through **Settings → Apps → Installed apps**.
+The uninstaller preserves memories and configuration.
+
+On Linux, run `hiero uninstall --yes`. On macOS, run
+`hiero uninstall --yes --data-root "$HOME/Library/Application Support/Hieronymus"`.
+These commands remove the owned application, service unit and generated
 integration entries; it preserves databases and configuration by default. Add
 `--delete-data` only to clear user contents from the explicitly configured data
 root, including models, backups and audit data. A small coordination-only directory
@@ -77,8 +55,8 @@ hiero config
 ```
 
 The command starts the loopback-only service when needed and opens the local Svelte
-web console in the default browser. The bootstrap token is exchanged for an HttpOnly
-local-session cookie before the app loads.
+web console in the default browser. When optional browser authentication is enabled,
+a launch grant creates the local browser session.
 
 For machine-readable status, use:
 

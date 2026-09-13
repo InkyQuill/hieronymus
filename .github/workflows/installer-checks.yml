@@ -1,0 +1,190 @@
+name: installer-checks
+on:
+  workflow_call:
+    inputs:
+      candidate_run:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful same-source candidate run (leave empty for a published release)
+        type: string
+      release_tag:
+        description: Published release to test online when candidate_run is empty
+        type: string
+        default: v0.9.1
+permissions:
+  contents: read
+  actions: read
+env:
+  CANDIDATE_RUN: ${{ inputs.candidate_run }}
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.generate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - run: bun test scripts/*.test.ts
+      - name: Acquire verified binaries without rebuilding
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ -n "$CANDIDATE_RUN" ]; then
+            bun scripts/desktop-ci.ts download "$CANDIDATE_RUN" desktop-candidate target/published "$GITHUB_SHA"
+          else
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            gh release download "$RELEASE_TAG" --pattern 'release-*.json' --pattern 'hieronymus-*.tar.gz' --pattern 'hieronymus-*.zip' --dir target/published
+          fi
+      - id: generate
+        run: |
+          bun scripts/build-installers.ts target/published target/installers
+          echo "version=$(jq -r .version target/published/release-x86_64-unknown-linux-gnu.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: standalone-installers
+          path: target/installers/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: inputs.candidate_run != ''
+        with:
+          name: installer-test-payloads
+          path: target/published/
+          retention-days: 7
+  installed:
+    needs: generate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # No source checkout or developer tools are needed to run the installer.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: standalone-installers
+          path: installers
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: inputs.candidate_run != ''
+        with:
+          name: installer-test-payloads
+          path: payloads
+      - name: Install from a single file on Linux/macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          diagnostics() { if [ "$(uname -s)" = Darwin ]; then for label in $(launchctl list | awk '$3 ~ /hieronymus/ {print $3}'); do launchctl print "gui/$(id -u)/$label" || true; done; fi; }
+          trap diagnostics EXIT
+          extra=(); if [ -n "$CANDIDATE_RUN" ]; then extra=(--release-dir "$PWD/payloads"); fi
+          bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$RUNNER_TEMP/Hieronymus data" --unit-dir "$RUNNER_TEMP/Hieronymus units" --no-activate
+          "$RUNNER_TEMP/Hieronymus app/bin/hiero" version --json
+      - name: Install with built-in Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'This must exercise built-in Windows PowerShell 5.1' }
+          $extra=@{}; if ($env:CANDIDATE_RUN) { $extra.ReleaseDir="$PWD/payloads" }
+          & ./installers/Install-Hieronymus.ps1 @extra -AppDir "$env:RUNNER_TEMP/Hieronymus app" -DataRoot "$env:RUNNER_TEMP/Hieronymus data" -UnitDir "$env:RUNNER_TEMP/Hieronymus units" -NoActivate
+          if (-not $?) { throw 'Installer failed' }
+          $result=Start-Process -FilePath "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installed-version.json"
+          Get-Content "$env:RUNNER_TEMP/installed-version.json"
+          if ($result.ExitCode -ne 0) { throw "Installed binary failed: $($result.ExitCode)" }
+  native-package:
+    needs: generate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            kind: windows
+          - os: macos-15
+            kind: macos
+    runs-on: ${{ matrix.os }}
+    env:
+      INSTALLER_VERSION: ${{ needs.generate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: standalone-installers
+          path: target/installers
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: inputs.candidate_run != ''
+        with:
+          name: installer-test-payloads
+          path: target/payloads
+      - name: Install NSIS build tool
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --yes --no-progress; if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' } }
+      - name: Verify Windows runtime prerequisite installation
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/setup/windows-runtime.test.ps1 -NativeIntegration
+      - name: Build unsigned native installer
+        shell: bash
+        run: bun scripts/build-native-installer.ts '${{ matrix.kind }}' target/installers target/native-installers "$INSTALLER_VERSION"
+      - name: Exercise Windows setup wizard in silent mode
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $appDir="$env:RUNNER_TEMP\Hieronymus setup app"
+          if ($env:CANDIDATE_RUN) { bun scripts/stage-installer-cache.ts target/payloads "$appDir"; if ($LASTEXITCODE -ne 0) { throw 'Cache preparation failed' } }
+          $result=Start-Process -FilePath "./target/native-installers/Hieronymus-${env:INSTALLER_VERSION}-Setup.exe" -ArgumentList "/S /D=$appDir" -Wait -PassThru
+          if ($result.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\Hieronymus\setup.log" -ErrorAction Continue; throw "NSIS setup failed: $($result.ExitCode)" }
+          $result=Start-Process -FilePath "$appDir\bin\hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/setup-version.json"
+          Get-Content "$env:RUNNER_TEMP/setup-version.json"
+          if ($result.ExitCode -ne 0) { throw "Installed executable failed: $($result.ExitCode)" }
+          $entry=Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus'
+          if ($entry.InstallLocation -ne $appDir) { throw 'Installed Apps registration mismatch' }
+          # NSIS normally re-executes its uninstaller from Temp. Disable that
+          # copy in CI so the process we wait on reports the actual removal result.
+          $result=Start-Process -FilePath "$env:LOCALAPPDATA\Hieronymus\Uninstall.exe" -ArgumentList "/S _?=$env:LOCALAPPDATA\Hieronymus" -Wait -PassThru
+          Get-Content "$env:LOCALAPPDATA\Hieronymus\uninstall.log" -ErrorAction Continue
+          if ($result.ExitCode -ne 0) { throw "NSIS removal failed: $($result.ExitCode)" }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus') { throw 'Installed Apps entry survived removal' }
+          if (Test-Path "$appDir\bin\hiero.exe") { throw 'Installed launcher survived removal' }
+      - name: Exercise macOS Installer package scripts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          diagnostics() { sudo tail -n 160 /var/log/install.log; for label in $(launchctl list | awk '$3 ~ /hieronymus/ {print $3}'); do launchctl print "gui/$(id -u)/$label" || true; done; }
+          trap diagnostics EXIT
+          if [ -n "$CANDIDATE_RUN" ]; then bun scripts/stage-installer-cache.ts target/payloads "$HOME/Library/Application Support/Hieronymus/app"; fi
+          sudo /usr/sbin/installer -verboseR -pkg "target/native-installers/Hieronymus-$INSTALLER_VERSION.pkg" -target /
+          "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" version --json
+          "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" stop --data-root "$HOME/Library/Application Support/Hieronymus"
+      - name: Windows failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $appDir="$env:RUNNER_TEMP\Hieronymus setup app"
+          Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($appDir) } | Select-Object Id,ProcessName,Path | Format-List
+          if (Test-Path $appDir) { Get-ChildItem -LiteralPath $appDir -Recurse -ErrorAction Continue | Select-Object -First 50 FullName,Attributes | Format-Table -AutoSize }
+          Get-MpThreatDetection -ErrorAction Continue | Select-Object InitialDetectionTime,ThreatID,ActionSuccess,Resources | Format-List
+          Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117; StartTime=(Get-Date).AddHours(-1)} -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,Message | Format-List
+          # Keep the primary failure above. This separate diagnostic determines
+          # whether removal becomes possible after process/file handles settle.
+          if ((Test-Path $appDir) -and (Test-Path "$env:LOCALAPPDATA\Hieronymus\uninstall-hiero.exe")) {
+            & "$env:LOCALAPPDATA\Hieronymus\uninstall-hiero.exe" uninstall --yes --app-dir "$appDir" --data-root "$env:APPDATA\Hieronymus"
+            Write-Output "Diagnostic removal repeat exit: $LASTEXITCODE"
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-installer-${{ matrix.kind }}
+          path: |
+            target/native-installers/Hieronymus-*.exe
+            target/native-installers/Hieronymus-*.pkg
+          if-no-files-found: error

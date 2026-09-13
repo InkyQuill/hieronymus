@@ -10,7 +10,7 @@
 //! Negative feedback touches only graded memory scores. `term_rules` and the
 //! deterministic contract projection are never reachable from here.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
 use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
@@ -102,7 +102,9 @@ impl FeedbackStore {
             return Err(FeedbackError::EmptyRecallId);
         }
         let mut connection = open_migrated(&self.config.database_path())?;
-        let transaction = connection.transaction()?;
+        // Reserve the writer before reading the ledger and scores. A deferred
+        // read snapshot cannot safely upgrade after a background worker writes.
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let outcome = record_recall_outcome_tx(&transaction, request)?;
         transaction.commit()?;
         Ok(outcome)

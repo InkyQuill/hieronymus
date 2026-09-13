@@ -7,7 +7,15 @@ concurrency:
   group: release-rust-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  installers:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/installer-checks.yml
+    with:
+      candidate_run: ${{ vars.DESKTOP_CANDIDATE_RUN }}
   promote:
+    needs: installers
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -19,7 +27,7 @@ jobs:
       EVIDENCE_RUN: ${{ vars.DESKTOP_EVIDENCE_RUN }}
       RELEASE_REF: ${{ github.ref }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -34,5 +42,14 @@ jobs:
           bun scripts/desktop-ci.ts download "$EVIDENCE_RUN" desktop-evidence target/evidence "$GITHUB_SHA"
       - name: Verify complete matrix and evidence provenance again
         run: bun scripts/package-desktop-evidence.ts --verify target/candidate target/evidence "$GITHUB_SHA" "$CANDIDATE_RUN"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: standalone-installers
+          path: target/setup
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-installer-*
+          merge-multiple: true
+          path: target/setup
       - name: Publish exact retained and verified bytes without rebuilding
-        run: bun scripts/desktop-ci.ts publish target/candidate "$GITHUB_SHA" "$RELEASE_REF" target/evidence "$CANDIDATE_RUN"
+        run: bun scripts/desktop-ci.ts publish target/candidate "$GITHUB_SHA" "$RELEASE_REF" target/evidence "$CANDIDATE_RUN" target/setup

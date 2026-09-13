@@ -276,34 +276,47 @@ if (import.meta.main) {
     }
     console.log(source);
   } else if (mode === "publish") {
-    const [directory, commit, ref, evidence, candidateRun] = args;
+    const [directory, commit, ref, evidence, candidateRun, installers] = args;
     const { checkSource } = await import("./check-rust-release");
     checkSource(process.cwd(), ref);
     const { verifyEvidence } = await import("./package-desktop-evidence");
     await verifyEvidence(directory, evidence, commit, candidateRun);
-    const files = await verifyCandidate(directory, commit);
-    const names = files.filter((n) => !n.startsWith("candidate-"));
+    const { publicPayloads, nativeInstallerNames } =
+      await import("./release-downloads");
+    const { renderInstallers } = await import("./build-installers");
+    const releases = TARGETS.map((target) =>
+      readReleaseV2(localFile(directory, `release-${target}.json`), target),
+    );
+    const names = publicPayloads(directory);
+    const setupNames = nativeInstallerNames(releases[0].version);
+    for (const name of setupNames) localFile(installers, name);
+    if (
+      readFileSync(localFile(installers, "install-hieronymus.sh"), "utf8") !==
+      renderInstallers(releases)["install-hieronymus.sh"]
+    )
+      throw new Error("installer source/release mismatch");
+    if (
+      readFileSync(localFile(installers, setupNames[1]))
+        .subarray(0, 2)
+        .toString() !== "MZ" ||
+      readFileSync(localFile(installers, setupNames[2]))
+        .subarray(0, 4)
+        .toString() !== "xar!"
+    )
+      throw new Error("invalid native setup package");
     const summaryDirectory = mkdtempSync(
       join(tmpdir(), "hieronymus-qualification-"),
     );
-    const summary = join(summaryDirectory, "native-qualification.json");
-    const records = JSON.parse(
-      readFileSync(localFile(evidence, "records.json"), "utf8"),
+    const notes = join(summaryDirectory, "release-notes.md");
+    const provenance = JSON.parse(
+      readFileSync(localFile(evidence, "provenance.json"), "utf8"),
     );
     writeFileSync(
-      summary,
-      JSON.stringify(
-        {
-          provenance: JSON.parse(
-            readFileSync(localFile(evidence, "provenance.json"), "utf8"),
-          ),
-          records: records.map((path: string) =>
-            JSON.parse(readFileSync(localFile(evidence, path), "utf8")),
-          ),
-        },
-        null,
-        2,
-      ) + "\n",
+      notes,
+      readFileSync("docs/desktop-release-notes.md", "utf8").replaceAll(
+        "@@EVIDENCE_URL@@",
+        `https://github.com/InkyQuill/hieronymus/tree/${provenance.evidence_data_commit}/qualification/desktop-evidence`,
+      ),
     );
     try {
       gh([
@@ -312,10 +325,10 @@ if (import.meta.main) {
         ref.replace("refs/tags/", ""),
         "--verify-tag",
         "--title",
-        `hiero ${ref.replace("refs/tags/", "")}`,
+        `Hieronymus ${ref.replace("refs/tags/", "")}`,
         "--notes-file",
-        "docs/desktop-release-notes.md",
-        summary,
+        notes,
+        ...setupNames.map((n) => join(installers, n)),
         ...names.map((n) => join(directory, n)),
       ]);
     } finally {

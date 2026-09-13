@@ -2,6 +2,7 @@
 pub mod credentials;
 pub(crate) mod export;
 pub mod install;
+pub(crate) mod managed_files;
 
 pub mod browser;
 pub mod native_gate;

@@ -63,6 +63,78 @@ fn bearer_header(daemon: &Daemon) -> (String, String) {
 }
 
 #[test]
+fn feedback_waits_for_a_writer_and_applies_once_to_its_committed_scores() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let root = tempfile::tempdir().unwrap();
+    let (config, recall_id, activation_id) = recall_fixture(root.path());
+    let store = FeedbackStore::open(&config).unwrap();
+    let request = hieronymus::feedback::RecallFeedback {
+        recall_id,
+        useful_activation_ids: vec![activation_id],
+        missed_activation_ids: Vec::new(),
+        idempotency_key: "contended-feedback".to_string(),
+    };
+    let mut writer = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    transaction
+        .execute(
+            "update crystals set strength = 0.2
+             where id = (select crystal_id from crystal_activations where id = ?1)",
+            [activation_id],
+        )
+        .unwrap();
+
+    std::thread::scope(|scope| {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let (store, request) = (&store, &request);
+        scope.spawn(move || {
+            started_tx.send(()).unwrap();
+            result_tx
+                .send(store.record_recall_outcome(request))
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Hold a real competing writer across the feedback attempt. The
+        // request must wait before reading its scoring/idempotency snapshot.
+        let early = result_rx.recv_timeout(Duration::from_millis(500));
+        transaction.commit().unwrap();
+        assert!(
+            matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+            "{early:?}"
+        );
+        let outcome = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert!(outcome.applied);
+    });
+
+    assert!(!store.record_recall_outcome(&request).unwrap().applied);
+    let strength: f64 = writer
+        .query_row(
+            "select strength from crystals where id =
+             (select crystal_id from crystal_activations where id = ?1)",
+            [activation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!((strength - (0.2 + hieronymus::feedback::RECALLED_USEFUL_DELTAS.0)).abs() < 1e-9);
+    let events: i64 = writer
+        .query_row(
+            "select count(*) from memory_events where evidence = ?1",
+            [&request.idempotency_key],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(events, 1);
+}
+
+#[test]
 fn rest_route_applies_replays_and_rejects_mismatches() {
     let root = tempfile::tempdir().unwrap();
     let (config, recall_id, activation_id) = recall_fixture(root.path());

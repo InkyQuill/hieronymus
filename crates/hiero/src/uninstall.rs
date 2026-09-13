@@ -228,7 +228,7 @@ fn run_uninstall_impl(
     removed.extend(lines);
 
     if layout.root().exists() {
-        std::fs::remove_dir_all(layout.root())?;
+        crate::platform::managed_files::remove(layout.root())?;
         removed.push(format!(
             "application directory (binaries and command links): {}",
             layout.root().display()

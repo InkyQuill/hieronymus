@@ -1,0 +1,49 @@
+gui/501/net.inkyquill.hieronymus.daemon.55303ee083ef2efe2f8d92f68481f943065e6ae63e61bec74c760a120bff47a1 = {
+	active count = 0
+	path = /Users/runner/Library/LaunchAgents/net.inkyquill.hieronymus.daemon.55303ee083ef2efe2f8d92f68481f943065e6ae63e61bec74c760a120bff47a1.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /Users/runner/Library/Application Support/Hieronymus/app/bin/hiero
+	arguments = {
+		/Users/runner/Library/Application Support/Hieronymus/app/bin/hiero
+		daemon
+		--data-root
+		/Users/runner/Library/Application Support/Hieronymus
+	}
+
+	stdout path = /dev/null
+	stderr path = /dev/null
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.M0JC5XBUrF/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		XPC_SERVICE_NAME => net.inkyquill.hieronymus.daemon.55303ee083ef2efe2f8d92f68481f943065e6ae63e61bec74c760a120bff47a1
+	}
+
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 0
+	last exit code = (never exited)
+
+	spawn type = interactive (4)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	probabilistic guard malloc policy = {
+		activation rate = 1/1000
+		sample rate = 1/0
+	}
+
+	properties = inferred program | system service | tle system
+}
