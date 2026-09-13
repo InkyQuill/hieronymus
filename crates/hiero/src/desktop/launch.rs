@@ -164,6 +164,10 @@ pub fn selected_cli(cli: &Path) -> Result<PathBuf, String> {
 /// Resolve the stable Unix selection endpoint; direct CLI fixtures are explicit.
 #[cfg(unix)]
 pub fn stable_cli(executable: &Path) -> Result<PathBuf, String> {
+    // macOS may report the invoked symlink from current_exe, while Linux
+    // reports the payload. Resolve both before recognizing a packaged layout.
+    let resolved = executable.canonicalize().map_err(|e| e.to_string())?;
+    let executable = resolved.as_path();
     if executable
         .parent()
         .is_some_and(|p| p.ends_with("Hieronymus.app/Contents/MacOS"))
@@ -225,5 +229,26 @@ mod selection_tests {
         );
         assert_eq!(stable, root.path().join("bin/hiero.exe"));
         assert!(!root.path().join("bin/hiero-desktop.exe").exists());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_selection_tests {
+    use super::*;
+
+    #[test]
+    fn stable_cli_preserves_the_registered_endpoint_from_a_symlink_or_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let version = root.join("versions/0.9.1");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&version).unwrap();
+        std::fs::create_dir(&bin).unwrap();
+        let payload = version.join("hiero");
+        std::fs::write(&payload, b"fixture").unwrap();
+        let stable = bin.join("hiero");
+        std::os::unix::fs::symlink("../versions/0.9.1/hiero", &stable).unwrap();
+        assert_eq!(stable_cli(&payload).unwrap(), stable);
+        assert_eq!(stable_cli(&stable).unwrap(), stable);
     }
 }

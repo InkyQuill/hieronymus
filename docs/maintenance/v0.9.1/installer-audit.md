@@ -208,3 +208,64 @@ Focused tests cover transient success, persistent/deadline failure, immediate
 non-retryable failure, and path context. The native Windows candidate job also
 exercises promotion/removal while a real non-delete-sharing file handle is held.
 The companion Rust review found no actionable regression in the bounded retry.
+
+## Final a99a305 candidate and installer follow-up
+
+PR CI [34750077942](https://github.com/InkyQuill/hieronymus/actions/runs/34750077942)
+and the four-platform candidate run
+[34750088390](https://github.com/InkyQuill/hieronymus/actions/runs/34750088390)
+passed on source `a99a305a67543696869fdfdb63fdb34838e9f07b`. All four final
+packages passed native model inference and authenticated MCP. The Linux archive
+`447d2c170aea768d9db724f8798c3f2c6c6bfc1eece73362edb6c299937b89fd`
+also passed local KDE Wayland startup/duplicate/stop/restart and tray lifecycle
+checks, unsafe-token refusal, standalone piped installer and data-preserving
+uninstall in isolated directories. These receipts identify this source only.
+
+Installer run [34755165337](https://github.com/InkyQuill/hieronymus/actions/runs/34755165337)
+passed Linux and standalone macOS installation but exposed two remaining defects:
+
+- The macOS PKG installation itself completed successfully and started the server.
+  Its following `hiero stop` failed with `Foreign daemon login definition`.
+  Unix stable endpoint resolution treated an invoked `bin/hiero` symlink differently
+  from the versioned payload path. Canonicalizing before recognizing the packaged
+  layout now preserves the registered stable endpoint in both cases. A regression
+  failed before this change and passed after it. CodeRabbit's local review reported
+  zero findings (receipt `coderabbit-launcher-review.jsonl`); companion Rust review
+  found no actionable issue. Final native verification is still required.
+- Both Windows paths failed promotion of `.staging-0.9.1` to `versions/0.9.1`
+  with Win32 error 5 despite the three-second retry. The installer rolled back;
+  this run does not qualify Windows installation. Static review found no retained
+  staging handle in Hieronymus. A separate diagnostic run
+  [34755736458](https://github.com/InkyQuill/hieronymus/actions/runs/34755736458)
+  reproduced the failure and used read-only Restart Manager queries to observe
+  `provjobd.exe` PID 1352 still using staged resources after the verification CLI
+  exited. Its precise resource lifetime is under investigation; no process was
+  terminated and no permissions or runner security settings were changed.
+
+The first diagnostic run, 34755635383, failed to compile its PowerShell 5.1 C#
+interop helper because `FILETIME` was ambiguous; qualifying the framework type
+fixed that diagnostic error. These diagnostic workflows are isolated on
+`codex/installer-diagnostics`, not release qualification gates.
+
+Diagnostic run [34755853743](https://github.com/InkyQuill/hieronymus/actions/runs/34755853743)
+installed the same Windows binary successfully under different observation timing;
+its separate native payload rename probe also passed immediately. The diagnostic
+workflow itself was red because its exploratory harness ended with an unconditional
+failure marker; this is not a second product failure. Together with the earlier
+recorded failure and external resource user, this establishes intermittent file
+lifetime interference rather than a deterministic updater-owned staging handle.
+
+The Windows mutation deadline is now 30 seconds, still restricted to errors
+5/32/33 and the same guarded individual operations. The native Windows regression
+holds a real non-delete-sharing reader for four seconds, beyond the former limit.
+No transaction retries, reader termination, ACL changes, or CI security exclusions
+were introduced. Companion Rust review found no actionable issue; a fresh actual
+installer run must verify this amendment before release.
+
+The combined launcher/lifetime amendment received zero CodeRabbit local findings
+(`coderabbit-native-followup-review.jsonl`). Local formatting and Clippy checks
+passed; source-matched native installer acceptance remains a release prerequisite.
+The complete local Rust verification chain also passed for the combined amendment:
+formatting, all-target/all-feature Clippy, all-feature tests and warnings-denied
+rustdoc. Native Windows and macOS installer results must still come from the next
+source-matched candidate run; a99a305 observations are not reused for new bytes.

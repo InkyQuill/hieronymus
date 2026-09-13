@@ -1,13 +1,13 @@
 //! File mutations performed while the caller retains installation ownership.
 use std::{io, path::Path};
 
-/// A stopped Windows process can release its coordination locks just before its
-/// executable mappings disappear. Retry only the individual filesystem mutation;
-/// never repeat the installation transaction or change permissions.
+/// Windows executable mappings and external readers can outlive a completed
+/// payload probe. Retry only the individual filesystem mutation; never repeat
+/// the installation transaction, terminate readers, or change permissions.
 fn mutate<T>(operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     #[cfg(windows)]
     {
-        retry_windows(operation, std::time::Duration::from_secs(3))
+        retry_windows(operation, std::time::Duration::from_secs(30))
     }
     #[cfg(not(windows))]
     {
@@ -84,7 +84,9 @@ mod tests {
                 .open(path)
                 .unwrap();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(100));
+                // Native diagnostics observed an external reader beyond the
+                // former three-second window after payload verification ended.
+                std::thread::sleep(Duration::from_secs(4));
                 drop(file);
             })
         };
