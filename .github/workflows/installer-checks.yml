@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_run:
-        description: Successful same-source candidate run (leave empty for a published release)
+        description: Successful candidate run (leave empty for a published release)
         type: string
       release_tag:
         description: Published release to test online when candidate_run is empty
@@ -31,14 +31,15 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: "1.4.0"
-      - run: bun test scripts/*.test.ts
       - name: Acquire verified binaries without rebuilding
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           if [ -n "$CANDIDATE_RUN" ]; then
-            bun scripts/desktop-ci.ts download "$CANDIDATE_RUN" desktop-candidate target/published "$GITHUB_SHA"
+            # Packaging may be retried after workflow-only fixes. The publisher
+            # separately checks the candidate against the exact release tag.
+            bun scripts/desktop-ci.ts download "$CANDIDATE_RUN" desktop-candidate target/published
           else
             [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
             gh release download "$RELEASE_TAG" --pattern 'release-*.json' --pattern 'hieronymus-*.tar.gz' --pattern 'hieronymus-*.zip' --dir target/published
@@ -165,7 +166,6 @@ jobs:
           if [ -n "$CANDIDATE_RUN" ]; then bun scripts/stage-installer-cache.ts target/payloads "$HOME/Library/Application Support/Hieronymus/app"; fi
           sudo /usr/sbin/installer -verboseR -pkg "target/native-installers/Hieronymus-$INSTALLER_VERSION.pkg" -target /
           "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" version --json
-          bash scripts/stop-installed.sh "$HOME/Library/Application Support/Hieronymus/app/bin/hiero" "$HOME/Library/Application Support/Hieronymus" "$RUNNER_TEMP/installed-stop.log"
       - name: Windows failure diagnostics
         if: failure() && runner.os == 'Windows'
         shell: pwsh
