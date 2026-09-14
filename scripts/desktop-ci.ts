@@ -23,7 +23,14 @@ import { localFile, verifyFile } from "./check-desktop-evidence";
 export function availableInstallerNotes(
   template: string,
   available: string[],
+  targets: readonly string[],
 ): string {
+  if (!targets.includes("x86_64-unknown-linux-gnu")) {
+    template = template.replace(
+      /^- \*\*Linux x86_64:\*\*[^\n]*\n\n```bash\n[\s\S]*?```\n?/m,
+      "",
+    );
+  }
   return template
     .split("\n")
     .filter((line) => {
@@ -35,6 +42,10 @@ export function availableInstallerNotes(
 /** Packaging and documentation edits do not change retained binary bytes. */
 export function binarySourceChanged(paths: string[]): boolean {
   const packaging = new Set([
+    ".github/workflows/release-rust.yml",
+    ".github/workflows/installer-checks.yml",
+    ".github/workflows/desktop-evidence.yml",
+    ".github/workflows/pr.yml",
     "scripts/desktop-ci.ts",
     "scripts/report-release-warnings.sh",
     "scripts/build-installers.ts",
@@ -50,9 +61,6 @@ export function binarySourceChanged(paths: string[]): boolean {
   return paths.some(
     (p) =>
       !(
-        (p.startsWith(".github/") &&
-          p !== ".github/workflows/desktop-candidate.yml" &&
-          !p.startsWith(".github/actions/")) ||
         p.startsWith("docs/") ||
         p.startsWith("qualification/") ||
         p.startsWith("scripts/setup/") ||
@@ -453,6 +461,7 @@ if (import.meta.main) {
       availableInstallerNotes(
         readFileSync("docs/desktop-release-notes.md", "utf8"),
         availableSetup,
+        releases.map((r) => r.target),
       ).replaceAll("@@EVIDENCE_URL@@", evidenceUrl) +
         `\n\nAvailable binary targets: ${releases.map((r) => r.target).join(", ")}.\n` +
         `Missing targets: ${TARGETS.filter((t) => !releases.some((r) => r.target === t)).join(", ") || "none"}.\n` +

@@ -10,17 +10,27 @@ import {
 
 test("partial release notes advertise only available native installers", () => {
   const template =
-    "- **Windows:** [Setup](https://example.com/Hieronymus-0.9.3-Setup.exe)\n- **macOS:** [Installer](https://example.com/Hieronymus-0.9.3.pkg)\n- **Linux x86_64:** run installer";
-  const notes = availableInstallerNotes(template, ["Hieronymus-0.9.3.pkg"]);
+    "- **Windows:** [Setup](https://example.com/Hieronymus-0.9.3-Setup.exe)\n- **macOS:** [Installer](https://example.com/Hieronymus-0.9.3.pkg)\n- **Linux x86_64:** run installer\n\n```bash\ncurl installer | bash\n```\n\nDescription";
+  const targets = ["x86_64-unknown-linux-gnu"];
+  const notes = availableInstallerNotes(
+    template,
+    ["Hieronymus-0.9.3.pkg"],
+    targets,
+  );
   expect(notes).not.toContain("Windows");
   expect(notes).toContain("macOS");
   expect(notes).toContain("Linux");
   expect(
-    availableInstallerNotes(template, [
-      "Hieronymus-0.9.3.pkg",
-      "Hieronymus-0.9.3-Setup.exe",
-    ]),
+    availableInstallerNotes(
+      template,
+      ["Hieronymus-0.9.3.pkg", "Hieronymus-0.9.3-Setup.exe"],
+      targets,
+    ),
   ).toBe(template);
+  const missing = availableInstallerNotes(template, [], []);
+  expect(missing).not.toContain("Linux");
+  expect(missing).not.toContain("curl");
+  expect(missing).toContain("Description");
 });
 const good = {
   repository: { full_name: "owner/repo" },

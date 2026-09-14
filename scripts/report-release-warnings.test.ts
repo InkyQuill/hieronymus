@@ -16,6 +16,7 @@ for (const mode of [
   "job-failed",
   "list-error",
   "create-error",
+  "comment-error",
 ])
   test.skipIf(process.platform === "win32")(
     `release warning reporter: ${mode}`,
@@ -27,9 +28,12 @@ for (const mode of [
           `#!/bin/sh
 if [ "$2" = list ]; then
   if [ "$REPORT_MODE" = list-error ]; then exit 1; fi
-  if [ "$REPORT_MODE" = existing ]; then echo 'Release warning: candidate / native / Linux'; fi
+  if [ "$REPORT_MODE" = existing ] || [ "$REPORT_MODE" = comment-error ]; then printf 'Release warning: candidate / native / Linux\\t42\\n'; fi
 elif [ "$2" = create ]; then
   if [ "$REPORT_MODE" = create-error ]; then exit 1; fi
+  printf '%s\\n' "$@" > "$REPORT_CALLS"
+elif [ "$2" = comment ]; then
+  if [ "$REPORT_MODE" = comment-error ]; then exit 1; fi
   printf '%s\\n' "$@" > "$REPORT_CALLS"
 else exit 2
 fi
@@ -68,13 +72,16 @@ fi
           expect(result.stdout.toString()).toContain("::warning::Could not");
         }
         expect(existsSync(calls)).toBe(
-          mode === "failed" || mode === "job-failed",
+          mode === "failed" || mode === "job-failed" || mode === "existing",
         );
         if (existsSync(calls)) {
           expect(
             readFileSync(join(root, "release-warning.md"), "utf8"),
           ).toContain("https://github.com/owner/repo/actions/runs/123");
           expect(readFileSync(calls, "utf8")).toContain("--body-file");
+          expect(readFileSync(calls, "utf8")).toContain(
+            mode === "existing" ? "comment" : "create",
+          );
         }
       } finally {
         rmSync(root, { recursive: true, force: true });

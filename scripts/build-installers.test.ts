@@ -119,6 +119,7 @@ test("public downloads exclude maintainer evidence and old multi-file installers
     "Hieronymus-0.9.1.pkg",
   ]);
 });
+const linux = test.skipIf(process.platform !== "linux");
 const unix = test.skipIf(process.platform === "win32");
 function fixture() {
   const root = temp(),
@@ -331,7 +332,7 @@ unix("Rosetta Terminal selects Apple Silicon payload", () => {
   );
 });
 
-unix(
+linux(
   "Linux defaults respect XDG directories and environment/flag precedence",
   () => {
     for (const mode of ["xdg", "environment", "flag"]) {
@@ -384,7 +385,7 @@ test("available platforms can ship while missing platforms report unavailable", 
   expect(() => renderInstallers([])).toThrow();
 });
 
-unix("relative XDG paths fall back to the user's home", () => {
+linux("relative XDG paths fall back to the user's home", () => {
   const f = fixture();
   const run = Bun.spawnSync(
     ["bash", f.script, "--release-dir", f.release, "--no-activate"],
