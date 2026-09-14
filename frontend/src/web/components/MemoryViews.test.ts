@@ -101,6 +101,8 @@ const selectedSnapshot = {
 } satisfies AdminSnapshot;
 
 beforeEach(() => {
+  localStorage.clear();
+  history.replaceState(null, "", "/admin/memory");
   loadSnapshotMock.mockReset();
   runActionMock.mockReset();
   loadSnapshotMock
@@ -423,4 +425,129 @@ test("an action result ends loading even when it supersedes an in-flight refresh
     expect(screen.queryByText("Loading Crystals…")).toBeNull(),
   );
   expect(screen.getByText("Evidence")).toBeTruthy();
+});
+
+test("book selection scopes requests, survives view changes and remembers the choice", async () => {
+  localStorage.clear();
+  const user = userEvent.setup();
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      views: ["Crystals", "Concepts"],
+      series_options: [
+        { slug: "book-a", title: "First book" },
+        { slug: "book-b", title: "Second book" },
+      ],
+    },
+    onNotice: vi.fn(),
+  });
+  await user.selectOptions(await screen.findByLabelText("Book"), "book-b");
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+      "Crystals",
+      undefined,
+      "book-b",
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Concepts" }));
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+      "Concepts",
+      undefined,
+      "book-b",
+    ),
+  );
+  expect(localStorage.getItem("hieronymus.memory.series")).toBe("book-b");
+  await user.selectOptions(screen.getByLabelText("Book"), "");
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith("Concepts", undefined),
+  );
+  localStorage.clear();
+});
+
+test("saved book is restored and add-memory uses its slug", async () => {
+  localStorage.setItem("hieronymus.memory.series", "book-a");
+  const user = userEvent.setup();
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      series_options: [{ slug: "book-a", title: "First book" }],
+    },
+    onNotice: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenCalledWith(
+      "Crystals",
+      undefined,
+      "book-a",
+    ),
+  );
+  await user.click(await screen.findByRole("button", { name: "Add Memory" }));
+  expect(
+    ((await screen.findByLabelText("Series slug")) as HTMLInputElement).value,
+  ).toBe("book-a");
+});
+
+test("action results are refreshed through the active book filter", async () => {
+  localStorage.setItem("hieronymus.memory.series", "book-a");
+  loadSnapshotMock.mockReset().mockResolvedValue(selectedSnapshot);
+  runActionMock.mockResolvedValue({
+    result: { message: "Done" },
+    snapshot: {
+      ...selectedSnapshot.snapshot,
+      rows: [{ ...row, id: 999, label: "Other book" }],
+    },
+  } as AdminActionResult);
+  const user = userEvent.setup();
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      series_options: [{ slug: "book-a", title: "First book" }],
+    },
+    onNotice: vi.fn(),
+  });
+  await user.click(
+    await screen.findByRole("button", { name: "Reinforce Crystal" }),
+  );
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", 7, "book-a"),
+  );
+  expect(screen.queryByText("Other book")).toBeNull();
+});
+
+test("a late response from the previous book cannot replace the selected book", async () => {
+  const user = userEvent.setup();
+  let resolveOld!: (value: AdminSnapshot) => void;
+  loadSnapshotMock.mockReset().mockResolvedValue(listSnapshot);
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      series_options: [
+        { slug: "a", title: "A" },
+        { slug: "b", title: "B" },
+      ],
+    },
+    onNotice: vi.fn(),
+  });
+  await screen.findByRole("button", { name: /Crystal Alpha/ });
+  loadSnapshotMock.mockImplementation((_view, _id, series) =>
+    series === "a"
+      ? new Promise((resolve) => {
+          resolveOld = resolve;
+        })
+      : Promise.resolve(listSnapshot),
+  );
+  await user.selectOptions(screen.getByLabelText("Book"), "a");
+  await user.selectOptions(screen.getByLabelText("Book"), "b");
+  await screen.findByRole("button", { name: /Crystal Alpha/ });
+  resolveOld({
+    snapshot: {
+      ...listSnapshot.snapshot,
+      rows: [{ ...row, label: "Stale book record" }],
+    },
+  });
+  await waitFor(() =>
+    expect(screen.queryByText("Stale book record")).toBeNull(),
+  );
+  expect((screen.getByLabelText("Book") as HTMLSelectElement).value).toBe("b");
 });

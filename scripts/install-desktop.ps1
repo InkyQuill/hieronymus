@@ -1,6 +1,6 @@
 #requires -Version 7.4
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$ReleaseDir,[string]$AppDir="$env:LOCALAPPDATA/Hieronymus/app",[string]$DataRoot="$env:APPDATA/Hieronymus",[string]$UnitDir,[switch]$NoActivate,[switch]$Uninstall)
+param([Parameter(Mandatory=$true)][string]$ReleaseDir,[string]$AppDir=$(if($env:HIERONYMUS_APP_DIR){$env:HIERONYMUS_APP_DIR}else{"$env:LOCALAPPDATA/Hieronymus/app"}),[string]$DataRoot=$(if($env:HIERONYMUS_DATA_ROOT){$env:HIERONYMUS_DATA_ROOT}else{"$env:APPDATA/Hieronymus"}),[string]$UnitDir,[switch]$NoActivate,[switch]$Uninstall)
 $ErrorActionPreference='Stop'
 if($Uninstall -and $NoActivate){throw '-Uninstall and -NoActivate cannot be combined'}
 if (-not $IsWindows -or [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'Windows x86_64 is required' }

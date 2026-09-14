@@ -1473,3 +1473,27 @@ fn preflight_lists_blocking_rows_with_reason_codes() {
     let rendered = serde_json::to_string(&report).unwrap();
     assert!(rendered.contains("\"reason_code\""), "{rendered}");
 }
+
+#[test]
+fn legacy_database_without_later_memory_columns_can_be_migrated() {
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let connection = rich_fixture(data.path());
+    connection
+        .execute_batch(
+            "drop index if exists short_term_memories_working_copy_idx;
+         drop index if exists crystal_activations_recall_id_idx;
+         drop index if exists crystal_activations_outcome_idx;
+         alter table short_term_memories drop column source_crystal_id;
+         alter table crystal_links drop column weight;
+         alter table crystal_activations drop column recall_id;
+         alter table crystal_activations drop column outcome;",
+        )
+        .unwrap();
+    drop(connection);
+    let before = file_tree_digest(data.path());
+    let report = run_dry_run_in(&HieronymusConfig::new(data.path()), false, work.path()).unwrap();
+    assert_eq!(report.refused, None, "{report:?}");
+    assert!(report.verification.unwrap().all_checks_pass());
+    assert_eq!(file_tree_digest(data.path()), before);
+}

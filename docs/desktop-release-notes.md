@@ -1,4 +1,4 @@
-# Hieronymus v0.9.2
+# Hieronymus v0.9.3
 
 <!-- Publication template: desktop-ci.ts replaces @@EVIDENCE_URL@@ with the verified immutable qualification-data URL before creating the GitHub release. -->
 
@@ -7,12 +7,12 @@ add its MCP connection and Hieronymus skills, then continue writing in your agen
 
 ## Install
 
-- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2-Setup.exe), open it, and follow the steps.
-- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
+- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.3/Hieronymus-0.9.3-Setup.exe), open it, and follow the steps.
+- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.3/Hieronymus-0.9.3.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
 - **Linux x86_64:** paste this into a terminal:
 
 ```bash
-curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/install-hieronymus.sh | bash
+curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.3/install-hieronymus.sh | bash
 ```
 
 The installers download the app and its memory model, verify the files, and install
@@ -25,16 +25,18 @@ The web interface opens after installation. Use it to inspect your agent's memor
 add pointers, and flag stale or wrong entries. Browser authentication is optional
 and off by default; MCP access remains authenticated.
 
-This update fixes Codex and other ordinary MCP clients failing to connect with
-`Header mismatch`. The installed stdio adapter now handles initialization and
-version negotiation before exposing tool schemas and forwarding tool calls.
-Existing clients using MCP `2026-07-28` continue to work. Restart your agent's
-MCP connection after updating Hieronymus.
+## What changed
 
-Dream now sizes batches to the provider’s context window. Set **Context window
-(tokens)** in provider settings to control the budget; native Ollama also checks
-the model’s limit and explicitly requests enough context without silently
-truncating memories. Failed or incomplete generations remain visible as errors.
+Choose a book in the memory browser to focus on one series. Your selection stays
+active across views and refreshes, and new memories default to that book.
+
+The installer uses the standard configuration folder for your operating system,
+with explicit overrides available. On Linux it also exposes `hiero` in your user
+command directory. Migration now accepts older Python databases missing legacy
+memory columns while preserving their contents and keeping a backup.
+
+Release checks report non-P0 problems as warnings with tracked issues. Retained
+binaries can be reused after installer-only fixes, avoiding another native build.
 
 ## Platform notes
 

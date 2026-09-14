@@ -181,7 +181,14 @@ const ADMIN_COMMANDS: [AdminCommand; 13] = [
 /// `GET /api/admin/dashboard` — the full admin bootstrap payload.
 pub(super) fn dashboard(_request: &Request, runtime: &DaemonRuntime) -> Response {
     let config = &runtime.config;
+    let series = match hieronymus::registry::Registry::open(config)
+        .and_then(|registry| registry.list_series())
+    {
+        Ok(series) => series,
+        Err(_) => return Response::json(500, &json!({"error": "Book list is unavailable"})),
+    };
     let mut payload = json!({
+        "series_options": series.iter().map(|book| json!({"slug": book.slug, "title": book.title})).collect::<Vec<_>>(),
         "views": ADMIN_VIEWS,
         "view_keys": ADMIN_VIEW_KEYS,
         "view_labels": view_labels(),

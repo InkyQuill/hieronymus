@@ -40,11 +40,20 @@ pub const LINK_NAMES: [&str; 4] = [
 
 /// Default application root, matching the historical managed install.
 pub fn default_app_dir() -> PathBuf {
+    if let Some(root) = std::env::var_os("HIERONYMUS_APP_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(root);
+    }
     #[cfg(target_os = "linux")]
     {
-        home::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".local/share/hieronymus/app")
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| {
+                home::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".local/share")
+            })
+            .join("hieronymus/app")
     }
     #[cfg(target_os = "macos")]
     {

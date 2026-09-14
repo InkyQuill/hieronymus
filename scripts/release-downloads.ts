@@ -1,10 +1,12 @@
 /** Public installation payloads; candidate/test evidence stays in maintainer storage. */
 import { readReleaseV2, TARGETS } from "./desktop-targets";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 export function publicPayloads(directory: string): string[] {
   const names = new Set<string>();
   for (const target of TARGETS) {
     const metadata = `release-${target}.json`;
+    if (!existsSync(join(directory, metadata))) continue;
     const release = readReleaseV2(join(directory, metadata), target);
     names.add(metadata);
     names.add(release.platform.archive);

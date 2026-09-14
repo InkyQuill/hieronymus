@@ -24,9 +24,7 @@ const RESTART_SECONDS: &str = "5s";
 
 /// Default per-user unit directory (systemd user units).
 pub fn default_unit_dir() -> PathBuf {
-    home::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config")
+    hieronymus::data_root::platform_config_dir()
         .join("systemd")
         .join("user")
 }

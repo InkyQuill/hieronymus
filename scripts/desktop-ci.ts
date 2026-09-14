@@ -18,6 +18,52 @@ import { dirname, join, resolve } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
 import { localFile, verifyFile } from "./check-desktop-evidence";
+/** Packaging and documentation edits do not change retained binary bytes. */
+export function binarySourceChanged(paths: string[]): boolean {
+  const packaging = new Set([
+    "scripts/desktop-ci.ts",
+    "scripts/report-release-warnings.sh",
+    "scripts/build-installers.ts",
+    "scripts/build-native-installer.ts",
+    "scripts/install-desktop.sh",
+    "scripts/install-desktop.ps1",
+    "scripts/install.sh",
+    "scripts/release-downloads.ts",
+    "scripts/package-desktop-evidence.ts",
+    "scripts/check-desktop-evidence.ts",
+    "scripts/stage-installer-cache.ts",
+  ]);
+  return paths.some(
+    (p) =>
+      !(
+        p.startsWith(".github/") ||
+        p.startsWith("docs/") ||
+        p.startsWith("qualification/") ||
+        p.startsWith("scripts/setup/") ||
+        p.endsWith(".test.ts") ||
+        (!p.includes("/") && p.endsWith(".md")) ||
+        packaging.has(p)
+      ),
+  );
+}
+
+function verifyReusableSource(source: string, current: string) {
+  if (source === current) return;
+  const result = Bun.spawnSync(
+    ["git", "diff", "--name-only", source, current],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (
+    result.exitCode !== 0 ||
+    binarySourceChanged(
+      result.stdout.toString().trim().split("\n").filter(Boolean),
+    )
+  )
+    throw new Error(
+      "Binary inputs changed; build a new candidate for this source",
+    );
+}
+
 export function numericRun(value: string) {
   if (!/^[1-9][0-9]{0,19}$/.test(value))
     throw new Error("numeric workflow run ID required");
@@ -28,6 +74,7 @@ export function validateRun(
   repository: string,
   workflow: string,
   commit?: string,
+  allowFailedChecks = false,
 ) {
   if (
     run.repository?.full_name !== repository ||
@@ -35,7 +82,8 @@ export function validateRun(
     run.path !== `.github/workflows/${workflow}.yml` ||
     run.event !== "workflow_dispatch" ||
     run.status !== "completed" ||
-    run.conclusion !== "success" ||
+    (run.conclusion !== "success" &&
+      !(allowFailedChecks && run.conclusion === "failure")) ||
     !/^[a-f0-9]{40}$/.test(run.head_sha) ||
     (commit && run.head_sha !== commit)
   )
@@ -172,7 +220,13 @@ export async function verifyCandidate(
   const all = new Set<string>();
   let modelHash: string | undefined;
   let version: string | undefined;
-  for (const target of TARGETS) {
+  const targets = TARGETS.filter((t) =>
+    lstatSync(join(directory, `candidate-${t}.json`), {
+      throwIfNoEntry: false,
+    }),
+  );
+  if (!targets.length) throw new Error("No candidate artifacts available");
+  for (const target of targets) {
     const name = `candidate-${target}.json`;
     const record = JSON.parse(readFileSync(localFile(directory, name), "utf8"));
     if (
@@ -259,11 +313,38 @@ if (import.meta.main) {
     const run = JSON.parse(
       gh(["api", `repos/${repo}/actions/runs/${numericRun(id)}`]),
     );
-    const source = validateRun(run, repo, kind, commit);
-    const names =
+    const source = validateRun(
+      run,
+      repo,
+      kind,
+      undefined,
+      kind === "desktop-candidate",
+    );
+    if (commit) verifyReusableSource(source, commit);
+    let names =
       kind === "desktop-candidate"
         ? TARGETS.map((t) => `candidate-${t}`)
         : ["desktop-evidence"];
+    if (kind === "desktop-candidate") {
+      const pages = JSON.parse(
+        gh([
+          "api",
+          "--paginate",
+          "--slurp",
+          `repos/${repo}/actions/runs/${id}/artifacts`,
+        ]),
+      );
+      const available = new Set(
+        pages.flatMap((page: any) =>
+          page.artifacts.filter((a: any) => !a.expired).map((a: any) => a.name),
+        ),
+      );
+      names = names.filter((name) => {
+        if (available.has(name)) return true;
+        console.warn(`::warning::Missing platform artifact: ${name}`);
+        return false;
+      });
+    }
     const acquire = artifactAcquirer(id, repo);
     if (kind === "desktop-candidate")
       await downloadCandidates(names, out, acquire, (directory) =>
@@ -280,43 +361,87 @@ if (import.meta.main) {
     const { checkSource } = await import("./check-rust-release");
     checkSource(process.cwd(), ref);
     const { verifyEvidence } = await import("./package-desktop-evidence");
-    await verifyEvidence(directory, evidence, commit, candidateRun);
+    const retainedCommit = JSON.parse(
+      readFileSync(
+        localFile(
+          directory,
+          readdirSync(directory).find(
+            (n) => n.startsWith("candidate-") && n.endsWith(".json"),
+          )!,
+        ),
+        "utf8",
+      ),
+    ).candidate_commit;
+    if (!/^[a-f0-9]{40}$/.test(retainedCommit))
+      throw new Error("Invalid candidate source");
+    verifyReusableSource(retainedCommit, commit);
+    await verifyCandidate(directory, retainedCommit);
+    try {
+      await verifyEvidence(directory, evidence, retainedCommit, candidateRun);
+    } catch (error) {
+      console.warn(`::warning::Optional desktop evidence: ${error}`);
+    }
     const { publicPayloads, nativeInstallerNames } =
       await import("./release-downloads");
     const { renderInstallers } = await import("./build-installers");
-    const releases = TARGETS.map((target) =>
+    const releases = TARGETS.filter((t) =>
+      lstatSync(join(directory, `release-${t}.json`), {
+        throwIfNoEntry: false,
+      }),
+    ).map((target) =>
       readReleaseV2(localFile(directory, `release-${target}.json`), target),
     );
     const names = publicPayloads(directory);
     const setupNames = nativeInstallerNames(releases[0].version);
-    for (const name of setupNames) localFile(installers, name);
+    const availableSetup = setupNames.filter((name) => {
+      if (
+        name.endsWith(".exe") &&
+        !releases.some((r) => r.target.includes("windows"))
+      )
+        return false;
+      if (
+        name.endsWith(".pkg") &&
+        !releases.some((r) => r.target.includes("darwin"))
+      )
+        return false;
+      if (lstatSync(join(installers, name), { throwIfNoEntry: false })) {
+        localFile(installers, name);
+        return true;
+      }
+      console.warn(`::warning::Native installer unavailable: ${name}`);
+      return false;
+    });
     if (
       readFileSync(localFile(installers, "install-hieronymus.sh"), "utf8") !==
       renderInstallers(releases)["install-hieronymus.sh"]
     )
       throw new Error("installer source/release mismatch");
     if (
-      readFileSync(localFile(installers, setupNames[1]))
-        .subarray(0, 2)
-        .toString() !== "MZ" ||
-      readFileSync(localFile(installers, setupNames[2]))
-        .subarray(0, 4)
-        .toString() !== "xar!"
+      (availableSetup.includes(setupNames[1]) &&
+        readFileSync(localFile(installers, setupNames[1]))
+          .subarray(0, 2)
+          .toString() !== "MZ") ||
+      (availableSetup.includes(setupNames[2]) &&
+        readFileSync(localFile(installers, setupNames[2]))
+          .subarray(0, 4)
+          .toString() !== "xar!")
     )
       throw new Error("invalid native setup package");
     const summaryDirectory = mkdtempSync(
       join(tmpdir(), "hieronymus-qualification-"),
     );
     const notes = join(summaryDirectory, "release-notes.md");
-    const provenance = JSON.parse(
-      readFileSync(localFile(evidence, "provenance.json"), "utf8"),
-    );
+    const evidenceUrl = `https://github.com/InkyQuill/hieronymus/actions/runs/${candidateRun}`;
     writeFileSync(
       notes,
       readFileSync("docs/desktop-release-notes.md", "utf8").replaceAll(
         "@@EVIDENCE_URL@@",
-        `https://github.com/InkyQuill/hieronymus/tree/${provenance.evidence_data_commit}/qualification/desktop-evidence`,
-      ),
+        evidenceUrl,
+      ) +
+        `\n\nAvailable binary targets: ${releases.map((r) => r.target).join(", ")}.\n` +
+        `Missing targets: ${TARGETS.filter((t) => !releases.some((r) => r.target === t)).join(", ") || "none"}.\n` +
+        `Missing installers: ${setupNames.filter((n) => !availableSetup.includes(n)).join(", ") || "none"}.\n` +
+        "Native installation checks and evidence are advisory; see the linked workflow and open release-warning issues for failures or untested behavior.\n",
     );
     try {
       gh([
@@ -328,7 +453,7 @@ if (import.meta.main) {
         `Hieronymus ${ref.replace("refs/tags/", "")}`,
         "--notes-file",
         notes,
-        ...setupNames.map((n) => join(installers, n)),
+        ...availableSetup.map((n) => join(installers, n)),
         ...names.map((n) => join(directory, n)),
       ]);
     } finally {

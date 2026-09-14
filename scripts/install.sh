@@ -31,9 +31,13 @@
 
 set -euo pipefail
 
+# XDG base directories must be absolute; empty/relative values use platform defaults.
+case "${XDG_CONFIG_HOME:-}" in /*) ;; *) XDG_CONFIG_HOME="$HOME/.config";; esac
+case "${XDG_DATA_HOME:-}" in /*) ;; *) XDG_DATA_HOME="$HOME/.local/share";; esac
+
 TARGET="x86_64-unknown-linux-gnu"
-APP_DIR="${HIERONYMUS_APP_DIR:-${HOME}/.local/share/hieronymus/app}"
-DATA_ROOT="${HIERONYMUS_DATA_ROOT:-${HOME}/.config/hieronymus}"
+APP_DIR="${HIERONYMUS_APP_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/hieronymus/app}"
+DATA_ROOT="${HIERONYMUS_DATA_ROOT:-${XDG_CONFIG_HOME:-${HOME}/.config}/hieronymus}"
 case "$DATA_ROOT" in
   "~/"*) DATA_ROOT="${HOME}/${DATA_ROOT#~/}" ;;
 esac

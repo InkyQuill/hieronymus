@@ -661,6 +661,7 @@ fn apply_terminology_schema_through(
     let from = match crate::schema_upgrade::marked_version(connection)? {
         Some(version) => version,
         None => {
+            prepare_legacy_memory_columns(connection)?;
             connection.execute_batch(&format!(
                 "insert into {RUST_META_TABLE} (schema_version) values ({baseline});
                  pragma user_version = {baseline};",
@@ -670,6 +671,40 @@ fn apply_terminology_schema_through(
         }
     };
     crate::schema_upgrade::apply_steps(connection, from, target)
+}
+
+/// Early Python databases predate these additive memory fields. Bring the
+/// import boundary to the v1 baseline before ordered Rust steps use them.
+/// Unknown feedback stays NULL; importing it must not invent useful recalls.
+fn prepare_legacy_memory_columns(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    for (table, column, definition) in [
+        (
+            "short_term_memories",
+            "source_crystal_id",
+            "integer references crystals(id) on delete set null",
+        ),
+        ("crystal_links", "weight", "real not null default 0.5"),
+        ("crystal_activations", "recall_id", "text"),
+        (
+            "crystal_activations",
+            "outcome",
+            "text check (outcome in ('useful', 'miss'))",
+        ),
+    ] {
+        let present: bool = connection.query_row(
+            "select exists(select 1 from pragma_table_info(?1) where name = ?2)",
+            [table, column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            connection.execute_batch(&format!(
+                "alter table {table} add column {column} {definition};"
+            ))?;
+        }
+    }
+    // CREATE IF NOT EXISTS also installs the baseline indexes missing from
+    // those Python versions, without changing preserved memory rows.
+    connection.execute_batch(GLOBAL_MIGRATION_SQL)
 }
 
 /// Classify the database at `path` without writing to it.
