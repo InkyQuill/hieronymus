@@ -1,0 +1,179 @@
+{
+  "candidate_commit": "4892343f118c360ec13ab39c54888b831e4a4e19",
+  "target": "x86_64-pc-windows-msvc",
+  "artifact_sha256": "9eedfb411237d22b99ae094522be9ae3e2bb8ce9b2a88b5af891522467383ce0",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "metadata_sha256": "fc51acbbe525bc5b3047086353689313fbfb12e6ca60988dfe0ad18bf37dbb56",
+  "assets_sha256": "1fa4aa266e5e9f83c08588eb02c412bc0d17cd7b0eed83c6125c8d0934cce387",
+  "signing": "unsigned-waiver",
+  "os_version": "Physical desktop session not exercised for this patch",
+  "desktop": "windows",
+  "session": "native",
+  "scale": [],
+  "qualification": "unqualified",
+  "qualification_reason": "No fresh physical desktop qualification was performed for this MCP and Dream context patch. Automated final-package transport tests are recorded separately.",
+  "checks": [
+    {
+      "name": "native-semantic-mcp",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "startup",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "duplicate-start",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "model-acquisition",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "semantic-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "provider-failure-recovery-untested",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "three-probe-failures",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "failed-stop",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "quit-preserves-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "login-toggle",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "next-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "interactive-menu",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "missing-tray-host",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "host-restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "theme",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "dpi",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "console-grant",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "active-upgrade",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "rollback",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "uninstall",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "secret-free-diagnostics",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "pending-native-operation",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "private-storage-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "windows-acl",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "scheduler-continuation",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    },
+    {
+      "name": "executable-in-use",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-pc-windows-msvc-windows-native.txt",
+      "evidence_sha256": "b7b148cd20adc6c0d03e43d16c45832702f8a642c5d597872ba4e69de6be08cf"
+    }
+  ]
+}

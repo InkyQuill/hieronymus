@@ -1,0 +1,173 @@
+{
+  "candidate_commit": "4892343f118c360ec13ab39c54888b831e4a4e19",
+  "target": "x86_64-unknown-linux-gnu",
+  "artifact_sha256": "91525bfe10ed0bb41c4445a10de35a7da7b4b38f207789c8784d7ae7d21bfb53",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "metadata_sha256": "90d52734bf406822a372e62a326c13150a182707c2875ef2b34547e2dc7ea649",
+  "assets_sha256": "15e6f894970b71f9430af68ada387685b766fd93466be00b341029bd2ebc17f3",
+  "signing": "unsigned-waiver",
+  "os_version": "Physical desktop session not exercised for this patch",
+  "desktop": "gnome-appindicator",
+  "session": "wayland",
+  "scale": [],
+  "qualification": "unqualified",
+  "qualification_reason": "No fresh physical desktop qualification was performed for this MCP and Dream context patch. Automated final-package transport tests are recorded separately.",
+  "checks": [
+    {
+      "name": "native-semantic-mcp",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "startup",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "duplicate-start",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "model-acquisition",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "semantic-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "provider-failure-recovery-untested",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "three-probe-failures",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "failed-stop",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "quit-preserves-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "login-toggle",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "next-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "interactive-menu",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "missing-tray-host",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "host-restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "theme",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "dpi",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "console-grant",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "active-upgrade",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "rollback",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "uninstall",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "secret-free-diagnostics",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "pending-native-operation",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "private-storage-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "native-manager-update",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    },
+    {
+      "name": "live-tray-replacement",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-wayland.txt",
+      "evidence_sha256": "0448a2edc612a52699212e9345876e6b82a437f9f4cdd0b638d588ae71a9abec"
+    }
+  ]
+}
