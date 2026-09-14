@@ -9,7 +9,14 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-for (const mode of ["passed", "failed", "existing", "job-failed"])
+for (const mode of [
+  "passed",
+  "failed",
+  "existing",
+  "job-failed",
+  "list-error",
+  "create-error",
+])
   test.skipIf(process.platform === "win32")(
     `release warning reporter: ${mode}`,
     () => {
@@ -19,8 +26,10 @@ for (const mode of ["passed", "failed", "existing", "job-failed"])
           join(root, "gh"),
           `#!/bin/sh
 if [ "$2" = list ]; then
+  if [ "$REPORT_MODE" = list-error ]; then exit 1; fi
   if [ "$REPORT_MODE" = existing ]; then echo 'Release warning: candidate / native / Linux'; fi
 elif [ "$2" = create ]; then
+  if [ "$REPORT_MODE" = create-error ]; then exit 1; fi
   printf '%s\\n' "$@" > "$REPORT_CALLS"
 else exit 2
 fi
@@ -55,6 +64,9 @@ fi
           },
         );
         expect(result.exitCode).toBe(0);
+        if (mode.endsWith("-error")) {
+          expect(result.stdout.toString()).toContain("::warning::Could not");
+        }
         expect(existsSync(calls)).toBe(
           mode === "failed" || mode === "job-failed",
         );

@@ -48,17 +48,7 @@ if (values["dry-run"]) {
       throw new Error(
         "HIERO_COMMON_MODEL_DIR and HIERO_RELEASE_RUNTIME_DIR required; produce shared archive once and stage exact pinned runtime first",
       );
-    run([
-      "cargo",
-      "test",
-      "--locked",
-      "-p",
-      "hiero",
-      "--features",
-      "console-embed",
-      "--test",
-      "console_embed",
-    ]);
+    // Embedded-console tests run in PR CI; do not rebuild a debug CLI here.
     run([
       "cargo",
       "build",

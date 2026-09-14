@@ -18,6 +18,20 @@ import { dirname, join, resolve } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
 import { localFile, verifyFile } from "./check-desktop-evidence";
+
+/** Do not advertise downloads omitted from a partial release. */
+export function availableInstallerNotes(
+  template: string,
+  available: string[],
+): string {
+  return template
+    .split("\n")
+    .filter((line) => {
+      const match = line.match(/^- \*\*(Windows|macOS):\*\*.*\/([^/()]+)\)/);
+      return !match || available.includes(match[2]);
+    })
+    .join("\n");
+}
 /** Packaging and documentation edits do not change retained binary bytes. */
 export function binarySourceChanged(paths: string[]): boolean {
   const packaging = new Set([
@@ -36,7 +50,9 @@ export function binarySourceChanged(paths: string[]): boolean {
   return paths.some(
     (p) =>
       !(
-        p.startsWith(".github/") ||
+        (p.startsWith(".github/") &&
+          p !== ".github/workflows/desktop-candidate.yml" &&
+          !p.startsWith(".github/actions/")) ||
         p.startsWith("docs/") ||
         p.startsWith("qualification/") ||
         p.startsWith("scripts/setup/") ||
@@ -434,10 +450,10 @@ if (import.meta.main) {
     const evidenceUrl = `https://github.com/InkyQuill/hieronymus/actions/runs/${candidateRun}`;
     writeFileSync(
       notes,
-      readFileSync("docs/desktop-release-notes.md", "utf8").replaceAll(
-        "@@EVIDENCE_URL@@",
-        evidenceUrl,
-      ) +
+      availableInstallerNotes(
+        readFileSync("docs/desktop-release-notes.md", "utf8"),
+        availableSetup,
+      ).replaceAll("@@EVIDENCE_URL@@", evidenceUrl) +
         `\n\nAvailable binary targets: ${releases.map((r) => r.target).join(", ")}.\n` +
         `Missing targets: ${TARGETS.filter((t) => !releases.some((r) => r.target === t)).join(", ") || "none"}.\n` +
         `Missing installers: ${setupNames.filter((n) => !availableSetup.includes(n)).join(", ") || "none"}.\n` +

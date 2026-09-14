@@ -13,7 +13,7 @@ on:
       release_tag:
         description: Published release to test online when candidate_run is empty
         type: string
-        default: v0.9.2
+        default: v0.9.3
 permissions:
   contents: read
   actions: read

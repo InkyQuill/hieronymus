@@ -97,44 +97,8 @@ jobs:
           ./scripts/check-protobuf.sh
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend build
-      - continue-on-error: true
-        id: warning-2
-        run: cargo clippy -p hiero-desktop --all-targets --all-features --locked -- -D warnings
-      - continue-on-error: true
-        id: warning-3
-        run: cargo test -p hiero-desktop --all-features --locked
-      - name: Native private-file contracts
-        continue-on-error: true
-        id: warning-4
-        if: runner.os == 'Windows' || runner.os == 'macOS'
-        run: cargo test -p hieronymus --all-features --locked --lib private_file::tests
-      - name: Windows selected-helper contract
-        continue-on-error: true
-        id: warning-5
-        if: runner.os == 'Windows'
-        run: cargo test -p hiero --all-features --locked --lib desktop::launch::selection_tests::regular_windows_launcher_selects_versioned_helper
-      - name: Windows isolated uninstall and worker contracts
-        continue-on-error: true
-        id: warning-6
-        if: runner.os == 'Windows'
-        run: |
-          cargo test -p hiero --all-features --locked --lib uninstall::tests
-          cargo test -p hiero --all-features --locked --lib platform::managed_files
-          cargo test -p hiero --all-features --locked --test worker_lifetime
-      - name: Helper rustdoc (Unix)
-        continue-on-error: true
-        id: warning-7
-        if: runner.os != 'Windows'
-        run: RUSTDOCFLAGS="-D warnings" cargo doc -p hiero-desktop --no-deps --all-features --locked
-      - name: Helper rustdoc (PowerShell)
-        continue-on-error: true
-        id: warning-8
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:RUSTDOCFLAGS = "-D warnings"
-          cargo doc -p hiero-desktop --no-deps --all-features --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Source lint, unit tests and rustdoc run in pr.yml. This job builds
+      # each native binary once and checks the actual packaged payload below.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: common-model

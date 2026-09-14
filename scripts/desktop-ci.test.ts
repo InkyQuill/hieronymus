@@ -5,7 +5,23 @@ import {
   validateRun,
   githubFailureDetail,
   artifactAcquirer,
+  availableInstallerNotes,
 } from "./desktop-ci";
+
+test("partial release notes advertise only available native installers", () => {
+  const template =
+    "- **Windows:** [Setup](https://example.com/Hieronymus-0.9.3-Setup.exe)\n- **macOS:** [Installer](https://example.com/Hieronymus-0.9.3.pkg)\n- **Linux x86_64:** run installer";
+  const notes = availableInstallerNotes(template, ["Hieronymus-0.9.3.pkg"]);
+  expect(notes).not.toContain("Windows");
+  expect(notes).toContain("macOS");
+  expect(notes).toContain("Linux");
+  expect(
+    availableInstallerNotes(template, [
+      "Hieronymus-0.9.3.pkg",
+      "Hieronymus-0.9.3-Setup.exe",
+    ]),
+  ).toBe(template);
+});
 const good = {
   repository: { full_name: "owner/repo" },
   head_repository: { full_name: "owner/repo" },
@@ -364,6 +380,8 @@ test("installer-only fixes reuse binaries, runtime changes require a rebuild", a
     ".cargo/config.toml",
     "scripts/desktop-targets.ts",
     "scripts/release-build.ts",
+    ".github/workflows/desktop-candidate.yml",
+    ".github/actions/build/action.yml",
   ])
     expect(binarySourceChanged([path])).toBe(true);
 });
