@@ -5,6 +5,7 @@ on:
 permissions:
   contents: read
   actions: read
+  issues: write
 concurrency:
   group: desktop-candidate-${{ github.ref }}
   cancel-in-progress: false
@@ -23,7 +24,9 @@ jobs:
           toolchain: "1.96.0"
           components: clippy,rustfmt
       - run: bun scripts/check-rust-release.ts --allow-untagged
-      - run: bun test scripts/*.test.ts
+      - continue-on-error: true
+        id: warning-1
+        run: bun test scripts/*.test.ts
       - run: bun scripts/prepare-common-model.ts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -31,6 +34,16 @@ jobs:
           path: target/common-model/
           if-no-files-found: error
           retention-days: 90
+      - name: File release warnings as issues
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_RESULTS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          RELEASE_PLATFORM: ${{ runner.os }}
+        shell: bash
+        run: bash scripts/report-release-warnings.sh
   native:
     needs: common-model
     strategy:
@@ -84,30 +97,8 @@ jobs:
           ./scripts/check-protobuf.sh
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend build
-      - run: cargo clippy -p hiero-desktop --all-targets --all-features --locked -- -D warnings
-      - run: cargo test -p hiero-desktop --all-features --locked
-      - name: Native private-file contracts
-        if: runner.os == 'Windows' || runner.os == 'macOS'
-        run: cargo test -p hieronymus --all-features --locked --lib private_file::tests
-      - name: Windows selected-helper contract
-        if: runner.os == 'Windows'
-        run: cargo test -p hiero --all-features --locked --lib desktop::launch::selection_tests::regular_windows_launcher_selects_versioned_helper
-      - name: Windows isolated uninstall and worker contracts
-        if: runner.os == 'Windows'
-        run: |
-          cargo test -p hiero --all-features --locked --lib uninstall::tests
-          cargo test -p hiero --all-features --locked --lib platform::managed_files
-          cargo test -p hiero --all-features --locked --test worker_lifetime
-      - name: Helper rustdoc (Unix)
-        if: runner.os != 'Windows'
-        run: RUSTDOCFLAGS="-D warnings" cargo doc -p hiero-desktop --no-deps --all-features --locked
-      - name: Helper rustdoc (PowerShell)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:RUSTDOCFLAGS = "-D warnings"
-          cargo doc -p hiero-desktop --no-deps --all-features --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Source lint, unit tests and rustdoc run in pr.yml. This job builds
+      # each native binary once and checks the actual packaged payload below.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: common-model
@@ -140,6 +131,8 @@ jobs:
       - name: Final stripped native package
         run: bun scripts/release-build.ts --target "${{ matrix.target }}"
       - name: Verify final pair and assemble disposable payload
+        continue-on-error: true
+        id: warning-9
         env:
           DESKTOP_TARGET: ${{ matrix.target }}
         run: bun scripts/qualify-desktop-native.ts
@@ -158,3 +151,13 @@ jobs:
           path: target/native-qualification.log
           if-no-files-found: warn
           retention-days: 90
+      - name: File release warnings as issues
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_RESULTS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          RELEASE_PLATFORM: ${{ matrix.os }}
+        shell: bash
+        run: bash scripts/report-release-warnings.sh

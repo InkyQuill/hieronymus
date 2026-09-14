@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Generated standalone installer. No source checkout or language runtime needed.
 set -euo pipefail
+
+# XDG base directories must be absolute; empty/relative values use platform defaults.
+case "${XDG_CONFIG_HOME:-}" in /*) ;; *) XDG_CONFIG_HOME="$HOME/.config";; esac
+case "${XDG_DATA_HOME:-}" in /*) ;; *) XDG_DATA_HOME="$HOME/.local/share";; esac
 main() {
-  local app='' data='' unit='' source='' no_activate=0 no_open=0
+  local app="${HIERONYMUS_APP_DIR:-}" data="${HIERONYMUS_DATA_ROOT:-}" unit="${HIERONYMUS_UNIT_DIR:-}" source='' no_activate=0 no_open=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --app-dir) app="${2:?Missing application directory}"; shift 2;;
@@ -17,7 +21,7 @@ main() {
   done
   local target
   case "$(uname -s)/$(uname -m)" in
-    Linux/x86_64) target=x86_64-unknown-linux-gnu; app="${app:-$HOME/.local/share/hieronymus/app}"; data="${data:-$HOME/.config/hieronymus}";;
+    Linux/x86_64) target=x86_64-unknown-linux-gnu; app="${app:-${XDG_DATA_HOME:-$HOME/.local/share}/hieronymus/app}"; data="${data:-${XDG_CONFIG_HOME:-$HOME/.config}/hieronymus}";;
     Darwin/arm64) target=aarch64-apple-darwin; app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
     Darwin/x86_64)
       # A Terminal running under Rosetta still needs the Apple Silicon build.
@@ -67,6 +71,23 @@ main() {
     printf 'Installation needs attention:\n' >&2; cat "$work/install.log" >&2; return 1
   fi
   printf 'Hieronymus is installed.\n'
+  # The managed launcher directory is internal; expose commands on the
+  # conventional user PATH without replacing unrelated executables.
+  mkdir -p "$HOME/.local/bin"
+  local name link
+  for name in hiero hieronymus hieronymus-agent-hook hieronymus-mcp; do
+    [ -e "$app/bin/$name" ] || continue
+    link="$HOME/.local/bin/$name"
+    if [ ! -e "$link" ] && [ ! -L "$link" ]; then
+      ln -s "$app/bin/$name" "$link"
+    elif [ "$(readlink "$link" 2>/dev/null || true)" != "$app/bin/$name" ]; then
+      printf 'Warning: keeping existing command %s; Hieronymus is available at %s/bin/%s.\n' "$link" "$app" "$name" >&2
+    fi
+  done
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) printf 'For terminal commands, add %s/.local/bin to PATH.\n' "$HOME";;
+  esac
   if [ "$no_open" = 0 ]; then
     printf 'Opening Hieronymus. Choose “Connect your agent” to finish setup.\n'
     if ! "$app/bin/hiero" admin --data-root "$data" > "$work/open.log" 2>&1; then

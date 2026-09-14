@@ -58,8 +58,13 @@ fn load_config_defaults_to_config_home_when_unset() {
     unsafe { std::env::remove_var("HIERONYMUS_DATA_ROOT") };
     let config = load_config(None);
 
-    let home = home::home_dir().unwrap();
-    assert_eq!(config.data_root(), home.join(".config").join("hieronymus"));
+    let base = hieronymus::data_root::platform_config_dir();
+    let name = if cfg!(any(windows, target_os = "macos")) {
+        "Hieronymus"
+    } else {
+        "hieronymus"
+    };
+    assert_eq!(config.data_root(), base.join(name));
 }
 
 #[test]
@@ -84,6 +89,40 @@ fn load_config_expands_home_shorthand() {
 
     let home = home::home_dir().unwrap();
     assert_eq!(config.data_root(), home.join("hieronymus-root"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn load_config_respects_xdg_and_explicit_precedence() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let old = std::env::var_os("XDG_CONFIG_HOME");
+    let root = tempfile::tempdir().unwrap();
+    // SAFETY: the environment lock serializes config resolution tests.
+    unsafe {
+        std::env::remove_var("HIERONYMUS_DATA_ROOT");
+        std::env::set_var("XDG_CONFIG_HOME", root.path());
+    }
+    assert_eq!(
+        load_config(None).data_root(),
+        root.path().join("hieronymus")
+    );
+    assert_eq!(
+        load_config(Some(Path::new("/explicit"))).data_root(),
+        Path::new("/explicit")
+    );
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", "relative");
+    }
+    assert_eq!(
+        load_config(None).data_root(),
+        home::home_dir().unwrap().join(".config/hieronymus")
+    );
+    unsafe {
+        match old {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+    }
 }
 
 // ----------------------------------------------------------- release config

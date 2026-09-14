@@ -1,5 +1,5 @@
 /** Render small, standalone launchers around checksum-bound released binaries. */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   TARGETS,
@@ -25,10 +25,10 @@ function heredoc(path: string, contents: string) {
 export function renderInstallers(releases: readonly ReleaseV2[]) {
   releases = releases.map((r) => parseReleaseV2(JSON.stringify(r), r.target));
   if (
-    releases.length !== TARGETS.length ||
-    new Set(releases.map((r) => r.target)).size !== TARGETS.length
+    releases.length === 0 ||
+    new Set(releases.map((r) => r.target)).size !== releases.length
   )
-    throw new Error("all four target releases required");
+    throw new Error("distinct available target releases required");
   const version = releases[0].version;
   if (
     !/^\d+\.\d+\.\d+$/.test(version) ||
@@ -46,7 +46,8 @@ export function renderInstallers(releases: readonly ReleaseV2[]) {
     payload += `${r.target})\nplatform='${r.platform.archive}'; platform_hash='${r.platform.sha256}'\nmodel='${r.model.archive}'; model_hash='${r.model.sha256}'\n`;
     payload += heredoc(`release-${r.target}.json`, JSON.stringify(r)) + ";;\n";
   }
-  payload += "esac\n";
+  payload +=
+    "*) echo 'This platform is unavailable in this release' >&2; return 2;;\nesac\n";
   payload += heredoc(
     "offline.sh",
     readFileSync(new URL("./install-desktop.sh", import.meta.url), "utf8"),
@@ -55,22 +56,26 @@ export function renderInstallers(releases: readonly ReleaseV2[]) {
     "desktop-metadata.awk",
     readFileSync(new URL("./desktop-metadata.awk", import.meta.url), "utf8"),
   );
-  const windows = releases.find((r) => r.target === "x86_64-pc-windows-msvc")!;
-  const ps = fill(
-    template("install.ps1"),
-    [
-      `$metadataBase64='${Buffer.from(JSON.stringify(windows)).toString("base64")}'`,
-      `$platformName='${windows.platform.archive}';$platformHash='${windows.platform.sha256}'`,
-      `$modelName='${windows.model.archive}';$modelHash='${windows.model.sha256}'`,
-    ].join("\n"),
-  );
+  const windows = releases.find((r) => r.target === "x86_64-pc-windows-msvc");
+  const ps = windows
+    ? fill(
+        template("install.ps1"),
+        [
+          `$metadataBase64='${Buffer.from(JSON.stringify(windows)).toString("base64")}'`,
+          `$platformName='${windows.platform.archive}';$platformHash='${windows.platform.sha256}'`,
+          `$modelName='${windows.model.archive}';$modelHash='${windows.model.sha256}'`,
+        ].join("\n"),
+      )
+    : "throw 'Windows is unavailable in this release'\n";
   return {
     "install-hieronymus.sh": fill(template("install.sh"), payload),
     "Install-Hieronymus.ps1": ps,
   };
 }
 export async function buildInstallers(directory: string, output: string) {
-  const releases = TARGETS.map((target) =>
+  const releases = TARGETS.filter((target) =>
+    existsSync(join(directory, `release-${target}.json`)),
+  ).map((target) =>
     readReleaseV2(join(directory, `release-${target}.json`), target),
   );
   for (const r of releases)

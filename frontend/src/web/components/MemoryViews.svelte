@@ -50,6 +50,18 @@
         ? "Crystals"
         : (dashboard.views[0] ?? ""),
   );
+  const books = $derived(dashboard.series_options ?? []);
+  let selectedSeries = $state("");
+  const globalView = $derived(["Dream Runs", "Dream Audits", "Audit Log"].includes(selectedView));
+  function chooseSeries(value: string) {
+    selectedSeries = value;
+    selectedIds = []; snapshot = null; correction = null; dialogCommand = null;
+    try { localStorage.setItem("hieronymus.memory.series", value); } catch { /* Storage may be disabled. */ }
+    const url = new URL(window.location.href);
+    if (value) url.searchParams.set("series", value); else url.searchParams.delete("series");
+    history.replaceState(null, "", url);
+    void load(selectedView);
+  }
   let selectedView = $state("");
   let selectedIds = $state<Array<string | number>>([]);
   let snapshot = $state.raw<AdminSnapshot["snapshot"] | null>(null);
@@ -88,7 +100,7 @@
     error = "";
     inspection = null;
     try {
-      const next = (await loadAdminSnapshot(view, selectedId)).snapshot;
+      const next = (await (selectedSeries ? loadAdminSnapshot(view, selectedId, selectedSeries) : loadAdminSnapshot(view, selectedId))).snapshot;
       if (sequence !== loadSequence) return;
       applySnapshot(next);
     } catch (reason) {
@@ -119,7 +131,7 @@
         refreshQueued = false;
         // Re-read the selected row each pass so a selection change during the
         // in-flight fetch is honored by the coalesced follow-up.
-        await load(view, untrack(() => snapshot?.selected?.id));
+        await load(untrack(() => selectedView), untrack(() => snapshot?.selected?.id));
       } while (refreshQueued);
     })().finally(() => {
       refreshInFlight = null;
@@ -151,7 +163,8 @@
       loadSequence += 1;
       loading = false;
       selectedIds = [];
-      applySnapshot(result.snapshot);
+      if (selectedSeries) await load(selectedView, result.snapshot.selected?.id);
+      else applySnapshot(result.snapshot);
       dialogCommand = null;
       if (result.provenance || result.reasons || result.review || result.run) {
         inspection = result;
@@ -190,6 +203,9 @@
   }
 
   onMount(() => {
+    let saved = new URLSearchParams(window.location.search).get("series");
+    if (saved === null) { try { saved = localStorage.getItem("hieronymus.memory.series"); } catch { /* Optional preference. */ } }
+    if (books.some(book => book.slug === saved)) selectedSeries = saved!;
     if (defaultView) void load(defaultView);
   });
 </script>
@@ -198,6 +214,14 @@
   class="grid gap-8 lg:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]"
   aria-label="Memory views"
 >
+  <div class="col-span-full rounded-md border border-default bg-surface p-4">
+    <label for="memory-series" class="block text-caption text-secondary">Book</label>
+    <select id="memory-series" class="mt-2 min-h-11 w-full rounded-sm border border-default bg-surface px-3 text-body text-primary sm:max-w-sm" value={selectedSeries} onchange={(event) => chooseSeries(event.currentTarget.value)} disabled={runningAction !== null}>
+      <option value="">All books</option>
+      {#each books as book (book.slug)}<option value={book.slug}>{book.title || book.slug}</option>{/each}
+    </select>
+    <p class="mt-2 text-caption text-secondary">{globalView ? "This activity log covers all books." : selectedSeries ? "Showing memories for this book. Shared concepts may also appear." : "Choose a book to focus on its memories."}</p>
+  </div>
   {#if correction}<div class="col-span-full">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}
   {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">Retained source records: status describes the record lifecycle, not whether its claims remain correct. Use “Correct this memory” to inspect and correct an exact claim.</p>{/if}
   {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">Legacy rendering records are historical source inspection. Use “Correct a rendering” to view and change current authority.</p>{/if}
@@ -226,6 +250,7 @@
           class="min-h-11 border-b-2 px-3 py-2 text-body-sm {selectedView === view
             ? 'border-accent text-accent-text'
             : 'border-transparent text-secondary hover:bg-raised hover:text-primary'}"
+          disabled={runningAction !== null}
           onclick={() => void load(view)}>{view}</button
         >
       {/each}
@@ -394,6 +419,7 @@
     view={selectedView}
     row={snapshot?.selected ?? null}
     {selectedIds}
+    initialSeries={selectedSeries}
     currentText={snapshot?.detail.body ?? ""}
     busy={runningAction !== null}
     error={dialogError}

@@ -5,7 +5,33 @@ import {
   validateRun,
   githubFailureDetail,
   artifactAcquirer,
+  availableInstallerNotes,
 } from "./desktop-ci";
+
+test("partial release notes advertise only available native installers", () => {
+  const template =
+    "- **Windows:** [Setup](https://example.com/Hieronymus-0.9.3-Setup.exe)\n- **macOS:** [Installer](https://example.com/Hieronymus-0.9.3.pkg)\n- **Linux x86_64:** run installer\n\n```bash\ncurl installer | bash\n```\n\nDescription";
+  const targets = ["x86_64-unknown-linux-gnu"];
+  const notes = availableInstallerNotes(
+    template,
+    ["Hieronymus-0.9.3.pkg"],
+    targets,
+  );
+  expect(notes).not.toContain("Windows");
+  expect(notes).toContain("macOS");
+  expect(notes).toContain("Linux");
+  expect(
+    availableInstallerNotes(
+      template,
+      ["Hieronymus-0.9.3.pkg", "Hieronymus-0.9.3-Setup.exe"],
+      targets,
+    ),
+  ).toBe(template);
+  const missing = availableInstallerNotes(template, [], []);
+  expect(missing).not.toContain("Linux");
+  expect(missing).not.toContain("curl");
+  expect(missing).toContain("Description");
+});
 const good = {
   repository: { full_name: "owner/repo" },
   head_repository: { full_name: "owner/repo" },
@@ -310,6 +336,18 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
         copyFileSync(join(directory, name), join(merged, name));
     }
     expect((await verify()).length).toBeGreaterThan(20);
+    const partial = join(root, "partial");
+    mkdirSync(partial);
+    const recordName = "candidate-x86_64-unknown-linux-gnu.json";
+    const record = JSON.parse(readFileSync(join(merged, recordName), "utf8"));
+    for (const name of [recordName, ...Object.keys(record.files)])
+      copyFileSync(join(merged, name), join(partial, name));
+    expect(
+      (await verifyCandidate(partial, "a".repeat(40))).length,
+    ).toBeGreaterThan(0);
+    await expect(verifyCandidate(partial, "b".repeat(40))).rejects.toThrow(
+      "source/target",
+    );
     await expect(verify("b".repeat(40))).rejects.toThrow("source/target");
     const unknown = join(merged, "unverified.exe");
     writeFileSync(unknown, "surprise");
@@ -332,4 +370,65 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("installer-only fixes reuse binaries, runtime changes require a rebuild", async () => {
+  const { binarySourceChanged } = await import("./desktop-ci");
+  expect(
+    binarySourceChanged([
+      "scripts/setup/install.sh",
+      ".github/workflows/release-rust.yml",
+      "docs/install.md",
+    ]),
+  ).toBe(false);
+  for (const path of [
+    "crates/hiero/src/main.rs",
+    "frontend/src/App.svelte",
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "scripts/desktop-targets.ts",
+    "scripts/release-build.ts",
+    ".github/workflows/desktop-candidate.yml",
+    ".github/actions/build/action.yml",
+  ])
+    expect(binarySourceChanged([path])).toBe(true);
+});
+
+test("embedded Markdown is a binary input", async () => {
+  const { binarySourceChanged } = await import("./desktop-ci");
+  expect(binarySourceChanged(["crates/hiero/resources/cws-project.md"])).toBe(
+    true,
+  );
+});
+
+test("failed qualification can supply retained candidates but not running or foreign runs", () => {
+  expect(
+    validateRun(
+      { ...good, conclusion: "failure" },
+      "owner/repo",
+      "desktop-candidate",
+      undefined,
+      true,
+    ),
+  ).toBe(good.head_sha);
+  expect(() =>
+    validateRun(
+      { ...good, status: "in_progress" },
+      "owner/repo",
+      "desktop-candidate",
+      undefined,
+      true,
+    ),
+  ).toThrow();
+  expect(() =>
+    validateRun(
+      { ...good, repository: { full_name: "foreign/repo" } },
+      "owner/repo",
+      "desktop-candidate",
+      undefined,
+      true,
+    ),
+  ).toThrow();
 });

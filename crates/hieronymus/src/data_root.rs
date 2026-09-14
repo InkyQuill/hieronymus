@@ -79,20 +79,44 @@ impl HieronymusConfig {
 }
 
 /// Resolve the data root: explicit argument wins, then
-/// `HIERONYMUS_DATA_ROOT`, then the default `~/.config/hieronymus`. A leading
+/// `HIERONYMUS_DATA_ROOT`, then the platform configuration directory. A leading
 /// `~` in explicit or environment roots expands to the user's home directory.
 pub fn load_config(data_root: Option<&Path>) -> HieronymusConfig {
     if let Some(explicit) = data_root {
         return HieronymusConfig::new(expand_user(explicit));
     }
-    if let Some(env_root) = std::env::var_os("HIERONYMUS_DATA_ROOT") {
+    if let Some(env_root) = std::env::var_os("HIERONYMUS_DATA_ROOT").filter(|v| !v.is_empty()) {
         return HieronymusConfig::new(expand_user(Path::new(&env_root)));
     }
-    let default = home::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config")
-        .join("hieronymus");
+    let default = platform_config_dir().join(if cfg!(any(windows, target_os = "macos")) {
+        "Hieronymus"
+    } else {
+        "hieronymus"
+    });
     HieronymusConfig::new(default)
+}
+
+/// Native configuration base, also used for Linux service registration.
+pub fn platform_config_dir() -> PathBuf {
+    let home = home::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Roaming"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library/Application Support")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| home.join(".config"))
+    }
 }
 
 fn expand_user(path: &Path) -> PathBuf {

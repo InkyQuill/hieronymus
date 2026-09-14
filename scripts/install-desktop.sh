@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Offline v2 desktop bootstrap. Only checksum-authenticated CLI bytes execute.
 set -euo pipefail
+
+# XDG base directories must be absolute; empty/relative values use platform defaults.
+case "${XDG_CONFIG_HOME:-}" in /*) ;; *) XDG_CONFIG_HOME="$HOME/.config";; esac
+case "${XDG_DATA_HOME:-}" in /*) ;; *) XDG_DATA_HOME="$HOME/.local/share";; esac
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-release=""; app=""; data=""; unit=""; no_activate=0
+release=""; app="${HIERONYMUS_APP_DIR:-}"; data="${HIERONYMUS_DATA_ROOT:-}"; unit="${HIERONYMUS_UNIT_DIR:-}"; no_activate=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --release-dir) release="${2:?--release-dir needs a path}"; shift 2;;
@@ -15,7 +19,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$release" ] || { echo '--release-dir is required; no default channel URL is configured' >&2; exit 2; }
 case "$(uname -s)/$(uname -m)" in
-  Linux/x86_64) target=x86_64-unknown-linux-gnu; app="${app:-$HOME/.local/share/hieronymus/app}"; data="${data:-$HOME/.config/hieronymus}";;
+  Linux/x86_64) target=x86_64-unknown-linux-gnu; app="${app:-${XDG_DATA_HOME:-$HOME/.local/share}/hieronymus/app}"; data="${data:-${XDG_CONFIG_HOME:-$HOME/.config}/hieronymus}";;
   Darwin/arm64) target=aarch64-apple-darwin; app="${app:-$HOME/Library/Application Support/Hieronymus/app}"; data="${data:-$HOME/Library/Application Support/Hieronymus}";;
   Darwin/x86_64)
     if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then target=aarch64-apple-darwin; else target=x86_64-apple-darwin; fi

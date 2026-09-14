@@ -1,6 +1,6 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([string]$AppDir="$env:LOCALAPPDATA/Hieronymus/app",[string]$DataRoot="$env:APPDATA/Hieronymus",[string]$UnitDir,[string]$ReleaseDir,[string]$LogPath,[switch]$NoActivate,[switch]$NoOpen)
+param([string]$AppDir=$(if($env:HIERONYMUS_APP_DIR){$env:HIERONYMUS_APP_DIR}else{"$env:LOCALAPPDATA/Hieronymus/app"}),[string]$DataRoot=$(if($env:HIERONYMUS_DATA_ROOT){$env:HIERONYMUS_DATA_ROOT}else{"$env:APPDATA/Hieronymus"}),[string]$UnitDir,[string]$ReleaseDir,[string]$LogPath,[switch]$NoActivate,[switch]$NoOpen)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 if($LogPath){[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($LogPath)));Start-Transcript -LiteralPath $LogPath -Force|Out-Null}

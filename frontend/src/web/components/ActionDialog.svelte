@@ -17,6 +17,7 @@
     /// The current text of the selected record (Detail body), used to
     /// prefill `edit_memory`.
     currentText?: string;
+    initialSeries?: string;
     busy?: boolean;
     error?: string;
     onSubmit: (body: AdminActionBody) => void;
@@ -29,6 +30,7 @@
     row = null,
     selectedIds = [],
     currentText = "",
+    initialSeries = "",
     busy = false,
     error = "",
     onSubmit,
@@ -71,6 +73,7 @@
   let previouslyFocused: HTMLElement | null = null;
 
   onMount(async () => {
+    series = initialSeries;
     if (actionId === "edit_memory") {
       text = currentText;
       seededTitle = row ? String(row.label ?? "") : "";

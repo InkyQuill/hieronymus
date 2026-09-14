@@ -42,3 +42,19 @@ bun run build
 Real model and installed-artifact tests are explicitly ignored by default. Supply their documented disposable fixture inputs and run them explicitly when qualifying those paths; missing inputs must fail. See `docs/rust-cutover-rehearsal.md`. Passing synthetic provider or transport tests does not establish native agent-host acceptance.
 
 Current Rust plans and accepted ADR amendments govern product behavior. Preserve frozen Python fixtures as historical evidence; do not introduce a Python parity release gate. ADR 0016's autonomous authority design is not evidence that its runtime has been implemented.
+
+## Release checks and blockers
+
+- Only P0 issues block a release. P1, P2, P3, missing native-host evidence, smoke-test failures, lint/documentation findings, and incomplete platform qualification are warnings; record actionable failures in GitHub issues with reproduction details and the relevant run/log link. Reuse an existing issue for the same problem. Never silently label a failed or unrun check as passed.
+- Run focused, inexpensive checks first. Keep the verification commands above as the verification checklist, but report non-P0 failures as warnings rather than starting an indefinite fix/rebuild cycle or withholding the release.
+- Use `CARGO_BUILD_JOBS=2` for local Rust checks: many concurrent debug linkers for the retrieval stack can exhaust memory and spend minutes swapping. An interrupted or unrun full check must be reported honestly as a verification warning with an issue, not restarted indefinitely.
+- Build native binaries once and retain the artifacts. Installer, packaging, documentation, and CI-only fixes must reuse those binaries when their build inputs are unchanged. Rerun the affected check or packaging job, not the entire platform matrix. Rebuild only when binary inputs change or the required artifact is missing.
+- Native installation checks and the separate evidence workflow are advisory. A missing optional installer or evidence record must not prevent publication of the available working artifacts; disclose the limitation in release notes and an issue.
+- Keep release automation small. Do not introduce extra qualification layers, duplicate gates, or new mandatory evidence scaffolding without an explicit product need. These rules supersede stricter release-blocker language in older plans and ADRs.
+- Artifact integrity checks and safeguards against corrupting user data remain runtime requirements. Do not make a checksum mismatch executable or bypass data ownership merely to turn a release check green.
+
+## Default paths
+
+- Use the operating system's standard configuration directory by default: `$XDG_CONFIG_HOME/hieronymus` (fallback `~/.config/hieronymus`) on Linux, `~/Library/Application Support/Hieronymus` on macOS, and `%APPDATA%/Hieronymus` on Windows.
+- `--data-root` overrides `HIERONYMUS_DATA_ROOT`, which overrides the platform default. Keep the CLI, installers, desktop launchers, and service registrations consistent. Never persist development or temporary fixture paths into a user's real service registration.
+- Tests that install services or desktop registrations must use disposable configuration, data, and registration directories and must not contact the real user service manager.

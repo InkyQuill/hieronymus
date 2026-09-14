@@ -519,6 +519,13 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
     // Runtime readiness is an additive Rust dashboard field. Its source is
     // the same daemon-owned summary as authenticated `/status`, so the frozen
     // historical payload remains the oracle for every pre-existing field.
+    expected["series_options"] = body["series_options"].clone();
+    assert!(
+        body["series_options"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"slug": "synthetic-series", "title": "Synthetic Series"}))
+    );
     expected["readiness"] = body["readiness"].clone();
     assert!(body["readiness"]["level"].is_string());
 

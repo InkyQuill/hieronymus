@@ -123,8 +123,10 @@ export async function loadAdminDashboard(): Promise<AdminDashboard> {
 export async function loadAdminSnapshot(
   view: string,
   selectedId?: string | number,
+  series?: string,
 ): Promise<AdminSnapshot> {
   const query = new URLSearchParams({ view });
+  if (series) query.set("series", series);
   if (selectedId !== undefined) query.set("selected_id", String(selectedId));
   return request(`/api/admin/snapshot?${query}`);
 }

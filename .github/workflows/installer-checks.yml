@@ -13,10 +13,11 @@ on:
       release_tag:
         description: Published release to test online when candidate_run is empty
         type: string
-        default: v0.9.2
+        default: v0.9.3
 permissions:
   contents: read
   actions: read
+  issues: write
 env:
   CANDIDATE_RUN: ${{ inputs.candidate_run }}
 jobs:
@@ -47,7 +48,8 @@ jobs:
       - id: generate
         run: |
           bun scripts/build-installers.ts target/published target/installers
-          echo "version=$(jq -r .version target/published/release-x86_64-unknown-linux-gnu.json)" >> "$GITHUB_OUTPUT"
+          cp scripts/report-release-warnings.sh target/installers/
+          echo "version=$(jq -r .version $(ls target/published/release-*.json | head -1))" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: standalone-installers
@@ -58,6 +60,16 @@ jobs:
           name: installer-test-payloads
           path: target/published/
           retention-days: 7
+      - name: File release warnings as issues
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_RESULTS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          RELEASE_PLATFORM: ${{ runner.os }}
+        shell: bash
+        run: bash scripts/report-release-warnings.sh
   installed:
     needs: generate
     strategy:
@@ -77,6 +89,7 @@ jobs:
           name: installer-test-payloads
           path: payloads
       - name: Install from a single file on Linux/macOS
+        id: unix-install
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -86,6 +99,7 @@ jobs:
           bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$RUNNER_TEMP/Hieronymus data" --unit-dir "$RUNNER_TEMP/Hieronymus units" --no-activate
           "$RUNNER_TEMP/Hieronymus app/bin/hiero" version --json
       - name: Install with built-in Windows PowerShell 5.1
+        id: windows-install
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -96,6 +110,16 @@ jobs:
           $result=Start-Process -FilePath "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installed-version.json"
           Get-Content "$env:RUNNER_TEMP/installed-version.json"
           if ($result.ExitCode -ne 0) { throw "Installed binary failed: $($result.ExitCode)" }
+      - name: File release warnings as issues
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_RESULTS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          RELEASE_PLATFORM: ${{ matrix.os }}
+        shell: bash
+        run: bash installers/report-release-warnings.sh
   native-package:
     needs: generate
     strategy:
@@ -135,9 +159,11 @@ jobs:
         shell: powershell
         run: ./scripts/setup/windows-runtime.test.ps1 -NativeIntegration
       - name: Build unsigned native installer
+        id: native-build
         shell: bash
         run: bun scripts/build-native-installer.ts '${{ matrix.kind }}' target/installers target/native-installers "$INSTALLER_VERSION"
       - name: Exercise Windows setup wizard in silent mode
+        id: windows-setup
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -158,6 +184,7 @@ jobs:
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hieronymus') { throw 'Installed Apps entry survived removal' }
           if (Test-Path "$appDir\bin\hiero.exe") { throw 'Installed launcher survived removal' }
       - name: Exercise macOS Installer package scripts
+        id: macos-setup
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -182,9 +209,20 @@ jobs:
             Write-Output "Diagnostic removal repeat exit: $LASTEXITCODE"
           }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
         with:
           name: native-installer-${{ matrix.kind }}
           path: |
             target/native-installers/Hieronymus-*.exe
             target/native-installers/Hieronymus-*.pkg
           if-no-files-found: error
+      - name: File release warnings as issues
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECK_RESULTS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          RELEASE_PLATFORM: ${{ matrix.os }}
+        shell: bash
+        run: bash scripts/report-release-warnings.sh

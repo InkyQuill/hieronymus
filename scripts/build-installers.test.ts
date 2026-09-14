@@ -4,6 +4,7 @@ import {
   mkdirSync,
   writeFileSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   rmSync,
   copyFileSync,
@@ -118,6 +119,7 @@ test("public downloads exclude maintainer evidence and old multi-file installers
     "Hieronymus-0.9.1.pkg",
   ]);
 });
+const linux = test.skipIf(process.platform !== "linux");
 const unix = test.skipIf(process.platform === "win32");
 function fixture() {
   const root = temp(),
@@ -154,6 +156,7 @@ function fixture() {
     requests = join(root, "requests");
   const env = {
     ...process.env,
+    HOME: root,
     PATH: `${bin}:${process.env.PATH}`,
     TMPDIR: scratch,
     SETUP_CALLS: calls,
@@ -327,4 +330,132 @@ unix("Rosetta Terminal selects Apple Silicon payload", () => {
   expect(readFileSync(f.requests, "utf8")).toContain(
     "aarch64-apple-darwin.tar.gz",
   );
+});
+
+linux(
+  "Linux defaults respect XDG directories and environment/flag precedence",
+  () => {
+    for (const mode of ["xdg", "environment", "flag"]) {
+      const f = fixture();
+      const xdg = join(f.root, "config home");
+      const share = join(f.root, "data home");
+      const expected = mode === "xdg" ? join(xdg, "hieronymus") : f.data;
+      const app = mode === "xdg" ? join(share, "hieronymus/app") : f.app;
+      const run = Bun.spawnSync(
+        [
+          "bash",
+          f.script,
+          "--release-dir",
+          f.release,
+          "--no-activate",
+          ...(mode === "flag"
+            ? ["--app-dir", app, "--data-root", expected]
+            : []),
+        ],
+        {
+          env: {
+            ...f.env,
+            HOME: f.root,
+            XDG_CONFIG_HOME: xdg,
+            XDG_DATA_HOME: share,
+            HIERONYMUS_DATA_ROOT:
+              mode === "xdg" ? "" : mode === "flag" ? "/wrong" : expected,
+            HIERONYMUS_APP_DIR:
+              mode === "xdg" ? "" : mode === "flag" ? "/wrong" : app,
+          },
+        },
+      );
+      expect(run.exitCode).toBe(0);
+      expect(readFileSync(f.calls, "utf8")).toContain(
+        "--data-root " + expected,
+      );
+      expect(readFileSync(f.calls, "utf8")).toContain("--app-dir " + app);
+    }
+  },
+);
+
+test("available platforms can ship while missing platforms report unavailable", () => {
+  const files = renderInstallers([releases()[0]]);
+  expect(files["install-hieronymus.sh"]).toContain(
+    "This platform is unavailable in this release",
+  );
+  expect(files["Install-Hieronymus.ps1"]).toContain(
+    "Windows is unavailable in this release",
+  );
+  expect(() => renderInstallers([])).toThrow();
+});
+
+linux("relative XDG paths fall back to the user's home", () => {
+  const f = fixture();
+  const run = Bun.spawnSync(
+    ["bash", f.script, "--release-dir", f.release, "--no-activate"],
+    {
+      env: {
+        ...f.env,
+        HOME: f.root,
+        XDG_CONFIG_HOME: "relative",
+        XDG_DATA_HOME: "relative",
+        HIERONYMUS_APP_DIR: "",
+        HIERONYMUS_DATA_ROOT: "",
+      },
+    },
+  );
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(f.calls, "utf8")).toContain(
+    "--data-root " + join(f.root, ".config/hieronymus"),
+  );
+  expect(readFileSync(f.calls, "utf8")).toContain(
+    "--app-dir " + join(f.root, ".local/share/hieronymus/app"),
+  );
+});
+
+unix(
+  "standalone installer makes hiero available in the user bin directory",
+  () => {
+    const f = fixture();
+    const run = Bun.spawnSync(
+      [
+        "bash",
+        f.script,
+        "--release-dir",
+        f.release,
+        "--app-dir",
+        f.app,
+        "--data-root",
+        f.data,
+        "--no-activate",
+      ],
+      { env: f.env },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(readlinkSync(join(f.root, ".local/bin/hiero"))).toBe(
+      join(f.app, "bin/hiero"),
+    );
+  },
+);
+
+unix("standalone installer preserves an unrelated command in user bin", () => {
+  const f = fixture();
+  const userBin = join(f.root, ".local/bin");
+  mkdirSync(userBin, { recursive: true });
+  writeFileSync(join(userBin, "hiero"), "unrelated command");
+  const run = Bun.spawnSync(
+    [
+      "bash",
+      f.script,
+      "--release-dir",
+      f.release,
+      "--app-dir",
+      f.app,
+      "--data-root",
+      f.data,
+      "--no-activate",
+    ],
+    { env: f.env },
+  );
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(join(userBin, "hiero"), "utf8")).toBe(
+    "unrelated command",
+  );
+  expect(run.stderr.toString()).toContain("keeping existing command");
 });

@@ -17,12 +17,12 @@ CLI provides shortcuts for quick tasks.
 
 ## Install
 
-- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2-Setup.exe), open it, and follow the steps.
-- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/Hieronymus-0.9.2.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
+- **Windows:** [Download Setup](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.3/Hieronymus-0.9.3-Setup.exe), open it, and follow the steps.
+- **macOS:** [Download the installer](https://github.com/InkyQuill/hieronymus/releases/download/v0.9.3/Hieronymus-0.9.3.pkg), open it, and follow the steps. It chooses Apple Silicon or Intel automatically.
 - **Linux x86_64:** paste this into a terminal:
 
 ```bash
-curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.2/install-hieronymus.sh | bash
+curl -fsSL https://github.com/InkyQuill/hieronymus/releases/download/v0.9.3/install-hieronymus.sh | bash
 ```
 
 The installers download the app and its memory model, verify the files, and install
@@ -75,3 +75,10 @@ The previous Python application, package, tests and qualification orchestration
 are archived on [`stale/python-v0.7.0`](https://github.com/InkyQuill/hieronymus/tree/stale/python-v0.7.0).
 Historical fixtures remain available to Rust migration tests. See
 [the archive policy](docs/archive/python-v0.7.0.md) for older plans and records.
+
+Configuration and memory use the standard per-user configuration directory:
+`$XDG_CONFIG_HOME/hieronymus` on Linux (default `~/.config/hieronymus`),
+`~/Library/Application Support/Hieronymus` on macOS, and `%APPDATA%/Hieronymus`
+on Windows. Use `--data-root DIR` to override it, or set `HIERONYMUS_DATA_ROOT`;
+the explicit flag takes precedence. Linux application files also respect
+`XDG_DATA_HOME`. Installer `--app-dir` / `HIERONYMUS_APP_DIR` override that location.

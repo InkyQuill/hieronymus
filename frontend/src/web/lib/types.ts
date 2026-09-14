@@ -105,6 +105,7 @@ export type ReadinessSummary = {
 };
 
 export type AdminDashboard = {
+  series_options?: Array<{ slug: string; title: string }>;
   header: { product: string; version: string; tagline: string };
   stats: Record<string, number>;
   views: string[];
