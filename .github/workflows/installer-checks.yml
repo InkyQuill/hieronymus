@@ -99,7 +99,7 @@ jobs:
           before=$(shasum -a 256 "$data/hieronymus.sqlite")
           if ! bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$data" --unit-dir "$RUNNER_TEMP/legacy-units" --no-activate --no-open > "$RUNNER_TEMP/legacy-install.log" 2>&1; then cat "$RUNNER_TEMP/legacy-install.log"; exit 1; fi
           cat "$RUNNER_TEMP/legacy-install.log"
-          grep -Eiq 'migration|upgrade' "$RUNNER_TEMP/legacy-install.log"
+          grep -Eiq 'migrate --data-root' "$RUNNER_TEMP/legacy-install.log"
           test "$before" = "$(shasum -a 256 "$data/hieronymus.sqlite")"
       - name: Successful PowerShell install exposes migration pending without changing data
         if: runner.os == 'Windows'
@@ -112,7 +112,7 @@ jobs:
           & ./installers/Install-Hieronymus.ps1 @extra -AppDir "$env:RUNNER_TEMP/Hieronymus app" -DataRoot $data -UnitDir "$env:RUNNER_TEMP/legacy-units" -NoOpen *> "$env:RUNNER_TEMP/legacy-install.log"
           if (-not $?) { Get-Content "$env:RUNNER_TEMP/legacy-install.log"; throw 'Migration-pending install should succeed' }
           $log=Get-Content -Raw "$env:RUNNER_TEMP/legacy-install.log"; Write-Output $log
-          if ($log -notmatch 'migration|upgrade') { throw 'Migration diagnostics were hidden' }
+          if ($log -notmatch 'migrate --data-root') { throw 'Migration diagnostics were hidden' }
           if ($before -ne (Get-FileHash "$data/hieronymus.sqlite" -Algorithm SHA256).Hash) { throw 'Installer changed the legacy database' }
       - name: Install from a single file on Linux/macOS
         id: unix-install
