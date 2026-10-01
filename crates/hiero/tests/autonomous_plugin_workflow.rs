@@ -30,7 +30,12 @@ fn hook_cli(root: &std::path::Path, args: &[&str], input: &Value) -> std::proces
 #[test]
 fn first_host_prompt_exposes_actual_identity_without_minting_authority() {
     let root = tempfile::tempdir().unwrap();
-    let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"independently-observed-session","prompt":"Please translate this chapter."});
+    std::fs::write(
+        root.path().join("project.md"),
+        "---\nschema-version: 1\ntitle: Book\nlanguage: ru\nstatus: drafting\n---\n",
+    )
+    .unwrap();
+    let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"independently-observed-session","prompt":"Please translate this chapter.","cwd":root.path()});
     let output = prompt(root.path(), &input);
     assert!(
         output.status.success(),
@@ -88,12 +93,8 @@ fn generated_optional_prompt_hook_executes_installed_handler() {
         String::from_utf8_lossy(&output.stderr)
     );
     let output: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        output["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap()
-            .contains("native-shaped-session")
-    );
+    assert_eq!(output["status"], "skipped");
+    assert_eq!(output["retained"], false);
 }
 
 #[test]
@@ -286,7 +287,7 @@ fn ambiguous_prompt_records_one_tentative_job_without_claiming_applied_dependenc
         "{}",
         String::from_utf8_lossy(&bound.stderr)
     );
-    let result=agent_prompt_delivery::submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"ambiguous-host-session","prompt":"Maybe Alex means the other person?"})).unwrap();
+    let result=agent_prompt_delivery::submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"ambiguous-host-session","prompt":"Maybe the character Alex means the other person?"})).unwrap();
     assert_eq!(result["result"]["status"], "tentative");
     assert!(result["required_decision_id"].is_null());
     assert_eq!(

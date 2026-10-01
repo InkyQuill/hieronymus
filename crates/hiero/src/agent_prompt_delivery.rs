@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{io::Read, path::PathBuf};
 
+mod relevance;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DeliveryError {
     #[error("invalid hook input or saved context: {0}")]
@@ -78,6 +80,37 @@ fn context_path(config: &HieronymusConfig, h: &str, session: &str) -> PathBuf {
         Sha256::digest(format!("{h}\n{session}"))
     ))
 }
+fn pause_path(config: &HieronymusConfig, h: &str, session: &str) -> PathBuf {
+    config.config_root().join("host-pauses").join(
+        context_path(config, h, session)
+            .file_name()
+            .expect("context filename"),
+    )
+}
+fn conversation_lock(
+    config: &HieronymusConfig,
+    h: &str,
+    session: &str,
+) -> Result<std::fs::File, DeliveryError> {
+    let path = config
+        .config_root()
+        .join("host-locks")
+        .join(
+            context_path(config, h, session)
+                .file_name()
+                .expect("context filename"),
+        )
+        .with_extension("lock");
+    match hieronymus::private_file::create_private_new(&path, b"") {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let file = hieronymus::private_file::open_coordination(&path)?;
+    file.lock()?;
+    // This persistent lock inode must never be removed by bind/unbind.
+    Ok(file)
+}
 fn delivery_path(config: &HieronymusConfig, id: &str) -> Result<PathBuf, DeliveryError> {
     if !crate::trusted_ingress::valid_uuid(id) {
         return Err(invalid("invalid delivery ID"));
@@ -125,6 +158,23 @@ fn uuid() -> Result<String, DeliveryError> {
 /// Installed binding command. Stores a read-validated snapshot, mints no origin,
 /// and never updates stale revisions to make a future correction pass.
 pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, DeliveryError> {
+    let object = input
+        .as_object()
+        .ok_or_else(|| invalid("binding must be a JSON object"))?;
+    let missing: Vec<_> = [
+        "version",
+        "host",
+        "host_session_id",
+        "series_id",
+        "session_id",
+        "expected_revision",
+    ]
+    .into_iter()
+    .filter(|field| !object.contains_key(*field))
+    .collect();
+    if !missing.is_empty() {
+        return Err(invalid(format!("missing fields: {}", missing.join(", "))));
+    }
     let c: HostContext = decode(input)?;
     host(&c.host)?;
     if c.version != 1
@@ -138,12 +188,13 @@ pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, D
     {
         return Err(invalid("invalid binding identity or bounds"));
     }
+    let _guard = conversation_lock(config, &c.host, &c.host_session_id)?;
     let mut db = rusqlite::Connection::open_with_flags(
         config.database_path(),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let tx = db.transaction()?;
-    let valid:bool=tx.query_row("select exists(select 1 from task_sessions t join series s on s.slug=t.series_slug join authority_state a on a.series_id=s.id where t.id=?1 and s.id=?2 and a.revision=?3 and (?4 is null or t.source_language=?4) and (?5 is null or t.target_language=?5))",params![c.session_id,c.series_id,c.expected_revision as i64,c.source_language,c.target_language],|r|r.get(0))?;
+    let valid:bool=tx.query_row("select exists(select 1 from task_sessions t join series s on s.slug=t.series_slug left join authority_state a on a.series_id=s.id where t.id=?1 and s.id=?2 and coalesce(a.revision,0)=?3 and (?4 is null or t.source_language=?4) and (?5 is null or t.target_language=?5))",params![c.session_id,c.series_id,c.expected_revision as i64,c.source_language,c.target_language],|r|r.get(0))?;
     if !valid {
         return Err(invalid(
             "session, language, series or observed revision mismatch",
@@ -185,9 +236,51 @@ pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, D
     }
     tx.commit()?;
     save(&context_path(config, &c.host, &c.host_session_id), &c)?;
+    match std::fs::remove_file(pause_path(config, &c.host, &c.host_session_id)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     Ok(
         json!({"bound":true,"host":c.host,"host_session_id":c.host_session_id,"session_id":c.session_id,"expected_revision":c.expected_revision,"authority_changed":false}),
     )
+}
+
+/// Remove capture for exactly one host conversation; pending deliveries remain immutable.
+pub fn unbind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, DeliveryError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Identity {
+        host: String,
+        host_session_id: String,
+    }
+    let identity: Identity = decode(input)?;
+    host(&identity.host)?;
+    if identity.host_session_id.is_empty() || identity.host_session_id.len() > 512 {
+        return Err(invalid("invalid host session"));
+    }
+    let _guard = conversation_lock(config, &identity.host, &identity.host_session_id)?;
+    // Write the pause first: even a failed context removal must stop future capture.
+    save(
+        &pause_path(config, &identity.host, &identity.host_session_id),
+        &json!({"paused":true}),
+    )?;
+    match std::fs::remove_file(context_path(
+        config,
+        &identity.host,
+        &identity.host_session_id,
+    )) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(
+        json!({"bound":false,"host":identity.host,"host_session_id":identity.host_session_id,"authority_changed":false}),
+    )
+}
+
+fn skipped(reason: &str) -> Value {
+    json!({"status":"skipped","reason":reason,"retained":false,"authority_changed":false})
 }
 fn prompt_fields<'a>(h: &str, input: &'a Value) -> Result<(&'a str, &'a str), DeliveryError> {
     host(h)?;
@@ -211,7 +304,28 @@ pub fn handle_prompt(
     h: &str,
     input: &Value,
 ) -> Result<Value, DeliveryError> {
-    let (session, _) = prompt_fields(h, input)?;
+    let (session, text) = prompt_fields(h, input)?;
+    if !relevance::literary_input(text) {
+        return Ok(skipped("unrelated_or_uncertain"));
+    }
+    if !context_path(config, h, session).try_exists()?
+        && !pause_path(config, h, session).try_exists()?
+    {
+        let project = input["cwd"]
+            .as_str()
+            .map(std::path::Path::new)
+            .map(|cwd| crate::project_context::inspect(cwd, None));
+        if !project
+            .as_ref()
+            .is_some_and(|report| matches!(report["status"].as_str(), Some("ready" | "unbound")))
+        {
+            return Ok(skipped("no_literary_project"));
+        }
+    }
+    let guard = conversation_lock(config, h, session)?;
+    if pause_path(config, h, session).try_exists()? {
+        return Ok(skipped("capture_paused"));
+    }
     if !context_path(config, h, session).try_exists()? {
         return Ok(
             json!({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":format!(
@@ -220,7 +334,9 @@ pub fn handle_prompt(
             )}}),
         );
     }
+    drop(guard);
     match submit_prompt(config, h, input) {
+        Ok(response) if response["status"] == "skipped" => Ok(response),
         Ok(response) => Ok(hook_output(&response)),
         // A definitive conflict must not prevent the model from reading and
         // binding context for a future event. The rejected delivery is never
@@ -249,6 +365,13 @@ pub fn submit_prompt(
     input: &Value,
 ) -> Result<Value, DeliveryError> {
     let (session, text) = prompt_fields(h, input)?;
+    if !relevance::literary_input(text) {
+        return Ok(skipped("unrelated_or_uncertain"));
+    }
+    let guard = conversation_lock(config, h, session)?;
+    if pause_path(config, h, session).try_exists()? {
+        return Ok(skipped("capture_paused"));
+    }
     let c: HostContext = load(&context_path(config, h, session))?;
     if c.version != 1 || c.host != h || c.host_session_id != session {
         return Err(invalid("saved host/session mismatch"));
@@ -278,6 +401,7 @@ pub fn submit_prompt(
         response: None,
     };
     save(&delivery_path(config, &id)?, &delivery)?;
+    drop(guard);
     retry_delivery(config, &id)
 }
 /// Returns the exact stored response after an acknowledged delivery. An
@@ -335,6 +459,38 @@ pub fn hook_output(response: &Value) -> Value {
 #[cfg(test)]
 mod host_tests {
     use super::*;
+
+    #[test]
+    fn waiting_capture_observes_pause_before_loading_binding_or_retaining_text() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let guard = conversation_lock(&config, "codex", "actual-session").unwrap();
+        let worker_config = config.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            result_tx.send(submit_prompt(&worker_config, "codex", &json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-session","prompt":"translate this as B"}))).unwrap();
+        });
+        ready_rx.recv().unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        save(
+            &pause_path(&config, "codex", "actual-session"),
+            &json!({"paused":true}),
+        )
+        .unwrap();
+        drop(guard);
+        let result = result_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(result["reason"], "capture_paused");
+        assert!(!root.path().join("host-deliveries").exists());
+    }
 
     #[test]
     fn saved_prompt_records_remain_private_after_replacement() {
