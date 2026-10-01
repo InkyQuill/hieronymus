@@ -71,12 +71,9 @@ fn read_state_file(path: &Path) -> Option<DreamCycleState> {
 pub fn read_dream_cycle_state(config: &HieronymusConfig) -> Option<DreamCycleState> {
     let paths = dream_cycle_paths(config);
     let state = read_state_file(&paths.state_json)?;
-    let Ok(lock) = open_lock(&paths.lock_file) else {
+    let Some(_lock) = CleanupLock::acquire(&paths.lock_file) else {
         return Some(state);
     };
-    if lock.try_lock().is_err() {
-        return Some(state);
-    }
     remove_record(&paths.state_json, &state);
     None
 }
@@ -85,11 +82,27 @@ pub fn read_dream_cycle_state(config: &HieronymusConfig) -> Option<DreamCycleSta
 /// and deleting its record. PIDs are diagnostic and never authorize cleanup.
 pub fn remove_state_if_unchanged(config: &HieronymusConfig, expected: &DreamCycleState) {
     let paths = dream_cycle_paths(config);
-    let Ok(lock) = open_lock(&paths.lock_file) else {
+    let Some(_lock) = CleanupLock::acquire(&paths.lock_file) else {
         return;
     };
-    if lock.try_lock().is_ok() {
-        remove_record(&paths.state_json, expected);
+    remove_record(&paths.state_json, expected);
+}
+
+// Closing one descriptor does not release a flock if a concurrently spawned
+// child inherited its open file description. Explicit unlock ends our ownership.
+struct CleanupLock(std::fs::File);
+
+impl CleanupLock {
+    fn acquire(path: &Path) -> Option<Self> {
+        let file = open_lock(path).ok()?;
+        file.try_lock().ok()?;
+        Some(Self(file))
+    }
+}
+
+impl Drop for CleanupLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
     }
 }
 
@@ -187,5 +200,24 @@ impl Drop for DreamCycleLock {
     fn drop(&mut self) {
         remove_record(&self.state_json, &self.state);
         let _ = self.lock_file.unlock();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_unlocks_even_when_a_duplicate_descriptor_remains_open() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("cleanup.lock");
+        let lock = CleanupLock::acquire(&path).unwrap();
+        // A duplicate shares the open file description, as inheritance does.
+        let inherited = lock.0.try_clone().unwrap();
+        assert!(CleanupLock::acquire(&path).is_none());
+        drop(lock);
+        let successor = CleanupLock::acquire(&path);
+        assert!(successor.is_some());
+        drop(inherited);
     }
 }
