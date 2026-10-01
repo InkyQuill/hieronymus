@@ -49,6 +49,7 @@ jobs:
         run: |
           bun scripts/build-installers.ts target/published target/installers
           cp scripts/report-release-warnings.sh target/installers/
+          cp compatibility/fixtures/database/legacy-python.sqlite target/installers/legacy-python.sqlite
           echo "version=$(jq -r .version $(ls target/published/release-*.json | head -1))" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -110,6 +111,31 @@ jobs:
           $result=Start-Process -FilePath "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installed-version.json"
           Get-Content "$env:RUNNER_TEMP/installed-version.json"
           if ($result.ExitCode -ne 0) { throw "Installed binary failed: $($result.ExitCode)" }
+      - name: Successful Unix install exposes migration pending without changing data
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          extra=(); if [ -n "$CANDIDATE_RUN" ]; then extra=(--release-dir "$PWD/payloads"); fi
+          data="$RUNNER_TEMP/legacy-data"; mkdir -p "$data"
+          cp installers/legacy-python.sqlite "$data/hieronymus.sqlite"
+          before=$(shasum -a 256 "$data/hieronymus.sqlite")
+          bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/legacy-app" --data-root "$data" --unit-dir "$RUNNER_TEMP/legacy-units" --no-open > "$RUNNER_TEMP/legacy-install.log" 2>&1
+          cat "$RUNNER_TEMP/legacy-install.log"
+          grep -Eiq 'migration|upgrade' "$RUNNER_TEMP/legacy-install.log"
+          test "$before" = "$(shasum -a 256 "$data/hieronymus.sqlite")"
+      - name: Successful PowerShell install exposes migration pending without changing data
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $extra=@{}; if ($env:CANDIDATE_RUN) { $extra.ReleaseDir="$PWD/payloads" }
+          $data="$env:RUNNER_TEMP/legacy-data"; New-Item -ItemType Directory -Force $data | Out-Null
+          Copy-Item installers/legacy-python.sqlite "$data/hieronymus.sqlite"
+          $before=(Get-FileHash "$data/hieronymus.sqlite" -Algorithm SHA256).Hash
+          & ./installers/Install-Hieronymus.ps1 @extra -AppDir "$env:RUNNER_TEMP/legacy-app" -DataRoot $data -UnitDir "$env:RUNNER_TEMP/legacy-units" -NoOpen *> "$env:RUNNER_TEMP/legacy-install.log"
+          if (-not $?) { throw 'Migration-pending install should succeed' }
+          $log=Get-Content -Raw "$env:RUNNER_TEMP/legacy-install.log"; Write-Output $log
+          if ($log -notmatch 'migration|upgrade') { throw 'Migration diagnostics were hidden' }
+          if ($before -ne (Get-FileHash "$data/hieronymus.sqlite" -Algorithm SHA256).Hash) { throw 'Installer changed the legacy database' }
       - name: Verify native Unix default data root and environment precedence
         if: runner.os != 'Windows'
         shell: bash
