@@ -10,7 +10,9 @@ test("running server version remains copyable without checking releases", async 
   render(VersionInfo);
   expect(await screen.findByText("Server v9.8.7-dev.2")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Copy version" }));
-  expect(await navigator.clipboard.readText()).toBe("Hieronymus server v9.8.7-dev.2");
+  expect(await navigator.clipboard.readText()).toBe(
+    "Hieronymus server v9.8.7-dev.2",
+  );
 });
 test("an unavailable server does not display the frontend build as its version", async () => {
   vi.mocked(loadVersion).mockRejectedValue(new Error("offline"));
