@@ -110,6 +110,37 @@ jobs:
           $result=Start-Process -FilePath "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installed-version.json"
           Get-Content "$env:RUNNER_TEMP/installed-version.json"
           if ($result.ExitCode -ne 0) { throw "Installed binary failed: $($result.ExitCode)" }
+      - name: Verify native Unix default data root and environment precedence
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          extra=(); if [ -n "$CANDIDATE_RUN" ]; then extra=(--release-dir "$PWD/payloads"); fi
+          export HIERONYMUS_APP_DIR="$RUNNER_TEMP/Hieronymus app"
+          unset HIERONYMUS_DATA_ROOT
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/xdg-config"
+          if [ "$(uname -s)" = Darwin ]; then expected="$HOME/Library/Application Support/Hieronymus"; else expected="$XDG_CONFIG_HOME/hieronymus"; fi
+          bash installers/install-hieronymus.sh "${extra[@]}" --unit-dir "$RUNNER_TEMP/default-units" --no-activate
+          test -f "$expected/release.conf"
+          export HIERONYMUS_DATA_ROOT="$RUNNER_TEMP/environment-data"
+          bash installers/install-hieronymus.sh "${extra[@]}" --unit-dir "$RUNNER_TEMP/env-units" --no-activate
+          test -f "$HIERONYMUS_DATA_ROOT/release.conf"
+          bash installers/install-hieronymus.sh "${extra[@]}" --data-root "$RUNNER_TEMP/flag-data" --unit-dir "$RUNNER_TEMP/flag-units" --no-activate
+          test -f "$RUNNER_TEMP/flag-data/release.conf"
+      - name: Verify native Windows APPDATA default and environment precedence
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $extra=@{}; if ($env:CANDIDATE_RUN) { $extra.ReleaseDir="$PWD/payloads" }
+          $env:HIERONYMUS_APP_DIR="$env:RUNNER_TEMP/Hieronymus app"
+          Remove-Item Env:HIERONYMUS_DATA_ROOT -ErrorAction SilentlyContinue
+          $env:APPDATA="$env:RUNNER_TEMP/appdata-fixture"
+          & ./installers/Install-Hieronymus.ps1 @extra -UnitDir "$env:RUNNER_TEMP/default-units" -NoActivate
+          if (-not $? -or -not (Test-Path "$env:APPDATA/Hieronymus/release.conf")) { throw 'APPDATA default failed' }
+          $env:HIERONYMUS_DATA_ROOT="$env:RUNNER_TEMP/environment-data"
+          & ./installers/Install-Hieronymus.ps1 @extra -UnitDir "$env:RUNNER_TEMP/env-units" -NoActivate
+          if (-not $? -or -not (Test-Path "$env:HIERONYMUS_DATA_ROOT/release.conf")) { throw 'Environment root failed' }
+          & ./installers/Install-Hieronymus.ps1 @extra -DataRoot "$env:RUNNER_TEMP/flag-data" -UnitDir "$env:RUNNER_TEMP/flag-units" -NoActivate
+          if (-not $? -or -not (Test-Path "$env:RUNNER_TEMP/flag-data/release.conf")) { throw 'Flag precedence failed' }
       - name: File release warnings as issues
         if: ${{ !cancelled() }}
         continue-on-error: true

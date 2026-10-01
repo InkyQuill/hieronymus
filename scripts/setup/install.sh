@@ -70,6 +70,8 @@ main() {
   if ! bash "$work/offline.sh" "${args[@]}" > "$work/install.log" 2>&1; then
     printf 'Installation needs attention:\n' >&2; cat "$work/install.log" >&2; return 1
   fi
+  # Successful bootstrap can still require an explicit database migration.
+  cat "$work/install.log"
   printf 'Hieronymus is installed.\n'
   # The managed launcher directory is internal; expose commands on the
   # conventional user PATH without replacing unrelated executables.

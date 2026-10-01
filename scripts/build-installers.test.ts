@@ -134,7 +134,7 @@ function fixture() {
   // Orchestration-only executable: native verification itself is tested by the real-package CI smoke.
   writeFileSync(
     join(payload, "hiero"),
-    `#!/usr/bin/env bash\nset -eu\nprintf '%s\\n' "$*" >> "$SETUP_CALLS"\nif [ "$1" = desktop-bootstrap ]; then\n while [ "$#" -gt 0 ]; do if [ "$1" = --app-dir ]; then app="$2"; break; fi; shift; done\n mkdir -p "$app/bin"; cp "$0" "$app/bin/hiero"; chmod 700 "$app/bin/hiero"\nfi\n`,
+    `#!/usr/bin/env bash\nset -eu\nprintf '%s\\n' "$*" >> "$SETUP_CALLS"\nif [ "$1" = desktop-bootstrap ]; then\n if [ -n "\${SETUP_WARNING:-}" ]; then printf '%s\\n' "$SETUP_WARNING"; fi\n while [ "$#" -gt 0 ]; do if [ "$1" = --app-dir ]; then app="$2"; break; fi; shift; done\n mkdir -p "$app/bin"; cp "$0" "$app/bin/hiero"; chmod 700 "$app/bin/hiero"\nfi\n`,
     { mode: 0o755 },
   );
   const archive = join(root, "fixture.tar.gz");
@@ -458,4 +458,14 @@ unix("standalone installer preserves an unrelated command in user bin", () => {
     "unrelated command",
   );
   expect(run.stderr.toString()).toContain("keeping existing command");
+});
+
+unix("successful no-open installer preserves migration-pending diagnostics", () => {
+  const f = fixture();
+  const warning = "Database upgrade required. Run hiero migrate; existing data is preserved.";
+  const run = Bun.spawnSync(["bash", f.script, "--release-dir", f.release, "--app-dir", f.app, "--data-root", f.data, "--unit-dir", join(f.root,"units"), "--no-open"], {env: {...f.env, SETUP_WARNING: warning}});
+  expect(run.exitCode).toBe(0);
+  expect(run.stdout.toString()).toContain(warning);
+  expect(run.stdout.toString()).toContain("Hieronymus is installed.");
+  expect(readFileSync(f.calls,"utf8")).not.toContain("admin --data-root");
 });
