@@ -70,7 +70,13 @@ impl Delivery {
             self.quit_failed = false;
         }
         match (&event, self.events.back()) {
-            (Event::Snapshot(_) | Event::Stopped | Event::InvalidIdentity, _) => {
+            (
+                Event::Snapshot(_)
+                | Event::VersionedSnapshot { .. }
+                | Event::Stopped
+                | Event::InvalidIdentity,
+                _,
+            ) => {
                 // A definitive observation replaces only the trailing health
                 // segment. Operation/deadline events are ordering fences.
                 while self.events.back().is_some_and(is_health) {
@@ -98,7 +104,11 @@ impl Delivery {
 fn is_health(event: &Event) -> bool {
     matches!(
         event,
-        Event::Snapshot(_) | Event::Stopped | Event::InvalidIdentity | Event::ProbeTimeout
+        Event::Snapshot(_)
+            | Event::VersionedSnapshot { .. }
+            | Event::Stopped
+            | Event::InvalidIdentity
+            | Event::ProbeTimeout
     )
 }
 
@@ -220,7 +230,12 @@ impl Controller {
                             }
                             let probe_started = Instant::now();
                             let event = backend.probe();
-                            if matches!(event, Event::Snapshot(_) | Event::InvalidIdentity) {
+                            if matches!(
+                                event,
+                                Event::Snapshot(_)
+                                    | Event::VersionedSnapshot { .. }
+                                    | Event::InvalidIdentity
+                            ) {
                                 startup_deadline = None;
                             }
                             publish(event);
@@ -432,7 +447,13 @@ impl<R: AutostartRegistration> DesktopBackend for LifecycleBackend<R> {
                 .get("readiness")
                 .cloned()
                 .and_then(|value| serde_json::from_value(value).ok())
-                .map_or(Event::ProbeTimeout, Event::Snapshot),
+                .map_or(Event::ProbeTimeout, |summary| Event::VersionedSnapshot {
+                    summary,
+                    version: status
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned),
+                }),
             DiscoveryHealth::NoRecord { .. } => {
                 if lifecycle::root_is_released(&self.config).unwrap_or(false) {
                     Event::Stopped

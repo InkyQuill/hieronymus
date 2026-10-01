@@ -14,6 +14,8 @@ fn menu_has_stable_spec_order_and_disabled_text_status() {
             MenuId::Start,
             MenuId::Restart,
             MenuId::Autostart,
+            MenuId::HelperVersion,
+            MenuId::ServerVersion,
             MenuId::Quit
         ]
     );
@@ -44,4 +46,17 @@ fn start_requires_verified_absence_and_busy_disables_every_action() {
         Some(Action::SetAutostart(false))
     );
     assert_eq!(MenuId::parse("Restart"), None);
+}
+
+#[test]
+fn helper_and_observed_server_versions_are_distinct() {
+    let mut state = DesktopState::new();
+    let mut view = state.apply(Event::ProbeTimeout).clone();
+    view.server_version = Some("9.8.7".into());
+    let menu = MenuProjection::from_view(&view, &DesktopSettings::default());
+    assert_eq!(
+        menu.items[5].label,
+        format!("Helper v{}", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(menu.items[6].label, "Server v9.8.7");
 }

@@ -145,6 +145,15 @@ fn run_uninstall_impl(
         }
     }
 
+    let host_cleanup = if use_native_manager {
+        home::home_dir()
+            .map(|home| crate::host_cleanup::Cleanup::prepare(&home, config.data_root()))
+            .transpose()
+            .map_err(UninstallError::Refused)?
+    } else {
+        None
+    };
+
     // Service unit first, so nothing can restart the daemon mid-uninstall.
     let service_options = ServiceOptions {
         data_root: config.data_root().to_path_buf(),
@@ -226,6 +235,10 @@ fn run_uninstall_impl(
     }
     let lines = service::uninstall_guarded(&service_options, &operation)?;
     removed.extend(lines);
+
+    if let Some(cleanup) = host_cleanup {
+        removed.extend(cleanup.apply().map_err(UninstallError::Refused)?);
+    }
 
     if layout.root().exists() {
         crate::platform::managed_files::remove(layout.root())?;
@@ -601,5 +614,65 @@ mod tests {
         assert!(resolve_into(&bin.join("hiero"), &target, &app));
         let foreign = std::fs::read_link(bin.join("hieronymus")).unwrap();
         assert!(!resolve_into(&bin.join("hieronymus"), &foreign, &app));
+    }
+}
+
+/// Refresh the managed launcher; it uses the selected native CLI, never a legacy Python tool.
+#[cfg(unix)]
+pub(crate) fn write_launcher(app: &Path, data: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = app.join("uninstall.sh");
+    if let Ok(metadata) = path.symlink_metadata() {
+        if !metadata.is_file() || metadata.len() > 65536 {
+            return Err("refusing foreign uninstall launcher".into());
+        }
+        let prior = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        if !prior.contains("Hieronymus") && !prior.contains("hiero uninstall") {
+            return Err("refusing foreign uninstall launcher".into());
+        }
+    }
+    let data = data.to_string_lossy().replace('\'', "'\"'\"'");
+    let script = format!(
+        "#!/bin/sh\n# Managed Hieronymus native uninstall launcher.\nset -eu\napp=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$app/bin/hiero\" uninstall --app-dir \"$app\" --data-root '{data}' \"$@\"\n"
+    );
+    hieronymus::atomic::atomic_write_text(&path, &script).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(all(test, unix))]
+mod launcher_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn managed_launcher_uses_its_own_cli_and_preserves_quoted_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = temp.path().join("app with space");
+        let data = temp.path().join("data's root");
+        std::fs::create_dir_all(app.join("bin")).unwrap();
+        let binary = app.join("bin/hiero");
+        std::fs::write(&binary, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_launcher(&app, &data).unwrap();
+        let output = std::process::Command::new(app.join("uninstall.sh"))
+            .args(["--yes", "--keep-data"])
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "uninstall",
+                "--app-dir",
+                app.to_str().unwrap(),
+                "--data-root",
+                data.to_str().unwrap(),
+                "--yes",
+                "--keep-data"
+            ]
+        );
     }
 }

@@ -42,7 +42,10 @@ fn run_as(
             .unwrap();
         Command::new(layout.stable_link(name))
     };
+    let isolated = tempfile::tempdir().unwrap();
     let mut child = command
+        .env("HIERONYMUS_DATA_ROOT", isolated.path().join("data"))
+        .env("XDG_CONFIG_HOME", isolated.path().join("config"))
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -4,5 +4,5 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [svelte(), tailwindcss()],
-  build: { outDir: "dist", emptyOutDir: true },
+  build: { assetsInlineLimit: 0, outDir: "dist", emptyOutDir: true },
 });

@@ -287,8 +287,11 @@ fn production_probe_consumes_authenticated_readiness_and_fails_closed() {
         providers: vec![],
     };
     assert_eq!(
-        probe_reply(serde_json::json!({"readiness": summary})),
-        Event::Snapshot(summary)
+        probe_reply(serde_json::json!({"readiness": summary, "version": "9.8.7"})),
+        Event::VersionedSnapshot {
+            summary,
+            version: Some("9.8.7".into())
+        }
     );
     assert_eq!(
         probe_reply(serde_json::json!({"version": "legacy"})),

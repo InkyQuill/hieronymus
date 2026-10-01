@@ -400,6 +400,41 @@ fn run_update_guarded_impl(
     operation: &LifecycleOperation,
     desktop_install: Option<bool>,
 ) -> Result<UpdateReport, UpdateError> {
+    let mut report = run_update_core(options, manager_override, operation, desktop_install)?;
+    #[cfg(unix)]
+    {
+        let root = options
+            .app_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(AppLayout::detect_from_exe)
+            .map_err(UpdateError::Refused)?;
+        let config = load_config(options.data_root.as_deref());
+        if let Err(error) = crate::uninstall::write_launcher(&root, config.data_root()) {
+            report.steps.push(format!(
+                "warning: uninstall launcher refresh failed: {error}"
+            ));
+        }
+        // Only real native lifecycle operations may touch the user's host settings.
+        if manager_override.is_none()
+            && options.unit_dir.is_none()
+            && let Some(home) = home::home_dir()
+            && let Err(error) = crate::host_cleanup::migrate_legacy(&home, config.data_root())
+        {
+            report.steps.push(format!(
+                "warning: obsolete Codex registration cleanup failed: {error}"
+            ));
+        }
+    }
+    Ok(report)
+}
+
+fn run_update_core(
+    options: &UpdateOptions,
+    manager_override: Option<&dyn ServiceManager>,
+    operation: &LifecycleOperation,
+    desktop_install: Option<bool>,
+) -> Result<UpdateReport, UpdateError> {
     let config = load_config(options.data_root.as_deref());
     operation.check(&config)?;
     let mut lines: Vec<String> = Vec::new();

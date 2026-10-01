@@ -8,6 +8,7 @@
   import IngestEditor from "./components/IngestEditor.svelte";
   import ProviderEditor from "./components/ProviderEditor.svelte";
   import ReleaseEditor from "./components/ReleaseEditor.svelte";
+  import VersionInfo from "./components/VersionInfo.svelte";
   import Toast from "./components/Toast.svelte";
   import { createThemeToggle } from "./lib/theme.svelte";
   import {
@@ -211,7 +212,9 @@
 <main class="min-h-dvh bg-root font-sans text-primary">
   <header class="sticky top-0 z-20 border-b border-default bg-surface">
     <div class="mx-auto flex w-full max-w-[90rem] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
-    <a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
+    <div><a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
+      <VersionInfo />
+    </div>
     <nav class="order-last flex w-full min-w-0 items-center gap-1 sm:order-none sm:w-auto sm:flex-1" aria-label="Primary navigation">
       <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/admin/connect" aria-current={section === "connect" ? "page" : undefined}>Connect your agent</a>
       <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'admin' ? 'bg-raised text-primary' : ''}" href="/admin">Overview</a>

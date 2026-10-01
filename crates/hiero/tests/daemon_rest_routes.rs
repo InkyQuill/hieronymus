@@ -1090,3 +1090,32 @@ fn relevance_settings_are_guarded_and_never_return_saved_credentials() {
         400
     );
 }
+
+#[test]
+fn version_route_reports_running_server_and_obeys_browser_guards() {
+    let (fixture, _root, _daemon) = start_daemon_with_browser_session();
+    let response = common::send_request(
+        fixture.port,
+        "GET",
+        "/api/version",
+        &common::browser_headers(&fixture, &[]),
+        b"",
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body()["server_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        common::send_request(fixture.port, "GET", "/api/version", &[], b"").status,
+        401
+    );
+    assert_eq!(
+        common::send_request(
+            fixture.port,
+            "GET",
+            "/api/version",
+            &common::browser_headers(&fixture, &[("Origin", "https://foreign.invalid".into())]),
+            b""
+        )
+        .status,
+        403
+    );
+}

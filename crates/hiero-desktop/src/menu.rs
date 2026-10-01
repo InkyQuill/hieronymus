@@ -4,6 +4,8 @@ use hiero::desktop::{Action, DesktopSettings, View};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuId {
     Status,
+    HelperVersion,
+    ServerVersion,
     OpenConsole,
     Start,
     Restart,
@@ -14,6 +16,8 @@ impl MenuId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Status => "status",
+            Self::HelperVersion => "helper-version",
+            Self::ServerVersion => "server-version",
             Self::OpenConsole => "open-console",
             Self::Start => "start",
             Self::Restart => "restart",
@@ -24,6 +28,8 @@ impl MenuId {
     pub fn parse(id: &str) -> Option<Self> {
         [
             Self::Status,
+            Self::HelperVersion,
+            Self::ServerVersion,
             Self::OpenConsole,
             Self::Start,
             Self::Restart,
@@ -35,7 +41,7 @@ impl MenuId {
     }
     pub fn action(self, autostart: bool) -> Option<Action> {
         match self {
-            Self::Status => None,
+            Self::Status | Self::HelperVersion | Self::ServerVersion => None,
             Self::OpenConsole => Some(Action::OpenConsole),
             Self::Start => Some(Action::Start),
             Self::Restart => Some(Action::Restart),
@@ -88,6 +94,21 @@ impl MenuProjection {
                     label: "Start at login".into(),
                     enabled: !view.busy,
                     checked: Some(settings.autostart),
+                },
+                MenuItem {
+                    id: MenuId::HelperVersion,
+                    label: format!("Helper v{}", env!("CARGO_PKG_VERSION")),
+                    enabled: false,
+                    checked: None,
+                },
+                MenuItem {
+                    id: MenuId::ServerVersion,
+                    label: view.server_version.as_ref().map_or_else(
+                        || "Server version unavailable".into(),
+                        |v| format!("Server v{v}"),
+                    ),
+                    enabled: false,
+                    checked: None,
                 },
                 MenuItem {
                     id: MenuId::Quit,

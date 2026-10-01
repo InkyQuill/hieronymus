@@ -116,6 +116,16 @@ export function validateRun(
     );
   return run.head_sha as string;
 }
+/** Select only evidence produced for the retained binary source, never a stale variable. */
+export function selectEvidenceRun(runs: any[], repository: string, commit: string, preferred = ""): string | null {
+  if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("candidate commit required");
+  const matching = runs.filter(run => {
+    try { validateRun(run, repository, "desktop-evidence", commit); return true; }
+    catch { return false; }
+  });
+  const selected = matching.find(run => String(run.id) === preferred) ?? matching[0];
+  return selected ? numericRun(String(selected.id)) : null;
+}
 export function githubFailureDetail(
   stderr: string,
   secrets: readonly string[],
@@ -324,7 +334,16 @@ export async function verifyCandidate(
 }
 if (import.meta.main) {
   const [mode, ...args] = Bun.argv.slice(2);
-  if (mode === "inventory") await inventory(args[0], args[1], args[2]);
+  if (mode === "select-evidence") {
+    const [commit, preferred = ""] = args;
+    if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("candidate commit required");
+    const repo = process.env.GITHUB_REPOSITORY!;
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repository required");
+    const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/actions/workflows/desktop-evidence.yml/runs?head_sha=${commit}&status=success&per_page=100`]));
+    const selected = selectEvidenceRun(pages.flatMap((page: any) => page.workflow_runs), repo, commit, preferred);
+    if (selected) console.log(selected);
+    else console.warn("::warning::No completed desktop evidence for the retained candidate source");
+  } else if (mode === "inventory") await inventory(args[0], args[1], args[2]);
   else if (mode === "verify")
     console.log(JSON.stringify(await verifyCandidate(args[0], args[1])));
   else if (mode === "download") {

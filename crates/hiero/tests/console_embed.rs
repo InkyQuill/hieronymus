@@ -73,6 +73,8 @@ fn expected_mime(asset_path: &str) -> &'static str {
         "application/javascript"
     } else if asset_path.ends_with(".css") {
         "text/css; charset=utf-8"
+    } else if asset_path.ends_with(".svg") {
+        "image/svg+xml"
     } else {
         "application/octet-stream"
     }
