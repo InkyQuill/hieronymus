@@ -30,6 +30,15 @@ fn independently_delivered_prompt_applies_and_replays_saved_delivery() {
     );
     let replay = retry_delivery(&config, first["delivery_id"].as_str().unwrap()).unwrap();
     assert_eq!(replay, first);
+    hiero::agent_prompt_delivery::unbind_context(
+        &config,
+        &json!({"host":"claude","host_session_id":"actual-host-session"}),
+    )
+    .unwrap();
+    assert_eq!(
+        retry_delivery(&config, first["delivery_id"].as_str().unwrap()).unwrap(),
+        first
+    );
     let app = Application::open(&config).unwrap();
     let rejected=app.call("hieronymus_correct",&json!({"actor_kind":"explicit_user","receipt_ref":first["result"]["Applied"]["receipt"]["origin"]}),"user");
     assert!(rejected.is_err());

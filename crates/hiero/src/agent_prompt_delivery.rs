@@ -87,6 +87,30 @@ fn pause_path(config: &HieronymusConfig, h: &str, session: &str) -> PathBuf {
             .expect("context filename"),
     )
 }
+fn conversation_lock(
+    config: &HieronymusConfig,
+    h: &str,
+    session: &str,
+) -> Result<std::fs::File, DeliveryError> {
+    let path = config
+        .config_root()
+        .join("host-locks")
+        .join(
+            context_path(config, h, session)
+                .file_name()
+                .expect("context filename"),
+        )
+        .with_extension("lock");
+    match hieronymus::private_file::create_private_new(&path, b"") {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let file = hieronymus::private_file::open_coordination(&path)?;
+    file.lock()?;
+    // This persistent lock inode must never be removed by bind/unbind.
+    Ok(file)
+}
 fn delivery_path(config: &HieronymusConfig, id: &str) -> Result<PathBuf, DeliveryError> {
     if !crate::trusted_ingress::valid_uuid(id) {
         return Err(invalid("invalid delivery ID"));
@@ -164,6 +188,7 @@ pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, D
     {
         return Err(invalid("invalid binding identity or bounds"));
     }
+    let _guard = conversation_lock(config, &c.host, &c.host_session_id)?;
     let mut db = rusqlite::Connection::open_with_flags(
         config.database_path(),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -234,6 +259,7 @@ pub fn unbind_context(config: &HieronymusConfig, input: &Value) -> Result<Value,
     if identity.host_session_id.is_empty() || identity.host_session_id.len() > 512 {
         return Err(invalid("invalid host session"));
     }
+    let _guard = conversation_lock(config, &identity.host, &identity.host_session_id)?;
     // Write the pause first: even a failed context removal must stop future capture.
     save(
         &pause_path(config, &identity.host, &identity.host_session_id),
@@ -279,13 +305,12 @@ pub fn handle_prompt(
     input: &Value,
 ) -> Result<Value, DeliveryError> {
     let (session, text) = prompt_fields(h, input)?;
-    if pause_path(config, h, session).try_exists()? {
-        return Ok(skipped("capture_paused"));
-    }
     if !relevance::literary_input(text) {
         return Ok(skipped("unrelated_or_uncertain"));
     }
-    if !context_path(config, h, session).try_exists()? {
+    if !context_path(config, h, session).try_exists()?
+        && !pause_path(config, h, session).try_exists()?
+    {
         let project = input["cwd"]
             .as_str()
             .map(std::path::Path::new)
@@ -296,6 +321,12 @@ pub fn handle_prompt(
         {
             return Ok(skipped("no_literary_project"));
         }
+    }
+    let guard = conversation_lock(config, h, session)?;
+    if pause_path(config, h, session).try_exists()? {
+        return Ok(skipped("capture_paused"));
+    }
+    if !context_path(config, h, session).try_exists()? {
         return Ok(
             json!({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":format!(
                 "Hieronymus bootstrap: {}. This prompt was NOT applied or retained as a correction. Use actual MCP session, immutable evidence/claim selection, bound languages/applicability and observed authority revision to construct the version:1 context for hiero agent-hook bind-context on stdin. Do not guess IDs, replay this prompt, or add prompt/actor fields to binding. A subsequent genuine UserPromptSubmit can apply after binding. No authority was minted.",
@@ -303,6 +334,7 @@ pub fn handle_prompt(
             )}}),
         );
     }
+    drop(guard);
     match submit_prompt(config, h, input) {
         Ok(response) if response["status"] == "skipped" => Ok(response),
         Ok(response) => Ok(hook_output(&response)),
@@ -333,15 +365,16 @@ pub fn submit_prompt(
     input: &Value,
 ) -> Result<Value, DeliveryError> {
     let (session, text) = prompt_fields(h, input)?;
+    if !relevance::literary_input(text) {
+        return Ok(skipped("unrelated_or_uncertain"));
+    }
+    let guard = conversation_lock(config, h, session)?;
     if pause_path(config, h, session).try_exists()? {
         return Ok(skipped("capture_paused"));
     }
     let c: HostContext = load(&context_path(config, h, session))?;
     if c.version != 1 || c.host != h || c.host_session_id != session {
         return Err(invalid("saved host/session mismatch"));
-    }
-    if !relevance::literary_input(text) {
-        return Ok(skipped("unrelated_or_uncertain"));
     }
     let id = uuid()?;
     let request = UserCorrectionV1 {
@@ -368,6 +401,7 @@ pub fn submit_prompt(
         response: None,
     };
     save(&delivery_path(config, &id)?, &delivery)?;
+    drop(guard);
     retry_delivery(config, &id)
 }
 /// Returns the exact stored response after an acknowledged delivery. An
@@ -425,6 +459,38 @@ pub fn hook_output(response: &Value) -> Value {
 #[cfg(test)]
 mod host_tests {
     use super::*;
+
+    #[test]
+    fn waiting_capture_observes_pause_before_loading_binding_or_retaining_text() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let guard = conversation_lock(&config, "codex", "actual-session").unwrap();
+        let worker_config = config.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            result_tx.send(submit_prompt(&worker_config, "codex", &json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-session","prompt":"translate this as B"}))).unwrap();
+        });
+        ready_rx.recv().unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        save(
+            &pause_path(&config, "codex", "actual-session"),
+            &json!({"paused":true}),
+        )
+        .unwrap();
+        drop(guard);
+        let result = result_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(result["reason"], "capture_paused");
+        assert!(!root.path().join("host-deliveries").exists());
+    }
 
     #[test]
     fn saved_prompt_records_remain_private_after_replacement() {
