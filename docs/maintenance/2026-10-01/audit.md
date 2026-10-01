@@ -44,3 +44,9 @@ Suggested order: hook relevance/lifecycle and diagnostics (#51, #55, #54, #46); 
 ## Local build storage
 
 Initial target: 7.1 GiB; debug: 6.4 GiB; incremental: 5.9 GiB. No cargo/rustc process was running. Remove only disposable debug artifacts, retain release binaries and published artifacts. Workspace dev/test profiles disable debug symbols and incremental compilation; .cargo/config.toml limits build jobs to two. This matches existing CI resource settings. Cargo target files have no automatic size cap: monitor `du -sh target/debug`; clean the dev profile when obsolete outputs accumulate. These settings mitigate the dominant growth sources, not a guarantee of a fixed maximum.
+
+## Completion checks
+
+Six secondary worktrees removed, nine stale registrations pruned, fourteen associated local branches deleted after confirming their heads are ancestors of main. Only the primary main worktree remains; no unmerged local branches remain. Original histories are reachable through reconciliation merge `49d38e6`.
+
+`cargo clean --profile dev` removed 23,044 files / 6.5 GiB; retained target is 716 MiB. `cargo metadata --no-deps --locked`, `cargo fmt --all -- --check`, `git diff --check` passed. Bun script suite: 149 passed, zero failed. Full Rust tests/clippy/rustdoc and frontend checks were not rerun: active Rust/frontend source was unchanged; this run qualifies repository preparation and configuration parsing, not runtime fixes.
