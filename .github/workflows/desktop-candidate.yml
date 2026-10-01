@@ -50,6 +50,7 @@ jobs:
         shell: bash
         run: bash scripts/report-release-warnings.sh
   native:
+    timeout-minutes: 300
     needs: common-model
     strategy:
       fail-fast: false

@@ -24,7 +24,7 @@ function gh(args: string[]) {
   if (run.exitCode) throw new Error(run.stderr.toString());
   return run.stdout.toString();
 }
-export async function buildAndPromote(repo: string, tag: string, sha: string, invoke = gh, sleep: (ms:number)=>Promise<unknown> = Bun.sleep, attempts = 240) {
+export async function buildAndPromote(repo: string, tag: string, sha: string, invoke = gh, sleep: (ms:number)=>Promise<unknown> = Bun.sleep, attempts = 660) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^v\d+\.\d+\.\d+$/.test(tag) || !/^[a-f0-9]{40}$/.test(sha)) throw new Error("Invalid release identity");
   const request = crypto.randomUUID();
   invoke(["api", "--method", "POST", `repos/${repo}/actions/workflows/desktop-candidate.yml/dispatches`, "-f", `ref=${tag}`, "-f", `inputs[orchestration_id]=${request}`]);
@@ -38,7 +38,7 @@ export async function buildAndPromote(repo: string, tag: string, sha: string, in
     console.log(`Promoting retained candidate ${run.id} for ${tag}`);
     return run.id;
   }
-  throw new Error("Candidate wait exceeded two hours; retry with the existing tag");
+  throw new Error("Candidate wait exceeded 330 minutes; resume publication with the existing candidate run, do not dispatch another build");
 }
 if (import.meta.main) {
   if (Bun.argv[2] === "sync") {

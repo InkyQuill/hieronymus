@@ -43,3 +43,19 @@ test("failed candidates and timeouts cannot dispatch publication",async()=>{
  expect(promotions).toBe(0);
  await expect(buildAndPromote('InkyQuill/hieronymus','v0.10.0',sha,()=>'{"workflow_runs":[]}',async()=>{},1)).rejects.toThrow('exceeded');
 });
+
+test("a candidate finishing after two hours is promoted without redispatch", async () => {
+ const sha = 'a'.repeat(40);
+ let request = '', polls = 0, builds = 0;
+ const invoke = (args: string[]) => {
+  const identity = args.find(a => a.startsWith('inputs[orchestration_id]='));
+  if (identity) { request = identity.split('=')[1]; builds++; }
+  if (args[0] === 'api' && args[1].includes('/runs?')) {
+   polls++;
+   return JSON.stringify({workflow_runs: [{id: 456, head_sha: sha, event: 'workflow_dispatch', path: '.github/workflows/desktop-candidate.yml', display_title: `desktop-candidate / ${request}`, status: polls >= 301 ? 'completed' : 'in_progress', conclusion: polls >= 301 ? 'success' : null}]});
+  }
+  return '';
+ };
+ expect(await buildAndPromote('InkyQuill/hieronymus', 'v0.10.0', sha, invoke, async () => {})).toBe(456);
+ expect(builds).toBe(1);
+});
