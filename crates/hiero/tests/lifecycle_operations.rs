@@ -247,6 +247,7 @@ esac
                 .arg("--data-root")
                 .arg(self.config.data_root())
                 .env("HOME", self.root.path().join("home"))
+                .env("XDG_CONFIG_HOME", self.root.path().join("home/.config"))
                 .env(
                     "PATH",
                     format!("{}:/usr/bin:/bin", self.root.path().join("bin").display()),
