@@ -97,7 +97,7 @@ jobs:
           data="$RUNNER_TEMP/legacy-data"; mkdir -p "$data"
           cp installers/legacy-python.sqlite "$data/hieronymus.sqlite"
           before=$(shasum -a 256 "$data/hieronymus.sqlite")
-          if ! bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$data" --unit-dir "$RUNNER_TEMP/legacy-units" --no-open > "$RUNNER_TEMP/legacy-install.log" 2>&1; then cat "$RUNNER_TEMP/legacy-install.log"; exit 1; fi
+          if ! bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$data" --unit-dir "$RUNNER_TEMP/legacy-units" --no-activate --no-open > "$RUNNER_TEMP/legacy-install.log" 2>&1; then cat "$RUNNER_TEMP/legacy-install.log"; exit 1; fi
           cat "$RUNNER_TEMP/legacy-install.log"
           grep -Eiq 'migration|upgrade' "$RUNNER_TEMP/legacy-install.log"
           test "$before" = "$(shasum -a 256 "$data/hieronymus.sqlite")"
