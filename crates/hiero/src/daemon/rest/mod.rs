@@ -63,6 +63,7 @@ pub(crate) fn handle(
             _ => not_found(),
         },
         "/api/settings/dream" => settings_route(request, runtime, settings::Kind::Dream),
+        "/api/settings/relevance" => settings_route(request, runtime, settings::Kind::Relevance),
         "/api/settings/ingest" => settings_route(request, runtime, settings::Kind::Ingest),
         "/api/settings/release" => settings_route(request, runtime, settings::Kind::Release),
         "/api/admin/dashboard" => match request.method.as_str() {

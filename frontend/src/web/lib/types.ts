@@ -209,3 +209,15 @@ export type AdminActionResult = {
   review?: Record<string, unknown>;
   run?: Record<string, unknown>;
 };
+
+export type RelevanceSettings = {
+  key_configured: boolean;
+  model: string;
+  minimum_relevance: number;
+  maximum_technical: number;
+  timeout_seconds: number;
+};
+export type RelevanceDraft = Omit<RelevanceSettings, "key_configured"> & {
+  api_key: string;
+  clear_key: boolean;
+};

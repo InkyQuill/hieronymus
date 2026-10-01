@@ -27,12 +27,20 @@ pub(crate) enum Kind {
     Dream,
     Ingest,
     Release,
+    Relevance,
 }
 
 /// `GET /api/settings/{kind}`.
 pub(super) fn get(_request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Response {
     let config = &runtime.config;
     match kind {
+        Kind::Relevance => match hieronymus::relevance_config::load(config) {
+            Ok(value) => Response::json(
+                200,
+                &json!({"relevance":hieronymus::relevance_config::public_payload(&value),"error":""}),
+            ),
+            Err(error) => envelope_400(error),
+        },
         Kind::Dream => {
             let (dream_config, dream_error) = load_dream(config);
             let (catalog, provider_error) = catalog(config);
@@ -67,12 +75,30 @@ pub(super) fn get(_request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Re
 pub(super) fn save(request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Response {
     let Some(body) = request_body(request) else {
         return envelope_400(match kind {
+            Kind::Relevance => "relevance must be an object",
             Kind::Dream => "dream must be an object",
             Kind::Ingest => "ingest must be an object",
             Kind::Release => "release must be an object",
         });
     };
     match kind {
+        Kind::Relevance => {
+            let result = hieronymus::relevance_config::load(&runtime.config)
+                .and_then(|base| {
+                    hieronymus::relevance_config::apply_draft(base, &body["relevance"])
+                })
+                .and_then(|value| {
+                    hieronymus::relevance_config::save(&runtime.config, &value)?;
+                    Ok(value)
+                });
+            match result {
+                Ok(value) => Response::json(
+                    200,
+                    &json!({"relevance":hieronymus::relevance_config::public_payload(&value),"error":""}),
+                ),
+                Err(error) => envelope_400(error),
+            }
+        }
         Kind::Dream => save_dream(request, runtime, &body),
         Kind::Ingest => save_ingest(request, runtime, &body),
         Kind::Release => save_release(request, runtime, &body),

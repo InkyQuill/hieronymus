@@ -40,6 +40,7 @@ pub mod rag_models;
 pub mod recall;
 pub mod registry;
 pub mod release_config;
+pub mod relevance_config;
 pub mod schema_upgrade;
 pub mod secret;
 pub mod semantic_arming;
