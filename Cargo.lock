@@ -2568,6 +2568,7 @@ dependencies = [
  "rust-embed",
  "rustix",
  "rustls",
+ "semver",
  "serde",
  "serde_json",
  "sha1",

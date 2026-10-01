@@ -18,6 +18,7 @@ console-embed = ["dep:rust-embed"]
 [dependencies]
 roxmltree = "=0.21.1"
 url = "2"
+semver = "=1.0.28"
 flate2 = "1"
 tar = "0.4"
 zip.workspace = true

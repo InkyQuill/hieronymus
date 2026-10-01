@@ -1,6 +1,5 @@
 //! HTTPS release staging. Downloads never mutate the application or data root.
-//! Redirects are refused (including HTTPS-to-HTTP), using the existing bounded
-//! rustls model transport and its injectable trust anchors.
+//! GitHub assets use bounded HTTPS redirects; insecure redirects are refused.
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -140,6 +139,28 @@ pub fn stage_remote_cached_with_roots(
     cache: &Path,
     roots: TlsRoots,
 ) -> Result<PathBuf, String> {
+    stage_remote_layout(base_url, channel, destination, cache, roots, false)
+}
+
+/// Stage the flat asset layout published by the official GitHub repository.
+pub fn stage_github_assets(
+    base_url: &str,
+    channel: &str,
+    destination: &Path,
+    cache: &Path,
+    roots: TlsRoots,
+) -> Result<PathBuf, String> {
+    stage_remote_layout(base_url, channel, destination, cache, roots, true)
+}
+
+fn stage_remote_layout(
+    base_url: &str,
+    channel: &str,
+    destination: &Path,
+    cache: &Path,
+    roots: TlsRoots,
+    flat: bool,
+) -> Result<PathBuf, String> {
     validate_base_url(base_url)?;
     validate_channel(channel)?;
     if destination.exists() {
@@ -153,11 +174,18 @@ pub fn stage_remote_cached_with_roots(
         .prefix(".release-")
         .tempdir_in(parent)
         .map_err(|e| e.to_string())?;
-    let transport = HttpModelTransport::new(Duration::from_secs(60)).with_tls_roots(roots);
-    let base = format!("{}/{channel}", base_url.trim_end_matches('/'));
+    let transport = HttpModelTransport::new(Duration::from_secs(60))
+        .with_tls_roots(roots)
+        .with_https_redirects(if flat { 5 } else { 0 });
+    let base = if flat {
+        base_url.trim_end_matches('/').to_owned()
+    } else {
+        format!("{}/{channel}", base_url.trim_end_matches('/'))
+    };
     let target_name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
     let target_metadata = temporary.path().join(&target_name);
-    match transport.download_to(
+    match download_release(
+        &transport,
         &format!("{base}/{target_name}"),
         &target_metadata,
         64 * 1024,
@@ -172,24 +200,24 @@ pub fn stage_remote_cached_with_roots(
             }
             {
                 let name = &manifest.platform.archive;
-                transport
-                    .download_to(
-                        &format!("{base}/{name}"),
-                        &temporary.path().join(name),
-                        MAX_ARCHIVE,
-                    )
-                    .map_err(|e| e.to_string())?;
+                download_release(
+                    &transport,
+                    &format!("{base}/{name}"),
+                    &temporary.path().join(name),
+                    MAX_ARCHIVE,
+                )
+                .map_err(|e| e.to_string())?;
             }
             let cached = cache.join(format!("{}.tar.gz", manifest.model.sha256));
             if !cached.try_exists().map_err(|e| e.to_string())? {
                 let download = temporary.path().join("model-download");
-                transport
-                    .download_to(
-                        &format!("{base}/{}", manifest.model.archive),
-                        &download,
-                        MAX_ARCHIVE,
-                    )
-                    .map_err(|e| e.to_string())?;
+                download_release(
+                    &transport,
+                    &format!("{base}/{}", manifest.model.archive),
+                    &download,
+                    MAX_ARCHIVE,
+                )
+                .map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
                 crate::release_archive::copy_verified(&download, &manifest.model.sha256, &cached)?;
             }
@@ -203,9 +231,10 @@ pub fn stage_remote_cached_with_roots(
             return Ok(destination.to_path_buf());
         }
         Err(error)
-            if error
-                .to_string()
-                .ends_with("server answered with status 404") =>
+            if !flat
+                && error
+                    .to_string()
+                    .ends_with("server answered with status 404") =>
         {
             if target_metadata.exists() {
                 std::fs::remove_file(target_metadata).map_err(|e| e.to_string())?;
@@ -214,9 +243,13 @@ pub fn stage_remote_cached_with_roots(
         Err(error) => return Err(error.to_string()),
     }
     let metadata = temporary.path().join("release.json");
-    transport
-        .download_to(&format!("{base}/release.json"), &metadata, 64 * 1024)
-        .map_err(|e| e.to_string())?;
+    download_release(
+        &transport,
+        &format!("{base}/release.json"),
+        &metadata,
+        64 * 1024,
+    )
+    .map_err(|e| e.to_string())?;
     let payload = parse_metadata(&std::fs::read(&metadata).map_err(|e| e.to_string())?)?;
     if payload.get("format_version").is_some() {
         return Err("split metadata must use its exact-target filename".into());
@@ -232,12 +265,166 @@ pub fn stage_remote_cached_with_roots(
         .and_then(serde_json::Value::as_str)
         .ok_or("legacy metadata needs an archive")?;
     let archive = temporary.path().join(archive_name);
-    transport
-        .download_to(&format!("{base}/{archive_name}"), &archive, MAX_ARCHIVE)
-        .map_err(|e| e.to_string())?;
+    download_release(
+        &transport,
+        &format!("{base}/{archive_name}"),
+        &archive,
+        MAX_ARCHIVE,
+    )
+    .map_err(|e| e.to_string())?;
     verify_directory(temporary.path())?;
     std::fs::rename(temporary.path(), destination).map_err(|e| e.to_string())?;
     Ok(destination.to_path_buf())
+}
+
+fn download_release(
+    transport: &HttpModelTransport,
+    url: &str,
+    path: &Path,
+    maximum: u64,
+) -> Result<u64, String> {
+    transport.download_to(url, path, maximum).map_err(|error| {
+        format!(
+            "release download failed for {url}: {}",
+            error
+                .to_string()
+                .trim_start_matches("model download failed: ")
+        )
+    })
+}
+
+pub const GITHUB_REPOSITORY: &str = "https://github.com/InkyQuill/hieronymus";
+const GITHUB_API: &str = "https://api.github.com/repos/InkyQuill/hieronymus/releases";
+
+#[derive(serde::Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<GitHubAsset>,
+}
+#[derive(serde::Deserialize)]
+struct GitHubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// Resolve only published native assets in the project's own repository.
+/// No token, arbitrary repository or source environment override is accepted.
+pub fn official_release_base(channel: &str) -> Result<String, String> {
+    use hieronymus::provider_http::{BlockingHttpTransport, ProviderTransport};
+    validate_channel(channel)?;
+    let endpoint = if channel == "stable" {
+        format!("{GITHUB_API}/latest")
+    } else {
+        format!("{GITHUB_API}?per_page=100")
+    };
+    let result = BlockingHttpTransport::new(2 * 1024 * 1024)
+        .get_json(
+            &endpoint,
+            &[
+                ("User-Agent".into(), "Hieronymus".into()),
+                ("Accept".into(), "application/vnd.github+json".into()),
+            ],
+            Duration::from_secs(15),
+        )
+        .map_err(|error| format!("release discovery failed: {error}"))?;
+    if result.status != 200 {
+        return Err(format!(
+            "release discovery failed: GitHub HTTP {}",
+            result.status
+        ));
+    }
+    select_official_release(&result.body, channel)
+}
+
+fn select_official_release(body: &str, channel: &str) -> Result<String, String> {
+    let releases: Vec<GitHubRelease> = if channel == "stable" {
+        vec![
+            serde_json::from_str(body)
+                .map_err(|e| format!("invalid GitHub release response: {e}"))?,
+        ]
+    } else {
+        serde_json::from_str(body).map_err(|e| format!("invalid GitHub release response: {e}"))?
+    };
+    let name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
+    for release in releases {
+        if release.draft || release.prerelease != (channel == "dev") {
+            continue;
+        }
+        if let Some(asset) = release.assets.iter().find(|asset| asset.name == name) {
+            let url = url::Url::parse(&asset.browser_download_url)
+                .map_err(|_| "invalid GitHub asset URL")?;
+            if url.scheme() != "https"
+                || url.host_str() != Some("github.com")
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.port().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || !url
+                    .path()
+                    .starts_with("/InkyQuill/hieronymus/releases/download/")
+            {
+                return Err("release asset does not belong to the official repository".into());
+            }
+            let expected = format!(
+                "{GITHUB_REPOSITORY}/releases/download/{}/{}",
+                release.tag_name, name
+            );
+            if asset.browser_download_url != expected {
+                return Err("release asset URL does not match its tag and target".into());
+            }
+            return Ok(asset
+                .browser_download_url
+                .trim_end_matches(&name)
+                .trim_end_matches('/')
+                .to_owned());
+        }
+    }
+    Err(format!(
+        "no published {channel} release supports {TARGET_TRIPLE}"
+    ))
+}
+
+/// Metadata-only check; does not stage archives or mutate installed state.
+pub fn check_official_release(
+    base: &str,
+    channel: &str,
+) -> Result<crate::release_manifest::ReleaseV2, String> {
+    check_release_with_roots(base, channel, TlsRoots::default())
+}
+
+/// Injected trust roots keep metadata-only acceptance tests fully local.
+pub fn check_release_with_roots(
+    base: &str,
+    channel: &str,
+    roots: TlsRoots,
+) -> Result<crate::release_manifest::ReleaseV2, String> {
+    validate_base_url(base)?;
+    validate_channel(channel)?;
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let path = temp.path().join("metadata.json");
+    let transport = HttpModelTransport::new(Duration::from_secs(15))
+        .with_tls_roots(roots)
+        .with_https_redirects(5);
+    download_release(
+        &transport,
+        &format!(
+            "{base}/{}",
+            crate::release_manifest::metadata_name(TARGET_TRIPLE)
+        ),
+        &path,
+        65536,
+    )?;
+    let manifest = crate::release_manifest::ReleaseV2::parse(
+        &std::fs::read(path).map_err(|e| e.to_string())?,
+        TARGET_TRIPLE,
+    )?;
+    if manifest.channel != channel {
+        return Err("release metadata channel mismatch".into());
+    }
+    Ok(manifest)
 }
 
 /// Shared local/remote release checks, before any activation or native load.
@@ -389,4 +576,42 @@ pub fn stage_local_pair(directory: &Path, cache: &Path) -> Result<tempfile::Temp
     )?;
     crate::release_archive::verify_split_directory(temp.path(), TARGET_TRIPLE)?;
     Ok(temp)
+}
+
+#[cfg(test)]
+mod github_tests {
+    use super::*;
+    fn release(tag: &str, draft: bool, prerelease: bool) -> serde_json::Value {
+        let name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
+        serde_json::json!({"tag_name":tag,"draft":draft,"prerelease":prerelease,"assets":[{"name":name,"browser_download_url":format!("{GITHUB_REPOSITORY}/releases/download/{tag}/{name}")}]})
+    }
+    #[test]
+    fn official_selection_filters_drafts_channels_and_foreign_sources() {
+        let stable = release("v0.9.3", false, false);
+        assert_eq!(
+            select_official_release(&stable.to_string(), "stable").unwrap(),
+            format!("{GITHUB_REPOSITORY}/releases/download/v0.9.3")
+        );
+        let dev = serde_json::json!([
+            release("v9.0.0", true, true),
+            stable,
+            release("v0.9.4-dev", false, true)
+        ]);
+        assert!(
+            select_official_release(&dev.to_string(), "dev")
+                .unwrap()
+                .ends_with("v0.9.4-dev")
+        );
+        for url in [
+            "https://example.org/file",
+            "https://github.com/other/repo/releases/download/v0.9.3/file",
+        ] {
+            let mut bad = release("v0.9.3", false, false);
+            bad["assets"][0]["browser_download_url"] = url.into();
+            assert!(select_official_release(&bad.to_string(), "stable").is_err());
+        }
+        assert!(
+            select_official_release(&release("v0.9.3", true, false).to_string(), "stable").is_err()
+        );
+    }
 }
