@@ -41,6 +41,12 @@ pub(crate) fn handle(
         "/api/agents/prepare" if request.method == "POST" => {
             guard_api(request, runtime, connection::prepare)
         }
+        "/api/version" if request.method == "GET" => guard_api(request, runtime, |_, _| {
+            Response::json(
+                200,
+                &serde_json::json!({"server_version": super::daemon_version()}),
+            )
+        }),
         "/status" => status::handle(request, runtime),
         "/authority/host-event" if request.method == "POST" => host_event(request, runtime),
         "/api/authority/correct" if request.method == "POST" => {

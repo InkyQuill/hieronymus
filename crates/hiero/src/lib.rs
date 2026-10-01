@@ -15,6 +15,7 @@ pub mod daemon_client;
 pub mod desktop;
 pub mod doctor;
 pub mod export;
+mod host_cleanup;
 pub mod lifecycle;
 pub mod project_context;
 pub mod readiness;

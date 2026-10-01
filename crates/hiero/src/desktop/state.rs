@@ -20,6 +20,7 @@ pub enum Action {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct View {
+    pub server_version: Option<String>,
     pub accent: Accent,
     pub reason: String,
     pub busy: bool,
@@ -35,6 +36,10 @@ pub enum Event {
         error: Option<String>,
     },
     Snapshot(ReadinessSummary),
+    VersionedSnapshot {
+        summary: ReadinessSummary,
+        version: Option<String>,
+    },
     ProbeTimeout,
     StartupDeadlineExpired,
     InvalidIdentity,
@@ -67,6 +72,7 @@ impl DesktopState {
     #[must_use]
     pub fn new() -> Self {
         let view = View {
+            server_version: None,
             accent: Accent::Amber,
             reason: "Checking".to_owned(),
             busy: false,
@@ -91,6 +97,11 @@ impl DesktopState {
             }
             Event::Preferences { .. } => {}
             Event::Snapshot(summary) => self.apply_snapshot(summary),
+            Event::VersionedSnapshot { summary, version } => {
+                self.apply_snapshot(summary);
+                self.status_view.server_version = version.clone();
+                self.view.server_version = version;
+            }
             Event::ProbeTimeout => self.apply_probe_timeout(),
             Event::StartupDeadlineExpired => self.apply_startup_deadline_expired(),
             Event::InvalidIdentity => self.apply_invalid_identity(),
@@ -134,6 +145,7 @@ impl DesktopState {
 
         if self.consecutive_failures < MAX_CONSECUTIVE_FAILURES {
             self.status_view = View {
+                server_version: None,
                 accent: Accent::Amber,
                 reason: "Checking".to_owned(),
                 busy: false,
@@ -142,6 +154,7 @@ impl DesktopState {
             };
         } else {
             self.status_view = View {
+                server_version: None,
                 accent: Accent::Red,
                 reason: "Server unavailable".to_owned(),
                 busy: false,
@@ -163,6 +176,7 @@ impl DesktopState {
         self.snapshot_observed_during_lifecycle = false;
         self.consecutive_failures = MAX_CONSECUTIVE_FAILURES;
         self.status_view = View {
+            server_version: None,
             accent: Accent::Red,
             reason: "Server unavailable".to_owned(),
             busy: false,
@@ -184,6 +198,7 @@ impl DesktopState {
         self.awaiting_startup = false;
         self.snapshot_observed_during_lifecycle = false;
         self.status_view = View {
+            server_version: None,
             accent: Accent::Red,
             reason: "Invalid server identity".to_owned(),
             busy: false,
@@ -207,6 +222,7 @@ impl DesktopState {
 
         self.consecutive_failures = MAX_CONSECUTIVE_FAILURES;
         self.status_view = View {
+            server_version: None,
             accent: Accent::Red,
             reason: "Stopped".to_owned(),
             busy: false,
@@ -232,6 +248,7 @@ impl DesktopState {
         }
         self.pending_action = Some(action.clone());
         self.view = View {
+            server_version: None,
             accent: match action {
                 Action::OpenConsole | Action::SetAutostart(_) => self.status_view.accent.clone(),
                 Action::Start | Action::Restart | Action::Quit => Accent::Amber,
@@ -258,6 +275,7 @@ impl DesktopState {
             }
             self.operation_failure = Some((action.clone(), error.clone()));
             self.view = View {
+                server_version: None,
                 accent: if lifecycle_failure {
                     Accent::Red
                 } else {
@@ -319,6 +337,7 @@ impl DesktopState {
 
 fn starting_view() -> View {
     View {
+        server_version: None,
         accent: Accent::Amber,
         reason: "Starting".to_owned(),
         busy: false,
@@ -334,6 +353,7 @@ fn view_from_summary(summary: ReadinessSummary) -> View {
         ReadinessLevel::Starting => (Accent::Amber, "Starting"),
     };
     View {
+        server_version: None,
         accent,
         reason: if summary.reasons.is_empty() {
             fallback.to_owned()

@@ -36,7 +36,7 @@ const PROJECT_CONTEXT_USAGE: &str = "usage: hiero project-context [--cwd <path>]
 
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
 const UPDATE_USAGE: &str = "usage: hiero update [--check | --release-dir <dir>] [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
-const UNINSTALL_USAGE: &str = "usage: hiero uninstall [--yes] [--delete-data] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
+const UNINSTALL_USAGE: &str = "usage: hiero uninstall [--yes] [--keep-data | --delete-data] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 
 /// The command this argv[0] presets, if the binary was invoked under one of
 /// the compatibility link names.
@@ -99,6 +99,7 @@ struct ParsedArguments {
     app_dir: Option<String>,
     yes: bool,
     delete_data: bool,
+    keep_data: bool,
     args_json: Option<String>,
     output: Option<String>,
     /// `hiero export --force`: replace an existing destination instead of
@@ -143,6 +144,7 @@ fn parse_arguments(
         app_dir: None,
         yes: false,
         delete_data: false,
+        keep_data: false,
         args_json: None,
         output: None,
         force: false,
@@ -324,6 +326,7 @@ fn parse_arguments(
                 );
             }
             "--no-activate" => parsed.no_activate = true,
+            "--keep-data" => parsed.keep_data = true,
             "--yes" => parsed.yes = true,
             "--delete-data" => parsed.delete_data = true,
             "--args" => {
@@ -1759,6 +1762,9 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
 /// unit, application directory, owned PATH links, and generated agent-plugin
 /// entries. Data deletion happens only through the explicit `--delete-data`.
 fn run_uninstall_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
+    if parsed.keep_data && parsed.delete_data {
+        return Err("--keep-data and --delete-data are mutually exclusive".into());
+    }
     if parsed.port.is_some() || parsed.start_daemon {
         return Err(format!(
             "uninstall does not accept --port or --start-daemon; {UNINSTALL_USAGE}"

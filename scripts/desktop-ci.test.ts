@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { checkSource } from "./check-rust-release";
 import {
   numericRun,
+  selectEvidenceRun,
   validateRun,
   githubFailureDetail,
   artifactAcquirer,
@@ -431,4 +432,12 @@ test("failed qualification can supply retained candidates but not running or for
       true,
     ),
   ).toThrow();
+});
+
+test("evidence selection ignores stale configured runs and preserves exact-source identity", () => {
+  const source = "b".repeat(40);
+  const run = (id: number, head_sha: string) => ({ ...good, id, path: ".github/workflows/desktop-evidence.yml", head_sha });
+  expect(selectEvidenceRun([run(1, "a".repeat(40)), run(2, source)], "owner/repo", source, "1")).toBe("2");
+  expect(selectEvidenceRun([run(1, "a".repeat(40))], "owner/repo", source, "1")).toBeNull();
+  expect(selectEvidenceRun([{ ...run(3, source), conclusion: "failure" }], "owner/repo", source)).toBeNull();
 });

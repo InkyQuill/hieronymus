@@ -12,8 +12,11 @@ use hiero::service::{self, ServiceOptions};
 use hieronymus::data_root::HieronymusConfig;
 
 fn hiero(arguments: &[&str]) -> (String, String, std::process::ExitStatus) {
+    let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_hiero"))
         .args(arguments)
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
         .output()
         .unwrap();
     (
@@ -208,4 +211,115 @@ fn uninstall_refuses_a_foreign_application_directory() {
     assert!(stderr.contains("does not look like"), "{stderr}");
     assert!(foreign.exists());
     assert!(Path::new(&fixture.app).exists());
+}
+
+#[test]
+fn full_linux_footprint_uninstall_preserves_data_and_repeats_safely() {
+    use std::os::unix::fs::symlink;
+    let fixture = Fixture::new();
+    let home = fixture.root.path().join("home");
+    std::fs::create_dir_all(home.join(".local/bin")).unwrap();
+    let bin = fixture.app.join("bin/hiero");
+    let helper = fixture.app.join("versions/1.0.0/hiero-desktop");
+    std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::remove_file(fixture.unit_dir.join(service::SERVICE_UNIT_NAME)).unwrap();
+    let run = |arguments: Vec<String>| {
+        Command::new(env!("CARGO_BIN_EXE_hiero"))
+            .args(arguments)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .output()
+            .unwrap()
+    };
+    let args = vec![
+        "desktop".into(),
+        "install".into(),
+        "--no-activate".into(),
+        "--data-root".into(),
+        fixture.data_root.to_string_lossy().into_owned(),
+        "--unit-dir".into(),
+        fixture.unit_dir.to_string_lossy().into_owned(),
+        "--binary".into(),
+        bin.to_string_lossy().into_owned(),
+    ];
+    let output = run(args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for name in hiero::app::LINK_NAMES {
+        symlink(
+            fixture.app.join("bin").join(name),
+            home.join(".local/bin").join(name),
+        )
+        .unwrap();
+    }
+    let codex = home.join(".codex");
+    std::fs::create_dir_all(codex.join("plugins/cache/hieronymus-local/hieronymus")).unwrap();
+    std::fs::write(
+        codex.join("config.toml"),
+        format!(
+            r#"model = "keep"
+[marketplaces.hieronymus-local]
+source = "{}/agent-plugins"
+[plugins."hieronymus@hieronymus-local"]
+enabled = true
+[hooks.state."hieronymus@hieronymus-local:hooks/hooks.codex.json:x"]
+trusted_hash = "old"
+"#,
+            fixture.data_root.display()
+        ),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let output = run(fixture.arguments(&["--yes", "--keep-data", "--json"]));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    for name in hiero::app::LINK_NAMES {
+        assert!(
+            home.join(".local/bin")
+                .join(name)
+                .symlink_metadata()
+                .is_err()
+        );
+    }
+    assert!(!fixture.app.exists());
+    assert!(!fixture.unit_dir.join(service::SERVICE_UNIT_NAME).exists());
+    assert!(!home.join(".config/autostart/hieronymus.desktop").exists());
+    assert!(
+        !home
+            .join(".local/share/applications/hieronymus.desktop")
+            .exists()
+    );
+    assert!(
+        !home
+            .join(".local/share/icons/hicolor/scalable/apps/hieronymus.svg")
+            .exists()
+    );
+    assert!(
+        !codex
+            .join("plugins/cache/hieronymus-local/hieronymus")
+            .exists()
+    );
+    let text = std::fs::read_to_string(codex.join("config.toml")).unwrap();
+    assert!(!text.contains("hieronymus"));
+    assert!(text.contains("model = \"keep\""));
+    assert!(
+        HieronymusConfig::new(&fixture.data_root)
+            .database_path()
+            .exists()
+    );
+    assert!(
+        HieronymusConfig::new(&fixture.data_root)
+            .backups_root()
+            .exists()
+    );
 }

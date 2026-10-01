@@ -188,3 +188,7 @@ export async function saveRelevanceSettings(
     )
   ).relevance;
 }
+
+export function loadVersion(): Promise<{ server_version: string }> {
+  return request("/api/version");
+}
