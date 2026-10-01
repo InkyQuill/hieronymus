@@ -165,13 +165,26 @@ export async function prepareAgentConnection(): Promise<AgentConnection[]> {
   ).agents;
 }
 
-export async function loadRelevanceSettings(): Promise<import("./types").RelevanceSettings> {
-  const result = await request<{ relevance: import("./types").RelevanceSettings; error: string }>("/api/settings/relevance");
+export async function loadRelevanceSettings(): Promise<
+  import("./types").RelevanceSettings
+> {
+  const result = await request<{
+    relevance: import("./types").RelevanceSettings;
+    error: string;
+  }>("/api/settings/relevance");
   if (result.error) throw new Error(result.error);
   return result.relevance;
 }
-export async function saveRelevanceSettings(relevance: import("./types").RelevanceDraft): Promise<import("./types").RelevanceSettings> {
-  return (await request<{ relevance: import("./types").RelevanceSettings }>("/api/settings/relevance", {
-    method: "POST", body: JSON.stringify({ relevance }),
-  })).relevance;
+export async function saveRelevanceSettings(
+  relevance: import("./types").RelevanceDraft,
+): Promise<import("./types").RelevanceSettings> {
+  return (
+    await request<{ relevance: import("./types").RelevanceSettings }>(
+      "/api/settings/relevance",
+      {
+        method: "POST",
+        body: JSON.stringify({ relevance }),
+      },
+    )
+  ).relevance;
 }
