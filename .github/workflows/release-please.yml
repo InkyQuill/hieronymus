@@ -1,0 +1,104 @@
+name: release-please
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+jobs:
+  release-pr:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: release
+        uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
+        with:
+          skip-github-release: true
+          target-branch: main
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - name: Synchronize Rust version and explicitly dispatch PR checks
+        if: steps.release.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          number=$(bun -e 'const n=JSON.parse(process.env.RELEASE_PR).number; if(!Number.isSafeInteger(n)||n<1)throw Error("Invalid PR"); console.log(n)')
+          head=$(gh pr view "$number" --json headRefName --jq .headRefName)
+          case "$head" in release-please--branches--main*) ;; *) echo 'Unexpected release branch' >&2; exit 1;; esac
+          gh auth setup-git
+          git fetch origin "$head"
+          git switch -c "$head" "origin/$head"
+          bun scripts/automatic-release.ts sync
+          git add Cargo.toml Cargo.lock
+          if ! git diff --cached --quiet; then
+            git config user.name 'Pavel Obruchnikov'
+            git config user.email 'me@inkyquill.net'
+            git commit -m 'chore(release): synchronize workspace version'
+            git push origin "$head"
+          fi
+          gh workflow run pr.yml --ref "$head"
+  prepare-tag:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - id: identity
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          version=$(tr -d '\n\r' < version.txt)
+          previous=$(git show "$BEFORE:version.txt" 2>/dev/null || printf '%s' "$version")
+          [ "$version" != "$previous" ] || exit 0
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          NEXT_VERSION="$version" bun -e 'const m=Bun.TOML.parse(await Bun.file("Cargo.toml").text()); if(m.workspace.package.version!==process.env.NEXT_VERSION)throw Error("Release and workspace versions differ")'
+          bun scripts/check-rust-release.ts --allow-untagged
+          tag="v$version"
+          if git rev-parse "$tag^{commit}" >/dev/null 2>&1; then
+            [ "$(git rev-parse "$tag^{commit}")" = "$GITHUB_SHA" ]
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+  retained-release:
+    needs: prepare-tag
+    if: needs.prepare-tag.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 125
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - name: Build once and dispatch promotion of the exact retained bytes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-tag.outputs.tag }}
+        run: bun scripts/automatic-release.ts promote "$RELEASE_TAG" "$GITHUB_SHA"
