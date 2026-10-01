@@ -69,13 +69,42 @@ pub fn mcp_protocol() -> Value {
 }
 
 pub fn route_target(route_id: &str) -> Value {
-    route_cases()["routes"]
+    let mut target = route_cases()["routes"]
         .as_array()
         .unwrap()
         .iter()
         .find(|route| route["contract_id"] == route_id)
         .unwrap_or_else(|| panic!("route {route_id} is missing from route-cases.json"))["target"]
-        .clone()
+        .clone();
+    retire_proposal_contract(&mut target);
+    target
+}
+
+// Accepted #47 delta; keep the immutable Python fixtures unchanged.
+fn retire_proposal_contract(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("pending_proposals");
+            object.remove("proposals");
+            for child in object.values_mut() {
+                retire_proposal_contract(child);
+            }
+        }
+        Value::Array(array) => {
+            array.retain(|entry| {
+                !matches!(entry.as_str(), Some("Proposals" | "proposals"))
+                    && entry["key"].as_str() != Some("proposals")
+                    && !matches!(
+                        entry["id"].as_str(),
+                        Some("approve_proposal" | "reject_proposal")
+                    )
+            });
+            for child in array {
+                retire_proposal_contract(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn route_cases() -> Value {

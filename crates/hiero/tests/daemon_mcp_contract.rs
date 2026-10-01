@@ -343,10 +343,12 @@ fn served_registry_preserves_frozen_names_and_active_rust_schemas() {
         .unwrap()
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
+        .filter(|name| *name != "hieronymus_concept_proposals_list")
         .collect();
     let served_names: Vec<&str> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
+        .filter(|name| *name != "hieronymus_concept_proposals_list")
         .collect();
     snapshot_names.extend([
         "hieronymus_decide",
@@ -357,7 +359,7 @@ fn served_registry_preserves_frozen_names_and_active_rust_schemas() {
     assert_eq!(served_names, snapshot_names);
     assert_eq!(
         served_names.len(),
-        snapshot["derived_tool_count"].as_u64().unwrap() as usize + 4
+        snapshot["derived_tool_count"].as_u64().unwrap() as usize + 3
     );
     assert_eq!(
         PROTOCOL_REVISION,

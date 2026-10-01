@@ -59,7 +59,6 @@
   // title when `title` is absent). A one-way dirty flag would wrongly send
   // the excerpt after a type-then-revert, so this compares against the seed.
   let seededTitle = "";
-  let reason = $state("");
   let confirmed = $state(false);
   // Parts carry a stable id so `removePart` (which filters the array) can't
   // rebind a textarea to the wrong part.
@@ -146,9 +145,6 @@
         };
       case "delete_selected":
         return { view, ids: targetIds(), confirmed: true };
-      case "approve_proposal":
-      case "reject_proposal":
-        return { ...body, reason: reason.trim() };
       default:
         return isDestructive ? { ...body, confirmed: true } : body;
     }
@@ -170,8 +166,6 @@
         );
       case "delete_selected":
         return targetIds().length > 0;
-      case "reject_proposal":
-        return reason.trim().length > 0;
       default:
         return true;
     }
@@ -304,17 +298,6 @@
           <li>{#if row?.id === id}{row.label} (ID: {id}){:else}Record ID: {id}{/if}</li>
         {/each}
       </ul>
-    {:else if command.id === "approve_proposal" || command.id === "reject_proposal"}
-      <label class="grid gap-1.5 text-caption text-secondary" for="action-reason">
-        Reason {command.id === "reject_proposal" ? "(required)" : "(optional)"}
-      </label>
-      <textarea
-        id="action-reason"
-        class="min-h-20 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40"
-        bind:value={reason}
-        rows="3"
-        required={command.id === "reject_proposal"}
-      ></textarea>
     {:else}
       <p class="text-body-sm text-secondary">
         {#if row}“{row.label}” will be affected.{:else}This action runs against the current view.{/if}

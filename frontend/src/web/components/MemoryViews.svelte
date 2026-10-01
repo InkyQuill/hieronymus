@@ -36,8 +36,6 @@
     "edit_memory",
     "merge_selected",
     "split_crystal",
-    "approve_proposal",
-    "reject_proposal",
     "delete_selected",
   ]);
 

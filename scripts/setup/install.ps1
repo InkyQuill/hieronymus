@@ -104,6 +104,8 @@ try{
   $uninstallRoot=Join-Path $env:LOCALAPPDATA 'Hieronymus'
   [void][IO.Directory]::CreateDirectory($uninstallRoot)
   [IO.File]::Copy($cli,(Join-Path $uninstallRoot 'uninstall-hiero.exe'),$true)
+  # Do not hide migration-pending warnings on a successful bootstrap.
+  Get-Content -LiteralPath (Join-Path $work 'install.log')
   Write-Host 'Hieronymus is installed.'
   if(-not $NoActivate -and -not $NoOpen){
     Write-Host 'Opening Hieronymus. Choose "Connect your agent" to finish setup.'

@@ -220,8 +220,8 @@ fn run(
 // --------------------------------------------------------------------------
 
 #[test]
-fn action_catalog_has_thirteen_named_actions() {
-    assert_eq!(ACTION_NAMES.len(), 13);
+fn action_catalog_has_eleven_autonomous_actions() {
+    assert_eq!(ACTION_NAMES.len(), 11);
 }
 
 #[test]
@@ -825,164 +825,12 @@ fn decay_crystal_rejects_a_non_integer_id() {
     assert!(matches!(error, hiero::application::AppError::Invalid(_)));
 }
 
-#[test]
-fn approve_proposal_creates_a_concept_and_marks_it_approved() {
-    let fx = setup();
-    let out = run(
-        &fx,
-        "approve_proposal",
-        json!({ "id": 1, "reason": "verified" }),
-    )
-    .unwrap();
-    let concept_id = out["result"]["concept_id"].as_i64().unwrap();
-    let db = db(&fx);
-    assert_eq!(
-        db.query_row(
-            "select status from strict_concept_proposals where id = 1",
-            [],
-            |r| r.get::<_, String>(0)
-        )
-        .unwrap(),
-        "approved"
-    );
-    assert_eq!(
-        count(
-            &db,
-            &format!("select count(*) from concepts where id = {concept_id}")
-        ),
-        1
-    );
-    assert_eq!(
-        count(
-            &db,
-            "select count(*) from audit_log where action = 'approve'"
-        ),
-        1
-    );
-}
-
-#[test]
-fn approve_proposal_rejects_a_non_pending_proposal() {
-    let fx = setup();
-    db(&fx)
-        .execute(
-            "update strict_concept_proposals set status = 'approved' where id = 1",
-            [],
-        )
-        .unwrap();
-    let error = run(&fx, "approve_proposal", json!({ "id": 1 })).unwrap_err();
-    assert!(matches!(error, hiero::application::AppError::Domain(_)));
-    assert_eq!(
-        count(&db(&fx), "select count(*) from concepts"),
-        1,
-        "no concept is created for a rejected approval"
-    );
-}
-
 /// The whole approval — concept row, semantic tag, rendering facet, proposal
 /// status flip, audit — is one transaction. A failure after the concept
 /// insert rolls everything back: the proposal stays `pending`, and no orphan
 /// concept/facet/tag or audit row survives. The failure is injected with a
 /// trigger that aborts the audit insert (migrations recreate dropped tables,
 /// so a trigger is the reliable seam).
-#[test]
-fn approve_proposal_rolls_back_completely_when_a_later_write_fails() {
-    let fx = setup();
-    db(&fx)
-        .execute_batch(
-            "create trigger boom_audit before insert on audit_log
-             begin select raise(abort, 'injected failure'); end;",
-        )
-        .unwrap();
-
-    let error = run(&fx, "approve_proposal", json!({ "id": 1 })).unwrap_err();
-    assert!(matches!(error, hiero::application::AppError::Domain(_)));
-
-    let db = db(&fx);
-    assert_eq!(
-        db.query_row(
-            "select status from strict_concept_proposals where id = 1",
-            [],
-            |r| r.get::<_, String>(0)
-        )
-        .unwrap(),
-        "pending",
-        "the proposal must remain pending"
-    );
-    assert_eq!(
-        count(&db, "select count(*) from concepts"),
-        1,
-        "only the seeded concept survives — no orphan concept"
-    );
-    assert_eq!(
-        count(
-            &db,
-            "select count(*) from concept_semantic_tags where tag = 'concept-proposal'"
-        ),
-        0,
-        "no orphan semantic tag"
-    );
-    assert_eq!(
-        count(&db, "select count(*) from concept_facets"),
-        0,
-        "no orphan rendering facet"
-    );
-    assert_eq!(
-        count(
-            &db,
-            "select count(*) from audit_log where action = 'approve'"
-        ),
-        0,
-        "no audit row"
-    );
-}
-
-#[test]
-fn reject_proposal_marks_it_rejected_with_a_reason() {
-    let fx = setup();
-    run(
-        &fx,
-        "reject_proposal",
-        json!({ "id": 1, "reason": "duplicate of an existing concept" }),
-    )
-    .unwrap();
-    let db = db(&fx);
-    assert_eq!(
-        db.query_row(
-            "select status from strict_concept_proposals where id = 1",
-            [],
-            |r| r.get::<_, String>(0)
-        )
-        .unwrap(),
-        "rejected"
-    );
-    assert_eq!(
-        db.query_row(
-            "select note from audit_log where action = 'reject'",
-            [],
-            |r| r.get::<_, String>(0)
-        )
-        .unwrap(),
-        "duplicate of an existing concept"
-    );
-}
-
-#[test]
-fn reject_proposal_requires_a_reason() {
-    let fx = setup();
-    let error = run(&fx, "reject_proposal", json!({ "id": 1 })).unwrap_err();
-    assert!(matches!(error, hiero::application::AppError::Invalid(_)));
-    assert_eq!(
-        db(&fx)
-            .query_row(
-                "select status from strict_concept_proposals where id = 1",
-                [],
-                |r| r.get::<_, String>(0)
-            )
-            .unwrap(),
-        "pending"
-    );
-}
 
 #[test]
 fn inspect_provenance_returns_the_source_memories_without_mutating() {
@@ -1308,75 +1156,6 @@ fn concept_merge_keeps_target_canonical_and_moves_scoped_source_evidence() {
 }
 
 #[test]
-fn dream_proposal_materialization_preserves_variant_evidence() {
-    let fx = setup();
-    let db = db(&fx);
-    db.execute(
-        "update strict_concept_proposals set approved_variants_json='[\"Verell\"]',
-        forbidden_variants_json='[\"Verele\"]' where id=1",
-        [],
-    )
-    .unwrap();
-    let out = run(&fx, "approve_proposal", json!({"id":1})).unwrap();
-    let id = out["result"]["concept_id"].as_i64().unwrap();
-    let store = hieronymus::concepts::ConceptStore::open(&fx.config).unwrap();
-    assert_eq!(store.get(id).unwrap().description, "City name proposal");
-    let facets = store.list_facets(id).unwrap();
-    let view = hiero::application::admin::snapshot(
-        &fx.config,
-        "Concepts",
-        &json!({"series":"s1", "selected_id":id.to_string()}),
-    )
-    .unwrap();
-    assert!(
-        view["detail"]["body"]
-            .as_str()
-            .unwrap()
-            .contains("note [forbidden-variant]: Verele")
-    );
-    assert!(
-        facets
-            .iter()
-            .find(|f| f.value == "Verell")
-            .unwrap()
-            .semantic_tags
-            .contains(&"approved-variant".into())
-    );
-    assert!(
-        facets
-            .iter()
-            .find(|f| f.value == "Verele")
-            .unwrap()
-            .semantic_tags
-            .contains(&"forbidden-variant".into())
-    );
-    assert!(
-        !facets
-            .iter()
-            .any(|f| f.value == "Verele" && (f.is_canonical || f.facet_type == "rendering"))
-    );
-
-    assert!(facets.iter().any(|f| f.value == "Verel" && f.is_canonical));
-    assert!(
-        facets
-            .iter()
-            .any(|f| f.value == "Verell" && f.facet_type == "rendering" && !f.is_canonical)
-    );
-    assert!(
-        facets
-            .iter()
-            .any(|f| f.value == "Verele" && f.facet_type == "note" && !f.is_canonical)
-    );
-    assert_eq!(
-        count(
-            &db,
-            "select count(*) from concept_facet_semantic_tags where semantic_tag='forbidden-variant'"
-        ),
-        1
-    );
-}
-
-#[test]
 fn merge_and_split_keep_original_claim_lineage() {
     use hieronymus::{
         claim_capture::{ClaimInput, capture_claim_tx},
@@ -1435,4 +1214,78 @@ fn admin_capture_validates_supplied_claims_before_commit() {
     );
     assert!(result.is_err(), "claims dropped: {result:?}");
     assert_eq!(count(&db(&fx), "select count(*) from crystals"), before);
+}
+
+#[test]
+fn removed_proposal_actions_are_not_implemented_and_pending_history_is_archived() {
+    let fx = setup();
+    for action in ["approve_proposal", "reject_proposal"] {
+        assert!(matches!(
+            run(&fx, action, json!({"id":1})),
+            Err(hiero::application::AppError::NotImplemented(_))
+        ));
+    }
+    let database = db(&fx);
+    let row: (String, String) = database
+        .query_row(
+            "select status, concept_text from strict_concept_proposals where id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, ("archived".into(), "Verel".into()));
+    assert_eq!(count(&database, "select count(*) from term_rules"), 0);
+}
+
+#[test]
+fn proposal_retirement_preserves_payload_resolved_history_and_authority() {
+    let fx = setup();
+    let raw = Connection::open(fx.config.database_path()).unwrap();
+    raw.execute_batch("insert into authority_state(series_id,revision) values(1,7) on conflict(series_id) do update set revision=7;
+    insert into strict_concept_proposals(dream_run_id,series_slug,source_language,target_language,concept_text,source_form,canonical_rendering,rationale,status,created_at,updated_at)
+    select dream_run_id,series_slug,source_language,target_language,concept_text,source_form,canonical_rendering,rationale,'approved',created_at,updated_at from strict_concept_proposals where id=1;
+    insert into strict_concept_proposals(dream_run_id,series_slug,source_language,target_language,concept_text,source_form,canonical_rendering,rationale,status,created_at,updated_at)
+    select dream_run_id,series_slug,source_language,target_language,concept_text,source_form,canonical_rendering,rationale,'rejected',created_at,updated_at from strict_concept_proposals where id=1;").unwrap();
+    let before: (String,String,String) = raw.query_row("select concept_text,canonical_rendering,updated_at from strict_concept_proposals where id=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    drop(raw);
+    for _ in 0..2 {
+        let current = db(&fx);
+        let after = current.query_row("select concept_text,canonical_rendering,updated_at from strict_concept_proposals where id=1",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(
+            count(
+                &current,
+                "select count(*) from strict_concept_proposals where status='archived'"
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                &current,
+                "select count(*) from strict_concept_proposals where status in ('approved','rejected')"
+            ),
+            2
+        );
+        assert_eq!(
+            count(
+                &current,
+                "select revision from authority_state where series_id=1"
+            ),
+            7
+        );
+        assert_eq!(count(&current, "select count(*) from term_rules"), 0);
+    }
+}
+
+#[test]
+fn retired_proposal_queue_does_not_turn_reads_into_writes() {
+    let fx = setup();
+    let writer = db(&fx); // Retire the one old pending row first.
+    writer.execute_batch("begin immediate").unwrap();
+    let reader = open_migrated(&fx.config.database_path()).unwrap();
+    assert_eq!(
+        count(&reader, "select count(*) from strict_concept_proposals"),
+        1
+    );
+    writer.execute_batch("rollback").unwrap();
 }

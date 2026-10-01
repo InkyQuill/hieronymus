@@ -5,7 +5,7 @@
 //!
 //! Binding rules (ADR 0011, ADR 0003):
 //! - Generic Dream output may create concepts,
-//!   facets, candidate rules (proposals), and graded-memory score deltas, but
+//!   facets and graded-memory score deltas, but
 //!   that path cannot activate, replace, or archive an active rule; the target
 //!   guard rejects any supersede action touching an id outside the selected
 //!   context or an active rule before any store call runs.
@@ -145,22 +145,6 @@ pub struct ReinforceAction {
     pub crystal_id: i64,
     pub strength_delta: f64,
     pub confidence_delta: f64,
-}
-
-/// Port of `DreamConceptProposal`: a strict concept proposal that becomes a
-/// `pending` row in `strict_concept_proposals` — a candidate that only an
-/// explicit human approval can act on, never an active rule.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConceptProposal {
-    pub series_slug: String,
-    pub source_language: String,
-    pub target_language: String,
-    pub concept_text: String,
-    pub source_form: String,
-    pub canonical_rendering: String,
-    pub approved_variants: Vec<String>,
-    pub forbidden_variants: Vec<String>,
-    pub rationale: String,
 }
 
 // ----------------------------------------------------------------------
@@ -467,75 +451,6 @@ pub(crate) fn normalize_reinforce_entry(
     })
 }
 
-/// One strict concept proposal entry. Structurally malformed proposals are
-/// rejected individually; context matching is validated later against the
-/// pass context (a proposal for another series fails the run closed).
-pub(crate) fn normalize_concept_proposal_entry(
-    item: &Value,
-    entry_path: &str,
-    rejected_entries: &mut Vec<Value>,
-) -> Option<ConceptProposal> {
-    let Some(payload) = item.as_object() else {
-        rejected_entries.push(json!({
-            "entry_path": entry_path,
-            "reason": "malformed_concept_proposal",
-            "candidate_type": value_type_name(item),
-        }));
-        return None;
-    };
-    let mut strings: Vec<String> = vec![String::new(); 6];
-    for (index, key) in [
-        "series_slug",
-        "source_language",
-        "target_language",
-        "concept_text",
-        "source_form",
-        "canonical_rendering",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        strings[index] = string_field(payload.get(key));
-    }
-    if strings[3].trim().is_empty() || strings[4].trim().is_empty() || strings[5].trim().is_empty()
-    {
-        rejected_entries.push(json!({
-            "entry_path": entry_path,
-            "reason": "invalid_concept_proposal",
-        }));
-        return None;
-    }
-    let variants = |key: &str| -> Option<Vec<String>> {
-        let mut values = Vec::new();
-        let fallback = Value::Array(Vec::new());
-        for item in payload.get(key).unwrap_or(&fallback).as_array()? {
-            values.push(item.as_str()?.to_string());
-        }
-        Some(values)
-    };
-    let (Some(approved_variants), Some(forbidden_variants)) = (
-        variants("approved_variants"),
-        variants("forbidden_variants"),
-    ) else {
-        rejected_entries.push(json!({
-            "entry_path": entry_path,
-            "reason": "invalid_concept_proposal_variants",
-        }));
-        return None;
-    };
-    Some(ConceptProposal {
-        series_slug: strings[0].clone(),
-        source_language: strings[1].clone(),
-        target_language: strings[2].clone(),
-        concept_text: strings[3].clone(),
-        source_form: strings[4].clone(),
-        canonical_rendering: strings[5].clone(),
-        approved_variants,
-        forbidden_variants,
-        rationale: string_field(payload.get("rationale")),
-    })
-}
-
 /// Port of `_concept_names_from_payload`: `concept_names`/`concepts` lists,
 /// a bare `concept_name`, and nested `{canonical_name|name|label}` objects.
 /// Malformed entries cost a confidence penalty and one aggregate warning.
@@ -805,28 +720,6 @@ pub(crate) fn validate_concepts(concepts: &[NormalizedConcept]) -> Result<(), St
         if !concept.confidence_delta.is_finite() || !(0.0..=1.0).contains(&concept.confidence_delta)
         {
             return Err("concept confidence_delta must be between 0 and 1".to_string());
-        }
-    }
-    Ok(())
-}
-
-/// Proposal context binding: a proposal asserts another series' language
-/// pair at most — a mismatch fails the run closed.
-pub(crate) fn validate_proposal_contexts(
-    proposals: &[ConceptProposal],
-    series_slug: &str,
-    source_language: &str,
-    target_language: &str,
-) -> Result<(), String> {
-    for proposal in proposals {
-        if proposal.series_slug != series_slug {
-            return Err("proposal series_slug must match context".to_string());
-        }
-        if proposal.source_language != source_language {
-            return Err("proposal source_language must match context".to_string());
-        }
-        if proposal.target_language != target_language {
-            return Err("proposal target_language must match context".to_string());
         }
     }
     Ok(())

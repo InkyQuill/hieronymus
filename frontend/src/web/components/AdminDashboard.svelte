@@ -10,7 +10,6 @@
     crystals: "/admin/memory?view=Crystals",
     dream_runs: "/admin/memory?view=Dream%20Runs",
     lessons: "/admin/memory?view=Lessons",
-    pending_proposals: "/admin/memory?view=Proposals",
     series: "/admin/memory?view=Concepts",
     sessions: "/admin/memory?view=Short-Term%20Sessions",
     short_term_memories: "/admin/memory?view=Short-Term%20Memory",

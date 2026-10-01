@@ -181,7 +181,6 @@ export type AdminActionBody = {
   source_language?: string;
   target_language?: string;
   crystal_type?: string;
-  /// approve_proposal / reject_proposal
   reason?: string;
   /// reinforce_crystal / decay_crystal
   evidence?: string;

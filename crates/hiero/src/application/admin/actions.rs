@@ -21,7 +21,7 @@
 //! (`ActionResult{entity_type, entity_id, action, message}`,
 //! `ProvenanceDetail{title, sources}`, `DreamReview{...}`).
 
-use rusqlite::{Connection, Transaction};
+use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 use hieronymus::concepts::ConceptStore;
@@ -162,7 +162,7 @@ pub fn validate_action_request(action: &str, args: &Value) -> Result<(), AppErro
 
 /// The action catalog: the 13 canonical ids the dashboard advertises
 /// (`ADMIN_COMMANDS` in `daemon/rest/admin.rs`).
-pub const ACTION_NAMES: [&str; 13] = [
+pub const ACTION_NAMES: [&str; 11] = [
     "add_memory",
     "edit_memory",
     "delete_selected",
@@ -170,8 +170,6 @@ pub const ACTION_NAMES: [&str; 13] = [
     "split_crystal",
     "reinforce_crystal",
     "decay_crystal",
-    "approve_proposal",
-    "reject_proposal",
     "inspect_provenance",
     "inspect_recall_reasons",
     "run_manual_dreaming",
@@ -198,8 +196,6 @@ pub fn run_action(
         "split_crystal" => split_crystal(config, actor, args),
         "reinforce_crystal" => feedback_action(config, actor, args, Feedback::Reinforce),
         "decay_crystal" => feedback_action(config, actor, args, Feedback::Decay),
-        "approve_proposal" => approve_proposal(config, actor, args),
-        "reject_proposal" => reject_proposal(config, actor, args),
         "inspect_provenance" => inspect_provenance(config, args),
         "inspect_recall_reasons" => inspect_recall_reasons(config, args),
         "run_manual_dreaming" => run_manual_dreaming_action(app, actor, args),
@@ -916,227 +912,6 @@ fn apply_immediate_feedback(
         )
         .map_err(store_unavailable)?;
     Ok(())
-}
-
-// --------------------------------------------------------------------------
-// approve_proposal / reject_proposal
-// --------------------------------------------------------------------------
-
-/// `approve_proposal({id, reason?})` — approve a pending strict-concept
-/// proposal: create the advisory concept (canonical name, description, the
-/// `concept-proposal` semantic tag, and its canonical rendering facet), mark
-/// the proposal `approved`, and audit — ALL in one transaction. On any
-/// failure nothing persists: no partial concept/facet/tag, the proposal stays
-/// `pending`, and no audit row. (Rule *terms* are unaffected: this is the
-/// advisory strict-concept surface, not ADR 0011's rule lifecycle. The
-/// concept row is inserted directly rather than through `ConceptStore` so the
-/// whole approval is atomic; the `concepts_ai` trigger maintains its FTS.)
-fn approve_proposal(
-    config: &HieronymusConfig,
-    actor: &str,
-    args: &Value,
-) -> Result<Value, AppError> {
-    let proposal_id = require_i64(args, "id")?;
-    let reason = arg_str(args, "reason").unwrap_or("approved from admin contract");
-
-    let mut connection = open_db(config)?;
-    let transaction = connection.transaction().map_err(store_unavailable)?;
-    let proposal = load_proposal(&transaction, proposal_id)?;
-    if proposal.status != "pending" {
-        return Err(AppError::Domain("proposal must be pending".to_string()));
-    }
-    let name = proposal.concept_text.trim();
-    if name.is_empty() {
-        return Err(AppError::Invalid(
-            "proposal has no concept text".to_string(),
-        ));
-    }
-    let (scope_type, scope_key) = if proposal.series_slug.is_empty() {
-        ("global", String::new())
-    } else {
-        ("series", format!("series:{}", proposal.series_slug))
-    };
-    let now = now_rfc3339();
-    transaction
-        .execute(
-            "insert into concepts(
-               canonical_name, description, scope_type, scope_key, status, confidence,
-               created_at, updated_at
-             )
-             values (?1, ?2, ?3, ?4, 'candidate', 0.2, ?5, ?5)",
-            rusqlite::params![name, proposal.rationale, scope_type, scope_key, now],
-        )
-        .map_err(store_unavailable)?;
-    let concept_id = transaction.last_insert_rowid();
-    transaction
-        .execute(
-            "insert into concept_semantic_tags(concept_id, tag, created_at)
-             values (?1, 'concept-proposal', ?2)",
-            rusqlite::params![concept_id, now],
-        )
-        .map_err(store_unavailable)?;
-    let rendering = proposal.canonical_rendering.trim();
-    if !rendering.is_empty() {
-        transaction
-            .execute(
-                "insert into concept_facets(
-                   concept_id, language, facet_type, value, confidence, is_canonical,
-                   created_at, updated_at
-                 )
-                 values (?1, ?2, 'rendering', ?3, 0.2, 1, ?4, ?4)",
-                rusqlite::params![concept_id, proposal.target_language, rendering, now],
-            )
-            .map_err(store_unavailable)?;
-    }
-    // These facets preserve proposal evidence only; they do not establish
-    // deterministic terminology authority. A forbidden spelling is a note,
-    // never an approved rendering or canonical facet.
-    for (variants, kind, tag) in [
-        (&proposal.approved_variants, "rendering", "approved-variant"),
-        (&proposal.forbidden_variants, "note", "forbidden-variant"),
-    ] {
-        for variant in variants {
-            transaction
-                .execute(
-                    "insert into concept_facets(concept_id, language, facet_type, value,
-                    confidence, is_canonical, created_at, updated_at)
-                 values (?1, ?2, ?3, ?4, 0.2, 0, ?5, ?5)",
-                    rusqlite::params![concept_id, proposal.target_language, kind, variant, now],
-                )
-                .map_err(store_unavailable)?;
-            let facet_id = transaction.last_insert_rowid();
-            transaction.execute(
-                "insert into concept_facet_semantic_tags(facet_id, semantic_tag) values (?1, ?2)",
-                rusqlite::params![facet_id, tag],
-            ).map_err(store_unavailable)?;
-        }
-    }
-    transaction
-        .execute(
-            "update strict_concept_proposals set status = 'approved', updated_at = ?1 where id = ?2",
-            rusqlite::params![now, proposal_id],
-        )
-        .map_err(store_unavailable)?;
-    write_audit(
-        &transaction,
-        actor,
-        "approve",
-        "strict_concept_proposal",
-        &proposal_id.to_string(),
-        reason,
-        "{}",
-        &json!({ "concept_id": concept_id }).to_string(),
-    )
-    .map_err(store_unavailable)?;
-    transaction.commit().map_err(store_unavailable)?;
-
-    Ok(responded(
-        json!({
-            "entity_type": "strict_concept_proposal",
-            "entity_id": proposal_id,
-            "action": "approve",
-            "message": "Proposal approved",
-            "concept_id": concept_id,
-        }),
-        "Proposals",
-        Some(proposal_id),
-    ))
-}
-
-/// `reject_proposal({id, reason})` — mark a pending proposal `rejected` with a
-/// before/after audit row (Python `reject_proposal`).
-fn reject_proposal(
-    config: &HieronymusConfig,
-    actor: &str,
-    args: &Value,
-) -> Result<Value, AppError> {
-    let proposal_id = require_i64(args, "id")?;
-    let reason = require_str(args, "reason")?;
-
-    let mut connection = open_db(config)?;
-    let transaction = connection.transaction().map_err(store_unavailable)?;
-    let before = load_proposal(&transaction, proposal_id)?;
-    if before.status != "pending" {
-        return Err(AppError::Domain("proposal must be pending".to_string()));
-    }
-    transaction
-        .execute(
-            "update strict_concept_proposals set status = 'rejected', updated_at = ?1 where id = ?2",
-            rusqlite::params![now_rfc3339(), proposal_id],
-        )
-        .map_err(store_unavailable)?;
-    write_audit(
-        &transaction,
-        actor,
-        "reject",
-        "strict_concept_proposal",
-        &proposal_id.to_string(),
-        &reason,
-        &json!({ "status": before.status }).to_string(),
-        &json!({ "status": "rejected" }).to_string(),
-    )
-    .map_err(store_unavailable)?;
-    transaction.commit().map_err(store_unavailable)?;
-
-    Ok(responded(
-        action_result(
-            "strict_concept_proposal",
-            proposal_id,
-            "reject",
-            "Proposal rejected",
-        ),
-        "Proposals",
-        Some(proposal_id),
-    ))
-}
-
-struct ProposalRow {
-    approved_variants: Vec<String>,
-    forbidden_variants: Vec<String>,
-    concept_text: String,
-    canonical_rendering: String,
-    rationale: String,
-    series_slug: String,
-    target_language: String,
-    status: String,
-}
-
-fn load_proposal(connection: &Connection, proposal_id: i64) -> Result<ProposalRow, AppError> {
-    connection
-        .query_row(
-            "select concept_text, canonical_rendering, rationale, series_slug,
-                    target_language, status, approved_variants_json, forbidden_variants_json
-             from strict_concept_proposals where id = ?1",
-            [proposal_id],
-            |row| {
-                let variants = |column: &str| -> rusqlite::Result<Vec<String>> {
-                    let raw: String = row.get(column)?;
-                    serde_json::from_str(&raw).map_err(|error| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            row.as_ref().column_index(column).unwrap_or(0),
-                            rusqlite::types::Type::Text,
-                            Box::new(error),
-                        )
-                    })
-                };
-                Ok(ProposalRow {
-                    approved_variants: variants("approved_variants_json")?,
-                    forbidden_variants: variants("forbidden_variants_json")?,
-                    concept_text: row.get("concept_text")?,
-                    canonical_rendering: row.get("canonical_rendering")?,
-                    rationale: row.get("rationale")?,
-                    series_slug: row.get("series_slug")?,
-                    target_language: row.get("target_language")?,
-                    status: row.get("status")?,
-                })
-            },
-        )
-        .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => {
-                AppError::Domain(format!("unknown concept proposal: {proposal_id}"))
-            }
-            _ => AppError::Domain("admin store is unavailable".to_string()),
-        })
 }
 
 // --------------------------------------------------------------------------

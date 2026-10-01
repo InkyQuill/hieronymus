@@ -152,10 +152,39 @@ pub fn open_migrated(path: &Path) -> Result<rusqlite::Connection, OpenMigratedEr
             Ok(connection)
         }
         DatabaseState::RustSchema { version } if version == SUPPORTED_RUST_SCHEMA_VERSION => {
-            Ok(open_for_writes(path)?)
+            let connection = open_for_writes(path)?;
+            // Retire the removed human-review queue without promoting its contents.
+            // Preserve payloads and resolved history; this is idempotent data cleanup,
+            // not a schema change and does not alter active authority.
+            retire_legacy_proposals(&connection)?;
+            Ok(connection)
         }
         other => Err(OpenMigratedError::UnsupportedState(other)),
     }
+}
+
+// Busy retirement is deferred to a later open; readers remain available.
+fn retire_legacy_proposals(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let pending: bool = connection.query_row(
+        "select exists(select 1 from strict_concept_proposals where status='pending')",
+        [],
+        |row| row.get(0),
+    )?;
+    if pending {
+        match connection.execute(
+            "update strict_concept_proposals set status = 'archived' where status = 'pending'",
+            [],
+        ) {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn open_for_writes(path: &Path) -> rusqlite::Result<rusqlite::Connection> {
@@ -780,6 +809,31 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(name);
         (root, path)
+    }
+
+    #[test]
+    fn busy_retirement_preserves_reads_and_retries() {
+        let (_root, path) = temp_db("retirement.sqlite");
+        let writer = open_migrated(&path).unwrap();
+        writer.execute("insert into strict_concept_proposals (source_language,target_language,concept_text,source_form,canonical_rendering,status,created_at,updated_at) values ('en','ru','preserve','source','target','pending','now','now')", []).unwrap();
+        let reader = open_for_writes(&path).unwrap();
+        reader.busy_timeout(std::time::Duration::ZERO).unwrap();
+        writer.execute_batch("begin immediate").unwrap();
+        retire_legacy_proposals(&reader).unwrap();
+        let status: String = reader
+            .query_row("select status from strict_concept_proposals", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "pending");
+        writer.execute_batch("rollback").unwrap();
+        retire_legacy_proposals(&reader).unwrap();
+        let status: String = reader
+            .query_row("select status from strict_concept_proposals", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "archived");
     }
 
     #[test]

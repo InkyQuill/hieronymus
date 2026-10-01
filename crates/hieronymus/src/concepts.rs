@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use rusqlite::Connection;
-use serde_json::{Value, json};
 use toml::Table;
 
 use crate::concept_models::{ConceptFacetRecord, ConceptRecord};
@@ -148,13 +147,6 @@ fn clean_tags<'a>(tags: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     cleaned.sort();
     cleaned.dedup();
     cleaned
-}
-
-/// Parse a strict proposal's stored variant array; malformed JSON is a
-/// rejection, never forwarded as raw text.
-fn parse_variant_array(raw: &str) -> Result<Vec<String>, ConceptError> {
-    serde_json::from_str(raw)
-        .map_err(|error| ConceptError::Invalid(format!("malformed proposal variants: {error}")))
 }
 
 fn clean_language_tags<'a>(
@@ -592,70 +584,6 @@ impl ConceptStore {
         set_semantic_tags(&transaction, concept_id, tags, &now)?;
         transaction.commit()?;
         Ok(())
-    }
-
-    /// The pending strict concept proposals as safe DTO payloads (Python
-    /// `ConceptProposalStore.list_pending`'s strict half, projected through
-    /// `StrictConceptProposal`): the explicit column list never forwards
-    /// internal rows wholesale (`dream_run_id` and timestamps stay
-    /// unprojected) and the variant arrays are parsed, not carried as raw
-    /// JSON text — a malformed row is a loud rejection, not leaked SQL
-    /// output.
-    pub fn list_proposals(&self) -> Result<Vec<Value>, ConceptError> {
-        let connection = self.connection()?;
-        let mut statement = connection.prepare(
-            "select id, series_slug, source_language, target_language, concept_text,
-                    source_form, canonical_rendering, approved_variants_json,
-                    forbidden_variants_json, rationale, status
-             from strict_concept_proposals
-             where status = 'pending'
-             order by id",
-        )?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, String>(10)?,
-            ))
-        })?;
-        let mut payloads = Vec::new();
-        for row in rows {
-            let (
-                id,
-                series_slug,
-                source_language,
-                target_language,
-                concept_text,
-                source_form,
-                canonical_rendering,
-                approved_variants_json,
-                forbidden_variants_json,
-                rationale,
-                status,
-            ) = row?;
-            payloads.push(json!({
-                "id": id,
-                "series_slug": series_slug,
-                "source_language": source_language,
-                "target_language": target_language,
-                "concept_text": concept_text,
-                "source_form": source_form,
-                "canonical_rendering": canonical_rendering,
-                "approved_variants": parse_variant_array(&approved_variants_json)?,
-                "forbidden_variants": parse_variant_array(&forbidden_variants_json)?,
-                "rationale": rationale,
-                "status": status,
-            }));
-        }
-        Ok(payloads)
     }
 
     pub fn update_concept(
@@ -2081,45 +2009,6 @@ pub(crate) fn create_or_reinforce_concept_in_transaction(
         )?;
     }
     Ok(concept_id)
-}
-
-/// Insert one pending strict concept proposal inside the caller's
-/// transaction (Python `ConceptProposalStore._create_with_connection`).
-/// Proposals are candidates: only the explicit approval operation can act
-/// on them, so dream output can never activate a rule through this path.
-pub(crate) fn create_concept_proposal_in_transaction(
-    connection: &Connection,
-    dream_run_id: i64,
-    proposal: &crate::dream_output::ConceptProposal,
-    now: &str,
-) -> Result<i64, ConceptError> {
-    let approved_variants_json = serde_json::to_string(&proposal.approved_variants)
-        .map_err(|error| ConceptError::Invalid(error.to_string()))?;
-    let forbidden_variants_json = serde_json::to_string(&proposal.forbidden_variants)
-        .map_err(|error| ConceptError::Invalid(error.to_string()))?;
-    connection.execute(
-        "insert into strict_concept_proposals(
-           dream_run_id, series_slug, source_language, target_language,
-           concept_text, source_form, canonical_rendering,
-           approved_variants_json, forbidden_variants_json, rationale,
-           status, created_at, updated_at
-         )
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?11)",
-        rusqlite::params![
-            dream_run_id,
-            proposal.series_slug,
-            proposal.source_language,
-            proposal.target_language,
-            proposal.concept_text,
-            proposal.source_form,
-            proposal.canonical_rendering,
-            approved_variants_json,
-            forbidden_variants_json,
-            proposal.rationale,
-            now
-        ],
-    )?;
-    Ok(connection.last_insert_rowid())
 }
 
 /// Move the source concept's live facets onto the target: identical facets

@@ -332,7 +332,6 @@ impl Application {
             "hieronymus_crystal_link_concept",
             "hieronymus_crystal_story_scopes_set",
             "hieronymus_crystal_semantic_tags_set",
-            "hieronymus_concept_proposals_list",
             // dream family (M5).
             "hieronymus_dream",
             // registry-backed frozen status contract.

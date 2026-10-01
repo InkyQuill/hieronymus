@@ -82,7 +82,6 @@ pub(crate) fn dispatch(
         "hieronymus_crystal_semantic_tags_set" => {
             Some(crystal_semantic_tags_set(application, arguments))
         }
-        "hieronymus_concept_proposals_list" => Some(concept_proposals_list(application, arguments)),
         _ => None,
     }
 }
@@ -571,17 +570,4 @@ fn crystal_semantic_tags_set(
         .set_semantic_tags(args.crystal_id, &args.semantic_tags, args.confidence)
         .map_err(domain)?;
     Ok(crystal_payload(&crystal))
-}
-
-// -------------------------------------------- hieronymus_concept_proposals_list
-
-#[derive(Deserialize)]
-struct ConceptProposalsList {}
-
-/// The pending strict concept proposals (safe DTO projection owned by the
-/// store).
-fn concept_proposals_list(application: &Application, arguments: &Value) -> Result<Value, AppError> {
-    decode::<ConceptProposalsList>(arguments)?;
-    let proposals = concepts(application)?.list_proposals().map_err(domain)?;
-    Ok(Value::Array(proposals))
 }

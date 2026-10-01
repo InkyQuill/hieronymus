@@ -834,77 +834,6 @@ fn concept_update_archive_and_merge_enforce_lifecycle_guards() {
 
 // --------------------------------------------------------- proposals projection
 
-#[test]
-fn concept_proposals_list_projects_pending_rows_as_safe_dtos() {
-    let (root, app) = test_application();
-    connection(&root)
-        .execute_batch(
-            "insert into strict_concept_proposals(
-               series_slug, source_language, target_language, concept_text,
-               source_form, canonical_rendering, approved_variants_json,
-               forbidden_variants_json, rationale, status, created_at, updated_at
-             )
-             values ('book', 'ja', 'ru', 'Cat', 'Cat', 'Кот',
-                     '[\"Котик\", \" Кот \"]', '[\"кошка\"]', 'dream evidence',
-                     'pending', '2026-09-04T00:00:00+00:00', '2026-09-04T00:00:00+00:00'),
-                    ('book', 'ja', 'ru', 'Dog', 'Dog', 'Пёс', '[]', '[]', '',
-                     'approved', '2026-09-04T00:00:00+00:00', '2026-09-04T00:00:00+00:00');",
-        )
-        .unwrap();
-
-    let proposals = call(&app, "hieronymus_concept_proposals_list", json!({}));
-    let rows = proposals.as_array().unwrap();
-    assert_eq!(rows.len(), 1, "{proposals}");
-    let row = &rows[0];
-    let mut keys: Vec<&str> = row
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    keys.sort();
-    assert_eq!(
-        keys,
-        vec![
-            "approved_variants",
-            "canonical_rendering",
-            "concept_text",
-            "forbidden_variants",
-            "id",
-            "rationale",
-            "series_slug",
-            "source_form",
-            "source_language",
-            "status",
-            "target_language",
-        ],
-        "the DTO never leaks internal columns (dream_run_id, timestamps)"
-    );
-    assert_eq!(row["concept_text"], json!("Cat"));
-    assert_eq!(row["canonical_rendering"], json!("Кот"));
-    // Variants project exactly as stored — the DTO never rewrites data.
-    assert_eq!(row["approved_variants"], json!(["Котик", " Кот "]));
-    assert_eq!(row["forbidden_variants"], json!(["кошка"]));
-    assert_eq!(row["status"], json!("pending"));
-
-    // A malformed stored variant array is a loud domain rejection, never a
-    // raw-JSON passthrough.
-    connection(&root)
-        .execute(
-            "insert into strict_concept_proposals(
-               series_slug, source_language, target_language, concept_text,
-               source_form, canonical_rendering, approved_variants_json,
-               forbidden_variants_json, rationale, status, created_at, updated_at
-             )
-             values ('book', 'ja', 'ru', 'Bird', 'Bird', 'Птица', 'not-json', '[]', '',
-                     'pending', '2026-09-04T00:00:00+00:00', '2026-09-04T00:00:00+00:00')",
-            [],
-        )
-        .unwrap();
-    let error = call_error(&app, "hieronymus_concept_proposals_list", json!({}));
-    expect_domain(error, "malformed proposal variants");
-}
-
 // ------------------------------------------------- transactional FTS projection
 
 #[test]
@@ -991,4 +920,14 @@ fn facet_and_concept_writes_project_into_fts() {
         vec![saber_id],
         "the re-parented facet keeps its FTS projection"
     );
+}
+
+#[test]
+fn proposal_compat_tool_is_removed_from_discovery_and_dispatch() {
+    let (_, app) = test_application();
+    assert!(!Application::implemented_tools().contains(&"hieronymus_concept_proposals_list"));
+    assert!(matches!(
+        call_error(&app, "hieronymus_concept_proposals_list", json!({})),
+        AppError::NotImplemented(_)
+    ));
 }

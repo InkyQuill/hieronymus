@@ -1009,7 +1009,7 @@ fn stdio_stdout_is_the_only_jsonrpc_channel() {
         .read_line(&mut line)
         .unwrap();
     let listed: Value = serde_json::from_str(line.trim_end()).expect("one JSON-RPC object");
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 43);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 42);
 
     // A tool call over the same session.
     let result = transport.call_tool("hieronymus_status", &json!({}));

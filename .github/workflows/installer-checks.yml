@@ -49,6 +49,7 @@ jobs:
         run: |
           bun scripts/build-installers.ts target/published target/installers
           cp scripts/report-release-warnings.sh target/installers/
+          bun scripts/installer-fixture.ts target/installers/legacy-python.sqlite
           echo "version=$(jq -r .version $(ls target/published/release-*.json | head -1))" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -88,6 +89,31 @@ jobs:
         with:
           name: installer-test-payloads
           path: payloads
+      - name: Successful Unix install exposes migration pending without changing data
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          extra=(); if [ -n "$CANDIDATE_RUN" ]; then extra=(--release-dir "$PWD/payloads"); fi
+          data="$RUNNER_TEMP/legacy-data"; mkdir -p "$data"
+          cp installers/legacy-python.sqlite "$data/hieronymus.sqlite"
+          before=$(shasum -a 256 "$data/hieronymus.sqlite")
+          if ! bash installers/install-hieronymus.sh "${extra[@]}" --app-dir "$RUNNER_TEMP/Hieronymus app" --data-root "$data" --unit-dir "$RUNNER_TEMP/legacy-units" --no-activate --no-open > "$RUNNER_TEMP/legacy-install.log" 2>&1; then cat "$RUNNER_TEMP/legacy-install.log"; exit 1; fi
+          cat "$RUNNER_TEMP/legacy-install.log"
+          grep -Eiq 'migrate --data-root' "$RUNNER_TEMP/legacy-install.log"
+          test "$before" = "$(shasum -a 256 "$data/hieronymus.sqlite")"
+      - name: Successful PowerShell install exposes migration pending without changing data
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $extra=@{}; if ($env:CANDIDATE_RUN) { $extra.ReleaseDir="$PWD/payloads" }
+          $data="$env:RUNNER_TEMP/legacy-data"; New-Item -ItemType Directory -Force $data | Out-Null
+          Copy-Item installers/legacy-python.sqlite "$data/hieronymus.sqlite"
+          $before=(Get-FileHash "$data/hieronymus.sqlite" -Algorithm SHA256).Hash
+          & ./installers/Install-Hieronymus.ps1 @extra -AppDir "$env:RUNNER_TEMP/Hieronymus app" -DataRoot $data -UnitDir "$env:RUNNER_TEMP/legacy-units" -NoOpen *> "$env:RUNNER_TEMP/legacy-install.log"
+          if (-not $?) { Get-Content "$env:RUNNER_TEMP/legacy-install.log"; throw 'Migration-pending install should succeed' }
+          $log=Get-Content -Raw "$env:RUNNER_TEMP/legacy-install.log"; Write-Output $log
+          if ($log -notmatch 'migrate --data-root') { throw 'Migration diagnostics were hidden' }
+          if ($before -ne (Get-FileHash "$data/hieronymus.sqlite" -Algorithm SHA256).Hash) { throw 'Installer changed the legacy database' }
       - name: Install from a single file on Linux/macOS
         id: unix-install
         if: runner.os != 'Windows'
@@ -110,6 +136,37 @@ jobs:
           $result=Start-Process -FilePath "$env:RUNNER_TEMP/Hieronymus app/bin/hiero.exe" -ArgumentList 'version --json' -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installed-version.json"
           Get-Content "$env:RUNNER_TEMP/installed-version.json"
           if ($result.ExitCode -ne 0) { throw "Installed binary failed: $($result.ExitCode)" }
+      - name: Verify native Unix default data root and environment precedence
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          extra=(); if [ -n "$CANDIDATE_RUN" ]; then extra=(--release-dir "$PWD/payloads"); fi
+          export HIERONYMUS_APP_DIR="$RUNNER_TEMP/Hieronymus app"
+          unset HIERONYMUS_DATA_ROOT
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/xdg-config"
+          if [ "$(uname -s)" = Darwin ]; then expected="$HOME/Library/Application Support/Hieronymus"; else expected="$XDG_CONFIG_HOME/hieronymus"; fi
+          bash installers/install-hieronymus.sh "${extra[@]}" --unit-dir "$RUNNER_TEMP/default-units" --no-activate
+          test -f "$expected/.lifecycle.lock"
+          export HIERONYMUS_DATA_ROOT="$RUNNER_TEMP/environment-data"
+          bash installers/install-hieronymus.sh "${extra[@]}" --unit-dir "$RUNNER_TEMP/env-units" --no-activate
+          test -f "$HIERONYMUS_DATA_ROOT/.lifecycle.lock"
+          bash installers/install-hieronymus.sh "${extra[@]}" --data-root "$RUNNER_TEMP/flag-data" --unit-dir "$RUNNER_TEMP/flag-units" --no-activate
+          test -f "$RUNNER_TEMP/flag-data/.lifecycle.lock"
+      - name: Verify native Windows APPDATA default and environment precedence
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $extra=@{}; if ($env:CANDIDATE_RUN) { $extra.ReleaseDir="$PWD/payloads" }
+          $env:HIERONYMUS_APP_DIR="$env:RUNNER_TEMP/Hieronymus app"
+          Remove-Item Env:HIERONYMUS_DATA_ROOT -ErrorAction SilentlyContinue
+          $env:APPDATA="$env:RUNNER_TEMP/appdata-fixture"
+          & ./installers/Install-Hieronymus.ps1 @extra -UnitDir "$env:RUNNER_TEMP/default-units" -NoActivate
+          if (-not $? -or -not (Test-Path "$env:APPDATA/Hieronymus/.lifecycle.lock")) { throw 'APPDATA default failed' }
+          $env:HIERONYMUS_DATA_ROOT="$env:RUNNER_TEMP/environment-data"
+          & ./installers/Install-Hieronymus.ps1 @extra -UnitDir "$env:RUNNER_TEMP/env-units" -NoActivate
+          if (-not $? -or -not (Test-Path "$env:HIERONYMUS_DATA_ROOT/.lifecycle.lock")) { throw 'Environment root failed' }
+          & ./installers/Install-Hieronymus.ps1 @extra -DataRoot "$env:RUNNER_TEMP/flag-data" -UnitDir "$env:RUNNER_TEMP/flag-units" -NoActivate
+          if (-not $? -or -not (Test-Path "$env:RUNNER_TEMP/flag-data/.lifecycle.lock")) { throw 'Flag precedence failed' }
       - name: File release warnings as issues
         if: ${{ !cancelled() }}
         continue-on-error: true
