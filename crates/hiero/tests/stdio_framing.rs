@@ -243,7 +243,7 @@ fn stdio_adapter_start_daemon_flag_goes_through_the_service_integration() {
     // foreground `hiero daemon` is for supervisors and debugging).
     //
     // The test isolates the service integration completely: HOME points at a
-    // temp directory (so `default_unit_dir` resolves there) and PATH is
+    // temp directory, with XDG_CONFIG_HOME matching it, and PATH is
     // emptied (so `manager_enabled` is false and systemd is never contacted).
     // The install step still runs, which is exactly the evidence we want.
     let root = tempfile::tempdir().unwrap();
@@ -256,6 +256,7 @@ fn stdio_adapter_start_daemon_flag_goes_through_the_service_integration() {
             "--start-daemon",
         ])
         .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join(".config"))
         .env("PATH", "")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
