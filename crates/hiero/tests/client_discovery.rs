@@ -237,6 +237,7 @@ fn only_explicit_opt_in_starts_a_truly_stopped_root() {
             let mut cmd = command(config.data_root(), stdio);
             cmd.env("HOME", root.path())
                 .env("PATH", root.path())
+                .env("XDG_CONFIG_HOME", root.path().join(".config"))
                 .env("TEST_MANAGER_LOG", &log);
             if opt_in {
                 cmd.arg("--start-daemon");
@@ -251,7 +252,8 @@ fn only_explicit_opt_in_starts_a_truly_stopped_root() {
         let manager_log = log.clone();
         let (done, stop) = std::sync::mpsc::channel();
         let manager = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(5);
+            // Hosted runners may spend several seconds scheduling the child.
+            let deadline = Instant::now() + Duration::from_secs(30);
             loop {
                 if std::fs::read_to_string(&manager_log)
                     .unwrap_or_default()
@@ -276,12 +278,13 @@ fn only_explicit_opt_in_starts_a_truly_stopped_root() {
         });
         let output = run(true);
         let _ = done.send(());
-        manager.join().unwrap();
+        let manager_result = manager.join();
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        manager_result.expect("mock manager failed after the child returned successfully");
         assert!(
             std::fs::read_to_string(log)
                 .unwrap()

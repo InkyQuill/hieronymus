@@ -357,6 +357,10 @@ mod remote_tests {
     #[test]
     #[ignore = "requires TYPESAFE_API_KEY; sends synthetic RU/EN messages to TypeSafe"]
     fn live_jev_synthetic_relevance() {
+        assert!(
+            std::env::var_os("CI").is_none() && std::env::var_os("GITHUB_ACTIONS").is_none(),
+            "live provider tests are local-only; unset CI/GITHUB_ACTIONS only on a local machine"
+        );
         let key = std::env::var("TYPESAFE_API_KEY").expect("TYPESAFE_API_KEY is required");
         assert!(!key.trim().is_empty(), "TYPESAFE_API_KEY is required");
         let settings = RelevanceConfig {
