@@ -110,10 +110,8 @@ fn spawn(
         .arg("--data-root")
         .arg(config.data_root())
         .arg("--binary")
-        .arg(binary)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
+        .arg(binary);
+    detach_stdio(&mut command);
     if let Some(options) = service {
         command.arg("--unit-dir").arg(&options.unit_dir);
     }
@@ -126,4 +124,41 @@ fn spawn(
         return Ok(None);
     }
     command.spawn().map(Some).map_err(|error| error.to_string())
+}
+
+fn detach_stdio(command: &mut Command) {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+}
+
+#[cfg(all(test, unix))]
+mod pipe_tests {
+    use super::*;
+    #[test]
+    fn running_helper_does_not_keep_invocation_stderr_pipe_open() {
+        use std::io::Read;
+        use std::os::fd::OwnedFd;
+        let (mut reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let fd: OwnedFd = writer.into();
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "exec sleep 30"])
+            .stderr(Stdio::from(fd));
+        detach_stdio(&mut command);
+        let mut child = command.spawn().unwrap();
+        drop(command);
+        let result = reader.read(&mut [0; 1]);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "helper must not keep pipe writers alive"
+        );
+    }
 }

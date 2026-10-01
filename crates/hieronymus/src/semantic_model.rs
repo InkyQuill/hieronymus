@@ -84,6 +84,7 @@ pub trait ModelTransport: Send + Sync {
 pub struct HttpModelTransport {
     timeout: Duration,
     tls_roots: TlsRoots,
+    https_redirects: usize,
 }
 
 impl HttpModelTransport {
@@ -91,7 +92,15 @@ impl HttpModelTransport {
         Self {
             timeout,
             tls_roots: TlsRoots::default(),
+            https_redirects: 0,
         }
+    }
+
+    /// Opt into bounded HTTPS redirects for release assets. Model acquisition
+    /// keeps its existing no-redirect policy unless explicitly enabled.
+    pub fn with_https_redirects(mut self, maximum: usize) -> Self {
+        self.https_redirects = maximum;
+        self
     }
 
     /// Overrides the trust anchors (loopback tests inject the locally
@@ -109,33 +118,65 @@ impl ModelTransport for HttpModelTransport {
         destination: &Path,
         max_bytes: u64,
     ) -> Result<u64, SemanticError> {
-        let parsed = tls::parse_outbound_url(url).map_err(SemanticError::UnsupportedUrl)?;
-        let mut stream: Box<dyn ReadWrite> = if parsed.secure {
-            Box::new(
-                tls::https_stream(&parsed.host, parsed.port, &self.tls_roots, self.timeout)
-                    .map_err(tls_error)?,
-            )
-        } else {
-            Box::new(self.connect_plain(&parsed)?)
-        };
+        let mut current = url.to_owned();
+        for hop in 0..=self.https_redirects {
+            let parsed =
+                tls::parse_outbound_url(&current).map_err(SemanticError::UnsupportedUrl)?;
+            let mut stream: Box<dyn ReadWrite> = if parsed.secure {
+                Box::new(
+                    tls::https_stream(&parsed.host, parsed.port, &self.tls_roots, self.timeout)
+                        .map_err(tls_error)?,
+                )
+            } else {
+                Box::new(self.connect_plain(&parsed)?)
+            };
 
-        let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-            path = parsed.path,
-            authority = parsed.http_authority(),
-        );
-        stream
-            .write_all(request.as_bytes())
-            .map_err(|error| SemanticError::Download(format!("request write failed: {error}")))?;
+            let request = format!(
+                "GET {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: */*\r\nUser-Agent: Hieronymus\r\nConnection: close\r\n\r\n",
+                path = parsed.path,
+                authority = parsed.http_authority(),
+            );
+            stream.write_all(request.as_bytes()).map_err(|error| {
+                SemanticError::Download(format!("request write failed: {error}"))
+            })?;
 
-        let (content_length, buffered) = read_response_head(&mut stream)?;
-        stream_body(
-            &mut stream,
-            destination,
-            &buffered,
-            content_length,
-            max_bytes,
-        )
+            let head = read_response_head(&mut stream)?;
+            if matches!(head.status, 301 | 302 | 303 | 307 | 308) && hop < self.https_redirects {
+                let location = head
+                    .location
+                    .ok_or_else(|| SemanticError::Download("redirect has no Location".into()))?;
+                current = if location.starts_with('/') && !location.starts_with("//") {
+                    format!("https://{}{}", parsed.http_authority(), location)
+                } else {
+                    location
+                };
+                let next =
+                    tls::parse_outbound_url(&current).map_err(SemanticError::UnsupportedUrl)?;
+                if !parsed.secure || !next.secure {
+                    return Err(SemanticError::Download(
+                        "release redirect must remain HTTPS".into(),
+                    ));
+                }
+                continue;
+            }
+            if head.status != 200 {
+                return Err(SemanticError::Download(format!(
+                    "server answered with status {}",
+                    head.status
+                )));
+            }
+            if head.chunked {
+                return stream_chunked_body(&mut stream, destination, &head.buffered, max_bytes);
+            }
+            return stream_body(
+                &mut stream,
+                destination,
+                &head.buffered,
+                head.content_length,
+                max_bytes,
+            );
+        }
+        unreachable!("bounded redirect loop always returns")
     }
 }
 
@@ -179,7 +220,14 @@ fn tls_error(error: TlsError) -> SemanticError {
 /// the advertised `Content-Length` when present plus the body bytes already
 /// buffered past the header separator (head and body can arrive in one TCP
 /// segment, and discarding them would truncate the artifact).
-fn read_response_head(stream: &mut impl Read) -> Result<(Option<u64>, Vec<u8>), SemanticError> {
+struct DownloadHead {
+    status: u16,
+    location: Option<String>,
+    content_length: Option<u64>,
+    chunked: bool,
+    buffered: Vec<u8>,
+}
+fn read_response_head(stream: &mut impl Read) -> Result<DownloadHead, SemanticError> {
     let mut raw: Vec<u8> = Vec::with_capacity(1024);
     let mut buffer = [0_u8; 1024];
     let separator = loop {
@@ -217,12 +265,9 @@ fn read_response_head(stream: &mut impl Read) -> Result<(Option<u64>, Vec<u8>), 
                 "response has an invalid status line: {status_line}"
             ))
         })?;
-    if status != 200 {
-        return Err(SemanticError::Download(format!(
-            "server answered with status {status}"
-        )));
-    }
     let mut content_length = None;
+    let mut location = None;
+    let mut chunked = false;
     for line in lines {
         if let Some((name, value)) = line.split_once(':')
             && name.trim().eq_ignore_ascii_case("content-length")
@@ -230,7 +275,33 @@ fn read_response_head(stream: &mut impl Read) -> Result<(Option<u64>, Vec<u8>), 
             content_length = value.trim().parse::<u64>().ok();
         }
     }
-    Ok((content_length, raw[separator + 4..].to_vec()))
+    for line in head.split("\r\n").skip(1) {
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("location") {
+                location = Some(value.trim().to_owned());
+            }
+            if name.eq_ignore_ascii_case("transfer-encoding") {
+                if !value.trim().eq_ignore_ascii_case("chunked") {
+                    return Err(SemanticError::Download(
+                        "unsupported transfer encoding".into(),
+                    ));
+                }
+                chunked = true;
+            }
+        }
+    }
+    if chunked && content_length.is_some() {
+        return Err(SemanticError::Download(
+            "ambiguous response body framing".into(),
+        ));
+    }
+    Ok(DownloadHead {
+        status,
+        location,
+        content_length,
+        chunked,
+        buffered: raw[separator + 4..].to_vec(),
+    })
 }
 
 /// Streams the body to `destination`, starting from the bytes buffered with
@@ -288,6 +359,63 @@ fn stream_body(
     Ok(written)
 }
 
+fn stream_chunked_body(
+    stream: &mut impl Read,
+    destination: &Path,
+    buffered: &[u8],
+    max_bytes: u64,
+) -> Result<u64, SemanticError> {
+    use std::io::BufRead;
+    let mut input = std::io::BufReader::new(std::io::Cursor::new(buffered).chain(stream));
+    let mut output = std::io::BufWriter::new(std::fs::File::create(destination)?);
+    let mut total = 0u64;
+    loop {
+        let mut line = Vec::new();
+        input.by_ref().take(129).read_until(b'\n', &mut line)?;
+        if line.len() > 128 || !line.ends_with(b"\r\n") {
+            return Err(SemanticError::Download("invalid chunk size line".into()));
+        }
+        let text = std::str::from_utf8(&line)
+            .map_err(|_| SemanticError::Download("invalid chunk size".into()))?;
+        let size = u64::from_str_radix(text.trim().split(';').next().unwrap_or(""), 16)
+            .map_err(|_| SemanticError::Download("invalid chunk size".into()))?;
+        if size == 0 {
+            let mut trailer_bytes = 0usize;
+            loop {
+                let mut trailer = Vec::new();
+                input.by_ref().take(8193).read_until(b'\n', &mut trailer)?;
+                trailer_bytes += trailer.len();
+                if trailer_bytes > 8192 || !trailer.ends_with(b"\r\n") {
+                    return Err(SemanticError::Download(
+                        "invalid or truncated chunk trailers".into(),
+                    ));
+                }
+                if trailer == b"\r\n" {
+                    break;
+                }
+                if !trailer.contains(&b':') {
+                    return Err(SemanticError::Download("invalid chunk trailer".into()));
+                }
+            }
+            break;
+        }
+        total = total
+            .checked_add(size)
+            .filter(|value| *value <= max_bytes)
+            .ok_or_else(|| {
+                SemanticError::Download(format!("download exceeded the {max_bytes} byte limit"))
+            })?;
+        let copied = std::io::copy(&mut input.by_ref().take(size), &mut output)?;
+        let mut separator = [0; 2];
+        input.read_exact(&mut separator)?;
+        if copied != size || separator != *b"\r\n" {
+            return Err(SemanticError::Download("truncated chunked download".into()));
+        }
+    }
+    output.flush()?;
+    Ok(total)
+}
+
 /// Streams the SHA-256 of the file at `path` with a bounded read window.
 pub fn sha256_file(path: &Path) -> Result<String, SemanticError> {
     let mut file = std::fs::File::open(path)?;
@@ -305,4 +433,34 @@ pub fn sha256_file(path: &Path) -> Result<String, SemanticError> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+    #[test]
+    fn chunked_response_requires_complete_trailers() {
+        let dir = tempfile::tempdir().unwrap();
+        for truncated in [b"1\r\nx\r\n0\r\n".as_slice(), b"0\r\nX-Test: value\r\n"] {
+            assert!(
+                stream_chunked_body(
+                    &mut std::io::Cursor::new(truncated),
+                    &dir.path().join("body"),
+                    &[],
+                    10
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            stream_chunked_body(
+                &mut std::io::Cursor::new(b"1\r\nx\r\n0\r\nX-Test: value\r\n\r\n"),
+                &dir.path().join("body"),
+                &[],
+                10
+            )
+            .unwrap(),
+            1
+        );
+    }
 }

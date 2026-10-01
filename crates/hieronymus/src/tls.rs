@@ -193,9 +193,11 @@ fn client_config(roots: &TlsRoots) -> Result<rustls::ClientConfig, TlsError> {
             }
         }
     }
-    Ok(builder
+    let mut config = builder
         .with_root_certificates(root_store)
-        .with_no_client_auth())
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(config)
 }
 
 /// One parsed outbound URL: scheme is `http` (plain) or `https` (TLS); every

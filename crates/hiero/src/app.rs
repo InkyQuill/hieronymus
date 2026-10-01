@@ -147,11 +147,14 @@ fn detect_failure_message() -> String {
         .to_string()
 }
 
-/// Three-way version comparison for dotted release versions: numeric
+/// SemVer comparison where possible; legacy dotted release versions use numeric
 /// components compare numerically, missing components sort lower, and
 /// non-numeric components fall back to a lexical compare.
 pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
+    if let (Ok(left), Ok(right)) = (semver::Version::parse(left), semver::Version::parse(right)) {
+        return left.cmp_precedence(&right);
+    }
     let mut left_parts = left.split('.');
     let mut right_parts = right.split('.');
     loop {
@@ -353,6 +356,13 @@ mod tests {
     #[test]
     fn version_compare_is_numeric_per_component() {
         use std::cmp::Ordering;
+        assert_eq!(compare_versions("0.9.3+r2", "0.9.3"), Ordering::Equal);
+        assert_eq!(compare_versions("0.9.3+r1", "0.9.3+r2"), Ordering::Equal);
+        assert_eq!(compare_versions("0.9.3", "0.9.3-dev.9"), Ordering::Greater);
+        assert_eq!(
+            compare_versions("0.9.3-alpha", "0.9.3-beta"),
+            Ordering::Less
+        );
         assert_eq!(compare_versions("1.10.0", "1.9.0"), Ordering::Greater);
         assert_eq!(compare_versions("1.0.0", "1.0.0"), Ordering::Equal);
         assert_eq!(compare_versions("1.0", "1.0.0"), Ordering::Less);

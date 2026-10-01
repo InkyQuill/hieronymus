@@ -35,7 +35,7 @@ const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-e
 const PROJECT_CONTEXT_USAGE: &str = "usage: hiero project-context [--cwd <path>] [--args '{\"direction_id\":null}'] [--json] [--data-root <path>]";
 
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
-const UPDATE_USAGE: &str = "usage: hiero update (--release-dir <dir> | --release-url <https-base>) [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
+const UPDATE_USAGE: &str = "usage: hiero update [--check | --release-dir <dir>] [--channel stable|dev] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 const UNINSTALL_USAGE: &str = "usage: hiero uninstall [--yes] [--delete-data] [--app-dir <dir>] [--data-root <path>] [--unit-dir <dir>] [--json]";
 
 /// The command this argv[0] presets, if the binary was invoked under one of
@@ -94,7 +94,7 @@ struct ParsedArguments {
     no_activate: bool,
     skip_registration: bool,
     release_dir: Option<String>,
-    release_url: Option<String>,
+    check_update: bool,
     channel: Option<String>,
     app_dir: Option<String>,
     yes: bool,
@@ -138,7 +138,7 @@ fn parse_arguments(
         no_activate: false,
         skip_registration: false,
         release_dir: None,
-        release_url: None,
+        check_update: false,
         channel: None,
         app_dir: None,
         yes: false,
@@ -154,6 +154,7 @@ fn parse_arguments(
         match argument.as_str() {
             "--help" | "-h" => parsed.help = true,
             "--json" => parsed.json = true,
+            "--check" => parsed.check_update = true,
             "--skip-registration" => parsed.skip_registration = true,
             "--host" | "--delivery-id" => {
                 index += 1;
@@ -299,18 +300,10 @@ fn parse_arguments(
                         .clone(),
                 );
             }
-            "--release-url" | "--channel" => {
-                let flag = arguments[index].clone();
+            "--release-url" => return Err("updates use only InkyQuill/hieronymus on GitHub; use --release-dir for local artifacts".into()),
+            "--channel" => {
                 index += 1;
-                let value = arguments
-                    .get(index)
-                    .ok_or_else(|| format!("{flag} requires a value"))?
-                    .clone();
-                if flag == "--channel" {
-                    parsed.channel = Some(value);
-                } else {
-                    parsed.release_url = Some(value);
-                }
+                parsed.channel = Some(arguments.get(index).ok_or("--channel requires a value")?.clone());
             }
             "--release-dir" => {
                 index += 1;
@@ -658,7 +651,7 @@ fn run_project_context(parsed: &ParsedArguments) -> Result<ExitCode, String> {
         || parsed.bytes.is_some()
         || parsed.runtime.is_some()
         || parsed.release_dir.is_some()
-        || parsed.release_url.is_some()
+        || parsed.check_update
         || parsed.channel.is_some()
         || parsed.app_dir.is_some()
         || parsed.yes
@@ -1669,50 +1662,75 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
             "update does not accept --port or --start-daemon; {UPDATE_USAGE}"
         ));
     }
-    let local = parsed
-        .release_dir
-        .clone()
-        .or_else(|| std::env::var("HIERONYMUS_RELEASE_DIR").ok());
-    let remote = parsed
-        .release_url
-        .clone()
-        .or_else(|| std::env::var("HIERONYMUS_RELEASE_URL").ok());
-    if local.is_some() && remote.is_some() {
-        return Err("--release-dir and --release-url are mutually exclusive".into());
+    if parsed.check_update && parsed.release_dir.is_some() {
+        return Err(
+            "--check always checks official GitHub releases; do not combine it with --release-dir"
+                .into(),
+        );
     }
     let config = load_config(parsed.data_root.as_deref().map(std::path::Path::new));
+    let channel = match &parsed.channel {
+        Some(channel) => channel.clone(),
+        None => hieronymus::release_config::load_release_config(&config)
+            .map_err(|e| e.to_string())?
+            .update_channel()
+            .to_owned(),
+    };
+    hiero::release_source::validate_channel(&channel)?;
+    let app_dir = parsed
+        .app_dir
+        .as_deref()
+        .map(absolute_path)
+        .unwrap_or_else(|| {
+            hiero::app::AppLayout::detect_from_exe()
+                .unwrap_or_else(|_| hiero::app::default_app_dir())
+        });
+    let staging = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let remote = if parsed.release_dir.is_none() {
+        let base = hiero::release_source::official_release_base(&channel)?;
+        let manifest = hiero::release_source::check_official_release(&base, &channel)?;
+        let installed = hiero::app::AppLayout::new(app_dir.clone())
+            .current_version()
+            .unwrap_or_else(|| VERSION.to_owned());
+        let available = hiero::app::compare_versions(&manifest.version, &installed).is_gt();
+        if parsed.check_update || !available {
+            let result = serde_json::json!({"current_version":installed,"latest_version":manifest.version,"update_available":available,"channel":channel,"repository":hiero::release_source::GITHUB_REPOSITORY});
+            if parsed.json {
+                println!("{result}");
+            } else if available {
+                println!(
+                    "Update available: {} → {} ({channel})",
+                    result["current_version"].as_str().unwrap_or(""),
+                    result["latest_version"].as_str().unwrap_or("")
+                );
+            } else {
+                println!(
+                    "Hieronymus {} is up to date ({channel})",
+                    result["current_version"].as_str().unwrap_or("")
+                );
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(base)
+    } else {
+        None
+    };
     let operation = lifecycle::operation::LifecycleOperation::acquire(&config)
         .map_err(|error| error.to_string())?;
-    let staging = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let channel = parsed
-        .channel
-        .clone()
-        .or_else(|| std::env::var("HIERONYMUS_RELEASE_CHANNEL").ok())
-        .unwrap_or_else(|| "stable".into());
-    hiero::release_source::validate_channel(&channel)?;
-    let release_dir = match (local, remote) {
-        (Some(directory), None) => absolute_path(&directory),
-        (None, Some(base)) => hiero::release_source::stage_remote_cached_with_roots(
+    let release_dir = match (&parsed.release_dir, remote) {
+        (Some(directory), _) => absolute_path(directory),
+        (None, Some(base)) => hiero::release_source::stage_github_assets(
             &base,
             &channel,
             &staging.path().join("verified"),
-            &parsed
-                .app_dir
-                .as_deref()
-                .map(absolute_path)
-                .unwrap_or_else(hiero::app::default_app_dir)
-                .join("cache/models"),
+            &app_dir.join("cache/models"),
             hieronymus::tls::TlsRoots::default(),
         )?,
-        _ => {
-            return Err(format!(
-                "configure HIERONYMUS_RELEASE_URL or pass --release-url / --release-dir; {UPDATE_USAGE}"
-            ));
-        }
+        _ => unreachable!("default source resolved above"),
     };
     let options = update::UpdateOptions {
         release_dir,
-        app_dir: parsed.app_dir.as_deref().map(absolute_path),
+        app_dir: Some(app_dir),
         data_root: parsed.data_root.as_deref().map(absolute_path),
         unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
     };

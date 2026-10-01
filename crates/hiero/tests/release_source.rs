@@ -363,35 +363,31 @@ fn doctor_refuses_corrupt_explicit_runtime_and_model_overrides() {
 }
 
 #[test]
-fn update_cli_honors_configured_source_and_rejects_conflicting_sources() {
-    let temp = tempfile::tempdir().unwrap();
-    let base = || {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_hiero"));
-        command
-            .args(["update", "--app-dir"])
-            .arg(temp.path().join("app"))
-            .env_remove("HIERONYMUS_RELEASE_DIR")
-            .env_remove("HIERONYMUS_RELEASE_URL");
-        command
+fn update_cli_ignores_source_environment_and_rejects_source_override() {
+    let root = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_hiero"))
+            .args(["update", "--data-root"])
+            .arg(root.path().join("data"))
+            .arg("--app-dir")
+            .arg(root.path().join("app"))
+            .arg("--unit-dir")
+            .arg(root.path().join("units"))
+            .env("XDG_CONFIG_HOME", root.path().join("config"))
+            .args(args)
+            .env("HIERONYMUS_RELEASE_URL", "http://127.0.0.1:1/unused")
+            .env("HIERONYMUS_RELEASE_DIR", "/unused-env-dir")
+            .output()
+            .unwrap()
     };
-    let output = base()
-        .env("HIERONYMUS_RELEASE_URL", "http://127.0.0.1:1/releases")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("HTTPS"));
-    let output = base()
-        .args([
-            "--release-dir",
-            "/unused",
-            "--release-url",
-            "https://127.0.0.1:1",
-        ])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("mutually exclusive"));
-    assert!(!temp.path().join("app").exists());
+    let output = run(&["--release-url", "https://example.org"]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("only InkyQuill/hieronymus"));
+    let output = run(&["--release-dir", "/unused-explicit-dir"]);
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("/unused-explicit-dir"), "{error}");
+    assert!(!error.contains("unused-env-dir"));
+    let output = run(&["--check", "--release-dir", "/unused"]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--check always checks official"));
 }
 
 #[test]
@@ -606,4 +602,43 @@ fn authenticated_snapshot_inspection_failure_cleans_assembly_and_preserves_sourc
         payload.to_string()
     );
     assert_eq!(std::fs::read_dir(directory).unwrap().count(), 3);
+}
+
+#[test]
+fn github_metadata_check_follows_https_redirect_and_reads_only_flat_metadata() {
+    let manifest = split_metadata(b"platform", b"model");
+    let name = hiero::release_manifest::metadata_name(hiero::app::TARGET_TRIPLE);
+    let body = manifest.to_string();
+    let chunked=format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",body.len(),body).into_bytes();
+    let server=Server::new(vec![(format!("/{name}"),b"HTTP/1.1 302 Found\r\nLocation: /asset?signature=fixture\r\nContent-Length: 0\r\n\r\n".to_vec()),("/asset?signature=fixture".into(),chunked)]);
+    let result = hiero::release_source::check_release_with_roots(
+        &server.url,
+        "stable",
+        server.roots.clone(),
+    )
+    .unwrap();
+    assert_eq!(result.version, "0.8.0");
+    assert_eq!(
+        *server.requests.lock().unwrap(),
+        vec![format!("/{name}"), "/asset?signature=fixture".into()]
+    );
+}
+
+#[test]
+fn github_redirect_refuses_downgrade_and_bounds_cycles_without_staging() {
+    let name = hiero::release_manifest::metadata_name(hiero::app::TARGET_TRIPLE);
+    for location in ["http://127.0.0.1:1/asset", &format!("/{name}")] {
+        let server = Server::new(vec![(
+            format!("/{name}"),
+            format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n")
+                .into_bytes(),
+        )]);
+        let result = hiero::release_source::check_release_with_roots(
+            &server.url,
+            "stable",
+            server.roots.clone(),
+        );
+        assert!(result.is_err());
+        assert!(server.requests.lock().unwrap().len() <= 6);
+    }
 }

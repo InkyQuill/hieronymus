@@ -132,7 +132,7 @@ Two interlocking flows share one on-disk layout
 
 - `scripts/install.sh` — the bootstrap installer (spec §Installer, 8 steps:
   platform resolve without executing content; fetch metadata + archive from
-  `--release-dir` or `--release-url`; SHA-256 verify and refuse any signature
+  official GitHub releases or `--release-dir`; SHA-256 verify and refuse any signature
   the waived first line cannot verify; atomic versioned-dir install; stable
   link switch; `hiero service install`; non-mutating `hiero doctor`; daemon
   start only when the schema is already compatible). A required database
@@ -284,25 +284,28 @@ not claim native readiness: the supervised daemon publishes that separately.
 
 ## Local and remote release sources
 
-No public hosting endpoint is assumed. Configure `HIERONYMUS_RELEASE_URL` or
-pass `--release-url`; `--release-dir` remains available. Supplying both is an
-error. `--channel stable|dev` (or `HIERONYMUS_RELEASE_CHANNEL`, default stable)
-selects `<base>/<channel>/release.json`. Remote metadata must declare that
-same channel. The archive is fetched beside that metadata. A feed directory
-can therefore be published under either configured channel without changing
-the updater. The builder writes the chosen channel to `release.json`.
+`hiero update --check` checks published releases in `InkyQuill/hieronymus`
+without changing the installation or downloading archives. `hiero update`
+installs an available newer release from that same repository. `--json` reports
+`current_version`, `latest_version`, `update_available`, `channel`, and
+`repository` for a check or an already-current installation.
 
-```json
-{"version":"0.7.0","target":"x86_64-unknown-linux-gnu","channel":"stable","archive":"hieronymus-0.7.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"<actual 64-digit archive digest>","signature":null}
-```
+`--channel stable|dev` overrides the channel saved in `release.conf`; the default
+is stable. Stable uses GitHub's latest published release; dev selects a published
+prerelease with assets for the current target. Drafts and releases without the
+required target metadata are excluded. An unavailable channel fails explicitly.
 
-Remote URLs require HTTPS, valid authority/port, and no userinfo, control
-characters, query or fragment. Rust staging uses the shared parsed URL and
-rustls trust roots. Redirects are refused, so a downgrade cannot occur.
-Metadata is limited to 64 KiB and archives to 1 GiB; expanded archives are
-limited to 3 GiB. Transport certificate verification stays enabled. A non-null
-signature is refused because signature verification remains unconfigured for
-this release line; SHA-256 is integrity evidence, not an independent signature.
+`--release-dir <dir>` installs explicitly supplied local artifacts. It cannot be
+combined with `--check`, which always checks GitHub. Arbitrary remote sources
+and release-source environment variables are not supported. GitHub metadata
+and archives live directly beside one another, without a channel subdirectory.
+
+Release downloads allow at most five HTTPS redirects to accommodate GitHub's
+asset delivery. HTTP downgrades are refused and TLS certificate verification
+remains enabled. Metadata is limited to 64 KiB and archives to 1 GiB; expanded
+archives are limited to 3 GiB. A non-null signature is refused because signature
+verification remains unconfigured for this release line; SHA-256 is integrity
+evidence, not an independent signature.
 
 Local and remote staging share checksum, target, archive-path and link checks
 before activation. Archive paths are a fixed allowlist; duplicate entries,
