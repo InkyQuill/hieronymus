@@ -46,7 +46,9 @@ jobs:
         run: bun scripts/check-headless-graph.ts
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --all-features --locked
+      # Live service probes are local-only, even if ignore annotations change.
+      # Provider behavior in CI is covered by mocks and loopback fixtures.
+      - run: cargo test --all-features --locked -- --skip live_jev_synthetic_relevance --skip real_ollama_coverage_fits_configured_context
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
       - name: Report build resource usage
         if: always()

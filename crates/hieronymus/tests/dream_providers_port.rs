@@ -1485,6 +1485,10 @@ fn ollama_rejects_oversized_memory_and_incomplete_generation() {
 #[test]
 #[ignore = "requires HIERO_TEST_OLLAMA_URL and HIERO_TEST_OLLAMA_MODEL; synthetic records only"]
 fn real_ollama_coverage_fits_configured_context() {
+    assert!(
+        std::env::var_os("CI").is_none() && std::env::var_os("GITHUB_ACTIONS").is_none(),
+        "live provider tests are local-only"
+    );
     let url = std::env::var("HIERO_TEST_OLLAMA_URL").expect("HIERO_TEST_OLLAMA_URL required");
     let model = std::env::var("HIERO_TEST_OLLAMA_MODEL").expect("HIERO_TEST_OLLAMA_MODEL required");
     let (_root, config) = temp_config();
