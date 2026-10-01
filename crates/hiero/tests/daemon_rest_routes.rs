@@ -1023,3 +1023,70 @@ fn public_mcp_producers_then_console_and_bridge_correction() {
     );
     assert_eq!(replay.status, 409);
 }
+
+#[test]
+fn relevance_settings_are_guarded_and_never_return_saved_credentials() {
+    let (fixture, root, _daemon) = start_daemon_with_browser_session();
+    let path = "/api/settings/relevance";
+    let forbidden = send_request(fixture.port, "GET", path, &[], b"");
+    assert_eq!(forbidden.status, 401);
+    let headers = browser_headers(&fixture, &[("Origin", same_origin(fixture.port))]);
+    let initial = send_request(fixture.port, "GET", path, &headers, b"");
+    assert_eq!(initial.status, 200);
+    assert_eq!(initial.body()["relevance"]["key_configured"], false);
+    let mut draft = json!({"relevance":{"api_key":"synthetic-private-key","clear_key":false,"model":"jev-1.13.0","minimum_relevance":0.85,"maximum_technical":0.15,"timeout_seconds":5}});
+    let response = send_request(
+        fixture.port,
+        "POST",
+        path,
+        &headers,
+        &serde_json::to_vec(&draft).unwrap(),
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body()["relevance"]["key_configured"], true);
+    assert!(!String::from_utf8_lossy(&response.raw_body).contains("synthetic-private-key"));
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    assert_eq!(
+        hieronymus::relevance_config::load(&config)
+            .unwrap()
+            .key
+            .expose_secret(),
+        "synthetic-private-key"
+    );
+    draft["relevance"]["api_key"] = json!("");
+    assert_eq!(
+        send_request(
+            fixture.port,
+            "POST",
+            path,
+            &headers,
+            &serde_json::to_vec(&draft).unwrap()
+        )
+        .body()["relevance"]["key_configured"],
+        true
+    );
+    draft["relevance"]["clear_key"] = json!(true);
+    assert_eq!(
+        send_request(
+            fixture.port,
+            "POST",
+            path,
+            &headers,
+            &serde_json::to_vec(&draft).unwrap()
+        )
+        .body()["relevance"]["key_configured"],
+        false
+    );
+    draft["relevance"]["timeout_seconds"] = json!(1000);
+    assert_eq!(
+        send_request(
+            fixture.port,
+            "POST",
+            path,
+            &headers,
+            &serde_json::to_vec(&draft).unwrap()
+        )
+        .status,
+        400
+    );
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import HookRelevanceSettings from "./HookRelevanceSettings.svelte";
   import { onMount } from "svelte";
   import type { IngestSettings } from "../lib/types";
 
@@ -21,4 +22,5 @@
     <label class="grid gap-1.5 text-caption text-secondary">Maximum learn block characters<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.learn.max_block_chars} /></label>
   </div>
   {#if error}<p class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+  <HookRelevanceSettings />
 </section>

@@ -305,9 +305,6 @@ pub fn handle_prompt(
     input: &Value,
 ) -> Result<Value, DeliveryError> {
     let (session, text) = prompt_fields(h, input)?;
-    if !relevance::literary_input(text) {
-        return Ok(skipped("unrelated_or_uncertain"));
-    }
     if !context_path(config, h, session).try_exists()?
         && !pause_path(config, h, session).try_exists()?
     {
@@ -322,6 +319,15 @@ pub fn handle_prompt(
             return Ok(skipped("no_literary_project"));
         }
     }
+    if pause_path(config, h, session).try_exists()? {
+        return Ok(skipped("capture_paused"));
+    }
+    let decision = relevance::evaluate(config, text);
+    if !decision.relevant {
+        let mut response = skipped("unrelated_or_uncertain");
+        response["relevance"] = decision.diagnostic;
+        return Ok(response);
+    }
     let guard = conversation_lock(config, h, session)?;
     if pause_path(config, h, session).try_exists()? {
         return Ok(skipped("capture_paused"));
@@ -335,7 +341,7 @@ pub fn handle_prompt(
         );
     }
     drop(guard);
-    match submit_prompt(config, h, input) {
+    match submit_relevant_prompt(config, h, session, text) {
         Ok(response) if response["status"] == "skipped" => Ok(response),
         Ok(response) => Ok(hook_output(&response)),
         // A definitive conflict must not prevent the model from reading and
@@ -365,9 +371,24 @@ pub fn submit_prompt(
     input: &Value,
 ) -> Result<Value, DeliveryError> {
     let (session, text) = prompt_fields(h, input)?;
-    if !relevance::literary_input(text) {
-        return Ok(skipped("unrelated_or_uncertain"));
+    if pause_path(config, h, session).try_exists()? {
+        return Ok(skipped("capture_paused"));
     }
+    // Direct callers also classify before saving; handle_prompt avoids a second remote request.
+    let decision = relevance::evaluate(config, text);
+    if !decision.relevant {
+        let mut response = skipped("unrelated_or_uncertain");
+        response["relevance"] = decision.diagnostic;
+        return Ok(response);
+    }
+    submit_relevant_prompt(config, h, session, text)
+}
+fn submit_relevant_prompt(
+    config: &HieronymusConfig,
+    h: &str,
+    session: &str,
+    text: &str,
+) -> Result<Value, DeliveryError> {
     let guard = conversation_lock(config, h, session)?;
     if pause_path(config, h, session).try_exists()? {
         return Ok(skipped("capture_paused"));

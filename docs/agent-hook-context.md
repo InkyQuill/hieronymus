@@ -51,7 +51,25 @@ The following is a syntax example for a monolingual session. IDs and revision il
 
 ## Capture and stop capture
 
-Capture relevance is determined automatically, locally and conservatively before saving text or sending a correction request. Exact supported correction grammar and Russian/English literary task vocabulary are eligible; technical vocabulary vetoes mixed free-text requests. Exact correction grammar takes precedence so quoted renderings and qualifications can contain technical words. Short status replies and uncertain wording are skipped. This is a deterministic heuristic, not semantic model classification: it can miss relevant messages. A relevance result does not confer authority; the existing server decision protocol still validates selection, scope, identity and revision. Ordinary autonomous agent observation capture remains available through scoped MCP operations.
+Capture relevance is determined before saving text or sending a correction request. In **Settings → Ingest → Prompt relevance**, a saved TypeSafe API key makes Jev the primary classifier. One request asks two independent Noul questions: whether the message carries authorial/literary content, and whether it requests software/infrastructure work. The message is eligible only when literary probability meets the minimum and technical probability is at or below the maximum. Successful negative or uncertain answers are skipped; they never fall back to the word filter.
+
+Without a key, the existing conservative Russian/English word filter is used. Exact supported correction grammar takes precedence within that local filter, so quoted renderings and qualifications may contain technical words. On a transport/HTTP failure, malformed response or unusable configuration, the local filter is the fallback. Skipped results include a text-free relevance diagnostic with the method and, when applicable, a generic fallback reason. The local heuristic can miss relevant messages or accept unrelated ones; Jev also remains probabilistic. A relevance result confers no authority: the server still validates selection, scope, identity and revision. Ordinary autonomous agent observation capture remains available through scoped MCP operations.
+
+Jev receives only the current user message, not the conversation history, database, selected evidence, session identifiers or project paths. An unbound hook checks the CWS project before classification; a paused hook skips it. Classification runs outside the conversation lock, so an invocation that already passed its pause check may send/finish its Jev request after unbind. Pause is rechecked under the lock before any durable retention. Requests have a 5-second default timeout, a 64 KiB response limit, and no inline retries; 401, 429, 529 and other non-200 responses use the local fallback.
+
+The optional private `relevance.conf` under the configured data root contains:
+
+```toml
+api_key = "YOUR_TYPESAFE_API_KEY"
+model = "jev-1.13.0"
+minimum_relevance = 0.85
+maximum_technical = 0.15
+timeout_seconds = 5
+```
+
+Use the settings form to create it with private permissions, or protect a manually created file with owner-only permissions (`chmod 600` on Unix). Blank key submissions preserve the saved key; “Remove saved Jev key” explicitly restores local classification. Saved keys never appear in settings responses. The endpoint is fixed to `https://api.typesafe.ai/v1/systemone`; redirects are not followed. The pinned model and initial thresholds are configurable, but these thresholds have not been calibrated on a representative project corpus. TypeSafe documents stronger English than non-English accuracy; qualify Russian content before depending on it.
+
+Protocol sources: [TypeSafe API](https://docs.typesafe.ai/api), [Noul](https://docs.typesafe.ai/primitives/noul), [model/language support](https://docs.typesafe.ai/models), and [known limitations](https://docs.typesafe.ai/model-jaggedness/jev-1.13). For an explicit synthetic live check (sends four RU/EN sample messages, requires a key; never uses real manuscript data), run `CARGO_BUILD_JOBS=2 cargo test --all-features --locked live_jev_synthetic_relevance -- --ignored`. Supply `TYPESAFE_API_KEY` securely in the process environment; missing credentials fail. Mock/transport checks do not establish real model accuracy.
 
 A skipped result has status:"skipped", retained:false and authority_changed:false. No full-text delivery is created and no binding_required instruction is injected for that message. Existing bindings do not make technical messages relevant.
 
