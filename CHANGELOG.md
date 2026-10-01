@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## [0.10.1](https://github.com/InkyQuill/hieronymus/compare/v0.10.0...v0.10.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **release:** permit updating merged release PR labels ([71c132a](https://github.com/InkyQuill/hieronymus/commit/71c132a565c54f3f365891aac31028e93af9133d))
+* **release:** permit updating merged release PR labels ([ec6afda](https://github.com/InkyQuill/hieronymus/commit/ec6afda18f3098b5f714e9dd1c5535d56fb6aafa))
+* **release:** skip PR discovery during version publication ([654e9e5](https://github.com/InkyQuill/hieronymus/commit/654e9e5b749b2ebfc41deab98f271c2c87b3c8d7))
+
 ## [0.10.0](https://github.com/InkyQuill/hieronymus/compare/v0.9.3...v0.10.0) (2026-10-01)
 
 
