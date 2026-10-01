@@ -122,16 +122,16 @@ impl Cleanup {
                                     .and_then(|i| i.get("HIERONYMUS_DATA_ROOT"))
                                     .and_then(|i| i.as_str())
                                     .map(PathBuf::from)
-                            })
-                            .unwrap_or_else(|| {
-                                hieronymus::data_root::load_config(None)
-                                    .data_root()
-                                    .to_owned()
                             });
-                        let root = hieronymus::data_root::load_config(Some(&root))
-                            .data_root()
-                            .to_owned();
-                        root == data_root
+                        // A rootless/relative entry may be launched with another host environment
+                        // or working directory. Preserve it unless its recorded root proves ownership.
+                        let owned_root = root.is_some_and(|root| {
+                            let root = hieronymus::data_root::load_config(Some(&root))
+                                .data_root()
+                                .to_owned();
+                            root.is_absolute() && root == data_root
+                        });
+                        owned_root
                             && (command == "hieronymus-mcp"
                                 || command == "hiero"
                                     && args.first().is_some_and(|a| matches!(*a, "mcp" | "stdio")))
@@ -231,6 +231,21 @@ command = "keep"
             .apply()
             .unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), after);
+    }
+    #[test]
+    fn rootless_mcp_registration_is_preserved_for_an_explicit_uninstall_root() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(".codex/config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let contents = "[mcp_servers.hieronymus]\ncommand = \"hiero\"\nargs = [\"stdio\"]\n";
+        std::fs::write(&path, contents).unwrap();
+        // This matches the process environment's root but is not recorded in the entry.
+        let root = hieronymus::data_root::load_config(None);
+        Cleanup::prepare(home.path(), root.data_root())
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), contents);
     }
     #[test]
     fn another_installations_mcp_and_legacy_registration_are_preserved() {

@@ -631,7 +631,11 @@ pub(crate) fn write_launcher(app: &Path, data: &Path) -> Result<(), String> {
             return Err("refusing foreign uninstall launcher".into());
         }
     }
-    let data = data.to_string_lossy().replace('\'', "'\"'\"'");
+    let data = std::path::absolute(data).map_err(|e| e.to_string())?;
+    let data = data
+        .to_str()
+        .ok_or("data root is not UTF-8; cannot write shell launcher")?
+        .replace('\'', "'\"'\"'");
     let script = format!(
         "#!/bin/sh\n# Managed Hieronymus native uninstall launcher.\nset -eu\napp=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$app/bin/hiero\" uninstall --app-dir \"$app\" --data-root '{data}' \"$@\"\n"
     );
@@ -644,6 +648,25 @@ pub(crate) fn write_launcher(app: &Path, data: &Path) -> Result<(), String> {
 mod launcher_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn launcher_records_absolute_relative_root_and_rejects_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let temp = tempfile::tempdir().unwrap();
+        let data = Path::new("relative-data-root");
+        write_launcher(temp.path(), data).unwrap();
+        let script = std::fs::read_to_string(temp.path().join("uninstall.sh")).unwrap();
+        assert!(script.contains(std::path::absolute(data).unwrap().to_str().unwrap()));
+        let invalid = PathBuf::from(std::ffi::OsString::from_vec(vec![b'/', 0xff]));
+        assert!(
+            write_launcher(temp.path(), &invalid)
+                .unwrap_err()
+                .contains("UTF-8")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("uninstall.sh")).unwrap(),
+            script
+        );
+    }
     #[test]
     fn managed_launcher_uses_its_own_cli_and_preserves_quoted_paths() {
         let temp = tempfile::tempdir().unwrap();
