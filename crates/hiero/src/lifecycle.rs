@@ -490,14 +490,49 @@ impl DaemonClient {
         )?;
         let parsed = serde_json::from_slice::<Value>(&raw).unwrap_or(Value::Null);
         if !(200..300).contains(&status) {
-            let detail = parsed
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("unexpected response")
-                .to_string();
+            let detail = response_error_detail(&parsed);
             return Err(ClientError::Status { status, detail });
         }
         Ok(parsed)
+    }
+}
+
+fn response_error_detail(parsed: &Value) -> String {
+    match parsed.get("error") {
+        Some(Value::String(detail)) => detail.clone(),
+        Some(value) => value
+            .get("RevisionConflict")
+            .and_then(|conflict| conflict.get("current_revision"))
+            .and_then(Value::as_u64)
+            .map(|current_revision| {
+                serde_json::json!({"RevisionConflict":{"current_revision":current_revision}})
+                    .to_string()
+            })
+            .unwrap_or_else(|| "unexpected response".into()),
+        None => "unexpected response".into(),
+    }
+}
+
+#[cfg(test)]
+mod response_error_tests {
+    use super::*;
+
+    #[test]
+    fn authority_conflicts_preserve_variant_and_revision() {
+        assert_eq!(
+            response_error_detail(
+                &serde_json::json!({"error":{"RevisionConflict":{"current_revision":7}}})
+            ),
+            r#"{"RevisionConflict":{"current_revision":7}}"#
+        );
+        assert_eq!(
+            response_error_detail(&serde_json::json!({"error":"unauthorized"})),
+            "unauthorized"
+        );
+        assert_eq!(
+            response_error_detail(&serde_json::json!({"error":{"token":"private"}})),
+            "unexpected response"
+        );
     }
 }
 

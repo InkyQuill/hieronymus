@@ -176,7 +176,7 @@ zCode 3.11.2; candidate installation and complete S1–S7 workflows are separate
 
 ## First session and explicit selection
 
-The first actual UserPromptSubmit without a binding returns read-only `binding_required`
+The first relevant UserPromptSubmit in a recognized CWS literary project without a binding returns read-only `binding_required`
 context with the actual host/session identity. It explicitly says the prompt was **not
 retained or applied** as a correction. It creates no domain session, origin or decision.
 The model establishes the real MCP session, imports/chooses actual evidence or claims,
@@ -197,3 +197,6 @@ No generated file itself proves trusted ingress, semantic retrieval or installed
 acceptance. Native version, bundle hash, model, actual events and durable effects must
 be recorded by the acceptance run. No plugin rewrites user host configuration, reports
 into a book folder, or claims a pending consolidation completed.
+
+
+Prompt capture now filters unrelated/uncertain messages before retention. Only a relevant prompt in a recognized CWS project requests initial binding; existing bindings still require relevance. See [the exact version:1 binding contract, help and unbind command](agent-hook-context.md).

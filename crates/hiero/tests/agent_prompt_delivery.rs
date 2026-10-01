@@ -50,7 +50,7 @@ fn repeated_identical_genuine_prompts_have_distinct_delivery_identity() {
     let (root, _daemon, context) = prepared();
     let config = HieronymusConfig::new(root.path());
     bind_context(&config, &context).unwrap();
-    let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"ordinary conversational text"});
+    let input = json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"The character speaks briefly"});
     let a = submit_prompt(&config, "claude", &input).unwrap();
     let mut refreshed = context.clone();
     refreshed["expected_revision"] = a["result"]["resulting_revision"].clone();
@@ -179,6 +179,18 @@ fn stale_cli_prompt_allows_recovery_without_rebasing_saved_delivery() {
     assert_eq!(diagnostic["status"], "delivery_rejected");
     assert_eq!(diagnostic["http_status"], 409);
     assert_eq!(diagnostic["authority_changed"], false);
+    assert!(
+        diagnostic["detail"]
+            .as_str()
+            .unwrap()
+            .contains("RevisionConflict")
+    );
+    assert!(
+        diagnostic["detail"]
+            .as_str()
+            .unwrap()
+            .contains("current_revision")
+    );
     assert!(diagnostic.get("required_decision_id").is_none());
     assert!(message.contains("current user operation was NOT applied"));
     assert!(message.contains("Do not rebase or automatically resubmit"));
@@ -413,4 +425,153 @@ fn binding_rejects_stale_context_and_input_reader_bounds() {
     assert!(bind_context(&config, &context).is_err());
     assert!(hiero::agent_prompt_delivery::read_json(&b"not JSON"[..]).is_err());
     assert!(hiero::agent_prompt_delivery::read_json(&vec![b' '; 1_048_577][..]).is_err());
+}
+
+#[test]
+fn bound_technical_prompts_skip_before_retention_or_authority_mutation() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let db = rusqlite::Connection::open(config.database_path()).unwrap();
+    let revision = || {
+        db.query_row(
+            "select revision from authority_state where series_id=?",
+            [context["series_id"].as_i64().unwrap()],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    let before = revision();
+    for text in [
+        "Install the CLI",
+        "Confirm browser OAuth login",
+        "Да, поехали",
+        "проверь issues проекта",
+        "Install a browser to read the chapter",
+        "Fix translation parser",
+        "Проверь обработку канона в коде",
+    ] {
+        let result = hiero::agent_prompt_delivery::handle_prompt(&config, "claude", &json!({"hook_event_name":"UserPromptSubmit", "session_id":"actual-host-session", "prompt":text})).unwrap();
+        assert_eq!(result["status"], "skipped", "{result}");
+        assert_eq!(result["retained"], false);
+        assert!(result.get("hookSpecificOutput").is_none());
+    }
+    assert!(!root.path().join("host-deliveries").exists());
+    assert_eq!(revision(), before);
+}
+
+#[test]
+fn unbind_pauses_only_selected_conversation_until_explicit_rebind() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let mut other = context.clone();
+    other["host_session_id"] = json!("other-session");
+    bind_context(&config, &other).unwrap();
+    let identity = json!({"host":"claude","host_session_id":"actual-host-session"});
+    for _ in 0..2 {
+        hiero::agent_prompt_delivery::unbind_context(&config, &identity).unwrap();
+    }
+    let prompt = json!({"hook_event_name":"UserPromptSubmit", "session_id":"actual-host-session", "prompt":"translate this as B"});
+    let result = hiero::agent_prompt_delivery::handle_prompt(&config, "claude", &prompt).unwrap();
+    assert_eq!(result["reason"], "capture_paused");
+    assert_eq!(
+        std::fs::read_dir(root.path().join("host-contexts"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert!(!root.path().join("host-deliveries").exists());
+    bind_context(&config, &context).unwrap();
+    assert!(
+        submit_prompt(&config, "claude", &prompt).unwrap()["result"]
+            .get("Applied")
+            .is_some()
+    );
+}
+
+#[test]
+fn unrelated_unbound_prompt_never_requests_bootstrap_or_creates_storage() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    for text in ["проверь все issues проекта на github", "Read chapter one"] {
+        let result = hiero::agent_prompt_delivery::handle_prompt(&config, "codex", &json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-id","prompt":text,"cwd":root.path()})).unwrap();
+        assert_eq!(result["status"], "skipped");
+        assert!(result.get("hookSpecificOutput").is_none());
+    }
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn hook_help_and_binding_validation_do_not_require_live_daemon() {
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["agent-hook", "--help"],
+        vec!["agent-hook", "bind-context", "--help"],
+        vec!["agent-hook", "unbind-context", "--help"],
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hiero"))
+            .args(args)
+            .arg("--data-root")
+            .arg(root.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(help.contains("expected_revision"));
+        assert!(help.contains("resulting_revision"));
+    }
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    let output = cli(
+        root.path(),
+        &["bind-context", "--host", "codex"],
+        &json!({"host":"codex"}),
+    );
+    assert!(!output.status.success());
+    let detail = String::from_utf8_lossy(&output.stderr);
+    assert!(detail.contains(
+        "missing fields: version, host_session_id, series_id, session_id, expected_revision"
+    ));
+}
+
+#[test]
+fn fresh_monolingual_session_binds_observed_zero_revision_without_authority_change() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let app = Application::open(&config).unwrap();
+    let series = app
+        .call(
+            "hieronymus_series_create",
+            &json!({"slug":"story","title":"Story","source_language":"ru"}),
+            "agent",
+        )
+        .unwrap();
+    let session = app
+        .call(
+            "hieronymus_session_start",
+            &json!({"series_slug":"story","source_language":"ru"}),
+            "agent",
+        )
+        .unwrap();
+    let recall = app
+        .call(
+            "hieronymus_recall",
+            &json!({"series_slug":"story","session_id":session["session_id"],"query":"персонаж"}),
+            "agent",
+        )
+        .unwrap();
+    let context = json!({"version":1,"host":"codex","host_session_id":"observed-session","series_id":series["id"],"session_id":session["session_id"],"expected_revision":recall["resulting_revision"],"source_language":"ru","target_language":null,"applicability":null,"selected_sources":[],"selected_claims":[],"selected_rule":null});
+    assert_eq!(recall["resulting_revision"], 0);
+    assert!(
+        bind_context(&config, &context).unwrap()["bound"]
+            .as_bool()
+            .unwrap()
+    );
+    let db = rusqlite::Connection::open(config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select count(*) from decision_records", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
 }

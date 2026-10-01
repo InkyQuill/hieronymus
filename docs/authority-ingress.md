@@ -219,9 +219,12 @@ Memory views retain source records and explicitly label their status as record l
 not claim validity. After applying a rendering, the frozen old choice is labeled
 previous rendering and the result states the current rendering.
 
-Task7 first-session bootstrap handles a missing binding read-only: actual host/session
+First-session bootstrap handles a missing binding read-only only for relevant prompts in recognized CWS literary projects: actual host/session
 identity and an actionable bind-context contract appear in hook additionalContext.
 The response says binding_required and explicitly says the current prompt was not
 retained/applied. No domain session, origin, decision or delivery is invented. A
 subsequent genuine prompt can apply after explicit binding from actual MCP outputs.
 Corrupt or inaccessible existing bindings remain errors, not bootstrap success.
+
+
+Prompt capture now filters unrelated/uncertain messages before retention. Only a relevant prompt in a recognized CWS project requests initial binding; existing bindings still require relevance. See [the exact version:1 binding contract, help and unbind command](agent-hook-context.md).
