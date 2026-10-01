@@ -55,7 +55,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-      pull-requests: read
+      pull-requests: write
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
     steps:
