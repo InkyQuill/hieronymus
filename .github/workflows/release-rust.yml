@@ -1,6 +1,14 @@
 # Publish retained binary bytes; packaging-only edits can reuse a compatible candidate.
 name: release-rust
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        type: string
+        required: true
+      candidate_run:
+        type: string
+        required: true
   push:
     tags: ["v*"]
 concurrency:
@@ -14,7 +22,7 @@ jobs:
       issues: write
     uses: ./.github/workflows/installer-checks.yml
     with:
-      candidate_run: ${{ vars.DESKTOP_CANDIDATE_RUN }}
+      candidate_run: ${{ inputs.candidate_run || vars.DESKTOP_CANDIDATE_RUN }}
   promote:
     needs: installers
     if: ${{ !cancelled() }}
@@ -26,9 +34,9 @@ jobs:
       issues: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      CANDIDATE_RUN: ${{ vars.DESKTOP_CANDIDATE_RUN }}
+      CANDIDATE_RUN: ${{ inputs.candidate_run || vars.DESKTOP_CANDIDATE_RUN }}
       EVIDENCE_RUN: ${{ vars.DESKTOP_EVIDENCE_RUN }}
-      RELEASE_REF: ${{ github.ref }}
+      RELEASE_REF: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

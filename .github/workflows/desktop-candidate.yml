@@ -1,7 +1,12 @@
 # Build retained candidates only. A matching v* tag promotes these exact bytes later.
 name: desktop-candidate
+run-name: desktop-candidate / ${{ inputs.orchestration_id || github.ref_name }}
 on:
   workflow_dispatch:
+    inputs:
+      orchestration_id:
+        description: Automatic release dispatch identity
+        type: string
 permissions:
   contents: read
   actions: read
