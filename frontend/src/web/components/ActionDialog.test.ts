@@ -249,34 +249,6 @@ test("split_crystal collects 2+ parts and requires an explicit confirm", async (
   });
 });
 
-test("reject_proposal requires a reason before it will post", async () => {
-  const user = userEvent.setup();
-  const onSubmit = vi.fn();
-  render(ActionDialog, {
-    props: {
-      command: command("reject_proposal", "Reject Proposal"),
-      view: "Proposals",
-      row: { ...row, id: 3, kind: "strict concept" },
-      onSubmit,
-      onClose: vi.fn(),
-    },
-  });
-
-  const submit = screen.getByRole("button", { name: "Reject Proposal" });
-  expect((submit as HTMLButtonElement).disabled).toBe(true);
-  await user.type(
-    screen.getByLabelText(/Reason/),
-    "duplicate of an existing concept",
-  );
-  await user.click(submit);
-
-  expect(onSubmit).toHaveBeenCalledWith({
-    view: "Proposals",
-    id: 3,
-    reason: "duplicate of an existing concept",
-  });
-});
-
 test("a cancelled confirmation posts nothing", async () => {
   const user = userEvent.setup();
   const onSubmit = vi.fn();

@@ -17,7 +17,7 @@ fn every_advertised_view_accepts_an_empty_database() {
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     let _app = hiero::application::Application::open(&config).unwrap();
-    assert_eq!(VIEW_NAMES.len(), 10);
+    assert_eq!(VIEW_NAMES.len(), 9);
     for name in VIEW_NAMES {
         let result = snapshot(&config, name, &json!({}));
         assert!(result.is_ok(), "{name}: {result:?}");
@@ -264,7 +264,6 @@ fn scoped_views_project_seeded_rows_and_hide_foreign_context() {
         ("Crystals", "Crystal Main", "Crystal Other"),
         ("Lessons", "Lesson Main", "Lesson Other"),
         ("Short-Term Memory", "STM Main", "STM Other"),
-        ("Proposals", "Proposal Main", "Proposal Other"),
     ] {
         let scoped = labels(&config, view, &main);
         assert!(scoped.contains(&visible.to_string()), "{view}: {scoped:?}");
@@ -403,15 +402,6 @@ fn seeded_rows_carry_every_admin_row_field() {
         "90% conf / 80% str",
     );
     assert_fields(
-        "Proposals",
-        "Proposal Main",
-        "strict concept",
-        "pending",
-        "main",
-        "ja -> en",
-        "rend",
-    );
-    assert_fields(
         "Concepts",
         "Concept Main",
         "global",
@@ -448,7 +438,7 @@ fn seeded_rows_carry_every_admin_row_field() {
     assert_eq!(run["kind"], json!("det"));
     assert_eq!(run["status"], json!("completed"));
     assert_eq!(run["scope"], json!("global"));
-    assert_eq!(run["quality_label"], json!("0 crystals / 0 proposals"));
+    assert_eq!(run["quality_label"], json!("0 crystals"));
 
     let entry = find_row(
         &config,
@@ -514,34 +504,6 @@ fn view_details_match_the_python_shape() {
         vec![
             ("Inputs".to_string(), "0".to_string()),
             ("Crystals".to_string(), "0".to_string()),
-            ("Proposals".to_string(), "0".to_string()),
-        ]
-    );
-
-    // Proposals — `_proposal_detail`.
-    let proposal_id = find_row(&config, "Proposals", &main, "Proposal Main")["id"]
-        .as_i64()
-        .unwrap();
-    let proposal = snapshot(
-        &config,
-        "Proposals",
-        &json!({"series": "main", "selected_id": proposal_id.to_string()}),
-    )
-    .unwrap();
-    assert_eq!(proposal["detail"]["title"], json!("Proposal Main"));
-    assert_eq!(
-        proposal["detail"]["subtitle"],
-        json!("strict concept / pending")
-    );
-    assert_eq!(
-        detail_fields(&proposal),
-        vec![
-            ("Source form".to_string(), "src".to_string()),
-            ("Rendering".to_string(), "rend".to_string()),
-            ("Approved variants".to_string(), String::new()),
-            ("Forbidden variants".to_string(), String::new()),
-            ("Series".to_string(), "main".to_string()),
-            ("Language".to_string(), "ja -> en".to_string()),
         ]
     );
 
@@ -582,33 +544,4 @@ fn view_details_match_the_python_shape() {
             ("Facets".to_string(), "1".to_string()),
         ]
     );
-}
-
-#[test]
-fn dream_proposal_lists_variant_evidence_and_rationale() {
-    let (_root, config) = seeded_root();
-    let db = open_migrated(&config.database_path()).unwrap();
-    db.execute(
-        "update strict_concept_proposals set dream_run_id=(select min(id) from dream_runs),
-        rationale='Keep the city spelling', approved_variants_json='[\"Verell\"]',
-        forbidden_variants_json='[\"Verele\"]' where concept_text='Proposal Main'",
-        [],
-    )
-    .unwrap();
-    let row = find_row(
-        &config,
-        "Proposals",
-        &json!({"series":"main"}),
-        "Proposal Main",
-    );
-    let out = snapshot(
-        &config,
-        "Proposals",
-        &json!({"series":"main","selected_id":row["id"]}),
-    )
-    .unwrap();
-    assert_eq!(out["detail"]["body"], "Keep the city spelling");
-    let fields = detail_fields(&out);
-    assert!(fields.contains(&("Approved variants".into(), "Verell".into())));
-    assert!(fields.contains(&("Forbidden variants".into(), "Verele".into())));
 }

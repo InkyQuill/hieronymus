@@ -19,7 +19,7 @@ use super::request_body;
 use crate::daemon::daemon_display_version;
 use crate::daemon::dream_worker::DreamRequest;
 
-const ADMIN_VIEWS: [&str; 10] = [
+const ADMIN_VIEWS: [&str; 9] = [
     "Concepts",
     "Renderings",
     "Crystals",
@@ -27,12 +27,11 @@ const ADMIN_VIEWS: [&str; 10] = [
     "Short-Term Memory",
     "Short-Term Sessions",
     "Dream Runs",
-    "Proposals",
     "Dream Audits",
     "Audit Log",
 ];
 
-const ADMIN_VIEW_KEYS: [&str; 10] = [
+const ADMIN_VIEW_KEYS: [&str; 9] = [
     "concepts",
     "renderings",
     "crystals",
@@ -40,7 +39,6 @@ const ADMIN_VIEW_KEYS: [&str; 10] = [
     "short_term_memory",
     "short_term_sessions",
     "dream_runs",
-    "proposals",
     "dream_audits",
     "audit_log",
 ];
@@ -58,7 +56,7 @@ type AdminCommand = (
 );
 
 /// Keyboard command metadata, verbatim from the frozen oracle.
-const ADMIN_COMMANDS: [AdminCommand; 13] = [
+const ADMIN_COMMANDS: [AdminCommand; 11] = [
     (
         "add_memory",
         "Add Memory",
@@ -120,24 +118,6 @@ const ADMIN_COMMANDS: [AdminCommand; 13] = [
         "-",
         "Memory",
         &["Crystals", "Lessons"],
-        true,
-    ),
-    (
-        "approve_proposal",
-        "Approve Proposal",
-        "Approve the selected compatibility proposal.",
-        "a",
-        "Proposals",
-        &["Proposals"],
-        true,
-    ),
-    (
-        "reject_proposal",
-        "Reject Proposal",
-        "Reject the selected compatibility proposal.",
-        "x",
-        "Proposals",
-        &["Proposals"],
         true,
     ),
     (
@@ -554,7 +534,6 @@ fn stats_payload(config: &HieronymusConfig) -> Value {
             "short_term_memories": 0,
             "sessions": 0,
             "dream_runs": 0,
-            "pending_proposals": 0,
             "audit_events": 0,
         })
     };
@@ -572,11 +551,6 @@ fn stats_payload(config: &HieronymusConfig) -> Value {
         ),
         "sessions": count(&connection, "task_sessions", ""),
         "dream_runs": count(&connection, "dream_runs", ""),
-        "pending_proposals": count(
-            &connection,
-            "strict_concept_proposals",
-            "where status = 'pending'",
-        ),
         "audit_events": count(&connection, "audit_log", ""),
     })
 }

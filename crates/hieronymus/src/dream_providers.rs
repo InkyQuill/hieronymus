@@ -465,7 +465,6 @@ impl LlmDreamProvider {
                 } else {
                     &[
                         "crystals",
-                        "concept_proposals",
                         "concepts",
                         "facets",
                         "rule_crystals",
@@ -837,7 +836,7 @@ fn phase_prompt(
 /// The base prompt payload (port of `_dream_prompt`, keys verbatim).
 fn dream_prompt_payload(context: &TranslationContext, memories: &[ShortTermMemoryRecord]) -> Value {
     json!({
-        "instruction": "Return only JSON with keys crystals and concept_proposals. \
+        "instruction": "Return only JSON with keys crystals. \
              Use English memory prose by default; Japanese, Russian, or other \
              languages may appear only as terms, names, renderings, quotes, or \
              metadata. Long-term crystals must be 1-2 sentences. Short-term \
@@ -876,17 +875,6 @@ fn dream_prompt_payload(context: &TranslationContext, memories: &[ShortTermMemor
                 "strength": 0.7,
                 "confidence": 0.8,
                 "source_memory_ids": [1],
-            }],
-            "concept_proposals": [{
-                "series_slug": context.series_slug,
-                "source_language": context.source_language,
-                "target_language": context.target_language,
-                "concept_text": "string",
-                "source_form": "string",
-                "canonical_rendering": "string",
-                "approved_variants": ["string"],
-                "forbidden_variants": ["string"],
-                "rationale": "string",
             }],
         },
     })

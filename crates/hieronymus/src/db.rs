@@ -152,7 +152,19 @@ pub fn open_migrated(path: &Path) -> Result<rusqlite::Connection, OpenMigratedEr
             Ok(connection)
         }
         DatabaseState::RustSchema { version } if version == SUPPORTED_RUST_SCHEMA_VERSION => {
-            Ok(open_for_writes(path)?)
+            let connection = open_for_writes(path)?;
+            // Retire the removed human-review queue without promoting its contents.
+            // Preserve payloads and resolved history; this is idempotent data cleanup,
+            // not a schema change and does not alter active authority.
+            let pending: bool = connection.query_row(
+                "select exists(select 1 from strict_concept_proposals where status='pending')",
+                [],
+                |row| row.get(0),
+            )?;
+            if pending {
+                connection.execute("update strict_concept_proposals set status = 'archived' where status = 'pending'", [])?;
+            }
+            Ok(connection)
         }
         other => Err(OpenMigratedError::UnsupportedState(other)),
     }

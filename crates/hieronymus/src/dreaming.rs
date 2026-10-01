@@ -46,8 +46,8 @@ use crate::dream_config::{DreamConfig, load_dream_config};
 use crate::dream_link_progress::LinkProgress;
 use crate::dream_locks::{DreamCycleState, DreamLockError, dream_cycle_lock};
 use crate::dream_output::{
-    ConceptProposal, NormalizedConcept, NormalizedFacet, ReinforceAction, SupersedeAction,
-    validate_action_targets, validate_reinforce_targets, validate_supersede_targets,
+    NormalizedConcept, NormalizedFacet, ReinforceAction, SupersedeAction, validate_action_targets,
+    validate_reinforce_targets, validate_supersede_targets,
 };
 use crate::dream_workflows::{WorkflowChoice, WorkflowResolver, enabled_choices};
 use crate::feedback::apply_score_delta;
@@ -549,7 +549,6 @@ pub struct NormalizedCrystal {
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedOutput {
     pub crystals: Vec<NormalizedCrystal>,
-    pub concept_proposals: Vec<ConceptProposal>,
     pub concepts: Vec<NormalizedConcept>,
     pub facets: Vec<NormalizedFacet>,
     pub supersede_actions: Vec<SupersedeAction>,
@@ -565,7 +564,6 @@ pub struct NormalizedOutput {
 /// the per-pass and per-run record budgets.
 fn normalized_output_count(output: &NormalizedOutput) -> usize {
     output.crystals.len()
-        + output.concept_proposals.len()
         + output.concepts.len()
         + output.facets.len()
         + output.supersede_actions.len()
@@ -1216,10 +1214,7 @@ impl DreamService {
             summary.created_crystal_ids.len(),
         )?;
 
-        let proposal_count = staged
-            .iter()
-            .map(|output| output.concept_proposals.len())
-            .sum::<usize>() as i64;
+        let proposal_count = 0_usize as i64;
         self.complete_run(
             run_id,
             cycle_id,
@@ -1389,7 +1384,7 @@ impl DreamService {
     fn apply_outputs_in_transaction(
         &self,
         transaction: &rusqlite::Transaction<'_>,
-        run_id: i64,
+        _run_id: i64,
         cycle_id: i64,
         groups: &[SelectionGroup],
         staged: &[NormalizedOutput],
@@ -1527,14 +1522,6 @@ impl DreamService {
                         "link_type": "mentions",
                     })
                 }));
-            }
-            for proposal in &output.concept_proposals {
-                crate::concepts::create_concept_proposal_in_transaction(
-                    transaction,
-                    run_id,
-                    proposal,
-                    &timestamp,
-                )?;
             }
         }
 
@@ -2546,10 +2533,7 @@ impl DreamService {
             "crystal_count": staged.iter().map(|output| output.crystals.len()).sum::<usize>(),
             "concept_count": staged.iter().map(|output| output.concepts.len()).sum::<usize>(),
             "facet_count": staged.iter().map(|output| output.facets.len()).sum::<usize>(),
-            "concept_proposal_count": staged
-                .iter()
-                .map(|output| output.concept_proposals.len())
-                .sum::<usize>(),
+            "concept_proposal_count": 0_usize,
             "supersede_action_count": staged
                 .iter()
                 .map(|output| output.supersede_actions.len())
@@ -2718,10 +2702,7 @@ impl DreamService {
                 "crystals": staged.iter().map(|output| output.crystals.len()).sum::<usize>(),
                 "concepts": staged.iter().map(|output| output.concepts.len()).sum::<usize>(),
                 "facets": staged.iter().map(|output| output.facets.len()).sum::<usize>(),
-                "concept_proposals": staged
-                    .iter()
-                    .map(|output| output.concept_proposals.len())
-                    .sum::<usize>(),
+                "concept_proposals": 0_usize,
                 "supersede_actions": staged
                     .iter()
                     .map(|output| output.supersede_actions.len())
@@ -3117,17 +3098,11 @@ pub fn normalize_dict_output(
 ) -> Result<NormalizedOutput, DreamError> {
     let mut output = NormalizedOutput::default();
 
-    for (index, item) in list_from_payload(payload.get("concept_proposals"))
+    for (index, _) in list_from_payload(payload.get("concept_proposals"))
         .into_iter()
         .enumerate()
     {
-        if let Some(proposal) = crate::dream_output::normalize_concept_proposal_entry(
-            &item,
-            &format!("concept_proposals[{index}]"),
-            &mut output.rejected_entries,
-        ) {
-            output.concept_proposals.push(proposal);
-        }
+        output.rejected_entries.push(json!({"entry_path":format!("concept_proposals[{index}]"), "reason":"proposal_mechanism_removed"}));
     }
     for (index, item) in list_from_payload(payload.get("concepts"))
         .into_iter()
@@ -3658,7 +3633,7 @@ pub(crate) fn optional_int(value: Option<&Value>) -> Option<i64> {
 /// the fail-closed invariants over the accepted records.
 fn validate_normalized_output(
     output: &NormalizedOutput,
-    context: &TranslationContext,
+    _context: &TranslationContext,
     allowed_memory_ids: &HashSet<i64>,
 ) -> Result<(), DreamError> {
     for candidate in &output.crystals {
@@ -3697,13 +3672,6 @@ fn validate_normalized_output(
     }
     crate::dream_output::validate_concepts(&output.concepts).map_err(DreamError::InvalidOutput)?;
     crate::dream_output::validate_facets(&output.facets).map_err(DreamError::InvalidOutput)?;
-    crate::dream_output::validate_proposal_contexts(
-        &output.concept_proposals,
-        &context.series_slug,
-        &context.source_language,
-        &context.target_language,
-    )
-    .map_err(DreamError::InvalidOutput)?;
     crate::dream_output::validate_reinforce_actions(&output.reinforce_actions)
         .map_err(DreamError::InvalidOutput)?;
     Ok(())
@@ -3767,7 +3735,6 @@ fn deduplicate_staged_outputs(staged: &[NormalizedOutput]) -> Vec<NormalizedOutp
         }
         result.push(NormalizedOutput {
             crystals,
-            concept_proposals: output.concept_proposals.clone(),
             concepts,
             facets: output.facets.clone(),
             supersede_actions: output.supersede_actions.clone(),

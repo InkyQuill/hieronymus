@@ -290,7 +290,7 @@ fn graph_sections_apply_concepts_facets_and_crystal_links() {
 }
 
 #[test]
-fn concept_proposals_persist_as_pending_candidates_never_active_rules() {
+fn legacy_proposal_output_never_creates_a_queue_or_active_rules() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
@@ -312,30 +312,12 @@ fn concept_proposals_persist_as_pending_candidates_never_active_rules() {
     let run = run_one_cycle(&config, payload);
 
     assert_eq!(run.status, "completed");
-    assert_eq!(run.proposal_count, 1);
-
-    // The proposal lands pending with its run attribution; the structured
-    // rule authority is untouched (dream has no approval authority).
-    let proposals = ConceptStore::open(&config)
-        .unwrap()
-        .list_proposals()
-        .unwrap();
-    assert_eq!(proposals.len(), 1);
-    assert_eq!(proposals[0]["concept_text"], json!("Fiorire"));
-    assert_eq!(proposals[0]["canonical_rendering"], json!("расцвести"));
-    assert_eq!(proposals[0]["status"], json!("pending"));
+    assert_eq!(run.proposal_count, 0);
+    assert_eq!(
+        scalar(&config, "select count(*) from strict_concept_proposals"),
+        json!(0)
+    );
     assert_eq!(scalar(&config, "select count(*) from term_rules"), json!(0));
-
-    let proposal_row = query(
-        &config,
-        "select dream_run_id, approved_variants_json, forbidden_variants_json
-         from strict_concept_proposals",
-        &[],
-    )
-    .remove(0);
-    assert_eq!(proposal_row[0], json!(run.id));
-    assert_eq!(proposal_row[1], json!("[\"расцветёт\"]"));
-    assert_eq!(proposal_row[2], json!("[\"цветень\"]"));
 }
 
 // ---------------------------------------------------------------------------
@@ -722,11 +704,11 @@ fn mixed_output_applies_valid_entries_and_audits_rejections_individually() {
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].canonical_name, "Valid");
     assert_eq!(concepts.list_facets(stored[0].id).unwrap().len(), 2);
-    assert_eq!(run.proposal_count, 1);
+    assert_eq!(run.proposal_count, 0);
     assert_eq!(run.created_crystal_count, 1);
     assert_eq!(
         scalar(&config, "select count(*) from strict_concept_proposals"),
-        json!(1)
+        json!(0)
     );
 
     // Reinforce applied once for the valid action (the second is rejected).
@@ -751,7 +733,7 @@ fn mixed_output_applies_valid_entries_and_audits_rejections_individually() {
         "malformed_concept_confidence",
         "missing_facet_value",
         "malformed_facet_confidence",
-        "invalid_concept_proposal",
+        "proposal_mechanism_removed",
         "reinforce_action_delta_out_of_range",
     ] {
         assert!(

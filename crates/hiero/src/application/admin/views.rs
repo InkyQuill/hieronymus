@@ -33,7 +33,7 @@ use hieronymus::db::open_migrated;
 use crate::application::AppError;
 
 /// The ten advertised admin views, in navigation order (Python `ADMIN_VIEWS`).
-pub const VIEW_NAMES: [&str; 10] = [
+pub const VIEW_NAMES: [&str; 9] = [
     "Concepts",
     "Renderings",
     "Crystals",
@@ -41,14 +41,13 @@ pub const VIEW_NAMES: [&str; 10] = [
     "Short-Term Memory",
     "Short-Term Sessions",
     "Dream Runs",
-    "Proposals",
     "Dream Audits",
     "Audit Log",
 ];
 
 /// The view keys parallel to [`VIEW_NAMES`] (Python `ADMIN_VIEW_KEYS`); the
 /// REST layer accepts either the label or the key.
-const VIEW_KEYS: [&str; 10] = [
+const VIEW_KEYS: [&str; 9] = [
     "concepts",
     "renderings",
     "crystals",
@@ -56,7 +55,6 @@ const VIEW_KEYS: [&str; 10] = [
     "short_term_memory",
     "short_term_sessions",
     "dream_runs",
-    "proposals",
     "dream_audits",
     "audit_log",
 ];
@@ -182,7 +180,6 @@ fn rows_for_view(
         "Short-Term Memory" => short_term_rows(connection, params),
         "Short-Term Sessions" => session_rows(connection, params),
         "Dream Runs" => dream_run_rows(connection, params),
-        "Proposals" => proposal_rows(connection, params),
         "Dream Audits" => dream_audit_rows(connection, params),
         "Audit Log" => audit_log_rows(connection, params),
         _ => unreachable!("canonical_view already validated {view}"),
@@ -479,7 +476,7 @@ fn dream_run_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Res
             let cycle_id: i64 = row.get("cycle_id")?;
             let status: String = row.get("status")?;
             let crystals: i64 = row.get("created_crystal_count")?;
-            let proposals: i64 = row.get("proposal_count")?;
+            let _historical_proposals: i64 = row.get("proposal_count")?;
             Ok(admin_row(
                 json!(id),
                 &provider,
@@ -487,7 +484,7 @@ fn dream_run_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Res
                 &status,
                 "global".to_string(),
                 String::new(),
-                format!("{crystals} crystals / {proposals} proposals"),
+                format!("{crystals} crystals"),
                 Vec::new(),
             ))
         })?
@@ -521,43 +518,6 @@ fn dream_audit_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::R
                 Vec::new(),
             ))
         })?
-        .collect()
-}
-
-/// `_list_proposals`: the strict concept proposals (Rust keeps only this
-/// strict half, per `compatibility/rust/recall-v2.json`).
-fn proposal_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Result<Vec<Value>> {
-    let mut statement = connection.prepare(
-        "select id, concept_text, status, series_slug, canonical_rendering,
-                source_language, target_language
-         from strict_concept_proposals
-         where (?1 is null or series_slug = ?1)
-         order by id desc
-         limit ?2 offset ?3",
-    )?;
-    statement
-        .query_map(
-            rusqlite::params![params.series, params.limit, params.offset],
-            |row| {
-                let id: i64 = row.get("id")?;
-                let concept_text: String = row.get("concept_text")?;
-                let status: String = row.get("status")?;
-                let series_slug: String = row.get("series_slug")?;
-                let canonical_rendering: String = row.get("canonical_rendering")?;
-                let source_language: String = row.get("source_language")?;
-                let target_language: String = row.get("target_language")?;
-                Ok(admin_row(
-                    json!(id),
-                    "strict concept",
-                    concept_text,
-                    &status,
-                    series_slug,
-                    language_pair(&source_language, &target_language),
-                    canonical_rendering,
-                    Vec::new(),
-                ))
-            },
-        )?
         .collect()
 }
 
@@ -659,10 +619,6 @@ fn detail_for_view(
         "Dream Audits" => match id {
             Some(id) => dream_audit_detail(connection, id),
             None => Ok(missing_detail("dream audit")),
-        },
-        "Proposals" => match id {
-            Some(id) => proposal_detail(connection, id),
-            None => Ok(missing_detail("proposal")),
         },
         "Audit Log" => Ok(row_detail(selected)),
         _ => unreachable!("canonical_view already validated {view}"),
@@ -946,7 +902,8 @@ fn dream_run_detail(connection: &Connection, run_id: i64) -> rusqlite::Result<Va
         )
         .map(Some)
         .or_else(no_rows)?;
-    let Some((cycle_id, provider, status, error, inputs, crystals, proposals)) = row else {
+    let Some((cycle_id, provider, status, error, inputs, crystals, _historical_proposals)) = row
+    else {
         return Ok(missing_detail("dream run"));
     };
     Ok(detail(
@@ -956,7 +913,6 @@ fn dream_run_detail(connection: &Connection, run_id: i64) -> rusqlite::Result<Va
         vec![
             ("Inputs", inputs.to_string()),
             ("Crystals", crystals.to_string()),
-            ("Proposals", proposals.to_string()),
         ],
     ))
 }
@@ -1006,67 +962,6 @@ fn dream_audit_detail(connection: &Connection, audit_id: i64) -> rusqlite::Resul
             ),
             ("Severity", severity),
             ("Created", created_at),
-        ],
-    ))
-}
-
-fn proposal_detail(connection: &Connection, proposal_id: i64) -> rusqlite::Result<Value> {
-    let row = connection
-        .query_row(
-            "select concept_text, status, rationale, source_form, canonical_rendering,
-                    series_slug, source_language, target_language,
-                    approved_variants_json, forbidden_variants_json
-             from strict_concept_proposals where id = ?1",
-            [proposal_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>("concept_text")?,
-                    row.get::<_, String>("status")?,
-                    row.get::<_, String>("rationale")?,
-                    row.get::<_, String>("source_form")?,
-                    row.get::<_, String>("canonical_rendering")?,
-                    row.get::<_, String>("series_slug")?,
-                    row.get::<_, String>("source_language")?,
-                    row.get::<_, String>("target_language")?,
-                    row.get::<_, String>("approved_variants_json")?,
-                    row.get::<_, String>("forbidden_variants_json")?,
-                ))
-            },
-        )
-        .map(Some)
-        .or_else(no_rows)?;
-    let Some((
-        concept_text,
-        status,
-        rationale,
-        source_form,
-        rendering,
-        series_slug,
-        source,
-        target,
-        approved_variants,
-        forbidden_variants,
-    )) = row
-    else {
-        return Ok(missing_detail("proposal"));
-    };
-    // Keep malformed legacy evidence visible rather than silently dropping it.
-    let variants = |raw: String| {
-        serde_json::from_str::<Vec<String>>(&raw)
-            .map(|items| items.join("\n"))
-            .unwrap_or(raw)
-    };
-    Ok(detail(
-        concept_text,
-        format!("strict concept / {status}"),
-        rationale,
-        vec![
-            ("Source form", source_form),
-            ("Rendering", rendering),
-            ("Approved variants", variants(approved_variants)),
-            ("Forbidden variants", variants(forbidden_variants)),
-            ("Series", series_slug),
-            ("Language", language_pair(&source, &target)),
         ],
     ))
 }

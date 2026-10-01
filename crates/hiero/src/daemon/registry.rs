@@ -99,6 +99,9 @@ impl McpRegistry {
         // frozen contract and the binary have diverged, which must never ship.
         let mut registry = Self::from_snapshot_str(EMBEDDED_SNAPSHOT)
             .expect("embedded MCP registry snapshot is valid");
+        registry
+            .tools
+            .retain(|tool| tool.name != "hieronymus_concept_proposals_list");
         let extension: Value = serde_json::from_str(include_str!(
             "../../../../compatibility/rust/authority-context-v1.json"
         ))
@@ -272,7 +275,7 @@ mod tests {
         let snapshot: serde_json::Value = serde_json::from_str(EMBEDDED_SNAPSHOT).unwrap();
         assert_eq!(
             registry.list_tools().len() as u64,
-            snapshot["derived_tool_count"].as_u64().unwrap() + 4
+            snapshot["derived_tool_count"].as_u64().unwrap() + 3
         );
         assert_eq!(registry.list_tools()[0].name, "hieronymus_concept_archive");
         assert!(registry.contains_tool("hieronymus_status"));

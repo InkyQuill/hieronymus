@@ -1580,36 +1580,6 @@
       }
     },
     {
-      "name": "hieronymus_concept_proposals_list",
-      "arguments": {},
-      "expected_subset": [
-        {
-          "id": 1,
-          "series_slug": "book",
-          "concept_text": "Yun",
-          "source_form": "ユン",
-          "canonical_rendering": "Юн",
-          "status": "pending",
-          "approved_variants": [],
-          "forbidden_variants": []
-        }
-      ],
-      "setup": [
-        {
-          "kind": "sql",
-          "statement": "insert into strict_concept_proposals(series_slug, source_language, target_language, concept_text, source_form, canonical_rendering, status, created_at, updated_at) values ('book', 'ja', 'ru', 'Yun', 'ユン', 'Юн', 'pending', '2026-09-05T00:00:00+00:00', '2026-09-05T00:00:00+00:00')",
-          "arguments": []
-        }
-      ],
-      "persist": {
-        "table": "strict_concept_proposals",
-        "where": {
-          "id": 1,
-          "status": "pending"
-        }
-      }
-    },
-    {
       "name": "hieronymus_dream",
       "setup": [
         {
