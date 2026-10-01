@@ -2,6 +2,38 @@
 
 <!-- version list -->
 
+## [0.10.0](https://github.com/InkyQuill/hieronymus/compare/v0.9.3...v0.10.0) (2026-10-01)
+
+
+### Features
+
+* classify prompt relevance with optional Jev provider ([398980c](https://github.com/InkyQuill/hieronymus/commit/398980ccccd4df0559ec0817940793afaa58355c))
+* **release:** automate Conventional Commit release PRs and retained promotion ([54fd829](https://github.com/InkyQuill/hieronymus/commit/54fd8292d25a982ab28ca0524c7ca96bb791de46))
+* **release:** automate Conventional Commit releases with retained artifacts ([c0b55e4](https://github.com/InkyQuill/hieronymus/commit/c0b55e41d097440a4fa6c13bf9c17cd5377a5721))
+* use Jev for optional prompt relevance classification ([40c1a4a](https://github.com/InkyQuill/hieronymus/commit/40c1a4a0ebcf6d8129fe4fd5cf6b445e421be775))
+
+
+### Bug Fixes
+
+* **autonomy:** retire proposal queue without promoting legacy evidence ([a055f8e](https://github.com/InkyQuill/hieronymus/commit/a055f8e5ad4053cc7053ab66c29e6bc1de292c39))
+* bound prompt hook conversation lock waiting ([6b06349](https://github.com/InkyQuill/hieronymus/commit/6b06349ca37b8d415ab40fb6678ae58e93e04141))
+* bound prompt hook coordination lock waiting ([b6e951b](https://github.com/InkyQuill/hieronymus/commit/b6e951bc80351e562928a9bf869a0d4f6edf0715))
+* defer proposal retirement when SQLite is busy ([146a573](https://github.com/InkyQuill/hieronymus/commit/146a573a3a13f14034c898167137bebd8a26b126))
+* ensure release lifecycle label exists ([c77c759](https://github.com/InkyQuill/hieronymus/commit/c77c75966c71ead187dc42a0a42a21c4177bdeea))
+* expose installer warnings and retire the proposal approval queue ([5338473](https://github.com/InkyQuill/hieronymus/commit/53384739dc4d7bd19d119af51d896b9964d4f64f))
+* **installer:** show successful warnings and qualify native path precedence ([5600e53](https://github.com/InkyQuill/hieronymus/commit/5600e53ad80ed00bc705a438959a0a3be1e899f2))
+* **maintenance:** isolate tests and complete uninstall and version surfaces ([274ad2d](https://github.com/InkyQuill/hieronymus/commit/274ad2d1b269535a83249b9d72c52f49ffe292b6))
+* reconcile release PR labels after tagging ([f8072fd](https://github.com/InkyQuill/hieronymus/commit/f8072fd2f1e44e26ac6f61f9b0819e191b67294d))
+* release Dream cleanup locks before closing descriptors ([436f5b0](https://github.com/InkyQuill/hieronymus/commit/436f5b08ec0d4863c60150a1f38b3582ea1a4079))
+* release Dream cleanup locks before closing descriptors ([9f5f12b](https://github.com/InkyQuill/hieronymus/commit/9f5f12baf69840b645b15042f90eb36aadae8f2e))
+* scope prompt capture and expose binding diagnostics ([7026d38](https://github.com/InkyQuill/hieronymus/commit/7026d38d2622a4ee3077ffaecf473ee6ae26f3ea))
+* scope prompt capture and expose binding diagnostics ([02dce5c](https://github.com/InkyQuill/hieronymus/commit/02dce5c83f082277af4fcab3848434b1ebe16add))
+* serialize conversation pause with durable capture ([b29ef1e](https://github.com/InkyQuill/hieronymus/commit/b29ef1ed742d8e8e75460edcc550bf4a5decb618))
+* **uninstall:** require recorded ownership and absolute launcher roots ([7e65604](https://github.com/InkyQuill/hieronymus/commit/7e6560430afd15f468244aede90129bb27cf1f36))
+* **updates:** default GitHub source, metadata checks and pipe completion ([00193de](https://github.com/InkyQuill/hieronymus/commit/00193def5c5662b8e9e1c7d1a79cdcabd9f02587))
+* **updates:** ignore build metadata in version precedence ([aa53c0f](https://github.com/InkyQuill/hieronymus/commit/aa53c0f96b86eb62fbc78dd20fcb307a3c8f6699))
+* **updates:** use official GitHub releases and detach helper stdio ([afdb70a](https://github.com/InkyQuill/hieronymus/commit/afdb70a477e935dfe13006d69ff509142e5b3630))
+
 ## v0.7.0 (2026-07-18)
 
 ### Bug Fixes
