@@ -107,9 +107,29 @@ fn conversation_lock(
         Err(error) => return Err(error.into()),
     }
     let file = hieronymus::private_file::open_coordination(&path)?;
-    file.lock()?;
+    lock_with_timeout(&file, std::time::Duration::from_secs(2))?;
     // This persistent lock inode must never be removed by bind/unbind.
     Ok(file)
+}
+
+fn lock_with_timeout(file: &std::fs::File, timeout: std::time::Duration) -> std::io::Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                let remaining = timeout.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "conversation coordination lock is busy; retry the hook operation",
+                    ));
+                }
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(20)));
+            }
+        }
+    }
 }
 fn delivery_path(config: &HieronymusConfig, id: &str) -> Result<PathBuf, DeliveryError> {
     if !crate::trusted_ingress::valid_uuid(id) {
@@ -480,6 +500,24 @@ pub fn hook_output(response: &Value) -> Value {
 #[cfg(test)]
 mod host_tests {
     use super::*;
+
+    #[test]
+    fn busy_conversation_lock_times_out_without_retaining_prompt() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let guard = conversation_lock(&config, "codex", "actual-session").unwrap();
+        let result = submit_prompt(
+            &config,
+            "codex",
+            &json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-session","prompt":"translate this as B"}),
+        );
+        assert!(
+            matches!(result, Err(DeliveryError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        assert!(!root.path().join("host-deliveries").exists());
+        drop(guard);
+        assert!(conversation_lock(&config, "codex", "actual-session").is_ok());
+    }
 
     #[test]
     fn waiting_capture_observes_pause_before_loading_binding_or_retaining_text() {
