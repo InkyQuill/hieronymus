@@ -11,6 +11,7 @@ concurrency:
 jobs:
   release-pr:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -20,7 +21,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - name: Detect a merged version PR
+        id: version-change
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          changed=false
+          if [ "$GITHUB_EVENT_NAME" = push ] && previous=$(git show "$BEFORE:version.txt" 2>/dev/null); then
+            current=$(cat version.txt)
+            if [ "$current" != "$previous" ]; then changed=true; fi
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
       - id: release
+        if: steps.version-change.outputs.changed != 'true'
         uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
         with:
           skip-github-release: true
@@ -55,7 +69,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-      pull-requests: read
+      pull-requests: write
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
     steps:
