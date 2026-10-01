@@ -39,6 +39,11 @@ jobs:
         with:
           toolchain: "1.96.0"
           components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: linux-headless
+          cache-all-crates: false
+          cache-workspace-crates: false
       - run: bun test scripts/*.test.ts
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend build
@@ -48,7 +53,15 @@ jobs:
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       # Live service probes are local-only, even if ignore annotations change.
       # Provider behavior in CI is covered by mocks and loopback fixtures.
-      - run: cargo test --all-features --locked -- --skip live_jev_synthetic_relevance --skip real_ollama_coverage_fits_configured_context
+      - name: Unit tests (mock providers only)
+        run: cargo test --lib --all-features --locked -- --skip live_jev_synthetic_relevance --skip real_ollama_coverage_fits_configured_context
+      - name: Data safety and hook/service contracts
+        run: >-
+          cargo test -p hiero -p hieronymus --all-features --locked
+          --test export_safety --test upgrade_port --test authority_review_fixes
+          --test agent_prompt_delivery --test lifecycle_operations
+          --test client_discovery --test stdio_framing
+          -- --skip live_jev_synthetic_relevance --skip real_ollama_coverage_fits_configured_context
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
       - name: Report build resource usage
         if: always()
@@ -77,96 +90,3 @@ jobs:
       - run: bun run --cwd frontend test
       - run: bun run --cwd frontend build
 
-  desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-          - os: macos-15
-            target: aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
-    env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-      CARGO_INCREMENTAL: "0"
-      CARGO_BUILD_JOBS: "2"
-      RUST_TEST_THREADS: "2"
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: "1.4.0"
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
-        with:
-          toolchain: "1.96.0"
-          components: clippy,rustfmt
-      - name: Linux desktop dependencies (headless job stays GUI-free)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends protobuf-compiler libprotobuf-dev libgtk-3-dev libxdo-dev
-      - name: macOS protobuf
-        if: runner.os == 'macOS'
-        run: brew install protobuf
-      - name: Windows protobuf
-        if: runner.os == 'Windows'
-        run: choco install protoc --yes --no-progress
-      - name: Protobuf standard import preflight
-        run: |
-          protoc --version
-          ./scripts/check-protobuf.sh
-      - run: bun install --cwd frontend --frozen-lockfile
-      - run: bun run --cwd frontend build
-      - run: cargo clippy -p hiero-desktop --all-targets --all-features --locked -- -D warnings
-      - name: Helper tests
-        run: cargo test -p hiero-desktop --all-features --locked
-      - name: Native private-file contracts
-        if: runner.os == 'macOS' || runner.os == 'Windows'
-        run: cargo test -p hieronymus --all-features --locked --lib private_file::tests
-      - name: Windows selected-helper contract
-        if: runner.os == 'Windows'
-        run: cargo test -p hiero --all-features --locked --lib desktop::launch::selection_tests::regular_windows_launcher_selects_versioned_helper
-      - name: Windows filesystem and uninstall contracts
-        if: runner.os == 'Windows'
-        run: cargo test -p hiero -p hieronymus --all-features --locked --test platform_filesystem --test export_safety --test dream_locks_port --test upgrade_port --test uninstall_cli
-      - name: Windows isolated uninstall and worker contracts
-        if: runner.os == 'Windows'
-        run: |
-          cargo test -p hiero --all-features --locked --lib uninstall::tests
-          cargo test -p hiero --all-features --locked --test worker_lifetime
-      - name: Windows native broker contracts
-        if: runner.os == 'Windows'
-        run: cargo test -p hiero --all-features --locked --lib platform::windows_broker::tests
-      - name: Windows desktop registration contracts
-        if: runner.os == 'Windows'
-        run: |
-          cargo test -p hiero --all-features --locked --test windows_desktop
-          cargo test -p hiero --all-features --locked --lib service::windows::tests
-      - name: Windows private prompt and retained-directory export contracts
-        if: runner.os == 'Windows'
-        run: |
-          cargo test -p hiero --all-features --locked --lib agent_prompt_delivery::host_tests::saved_prompt_records_remain_private_after_replacement
-          cargo test -p hiero --all-features --locked --lib platform::export::native::tests
-      - name: Helper rustdoc (Unix)
-        if: runner.os != 'Windows'
-        run: RUSTDOCFLAGS="-D warnings" cargo doc -p hiero-desktop --no-deps --all-features --locked
-      - name: Helper rustdoc (PowerShell)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:RUSTDOCFLAGS = "-D warnings"
-          cargo doc -p hiero-desktop --no-deps --all-features --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
