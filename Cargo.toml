@@ -41,3 +41,12 @@ rustls = { version = "0.23", default-features = false, features = [
 webpki-roots = "0.26"
 # Dev-only certificate generation for loopback TLS tests.
 rcgen = "0.13"
+
+# Retrieval dependencies otherwise repeat large debug symbols in every test binary.
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

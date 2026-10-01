@@ -1,0 +1,173 @@
+{
+  "candidate_commit": "a2d3496aea8d8579eca0efffeb61630c02e70f47",
+  "target": "x86_64-unknown-linux-gnu",
+  "artifact_sha256": "e312dc44120b104932e54425a2820e682be79052bf74769f62244edc281d019a",
+  "model_sha256": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  "metadata_sha256": "a3138357bad372efd378cac4be28afb621a289d23d2d55650b44922f423a3b12",
+  "assets_sha256": "12e57b63af57be56a37835aa91af6103b6e4df75daff0877cb75a7d6bad12e28",
+  "signing": "unsigned-waiver",
+  "os_version": "Unavailable: no GNOME X11 session was available",
+  "desktop": "gnome-appindicator",
+  "session": "x11",
+  "scale": [],
+  "qualification": "unqualified",
+  "qualification_reason": "Final-byte physical desktop testing was unavailable for this target/session. Published with the owner-authorized explicit qualification gap.",
+  "checks": [
+    {
+      "name": "native-semantic-mcp",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "startup",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "duplicate-start",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "model-acquisition",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "semantic-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "provider-failure-recovery-untested",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "three-probe-failures",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "failed-stop",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "quit-preserves-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "login-toggle",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "next-login",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "interactive-menu",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "missing-tray-host",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "host-restart",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "theme",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "dpi",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "console-grant",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "active-upgrade",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "rollback",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "uninstall",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "secret-free-diagnostics",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "pending-native-operation",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "private-storage-failure",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "native-manager-update",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    },
+    {
+      "name": "live-tray-replacement",
+      "result": "unavailable",
+      "evidence_path": "captures/x86_64-unknown-linux-gnu-gnome-appindicator-x11.txt",
+      "evidence_sha256": "923f1f829cb710e9ab35b8da9c33ef4243389ef988c2cd4742ea865b1ce7803f"
+    }
+  ]
+}

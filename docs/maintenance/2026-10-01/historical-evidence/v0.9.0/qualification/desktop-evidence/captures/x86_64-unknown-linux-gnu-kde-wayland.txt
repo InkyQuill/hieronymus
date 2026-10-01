@@ -1,0 +1,335 @@
+Hieronymus v0.9.0 qualification
+Candidate source: d6d93f766e78cea09fb0573170e5c1019409f422
+Successful run: https://github.com/InkyQuill/hieronymus/actions/runs/34721365040
+Target/session: x86_64-unknown-linux-gnu kde/wayland
+Artifact SHA256: 07c9a45ed67fefe80ff5a42d5678f793f82442f480a90a9b841e72642e577f21
+
+PARTIAL. These are fresh checks of the installed final candidate on the current KDE Wayland session. The recorded display scales describe the session; they do not certify visual DPI behavior. No signing or notarization is claimed.
+
+native-semantic-mcp: PASS. The exact installed replacement CLI passed the explicit final_native_payload_runs_semantic_inference_and_authenticated_mcp fixture (1 passed, 0 failed, 3.43 seconds): pinned native inference, authenticated MCP status and graceful shutdown.
+
+startup: PASS. The shipped v2 installer verified and installed this archive in a disposable root. Its health check passed. A transient user service started the installed daemon and its own helper, and KDE reported the helper StatusNotifierItem Active. The daemon had no display variables; the helper recovered them from the trusted graphical session.
+
+duplicate-start: PASS. A second installed daemon invocation exited 2 with data-root ownership guidance; the original PID and instance identity remained unchanged.
+
+model-acquisition: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+semantic-failure: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+provider-failure-recovery-untested: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+three-probe-failures: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+restart: PASS. The installed stop command removed the server, its helper and its tray registration. A subsequent start produced a new daemon identity and active helper, recovered graphical settings and returned browser HTTP 200. The second stop again removed both processes and the tray item, leaving the transient unit inactive with MainPID 0.
+
+failed-stop: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+quit-preserves-login: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+login-toggle: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+next-login: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+interactive-menu: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+missing-tray-host: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+host-restart: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+theme: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+dpi: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+console-grant: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+active-upgrade: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+rollback: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+uninstall: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+secret-free-diagnostics: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+pending-native-operation: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+private-storage-failure: PASS. The installed daemon refused a mode-0644 public-placeholder credential in a disposable root with exit 2 and repair guidance. It did not publish discovery, disclose the placeholder, or silently change permissions.
+
+native-manager-update: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+live-tray-replacement: UNAVAILABLE. This specific final-byte end-to-end scenario was not exercised; no pass is inferred from unit tests, tray registration, bundled-model installation, or display settings.
+
+Additional observations and limits:
+Only the explicitly named scenarios passed. Browser content and API behavior were checked, but native visual appearance, theme/DPI transitions, menu interaction, login scheduling, failure recovery, upgrade/rollback/uninstall and pending-operation scenarios remain unqualified. No user login configuration or agent host configuration was modified. The isolated KDE palette lookup and upstream AppIndicator deprecation diagnostics are retained in the journal. An initial main-thread-only process lookup incorrectly reported a missing helper; ps --ppid and the systemd cgroup confirmed the helper already running from that same startup. Both transient test services were stopped.
+
+--- linux-inventory-check.json ---
+{
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "target": "x86_64-unknown-linux-gnu",
+  "verified_files": {
+    "assets-x86_64-unknown-linux-gnu.json": "cb193c471e721f86981cbabe0fa9efb9bb3a0f2533b3e193cfb9cdec194c3682",
+    "desktop-metadata.awk": "0784453e458c898627c93d37715cd903c8991422d2ba82a3038fea578caa6639",
+    "evidence-x86_64-unknown-linux-gnu.json": "c3a407f8084e5dbba6570ffc36e620b8c62d6d4e8acee2b1b1854c24679f07dc",
+    "hiero-0e55b99700577f488fb17ec1017a8bd1a4369d11232ec7f817a02f10eb2ec3b3.debug": "ec08b0eed511fee1c1f294dafe3b8a1252b39b576dd656bc237850438954efb9",
+    "hiero-desktop-e4b89726c376cc5b382af58a879458e751a70c3e9e7dcb4bd432ae8e81c5e18f.debug": "1e9aa89303a6a756099cb0fcde1f8c499bc4e3eb1b04709c6dfb1a45c1300b09",
+    "hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz": "07c9a45ed67fefe80ff5a42d5678f793f82442f480a90a9b841e72642e577f21",
+    "hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz": "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+    "install-desktop-x86_64-unknown-linux-gnu.sh": "6be273dc05189bbebe6d4c29e80fc429502471621c73ffa3d8fdf307cd19d0a8",
+    "install.sh": "7c1a6e70847fe5740c7fdfb6154e451eded28a71d3308684c46eebdec165cac5",
+    "release-x86_64-unknown-linux-gnu.json": "60ac425f711f7712f5fc177fc3e03c72b801fbe9145e64a88160660e65bd12a3"
+  }
+}
+
+
+--- linux-installer.log ---
+verified split release 0.9.0 (x86_64-unknown-linux-gnu)
+update (updated, version 0.9.0)
+  release resolved: 0.9.0 (archive /tmp/.tmpLUYSgi/hieronymus-0.9.0-x86_64-unknown-linux-gnu.tar.gz)
+  archive checksum verified
+  candidate compatibility: protocol 2026-07-28, schema 5
+  installed into /tmp/hieronymus-v090-d6-linux.aJtBs1/app/versions/0.9.0 and switched the stable links
+  no manager integration; start the daemon manually with `/tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-d6-linux.aJtBs1/data` (or `hiero service install`)
+  health check: healthy
+  agent integrations keep using the stable hiero/hieronymus links, which now serve the new version; host configuration was not modified
+
+Installed Hieronymus 0.9.0. Commands: /tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin. Signing: unsigned.
+
+
+--- linux-native-semantic.log ---
+   Compiling hiero v0.9.0 (/home/inky/Development/hieronymus/crates/hiero)
+   Compiling hieronymus v0.9.0 (/home/inky/Development/hieronymus/crates/hieronymus)
+    Finished `test` profile [unoptimized] target(s) in 7.21s
+     Running tests/desktop_native.rs (target/debug/deps/desktop_native-61172473da29f58b)
+
+running 1 test
+test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.43s
+
+
+
+--- linux-startup.json ---
+{
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "discovery": {
+    "discovery_version": 1,
+    "protocol_version": "2026-07-28",
+    "host": "127.0.0.1",
+    "port": 44093,
+    "pid": 497109,
+    "instance_id": "b48e36e94e400e7d6597e780d9bd8be4",
+    "started_at": "2026-09-12T22:46:10Z"
+  },
+  "helper_pid": 497174,
+  "tray_item": ":1.1248/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_497174",
+  "tray_status": "s \"Active\"",
+  "graphical_environment_presence": {
+    "server": {
+      "DISPLAY": false,
+      "WAYLAND_DISPLAY": false,
+      "XAUTHORITY": false
+    },
+    "helper": {
+      "DISPLAY": true,
+      "WAYLAND_DISPLAY": true,
+      "XAUTHORITY": true
+    }
+  },
+  "browser_dashboard_status": 200,
+  "prepare_status": 200,
+  "agents": [
+    "codex",
+    "cowork",
+    "pi"
+  ],
+  "credentials_supplied": false,
+  "probe_correction": "An initial main-thread-only /proc children lookup missed a child spawned by another daemon thread. The systemd cgroup and ps --ppid correctly identify the running helper; no application failure occurred."
+}
+
+
+--- linux-startup-journal.log ---
+Sep 13 01:46:10 dawn systemd[861]: Started [systemd-run] /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY XDG_CONFIG_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/config XDG_DATA_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/share /tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-d6-linux.aJtBs1/data --unit-dir /tmp/hieronymus-v090-d6-linux.aJtBs1/units --port 0.
+Sep 13 01:46:10 dawn env[497109]: hiero daemon listening on 127.0.0.1:44093 (pid 497109); discovery: /tmp/hieronymus-v090-d6-linux.aJtBs1/data/daemon.json; ctrl-c to stop
+Sep 13 01:46:10 dawn hiero-desktop[497174]: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+Sep 13 01:46:10 dawn env[497174]: hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
+Sep 13 01:46:10 dawn env[497174]: hiero-desktop: KDE panel palette unavailable; use the light/dark foreground override for custom panels
+Sep 13 01:46:10 dawn env[497174]: hiero-desktop: Tray host and desktop preferences available
+
+
+--- linux-duplicate.json ---
+{
+  "exit_code": 2,
+  "stderr": "hiero: another process already owns this data root: another process owns this data root (497109 daemon); stop it before retrying (stop the running daemon or maintenance command first)",
+  "original_daemon_preserved": true,
+  "pid": 497109
+}
+
+
+--- linux-stop.log ---
+shutdown requested: 127.0.0.1:44093 (instance b48e36e94e400e7d6597e780d9bd8be4, pid 497109) — stopping
+daemon stopped and released its discovery record and data-root ownership
+
+
+--- linux-stop-check.json ---
+{
+  "server_pid": 497109,
+  "helper_pid": 497174,
+  "both_processes_gone": true,
+  "owned_tray_item_removed": true,
+  "unit": "ActiveState=inactive\nMainPID=0"
+}
+
+
+--- linux-restart.json ---
+{
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "discovery": {
+    "discovery_version": 1,
+    "protocol_version": "2026-07-28",
+    "host": "127.0.0.1",
+    "port": 37809,
+    "pid": 500345,
+    "instance_id": "c792318c16c91c70674d4a578b9a981c",
+    "started_at": "2026-09-12T22:49:43Z"
+  },
+  "helper_pid": 500420,
+  "tray_item": ":1.1264/org/ayatana/NotificationItem/tray_icon_tray_app_hieronymus_500420",
+  "tray_status": "s \"Active\"",
+  "graphical_environment_presence": {
+    "server": {
+      "DISPLAY": false,
+      "WAYLAND_DISPLAY": false,
+      "XAUTHORITY": false
+    },
+    "helper": {
+      "DISPLAY": true,
+      "WAYLAND_DISPLAY": true,
+      "XAUTHORITY": true
+    }
+  },
+  "browser_dashboard_status": 200,
+  "credentials_supplied": false
+}
+
+
+--- linux-restart-journal.log ---
+Sep 13 01:49:43 dawn systemd[861]: Started [systemd-run] /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY XDG_CONFIG_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/config XDG_DATA_HOME=/tmp/hieronymus-v090-d6-linux.aJtBs1/share /tmp/hieronymus-v090-d6-linux.aJtBs1/app/bin/hiero daemon --data-root /tmp/hieronymus-v090-d6-linux.aJtBs1/data --unit-dir /tmp/hieronymus-v090-d6-linux.aJtBs1/units --port 0.
+Sep 13 01:49:43 dawn env[500345]: hiero daemon listening on 127.0.0.1:37809 (pid 500345); discovery: /tmp/hieronymus-v090-d6-linux.aJtBs1/data/daemon.json; ctrl-c to stop
+Sep 13 01:49:43 dawn hiero-desktop[500420]: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+Sep 13 01:49:43 dawn env[500420]: hiero-desktop: Waiting for a tray host; on GNOME install and enable AppIndicator Support from https://extensions.gnome.org/extension/615/appindicator-support/
+Sep 13 01:49:43 dawn env[500420]: hiero-desktop: KDE panel palette unavailable; use the light/dark foreground override for custom panels
+Sep 13 01:49:43 dawn env[500420]: hiero-desktop: Tray host and desktop preferences available
+
+
+--- linux-restart-stop.log ---
+shutdown requested: 127.0.0.1:37809 (instance c792318c16c91c70674d4a578b9a981c, pid 500345) — stopping
+daemon stopped and released its discovery record and data-root ownership
+
+
+--- linux-restart-stop-check.json ---
+{
+  "server_pid": 500345,
+  "helper_pid": 500420,
+  "both_processes_gone": true,
+  "owned_tray_item_removed": true,
+  "unit": "ActiveState=inactive\nMainPID=0"
+}
+
+
+--- linux-private-storage.json ---
+{
+  "candidate_commit": "d6d93f766e78cea09fb0573170e5c1019409f422",
+  "exit_code": 2,
+  "stderr": "hiero: daemon cannot use the installation credential: the stored installation token at /tmp/hieronymus-v090-d6-linux.aJtBs1/private-storage-JThSjz/daemon.token is readable beyond its owner or has unsafe aliases; on Unix run `chmod 600 /tmp/hieronymus-v090-d6-linux.aJtBs1/private-storage-JThSjz/daemon.token`; otherwise recreate it with owner-only access",
+  "credential_not_disclosed": true,
+  "discovery_not_published": true,
+  "permissions_not_silently_changed": true
+}
+
+
+--- linux-browser-observation.txt ---
+Fresh in-app browser tabs inspected the replacement installed candidate at http://127.0.0.1:44093/. The initial page showed Connect your agent, Codex/Cowork/pi choices, and both MCP and Hieronymus skills setup with separate verification. /admin loaded memory statistics and Local service: Ready. /admin/memory completed loading with the empty Crystals view and record-context guidance. No login or launch grant was supplied. Independent browser API requests omitted credentials; GET also omitted Origin and returned 200. POST prepare used the matching Origin and returned three agent setup requests. No actual agent host was configured or claimed connected.
+
+
+--- linux-os.txt ---
+NAME="CachyOS Linux"
+PRETTY_NAME="CachyOS"
+ID=cachyos
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;23;147;209"
+HOME_URL="https://cachyos.org/"
+DOCUMENTATION_URL="https://wiki.cachyos.org/"
+SUPPORT_URL="https://discuss.cachyos.org/"
+BUG_REPORT_URL="https://github.com/cachyos"
+PRIVACY_POLICY_URL="https://terms.archlinux.org/docs/privacy-policy/"
+LOGO=cachyos
+
+
+--- linux-displays.txt ---
+[01;32mOutput: [0;0m1 DP-5 938554d2-d08c-4b9e-92b7-ca2e936159b2
+	[01;32menabled[0;0m
+	[01;32mconnected[0;0m
+	[01;32mpriority 1[0;0m
+	[01;33mDisplayPort[0;0m
+	[01;33mreplication source:[0;0m0
+	[01;34mModes: [0;0m 1:2560x1440@59.95!  10:1280x1440@59.91  11:1280x1024@75.03  12:1280x1024@60.02  13:1280x720@59.94  14:1280x720@50.00  15:1024x768@119.99  16:1024x768@99.97  17:1024x768@75.03  18:1024x768@70.07  19:1024x768@60.00  2:[01;32m2560x1440@170.00*[0;0m  20:800x600@119.97  21:800x600@99.66  22:800x600@75.00  23:800x600@72.19  24:800x600@60.32  25:800x600@56.25  26:720x576@50.00  27:720x480@59.94  28:640x480@119.52  29:640x480@99.77  3:2560x1440@165.00  30:640x480@75.00  31:640x480@72.81  32:640x480@59.94  33:640x480@59.93  4:2560x1440@143.91  5:2560x1440@120.00  6:1920x1080@119.88  7:1920x1080@60.00  8:1920x1080@59.94  9:1920x1080@50.00 
+[01;33m	Custom modes:[0;0m None
+[01;33m	Geometry: [0;0m0,0 2227x1253
+[01;33m	Scale: [0;0m1.15
+[01;33m	Rotation: [0;0m1
+[01;33m	Overscan: [0;0m0
+[01;33m	Vrr: [0;0mNever
+[01;33m	RgbRange: [0;0munknown
+[01;33m	HDR: [0;0mdisabled
+[01;33m	Wide Color Gamut: [0;0mdisabled
+[01;33m	ICC profile: [0;0mnone
+[01;33m	Color profile source: [0;0msRGB
+[01;33m	Color power preference: [0;0mprefer efficiency and performance
+[01;33m	Brightness control: [0;0msupported, set to 52% and dimming to 100%
+[01;33m	DDC/CI: [0;0mallowed
+[01;33m	Color resolution: unknown
+[01;33m	Allow EDR: [0;0munsupported
+[01;33m	Sharpness control: [0;0munsupported
+[01;33m	Automatic brightness: [0;0munsupported
+[01;33m	Auto Rotate Policy: [0;0mincapable
+[01;33m	Adaptive backlight modulation: [0;0munsupported
+[01;32mOutput: [0;0m2 DP-4 4c71e29d-318d-4793-8afd-a33557589322
+	[01;32menabled[0;0m
+	[01;32mconnected[0;0m
+	[01;32mpriority 2[0;0m
+	[01;33mDisplayPort[0;0m
+	[01;33mreplication source:[0;0m0
+	[01;34mModes: [0;0m 34:2560x1440@59.95!  35:[01;32m2560x1440@170.00*[0;0m  36:2560x1440@165.00  37:2560x1440@143.91  38:2560x1440@120.00  39:1920x1080@119.88  40:1920x1080@60.00  41:1920x1080@59.94  42:1920x1080@50.00  43:1280x1440@59.91  44:1280x1024@75.03  45:1280x1024@60.02  46:1280x720@59.94  47:1280x720@50.00  48:1024x768@119.99  49:1024x768@99.97  50:1024x768@75.03  51:1024x768@70.07  52:1024x768@60.00  53:800x600@119.97  54:800x600@99.66  55:800x600@75.00  56:800x600@72.19  57:800x600@60.32  58:800x600@56.25  59:720x576@50.00  60:720x480@59.94  61:640x480@119.52  62:640x480@99.77  63:640x480@75.00  64:640x480@72.81  65:640x480@59.94  66:640x480@59.93 
+[01;33m	Custom modes:[0;0m None
+[01;33m	Geometry: [0;0m2227,0 2227x1253
+[01;33m	Scale: [0;0m1.15
+[01;33m	Rotation: [0;0m1
+[01;33m	Overscan: [0;0m0
+[01;33m	Vrr: [0;0mNever
+[01;33m	RgbRange: [0;0munknown
+[01;33m	HDR: [0;0mdisabled
+[01;33m	Wide Color Gamut: [0;0mdisabled
+[01;33m	ICC profile: [0;0mnone
+[01;33m	Color profile source: [0;0msRGB
+[01;33m	Color power preference: [0;0mprefer efficiency and performance
+[01;33m	Brightness control: [0;0msupported, set to 52% and dimming to 100%
+[01;33m	DDC/CI: [0;0mallowed
+[01;33m	Color resolution: unknown
+[01;33m	Allow EDR: [0;0munsupported
+[01;33m	Sharpness control: [0;0munsupported
+[01;33m	Automatic brightness: [0;0munsupported
+[01;33m	Auto Rotate Policy: [0;0mincapable
+[01;33m	Adaptive backlight modulation: [0;0munsupported
+
+
+--- final-main-linux-build.log ---
+    Finished `release` profile [optimized] target(s) in 0.24s
+
+
+Separate automated CI evidence for this target: the final extracted package passed real model inference and authenticated MCP in the candidate run above. This does not upgrade unavailable desktop-session checks.
+
+running 1 test
+test final_native_payload_runs_semantic_inference_and_authenticated_mcp ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s
+

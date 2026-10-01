@@ -1,0 +1,3 @@
+[build]
+# Avoid simultaneous retrieval-stack linkers exhausting local memory.
+jobs = 2

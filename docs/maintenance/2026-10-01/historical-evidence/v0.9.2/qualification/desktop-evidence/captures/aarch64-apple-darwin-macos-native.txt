@@ -1,0 +1,4 @@
+Hieronymus 0.9.2; source 4892343f118c360ec13ab39c54888b831e4a4e19; aarch64-apple-darwin macos/native.
+Final package CI: https://github.com/InkyQuill/hieronymus/actions/runs/34777548710
+Artifact SHA256: 415df1975e4778a3628940de04361ffd5597f571cc0a9832d7c9930f965f63ef
+The candidate CI tests real inference and the standard stdio initialization, discovery and status call on the final package. This is automated transport acceptance, not physical desktop/session qualification. No additional physical desktop scenarios were exercised for this patch; every desktop check is explicitly unavailable. Intel macOS remains unqualified.

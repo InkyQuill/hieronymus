@@ -1,0 +1,9 @@
+[
+  "x86_64-unknown-linux-gnu-kde-wayland.json",
+  "x86_64-unknown-linux-gnu-kde-x11.json",
+  "x86_64-unknown-linux-gnu-gnome-appindicator-wayland.json",
+  "x86_64-unknown-linux-gnu-gnome-appindicator-x11.json",
+  "x86_64-pc-windows-msvc-windows-native.json",
+  "aarch64-apple-darwin-macos-native.json",
+  "x86_64-apple-darwin-macos-native.json"
+]
