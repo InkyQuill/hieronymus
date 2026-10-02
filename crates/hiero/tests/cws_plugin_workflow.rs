@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use hieronymus::data_root::HieronymusConfig;
 
 const TARGETS: [&str; 6] = ["codex", "claude", "gemini", "opencode", "openclaw", "pi"];
-const SKILLS: [&str; 8] = [
+const SKILLS: [&str; 9] = [
     "hieronymus-bootstrap",
     "hieronymus-recall",
     "hieronymus-learn",
@@ -14,6 +14,7 @@ const SKILLS: [&str; 8] = [
     "hieronymus-translate",
     "hieronymus-review",
     "hieronymus-orchestrate",
+    "hieronymus-doctor",
 ];
 const OBSOLETE_BOUNDARY: &str = "Current scoped terminology contracts are mandatory.";
 

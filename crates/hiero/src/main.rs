@@ -25,7 +25,7 @@ const LIFECYCLE_USAGE: &str = "usage: hiero <start|stop|restart|status> [--json]
 const RECALL_FEEDBACK_USAGE: &str = "usage: hiero recall-feedback --recall-id <id> --idempotency-key <key> [--useful <activation ids>] [--miss <activation ids>] [--json] [--data-root <path>] (requires the local daemon)";
 const TOOL_CALL_USAGE: &str = "usage: hiero tool-call <tool> [--args <json>] [--json] [--data-root <path>] [--start-daemon] (calls the advertised MCP tool through the local daemon's authenticated /mcp route)";
 const EXPORT_USAGE: &str = "usage: hiero export --output <path> [--force] [--json] [--data-root <path>] (read-only JSON serialization; never a database file copy. An existing destination is refused unless --force replaces it, and no path this installation owns is ever a legal destination)";
-const PLUGINS_USAGE: &str = "usage: hiero plugins generate [--dry-run] [--json] [--data-root <path>] (writes the installation-owned agent plugin bundle)";
+const PLUGINS_USAGE: &str = "usage: hiero plugins <generate|status|sync> [--dry-run] [--json] [--data-root <path>] (inspect or refresh installation-owned agent bundles and supported host caches)";
 const MIGRATE_USAGE: &str = "usage: hiero migrate [--dry-run] [--json] [--data-root <path>]";
 const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]";
 const DOCTOR_USAGE: &str =
@@ -1481,14 +1481,35 @@ fn run_plugins(
             "plugins does not accept --port or --start-daemon; {PLUGINS_USAGE}"
         ));
     }
-    if parsed.subcommand.as_deref() != Some("generate") {
+    if !matches!(
+        parsed.subcommand.as_deref(),
+        Some("generate" | "status" | "sync")
+    ) {
         return Err(format!(
-            "plugins requires the 'generate' subcommand; {PLUGINS_USAGE}"
+            "plugins requires generate, status, or sync; {PLUGINS_USAGE}"
         ));
     }
     reject_args_flag(parsed, "plugins")?;
     reject_output_flag(parsed, "plugins")?;
     let config = load_config(data_root);
+    if parsed.subcommand.as_deref() == Some("status") {
+        let mut status =
+            hiero::agent_sync::inspect(&config, hiero::agent_sync::codex_home().as_deref());
+        status["daemon"] = hiero::lifecycle::status(&config).to_json();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status).map_err(|e| e.to_string())?
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    if parsed.subcommand.as_deref() == Some("sync") && !parsed.dry_run {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&hiero::agent_sync::sync(&config)?)
+                .map_err(|e| e.to_string())?
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     if parsed.dry_run {
         let rendered = hiero::agent_plugins::render(&config)?;
         if parsed.json {

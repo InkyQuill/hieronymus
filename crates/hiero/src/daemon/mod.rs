@@ -373,6 +373,9 @@ impl Daemon {
         // fails safe as `DaemonError::Database` without publishing readiness.
         let database_path = config.database_path();
         let connection = open_migrated(&database_path)?;
+        if let Err(error) = crate::agent_sync::ensure_current(&config) {
+            eprintln!("agent bundle refresh warning: {error}; run hiero plugins sync");
+        }
 
         let registry = McpRegistry::embedded();
         let web = hieronymus::web_config::load(&config)?;

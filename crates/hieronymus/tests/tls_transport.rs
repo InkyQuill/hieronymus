@@ -228,3 +228,21 @@ fn model_download_unsupported_schemes_still_fail_closed() {
         "{error}"
     );
 }
+
+#[test]
+fn fixture_reads_body_delivered_after_header_and_rejects_incomplete_requests() {
+    use std::io::{Cursor, Read};
+    let head = b"POST / HTTP/1.1\r\nHost: localhost\r\ncOnTeNt-LeNgTh: 22\r\n\r\n";
+    let body = br#"{"prompt":"translate"}"#;
+    let mut split = Cursor::new(head).chain(Cursor::new(body));
+    let request = common::read_request(&mut split).unwrap();
+    assert_eq!(&request[head.len()..], body);
+    for input in [
+        "POST / HTTP/1.1\r\nContent-Length: 22\r\n\r\nshort",
+        "POST / HTTP/1.1\r\nContent-Length: 999999999\r\n\r\n",
+        "POST / HTTP/1.1\r\nContent-Length: bad\r\n\r\n",
+        "GET / HTTP/1.1\r\n",
+    ] {
+        assert!(common::read_request(&mut Cursor::new(input)).is_err());
+    }
+}

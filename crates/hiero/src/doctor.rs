@@ -149,6 +149,21 @@ fn run_scoped(
     check_credential_permissions(config, &mut report);
     check_discovery(config, &mut report);
     check_semantic(config, &mut report);
+    let agents = crate::agent_sync::inspect(config, crate::agent_sync::codex_home().as_deref());
+    let stale = agents["generated"].as_array().is_some_and(|items| {
+        items.iter().any(|v| {
+            v["bundle"]["state"] == "stale"
+                || v.get("error").is_some()
+                || (v["bundle"]["state"] == "missing" && config.agent_plugins_root().exists())
+        })
+    }) || (agents["codex_cache"]["state"] == "inventory"
+        && !crate::agent_sync::cache_is_current(&agents));
+    let stale = stale || agents["codex_cache"]["state"] == "error";
+    report.push(
+        if stale { Level::Warning } else { Level::Ok },
+        "agent-bundles",
+        format!("{agents}; refresh with hiero plugins sync, then reopen conversations"),
+    );
     if !skip_registration {
         check_service(config, unit_dir, &mut report);
     }
@@ -442,12 +457,12 @@ fn check_discovery(config: &HieronymusConfig, report: &mut DoctorReport) {
     // inherited the port would otherwise be reported as a healthy daemon.
     // Doctor is read-only, so it reports the verdict and repairs nothing.
     match lifecycle::probe(config) {
-        DiscoveryHealth::Live { record, .. } => report.push(
-            Level::Ok,
+        DiscoveryHealth::Live { record, status } => report.push(
+            if status["version"] == env!("CARGO_PKG_VERSION") { Level::Ok } else { Level::Warning },
             "daemon-reachable",
             format!(
-                "daemon answered the authenticated probe at {}:{} (instance {}, pid {})",
-                record.host, record.port, record.instance_id, record.pid
+                "daemon version {} answered the authenticated probe at {}:{} (instance {}, pid {}); executable {}. If versions differ, restart the updated daemon and run hiero plugins sync",
+                status["version"], record.host, record.port, record.instance_id, record.pid, env!("CARGO_PKG_VERSION")
             ),
         ),
         DiscoveryHealth::NoCredential { detail, .. } => report.push(

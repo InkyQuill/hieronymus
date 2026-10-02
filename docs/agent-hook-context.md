@@ -75,6 +75,8 @@ A skipped result has status:"skipped", retained:false and authority_changed:fals
 
 To stop capture for one conversation, run `hiero agent-hook unbind-context` with stdin `{"host":"codex","host_session_id":"actual-host-session-id"}`. Repeating it succeeds. A private, text-free pause marker suppresses subsequent capture and bootstrap until explicit bind-context. Bind, unbind and new capture share one persistent per-conversation OS lock under host-locks; lock files are never unlinked. Pause waits for an already saving capture to finish. Transport of an already saved delivery and explicit retries remain independent of pause. It leaves other conversations and immutable pending deliveries unchanged.
 
+Unbind does **not** complete the memory session. Save its actual Hieronymus session ID before unbinding: removing the binding and termination journal removes the association needed by SessionEnd and recover-session, which then skip with `no_bound_session`. After the task ends, explicitly call `hieronymus_session_complete` with that known `session_id`; pausing capture alone is not a reason to close a live task. Rebinding an active session clears the pause and enables future prompt capture. Do not silently rebind for recovery: binding-based recovery requires an existing matching binding and an operator-stopped host.
+
 An eligible delivery is saved privately before transport so a lost acknowledgement can be recovered by `retry-delivery --delivery-id UUID`. Definitively rejected deliveries retain the original text/context for diagnosis and immutable manual retry; they are not automatically purged or replayed. They have no authority effect. Delete their exact private JSON file under the configured host-deliveries directory if retention is unwanted; this removes local recovery only, not a server-side receipt. Acknowledged deliveries also retain their receipt. No bulk purge occurs during unbind or upgrades.
 
 ## Session termination and recovery
@@ -130,3 +132,34 @@ transport with disposable fixtures. They do not establish native acceptance on
 every installed host/version; previously recorded prompt-hook qualification does
 not qualify these newly added lifecycle hooks. Changed generated hook commands
 require the host's normal review/trust process; no blanket trust is granted.
+
+## Local lifecycle trust boundary
+
+Lifecycle stdin is a local-user interface, not authenticated native-host provenance.
+The allowlisted `--host`, event shape and private binding reject mismatched requests,
+but another process with the same OS-user access can submit a valid-shaped event.
+Authenticated daemon discovery protects the daemon transport, not the origin of
+that local event. Agents must not manufacture host events from user text.
+
+Evaluation for #108: the documented Codex and Claude hook inputs do not carry an
+independently verifiable host signature. A shared token readable by the same user,
+parent PID or executable-name test cannot establish stronger provenance reliably.
+No such token gate is added. A stronger boundary requires host-issued verifiable
+provenance or OS isolation denying other callers access, plus qualified replay and
+resume behavior. Existing binding ownership, activity guards, private-file checks
+and serialized completion remain required. This is a local trust limitation, not
+unauthenticated remote access.
+
+## Task completion versus chat termination
+
+A completed read/learn task should explicitly complete the memory session it created;
+a nested skill must leave its caller's session active. SessionEnd is a fallback for
+one bound session, not a collector for all sessions created in a conversation.
+Codex switching between chats does not immediately trigger SessionEnd; current host
+behavior is documented in the [Codex hooks reference](https://developers.openai.com/codex/hooks#sessionend).
+Do not substitute per-turn Stop or an age-based sweep for task completion.
+
+For an existing project with stale hooks or earlier open sessions, use
+`hieronymus-doctor`. The generated skill separates project binding, MCP connectivity,
+skill discovery, actual hook loading and host-cache refresh. It preserves read-only
+agreements and diagnoses known session ownership before proposing completion.

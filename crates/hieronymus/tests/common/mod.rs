@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// One loopback HTTPS endpoint serving a canned response to every request.
 /// The presented certificate is returned so tests can inject it as a trusted
@@ -90,7 +90,7 @@ impl TlsLoopbackServer {
         format!("https://127.0.0.1:{port}{path}", port = self.port)
     }
 
-    /// The raw request heads the server received (after TLS decryption), so
+    /// The complete raw requests the server received (after TLS decryption), so
     /// tests can assert the client actually spoke TLS.
     pub fn requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
@@ -121,7 +121,7 @@ impl rustls::server::ResolvesServerCert for FixedResolver {
 }
 
 /// Handles exactly one request on `socket`: completes the TLS handshake,
-/// reads to the end of the request head, records it, answers with the canned
+/// reads the head and declared body, records them, answers with the canned
 /// response, and closes the TLS connection properly (close_notify) so the
 /// client's read-to-EOF loop terminates cleanly.
 fn serve_once(
@@ -143,15 +143,7 @@ fn serve_once(
             .map_err(|error| std::io::Error::other(error.to_string()))?;
     }
 
-    let mut received = Vec::new();
-    let mut buffer = [0_u8; 4096];
-    loop {
-        let count = stream.read(&mut buffer)?;
-        received.extend_from_slice(&buffer[..count]);
-        if received.windows(4).any(|window| window == b"\r\n\r\n") || count == 0 {
-            break;
-        }
-    }
+    let received = read_request(&mut stream)?;
     requests
         .lock()
         .unwrap()
@@ -165,4 +157,76 @@ fn serve_once(
         .complete_io(&mut stream.sock)
         .map(|_| ())
         .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+/// Bounded HTTP/1 fixture reader; TLS reads may split the head and body.
+pub(crate) fn read_request(reader: &mut impl Read) -> std::io::Result<Vec<u8>> {
+    const MAX_HEADER: usize = 64 * 1024;
+    const MAX_BODY: usize = 1024 * 1024;
+    let invalid = |reason| std::io::Error::new(std::io::ErrorKind::InvalidData, reason);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut received = Vec::new();
+    let mut expected = None;
+    let mut buffer = [0_u8; 4096];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request deadline",
+            ));
+        }
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "incomplete request",
+            ));
+        }
+        received.extend_from_slice(&buffer[..count]);
+        if received.len() > MAX_HEADER + MAX_BODY {
+            return Err(invalid("request too large"));
+        }
+        if expected.is_none() {
+            if let Some(end) = received
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|n| n + 4)
+            {
+                if end > MAX_HEADER {
+                    return Err(invalid("header too large"));
+                }
+                let head =
+                    std::str::from_utf8(&received[..end]).map_err(|_| invalid("invalid header"))?;
+                let mut length = None;
+                for line in head.split("\r\n").skip(1).filter(|s| !s.is_empty()) {
+                    let (name, value) = line
+                        .split_once(':')
+                        .ok_or_else(|| invalid("invalid header field"))?;
+                    if name.eq_ignore_ascii_case("transfer-encoding") {
+                        return Err(invalid("transfer encoding unsupported by fixture"));
+                    }
+                    if name.eq_ignore_ascii_case("content-length") {
+                        if length.is_some() {
+                            return Err(invalid("duplicate content length"));
+                        }
+                        let size = value
+                            .trim()
+                            .parse::<usize>()
+                            .map_err(|_| invalid("invalid content length"))?;
+                        if size > MAX_BODY {
+                            return Err(invalid("body too large"));
+                        }
+                        length = Some(size);
+                    }
+                }
+                expected = Some(end + length.unwrap_or(0));
+            } else if received.len() > MAX_HEADER {
+                return Err(invalid("header too large"));
+            }
+        }
+        if let Some(total) = expected.filter(|total| received.len() >= *total) {
+            received.truncate(total);
+            return Ok(received);
+        }
+    }
 }

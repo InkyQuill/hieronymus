@@ -422,7 +422,7 @@ hiero plugins generate [--dry-run] [--json] [--data-root <path>]
 ```
 
 Writes the installation-owned bundle under the config root's
-`agent-plugins/` directory: the eight workflow skills, the MCP registration,
+`agent-plugins/` directory: the nine workflow skills, the MCP registration,
 Codex hooks, local Claude/Codex marketplace catalogs, a passive Pi MCP/skills
 package, and one manifest per other supported host (`codex`, `claude`,
 `gemini`, `opencode`, `openclaw`). The MCP registration uses the stable
@@ -565,3 +565,10 @@ pass instruction, project context and source memories. JSON schemas, source-ID
 requirements and runtime evidence/authority validation remain enforced by the
 application. Editing prompts does not grant dreaming authority to approve terms
 or explicit user rules.
+
+
+Agent bundles refresh lazily on daemon startup. After upgrading, use
+`hiero plugins sync --json` to also refresh an existing enabled Codex installation,
+then reopen conversations. `hiero plugins status --json` and `hiero doctor` expose
+bundle drift. Other hosts use their native plugin reload/update flow; see
+[agent workflows](agent-workflows.md#keeping-installed-bundles-current).
