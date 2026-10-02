@@ -1031,6 +1031,17 @@ fn phase_prompt(
         "Dream pass: {pass_name}. {general_prompt} {instruction} \
          Use only provided source memory ids. Every crystal and facet must include a non-empty source_memory_ids array containing only the provided source memory ids that support that crystal. Return one JSON object without markdown."
     ));
+    if pass_name == "concepts" {
+        payload["schema"] = json!({
+            "concepts": [{"canonical_name":"supported character, term or recurring subject", "description":"brief supported description", "tags":[], "source_memory_ids":[1], "confidence":0.8}],
+            "facets": [{"concept_name":"same canonical name", "kind":"note", "value":"supported detail", "source_memory_ids":[1], "confidence":0.8}],
+            "crystals": [{"crystal_type":"concept", "title":"brief title", "text":"supported assertion", "concept_names":["same canonical name"], "source_memory_ids":[1], "confidence":0.8}]
+        });
+        payload["instruction"] = json!(format!(
+            "{} Return concepts for named subjects, facets for their source-backed details, and crystals only for durable assertions. Use concept_names to connect assertions to their subjects. Omit unsupported entries; empty arrays are valid. Concepts are advisory and never approved terminology.",
+            payload["instruction"].as_str().unwrap_or_default()
+        ));
+    }
     if pass_name == "coverage_audit" {
         payload["schema"] = json!({"covered_memory_ids": [1], "discarded_memories": [{"memory_id": 1, "reason": "Explicit reason for intentional selective forgetting; omit unless justified"}]});
     }
@@ -1087,6 +1098,7 @@ fn dream_prompt_payload(context: &TranslationContext, memories: &[ShortTermMemor
                 "strength": 0.7,
                 "confidence": 0.8,
                 "source_memory_ids": [1],
+                "concept_names": ["supported recurring subject, if any"],
             }],
         },
     })

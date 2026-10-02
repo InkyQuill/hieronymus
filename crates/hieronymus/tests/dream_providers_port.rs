@@ -1753,3 +1753,45 @@ fn discovery_failures_publish_typed_provider_outcomes() {
         assert_eq!(*observer.0.lock().unwrap(), vec![expected]);
     }
 }
+
+#[test]
+fn concept_pass_requests_concepts_facets_and_linked_assertions() {
+    let server = LoopbackLlm::start(Box::new(|request| {
+        let payload = request.json();
+        let prompt: Value =
+            serde_json::from_str(payload["messages"][0]["content"].as_str().unwrap()).unwrap();
+        assert!(prompt["schema"]["concepts"].is_array());
+        assert!(prompt["schema"]["facets"][0]["source_memory_ids"].is_array());
+        assert!(prompt["schema"]["crystals"][0]["concept_names"].is_array());
+        assert!(
+            prompt["instruction"]
+                .as_str()
+                .unwrap()
+                .contains("never approved terminology")
+        );
+        (
+            200,
+            openai_envelope(
+                r#"{"concepts":[{"canonical_name":"Mira","description":"A map reader"}],"facets":[{"concept_name":"Mira","kind":"note","value":"Reads old maps","source_memory_ids":[1]}],"crystals":[{"text":"Mira reads old maps.","source_memory_ids":[1],"concept_names":["Mira"]}]}"#,
+            ),
+        )
+    }));
+    let provider = LlmDreamProvider::new(
+        "local-llm",
+        openai_profile(&server.url("/v1")),
+        "test-model",
+    )
+    .unwrap();
+    let payload = provider
+        .run_pass("concepts", &context("book"), &[])
+        .unwrap();
+    let output = hieronymus::dreaming::normalize_dict_output(
+        &payload,
+        &std::collections::HashSet::from([1]),
+        &std::collections::HashSet::new(),
+    )
+    .unwrap();
+    assert_eq!(output.concepts.len(), 1);
+    assert_eq!(output.facets.len(), 1);
+    assert_eq!(output.crystals[0].concept_names, ["Mira"]);
+}

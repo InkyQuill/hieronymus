@@ -678,6 +678,7 @@ fn dreaming_applies_the_previously_unsupported_concept_section() {
                             "source_memory_ids": source_ids, "crystal_type": "observation",
                             "title": "Applied crystal",
                             "text": "This crystal applies with its concept.",
+                            "concept_names": ["Concept application is no longer a later slice"],
                             "confidence": 0.8
                         }],
                         "concepts": [{"name": "Concept application is no longer a later slice"}]
@@ -704,6 +705,10 @@ fn dreaming_applies_the_previously_unsupported_concept_section() {
     );
     assert_eq!(concept[1], json!("candidate"));
     assert_eq!(concept[2], json!("series"));
+    assert_eq!(
+        scalar(&config, "select count(*) from crystal_concepts"),
+        json!(1)
+    );
     let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
     assert_eq!(session_row[0], json!("dreamed"));
     let audited_events = query(
