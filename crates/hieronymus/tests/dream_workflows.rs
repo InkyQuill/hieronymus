@@ -393,7 +393,7 @@ fn enabled_workflows_run_on_their_own_provider_and_model() {
         assert!(instruction.contains("Prefer concise bilingual memory."));
         assert!(!instruction.contains("Use English memory prose by default"));
         assert!(
-            instruction.contains("Every crystal must include a non-empty source_memory_ids array")
+            instruction.contains("Every crystal and facet must include a non-empty source_memory_ids array")
         );
         assert!(instruction.contains("Return one JSON object without markdown"));
         if index == 0 {
