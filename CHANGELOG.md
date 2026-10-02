@@ -2,6 +2,34 @@
 
 <!-- version list -->
 
+## [0.12.0](https://github.com/InkyQuill/hieronymus/compare/v0.11.0...v0.12.0) (2026-10-02)
+
+
+### Features
+
+* expose inherited source locations on long-term memories ([#139](https://github.com/InkyQuill/hieronymus/issues/139)) ([a0bcb8d](https://github.com/InkyQuill/hieronymus/commit/a0bcb8d2bfb527b8794533312ae73ba6281ea391))
+* **frontend:** adopt Thoth palette and document design system ([37b758e](https://github.com/InkyQuill/hieronymus/commit/37b758e2df39188890b039eb5aca3e37fb320ce7))
+* **frontend:** adopt Thoth palette and document design system ([234d297](https://github.com/InkyQuill/hieronymus/commit/234d29722aeb5838cef7d6a7e21d13b74766b959))
+
+
+### Bug Fixes
+
+* **console:** clarify sources and recover settings workflows ([#147](https://github.com/InkyQuill/hieronymus/issues/147)) ([1d66bb9](https://github.com/InkyQuill/hieronymus/commit/1d66bb99a7cf95631a15bc5e9e425c5e04940e0e))
+* describe concept extraction output in Dream prompts ([#138](https://github.com/InkyQuill/hieronymus/issues/138)) ([37015bd](https://github.com/InkyQuill/hieronymus/commit/37015bdded4abb7a5cc1323092d5c09716f0b863))
+* preserve memory inspection during Dreaming updates ([#136](https://github.com/InkyQuill/hieronymus/issues/136)) ([477acd9](https://github.com/InkyQuill/hieronymus/commit/477acd966f75369476e5a18187dcd1b12a670a48))
+* **release:** synchronize README installer links ([#127](https://github.com/InkyQuill/hieronymus/issues/127)) ([09cff5a](https://github.com/InkyQuill/hieronymus/commit/09cff5a97932421ca6aa29338bc24dc30f55d1cb))
+* retain actionable service startup diagnostics ([#134](https://github.com/InkyQuill/hieronymus/issues/134)) ([af30bce](https://github.com/InkyQuill/hieronymus/commit/af30bce97c0920120bbfce2d40ce19bdd99e081a))
+* **update:** tolerate expected agent-bundle refresh during offline upgrade ([#133](https://github.com/InkyQuill/hieronymus/issues/133)) ([65e5d9e](https://github.com/InkyQuill/hieronymus/commit/65e5d9e952e760c5dbc53d340ba43ca44b44bec1))
+* version comparison cache contracts and evaluate Jev ([#135](https://github.com/InkyQuill/hieronymus/issues/135)) ([1c07046](https://github.com/InkyQuill/hieronymus/commit/1c0704619a79c036d2cd8da740cb1e9c575de7d4))
+
+
+### Refactoring and Build Simplification
+
+* replace SVG icon rendering with static native assets ([#140](https://github.com/InkyQuill/hieronymus/issues/140)) ([94d37a9](https://github.com/InkyQuill/hieronymus/commit/94d37a996f424b4411baf761f62055b2f7af55e5))
+* **semantic:** replace heavyweight LanceDB with SQLite and remove 292 dependencies ([c0e352c](https://github.com/InkyQuill/hieronymus/commit/c0e352c6e762de7b926ef75cf61c61c2b3d54dbe))
+* **semantic:** replace LanceDB with exact SQLite retrieval ([7ac749b](https://github.com/InkyQuill/hieronymus/commit/7ac749b5aee3394ba3b29986da01213d3ee89d2c))
+* **semantic:** replace LanceDB with exact SQLite retrieval ([87a74f9](https://github.com/InkyQuill/hieronymus/commit/87a74f9029389ad670a950468aa66488554f7c47))
+
 ## [0.11.0](https://github.com/InkyQuill/hieronymus/compare/v0.10.1...v0.11.0) (2026-10-02)
 
 
