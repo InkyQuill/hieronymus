@@ -424,3 +424,11 @@ separate observations, not interchangeable calibration results. Neither run
 accepted a negative pair as equivalent. The six synthetic examples do not
 establish general accuracy, equal single/batch quality, or real Ollama/cloud
 qualification. The default remains unassigned.
+
+### Optional source locations
+
+Supply `source_ref` when capturing a working memory: a file path or a loose label such as `Vol 3, chapter 2` is valid. Session volume/chapter fields provide additional context. Dream preserves links to these source memories, and long-term recall now returns their `sources` (memory ID, source reference, volume, chapter); the console displays Source locations. No location is invented when none was supplied. Multiple cited locations remain separate, including across merged or split crystals.
+
+A locator is a pointer, not proof that a file was read or a chronological ordering. Exact evidence and temporal/viewpoint applicability still use the existing claim metadata. A later level or status must not replace an earlier fact merely because their text resembles each other. Query the relevant story context to select time/viewpoint; an unspecified-context search can return several matching memories with different locators. Existing linked memories gain this projection without a migration or re-embedding.
+
+These locators are inherited from retained working memories and sessions. Archiving preserves them; explicitly hard-deleting those source rows removes their locators. They are not independent immutable evidence snapshots.

@@ -109,6 +109,7 @@ fn crystal_payload(crystal: &CrystalRecord) -> Value {
         "story_scopes": crystal.story_scopes,
         "semantic_tags": crystal.semantic_tags,
         "concept_ids": crystal.concept_ids,
+        "sources": crystal.sources,
     })
 }
 
