@@ -10,15 +10,14 @@ an author label nor a routine approval queue confers authority or permission to 
 [authority ingress](authority-ingress.md) for exact public DTOs, current-selection rules and
 receipt dependencies.
 
-`hiero plugins generate` (`--dry-run`, `--json`) deterministically writes eight skills,
+`hiero plugins generate` (`--dry-run`, `--json`) deterministically writes nine skills,
 MCP configuration and host manifests under `<data-root>/agent-plugins/`. It does not
 edit host profiles or book files. The generated targets are codex, claude, gemini,
 opencode, openclaw and pi; retained output is not proof of native support. The required
 native matrix is Claude/Codex/Pi. zCode's prior shared-Claude results remain historical,
 paused and unqualified.
 
-The skills are hieronymus-bootstrap, recall, learn, read, remember, translate, review and
-orchestrate. Every generated target carries a local
+The skills are hieronymus-bootstrap, recall, learn, read, remember, translate, review, orchestrate and doctor. Every generated target carries a local
 `hieronymus-bootstrap/resources/cws-project.md`; bootstrap links to it and the other skills
 reuse bootstrap's project-context workflow by name. The resource is self-contained and
 requires no CWS installation for supported project reading. The skills preserve source
@@ -130,7 +129,7 @@ pi install <data-root>/agent-plugins/pi
 ```
 
 The first command installs Pi's separately packaged MCP prerequisite; restart Pi
-after installation. The Hieronymus package exposes all eight skills. Its generated `mcp.json` registers only
+after installation. The Hieronymus package exposes all nine skills. Its generated `mcp.json` registers only
 `hieronymus-mcp` and pins
 `protocolVersion` to `2026-07-28`; `pi-mcp-adapter` owns discovery, lazy lifecycle,
 authoritative tool catalog, calls and error envelopes. Pi can use Hieronymus MCP tools and

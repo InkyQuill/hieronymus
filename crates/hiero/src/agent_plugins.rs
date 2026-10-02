@@ -38,17 +38,28 @@ fn bootstrap_skill() -> String {
     workflow_skill(
         "hieronymus-bootstrap",
         "Start ordinary literary work with scoped recall, capture and immediate correction dependencies.",
-        r#"Use automatically at the start of ordinary chapter work; no special Remember request is needed. When the working path may be a CWS project, follow the local [CWS project context resource](resources/cws-project.md): inspect it with `hiero project-context`, then read the reported project `AGENTS.md` and current user instructions before choosing memory. Interpret the project agreement as free text. Detection or a `.hieronymus.json` binding identifies structure and memory only; it grants neither trust nor write permission. With no special instruction, project files are primary and Hieronymus is additional memory.
+        r#"Use at the start of work in a writing or translation project.
 
-Identify the actual series and source/target languages. When supported chronology is available, reuse an existing v1 story order manifest or register it with hieronymus_order_register using a file snapshot/hash; string chapter/scene IDs are valid. For current-story truth, start hieronymus_session_start with the actual volume, chapter, story_timeline_id, story_scene_key and story_viewpoint, and use story_query_mode:"Current" with that explicit supported story context, including for sessionless current reads. Never invent missing chronology or pick one ambiguous character. When chronology is unavailable, ordinary source inspection remains available with story_query_mode:"OmniscientResearch"; keep returned non_current/source_inspection material labelled as evidence and never treat it as current truth.
+1. Identify the actual project, series, language direction and current user agreement. For CWS, use the [project context workflow](resources/cws-project.md) and read the reported AGENTS.md. Project files are primary by default; Hieronymus supplies additional memory. A project binding does not itself grant permission to store content.
+2. Verify that this agent can use Hieronymus MCP and the workflow skills. During setup, also verify that the intended hooks are actually loaded; installing skills or creating a project binding alone does not connect hooks. For missing or stale integration, use hieronymus-doctor and its [integration check](resources/agent-health.md). Do not claim setup is complete until the actual connection is verified.
+3. Reuse a compatible session owned by the leading task. For sessionless research, do not start one unnecessarily. When creating a task session with hieronymus_session_start, retain its returned ID and own its completion. Carry the actual chapter, language direction, chronology and viewpoint; unknown context stays unknown.
+4. Recall working memory and source evidence with hieronymus_recall and hieronymus_rag_search before using them. Keep current truth separate from research-only/non_current evidence. Missing semantic retrieval means incomplete recall. Capture only permitted, significant observations during work, and validate translations before returning them.
+5. Complete a session this task created with hieronymus_session_complete when the task finishes, including a stopped task that will not continue. Check the acknowledgement before reporting completion. Nested skills leave their caller's session open. For continuing work, hand off the active ID and remaining task explicitly; a failed completion must be reported with its ID. Do not rely on chat shutdown to finish a read/learn task.
 
-Before each chapter, use hieronymus_recall and hieronymus_rag_search with that context. RAG search returns an envelope with results/non_current/authority revision, not a bare array. Keep current strict contracts separate from advisory voice, relationship and factual observations. Semantic unavailable means retrieval is incomplete; never describe lexical fallback as semantic success. Capture significant new observations with individually scoped ClaimInput objects during work, inspect returned claim IDs/revisions and context warnings, and validate before returning translation.
+If automatic prompt capture is intended, follow the [capture and binding workflow](resources/prompt-capture.md). With configured Jev, the current user message is sent externally before deciding whether to retain it; a local fallback is used when unavailable. Neither filter guarantees perfect relevance, and relevance does not mean a correction was applied. Pausing capture does not complete a session or retract an already started external request. Preserve the session ID before unbinding and complete the ended task explicitly. Never silently enable capture in a read-only project.
 
-The optional SessionEnd hook completes only the memory session bound to the terminating host conversation. SessionStart/resume cancels pending termination; a completed memory session requires a fresh active session and explicit binding before new capture. Hosts lacking these events must use explicit session_complete or documented recover-session after the operator stops the host; never fabricate a native termination event or close sessions because they are idle. The optional UserPromptSubmit hook classifies relevance before durable retention. With a configured TypeSafe API key, Jev receives the entire current user message at https://api.typesafe.ai/v1/systemone, even when the result skips retention; skipping storage does not undo external transmission. Without a key, or on provider/configuration failure, classification uses the local RU/EN heuristic. A successful negative or uncertain Jev result skips without local fallback. Jev is probabilistic and the local heuristic is imperfect: neither guarantees exclusion of all technical/status text. Preserve the returned relevance method and fallback diagnostics; relevance acceptance grants no correction authority. Read the [classification and stop-capture contract](https://github.com/InkyQuill/hieronymus/blob/main/docs/agent-hook-context.md#capture-and-stop-capture), also printed by `hiero agent-hook --help` for the installed version. Unbind prevents future classification after pause checks, but an invocation that already passed its check may still send/finish an external request; pause is checked again before retention. Unbind cannot recall data already sent. Use `hiero agent-hook --help` for the exact version:1 stdin schema and monolingual example; `unbind-context` reads {"host":"codex","host_session_id":"actual-host-id"} on stdin to stop capture for one conversation. If the optional UserPromptSubmit hook reports binding_required, it provides the actual host and host_session_id. This initial prompt was not retained or applied as a correction. Use real MCP session and evidence/claim selection outputs to construct the version:1 input to the installed `hiero agent-hook bind-context` command on stdin: host, host_session_id, series_id, session_id, observed expected_revision, bound source_language/target_language, applicability, selected_sources, selected_claims and selected_rule. Only actual kind:"source_passage" references belong in selected_sources; keep aligned-rendering and observation references in the decision draft's complete evidence_refs instead, and leave selected_sources empty for factual-only selection. No prompt, actor or invented event field belongs in binding. Use immutable captured references, exact selected claim/rule revisions and the authority revision from a coherent read. Do not guess transcript/session IDs or write host-context files manually. Rebind explicitly when work selects a new source or after observing a new authority revision; never refresh an in-flight delivery to force success. Binding confers no authority.
+For a genuine user correction, follow hieronymus-remember. Use the actual applied decision before dependent reads/validation, and preserve tentative or rejected outcomes. Never fabricate or replay a host event. Report blockers in the conversation, without creating unsolicited project reports."#,
+    )
+}
+fn doctor_skill() -> String {
+    workflow_skill(
+        "hieronymus-doctor",
+        "Diagnose an existing project's Hieronymus MCP, skills, hooks and open memory sessions; repair requested integration.",
+        r#"Use when an already bootstrapped project has missing hooks, stale skills, disconnected MCP or read/learn sessions left open. Follow the project-context workflow from hieronymus-bootstrap and preserve the project agreement; do not restart setup blindly or create a diagnostic memory session.
 
-An independently delivered subsequent user prompt can apply immediately only when it matches the single-line English correction grammar documented by hieronymus-remember and passes selection, scope and revision checks. Relevance acceptance alone is not parsing or application success. Consume its required_decision_id in dependent recall/contract/validation calls; never redeem its receipt through public hieronymus_correct. Unresolved authentic text records a tentative signal, increments authority revision and schedules gathering, but has no rule/claim effect and cannot satisfy a dependency. Observe the returned revision before explicitly binding a genuinely new prompt. A failed delivery gives an ID: `hiero agent-hook retry-delivery --delivery-id <id>` retries its saved context. Re-invoking user-prompt-submit creates a new event, including identical text.
+Follow the [project integration and session health check](resources/agent-health.md). Verify the actual host-loaded configuration, generated contents and current cache separately. A project binding is not hook installation. Repair only requested integration, preserve unrelated settings, and use the host's normal command trust mechanism. Report what is verified, missing, stale or still unverified; generated configuration and synthetic CLI tests are not native-host acceptance.
 
-The stable commands hieronymus-mcp, hieronymus-agent-hook and hiero discover the local installation. Optional hook loading is controlled by supported host trust/settings. Pi package loading supplies the eight skills and uses the separately installed pi-mcp-adapter for MCP context reads; it does not run trusted ingress or mint correction provenance. The shared Claude/zCode bundle defaults to host claude; a zCode launcher must explicitly set HIERONYMUS_AGENT_HOST=zcode. Codex uses its codex hook. Set HIERONYMUS_DATA_ROOT for a nondefault installation. Generated plugins remain in the application data root, never a book folder. Report a blocking issue in the conversation; do not create unsolicited book-file reports."#,
+Correlate open memory-session IDs with actual task ownership and host binding. Complete an established ended task explicitly, recover an abandoned bound host only after it has stopped, and leave live or unknown sessions alone. Do not bulk-close sessions by age, silently enable capture, fabricate lifecycle events, read private manuscript text for diagnosis, or edit the database directly."#,
     )
 }
 fn recall_skill() -> String {
@@ -64,11 +75,13 @@ fn learn_skill() -> String {
     workflow_skill(
         "hieronymus-learn",
         "Capture supported observations and activate terminology from independent source evidence.",
-        r#"Before storing project-derived observations, apply the project-context workflow from hieronymus-bootstrap. The free-text project agreement and current user request must permit the write; permission to read, a technical binding, or a preference for one memory source is not write permission. Never ingest a whole project, protected lifecycle state, supplied originals, secrets, or hidden text automatically.
+        r#"Use the project-context workflow from hieronymus-bootstrap and preserve the project agreement. Store only observations this task is permitted to retain; do not ingest a whole project or protected/hidden material automatically.
 
-During normal reading and translation, store permitted significant observations with hieronymus_short_term_add or batch, using kind/text and individually scoped claims. New-claim template (replace the unquoted `SERIES_ID` token with the actual series ID returned by Hieronymus before sending): `{"text":"Alex speaks in clipped phrases.","concept_id":null,"applicability":{"series_id":SERIES_ID,"timeline_id":null,"volume_key":null,"chapter_key":null,"scope_predicates":[],"valid_from":null,"valid_until":null,"metadata_state":"Unspecified","knowledge_gates":[]}}`. `text` and `concept_id` are siblings of `applicability`; use `concept_id:null` when identity is unknown; never invent an ID. This template records unknown context. Populate applicability only from observed, supported context; when typed context is unavailable, omit the optional claims array and let ordinary capture preserve the session context. Use actual resolved positions and viewpoints. Never invent chronology, a character, or `All`; unresolved context or a missing knowledge gate remains conservatively outside current truth. Separate reusable voice/relationship assertions from chapter-local events and give each only the scope supported by the source. Inspect returned claim IDs, revisions and warnings before relying on later recall. Preserve uncertainty and source evidence. No author label, approval queue or special Learn request is needed.
+Reuse the leading task's compatible session. If this standalone task creates a session, retain its ID and complete it with hieronymus_session_complete after the work finishes, before the final report. Do not complete a caller-owned session. Report failed completion or explicitly continuing work with the active ID.
 
-For terminology, create/reuse the exact concept, capture immutable source_passage and aligned_rendering evidence via hieronymus_evidence_capture from actual file snapshots and hashes. Offsets index the whole UTF-8 file; alignments link aligned_source_id. Two independent aligned paragraph anchors, a resolved identity and scope, and matching revisions can support learned activation through hieronymus_termbase_propose plus hieronymus_decide Activate. A learned replacement additionally needs scoped contradiction evidence. Reused bytes/duplicate anchors and stale revisions do not satisfy policy. Read returned status and resulting contract; never claim a tentative decision activated a rule. Two people named Alex need separate concepts and explicit anchors; ambiguity remains an observation, never a global replacement."#,
+Capture significant voice, relationships, events and uncertainty through hieronymus_short_term_add or batch. Give each assertion only the scope its evidence supports; distinguish recurring traits from chapter-local events. Unknown identity, chronology or viewpoint stays tentative. See the [scoped observation input](resources/claim-capture.md) when constructing claims. Inspect returned IDs, revisions and warnings before relying on later recall.
+
+For terminology, resolve the actual concept and capture source and aligned-rendering evidence from exact snapshots. See the [complete evidence workflow](resources/evidence-capture.md) for UTF-8 byte selections, whole-file hashes and observed bindings. Two independent aligned paragraph anchors, supported identity/scope and matching revisions can support learned activation; duplicate anchors or stale evidence cannot. A learned replacement needs scoped contradiction evidence. Use hieronymus_termbase_propose and hieronymus_decide, then inspect the actual resulting status and contract. Never call a tentative decision active."#,
     )
 }
 fn read_skill() -> String {
@@ -77,6 +90,8 @@ fn read_skill() -> String {
         "Read source files into contextual RAG and capture important conclusions.",
         r#"Before importing a project file, apply the project-context workflow from hieronymus-bootstrap. Identify its structural role, then import only task-required evidence whose free-text project agreement and current user request permit import. Do not import a whole project, protected lifecycle state, supplied originals, secrets, or `<hidden>` content automatically.
 
+Reuse a compatible session owned by the leading workflow; do not create or complete a second session inside a nested skill. For a standalone bounded task, retain any session_id this invocation creates and call hieronymus_session_complete with it after capture/validation finishes, before reporting completion. On an abort with no continuation, complete that owned session as well; on completion failure report its ID and pending error. If work is continuing, hand off its active ID explicitly. Never close a caller-owned or unrelated live session. Do not wait for chat shutdown: SessionEnd only covers its explicit binding. Completion does not mean Dream finished.
+
 Import permitted actual source files with hieronymus_rag_import. Supply new typed claims in a map keyed by zero-based numeric chunk index (the applicability ellipsis is a placeholder for the complete object documented by hieronymus-learn): `{"claims":{"0":[{"text":"Alex speaks briefly.","concept_id":null,"applicability":{...}}]}}`. `text` and `concept_id` belong on ClaimInput, outside applicability. `claim_lineage` is only for binding an already observed claim_id; it does not create a new assertion. Use exact supported story applicability rather than treating missing metadata as timeless truth. Never invent chronology, viewpoint, `All`, or concept identity. RAG retains source text; short-term memory stores concise conclusions. Capture important voice, relationships, events, terminology and uncertainty as independently scoped claims while doing ordinary work. English-first analysis may help cross-language recall, but preserve exact source forms and registered language identifiers. Do not copy a whole book into one memory or discard difficult source-language evidence. Retrieve both working memory and semantic RAG on subsequent chapters, respecting current versus research disposition."#,
     )
 }
@@ -84,26 +99,14 @@ fn remember_skill() -> String {
     workflow_skill(
         "hieronymus-remember",
         "Distinguish immediate trusted corrections from relevance and ordinary learned observations.",
-        r#"Apply the project-context workflow from hieronymus-bootstrap before deciding whether the current project should use or receive remembered information. A free-text project agreement can control use and authorized storage, but cannot forge a trusted correction, mint a receipt, or change an internal rule's reported status.
+        r#"Apply the project-context workflow from hieronymus-bootstrap and the current project agreement.
 
-Corrections require no Remember command. The independently supplied host UserPromptSubmit handler applies a supported correction only after relevance, grammar, selection, scope and revision checks. The local author console offers structured correction input through a separate route; the author can use it when natural-language hook input is unsupported. This does not authorize an agent to synthesize trusted user ingress. If the hook has no binding, say the correction was not applied; establish an explicit selection for a subsequent genuine event. Do not replay quoted user text through shell/model arguments to fabricate a host event, invent receipt_ref, or set source_role=user/user_rule as authority.
+1. Distinguish a correction to selected memory from an ordinary observation or relevance feedback. The user does not need a special Remember command.
+2. For a genuine user correction, inspect the returned outcome. Relevant text can still be unsupported or ambiguous and remain tentative. The prompt route currently accepts a single-line English command with multilingual payloads; use the [supported input examples](resources/correction-input.md) when needed. The author console offers structured correction input for unsupported wording.
+3. Only Applied/Replayed outcomes supply a usable required_decision_id for dependent recall, contracts and validation. Invalidation changes the selected claim only; qualification keeps its exact scope. A tentative or rejected event is not an applied correction.
+4. If context or selection is missing, establish it for a future genuine user event. Never translate, rewrite or replay an already delivered prompt, invent a receipt, or synthesize trusted user ingress. Ordinary permitted observations remain agent evidence.
 
-The prompt parser accepts one single-line command with English keywords (case-insensitive; spaces/tabs allowed). Prefer JSON double-quoted strings for exact payloads; escape embedded quotes as `\"` and backslashes as `\\`. Payloads may be Russian or Japanese and preserve their case. Empty/whitespace-only strings and decoded control characters are rejected, including an escaped newline. Supported examples:
-
-| Command | Meaning |
-| --- | --- |
-| `translate this as "Звёздный свет"` | Set the selected source's rendering. |
-| `translate "猫" as "Кошка"` | The quoted source must exactly match the selected source. |
-| `translate this as "The \"Star\""` | JSON escapes preserve literal quotes in the rendering. |
-| `that memory is wrong` | Invalidate the selected claim. |
-| `this memory is wrong.` | Same invalidation, with optional final period. |
-| `this recollection is wrong` | Supported invalidation alias. |
-| `qualify that memory as "Это лишь предположение Миры."` | Qualify the selected claim. |
-| `qualify this memory as "まだ確認されていない"` | Qualification with a Japanese payload. |
-
-For invalidation and qualification, this/that memory are both supported; recollection is only accepted as this recollection for invalidation. The legacy unquoted form `translate this as X` accepts a restricted simple payload; quote payloads containing punctuation or words such as and/or. A quoted source always requires a quoted target. Add no polite prefix, trailing explanation or second command; literal CR/LF makes the whole prompt unsupported. For example, `переводи это как X` and `please translate this as X` do not parse. Relevant authentic input that fails parsing becomes tentative with reason `unsupported_or_ambiguous_command`, not an applied correction; irrelevant input may instead skip before parsing. Preserve the actual outcome and diagnostic. Never translate, rewrite or replay an already delivered prompt to turn it into a new trusted event. A future command must come independently from the user.
-
-Consume Applied/Replayed required_decision_id before dependent reads/validation. An invalidation marks only the selected claim incorrect and invents no replacement. Qualification preserves its exact scope. Unhelpful recall goes to relevance feedback instead. Ambiguous selection stays tentative with visible reasons. Provider outage cannot delay an already applied correction; consolidation is durable background work with retries, not evidence that a provider run succeeded. Never claim completion from a pending/parked job."#,
+Use relevance feedback for an unhelpful search result. Report actual correction and background-consolidation states; a pending job is not completed work."#,
     )
 }
 fn translate_skill() -> String {
@@ -126,7 +129,7 @@ fn orchestrate_skill() -> String {
     workflow_skill(
         "hieronymus-orchestrate",
         "Run the automatic session, recall, capture, validation and feedback loop.",
-        r#"Keep the current leading skill in control; never recursively launch another orchestrator. Start with the project-context workflow from hieronymus-bootstrap, apply the current user's free-text project agreement, then run recall→work/permitted capture→validation→correlated relevance feedback for ordinary chapter work. Do not require synchronized writes or a Markdown mirror unless the current instruction does. Capture each permitted supported assertion with the ClaimInput shape documented by hieronymus-learn, then inspect actual returned claim IDs/revisions and conservative context warnings before relying on continuity. Preserve observed authority revision and selected immutable context. After a trusted correction, require its applied decision in dependent calls; after an unresolved signal, observe the new revision before explicitly binding a new event. Complete sessions normally and recover memory in the next session.
+        r#"Keep the current leading skill in control; never recursively launch another orchestrator. Start with the project-context workflow from hieronymus-bootstrap, apply the current user's free-text project agreement, then run recall→work/permitted capture→validation→correlated relevance feedback for ordinary chapter work. Do not require synchronized writes or a Markdown mirror unless the current instruction does. Capture each permitted supported assertion with the ClaimInput shape documented by hieronymus-learn, then inspect actual returned claim IDs/revisions and conservative context warnings before relying on continuity. Preserve observed authority revision and selected immutable context. After a trusted correction, require its applied decision in dependent calls; after an unresolved signal, observe the new revision before explicitly binding a new event. Complete the memory session owned by this task through hieronymus_session_complete after its work finishes, before the final report; do not rely solely on chat shutdown. Preserve an active session only for explicitly continuing work, with its ID in the handoff. Nested skills must not complete the leading task session. Recover memory in the next session.
 
 Background dreaming and correction consolidation follow daemon policy and budgets. A provider outage leaves immediate corrections effective, with durable retries/parking/recovery. Report actual pending/failed/complete state; never fabricate a completion, recursively enqueue the same correction, or repeat relevance deltas. Native host and semantic retrieval support require actual qualification; generated files alone are not acceptance evidence."#,
     )
@@ -198,6 +201,34 @@ fn common_assets() -> BTreeMap<String, String> {
         (
             "skills/hieronymus-bootstrap/resources/cws-project.md".to_string(),
             include_str!("../resources/cws-project.md").to_string(),
+        ),
+        (
+            "skills/hieronymus-learn/resources/evidence-capture.md".to_string(),
+            include_str!("../resources/evidence-capture.md").to_string(),
+        ),
+        (
+            "skills/hieronymus-doctor/SKILL.md".to_string(),
+            doctor_skill(),
+        ),
+        (
+            "skills/hieronymus-doctor/resources/agent-health.md".to_string(),
+            include_str!("../resources/agent-health.md").to_string(),
+        ),
+        (
+            "skills/hieronymus-bootstrap/resources/agent-health.md".to_string(),
+            include_str!("../resources/agent-health.md").to_string(),
+        ),
+        (
+            "skills/hieronymus-bootstrap/resources/prompt-capture.md".to_string(),
+            include_str!("../resources/prompt-capture.md").to_string(),
+        ),
+        (
+            "skills/hieronymus-remember/resources/correction-input.md".to_string(),
+            include_str!("../resources/correction-input.md").to_string(),
+        ),
+        (
+            "skills/hieronymus-learn/resources/claim-capture.md".to_string(),
+            include_str!("../resources/claim-capture.md").to_string(),
         ),
         (
             "skills/hieronymus-recall/SKILL.md".to_string(),
@@ -450,7 +481,7 @@ mod tests {
                 .iter()
                 .filter(|(path, _)| path.ends_with("SKILL.md"))
                 .count(),
-            8
+            9
         );
         assert!(pi_files.iter().all(|(path, contents)| {
             !path.to_string_lossy().contains("extensions/")

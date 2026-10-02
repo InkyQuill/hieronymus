@@ -871,3 +871,89 @@ fn crashed_host_without_termination_event_has_explicit_cli_recovery() {
         "completed"
     );
 }
+
+#[test]
+fn unbind_then_host_end_requires_explicit_task_completion() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let unbound = cli(
+        root.path(),
+        &["unbind-context"],
+        &json!({
+            "host":"claude", "host_session_id":"actual-host-session"
+        }),
+    );
+    assert!(unbound.status.success());
+    for (command, input) in [
+        (
+            "session-end",
+            json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session"}),
+        ),
+        (
+            "recover-session",
+            json!({"host_session_id":"actual-host-session","session_id":context["session_id"],"confirm_abandoned":true}),
+        ),
+    ] {
+        let result = cli(root.path(), &[command, "--host", "claude"], &input);
+        assert!(result.status.success());
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["reason"], "no_bound_session");
+    }
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    let status = || {
+        db.query_row(
+            "select status from task_sessions where id=?",
+            [context["session_id"].as_i64().unwrap()],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(status(), "active");
+    let client = hiero::lifecycle::connect(&config, false).unwrap();
+    let completed = client
+        .call_tool(
+            "hieronymus_session_complete",
+            &json!({"session_id":context["session_id"]}),
+        )
+        .unwrap();
+    assert_eq!(completed["result"]["structuredContent"]["completed"], true);
+    assert_eq!(status(), "completed");
+    assert_eq!(submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"})).unwrap()["reason"], "capture_paused");
+}
+
+#[test]
+fn resume_after_explicit_completion_requests_new_binding_in_host_context() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let client = hiero::lifecycle::connect(&config, false).unwrap();
+    client
+        .call_tool(
+            "hieronymus_session_complete",
+            &json!({"session_id":context["session_id"]}),
+        )
+        .unwrap();
+    assert!(!root.path().join("host-endings").exists());
+    let result = cli(
+        root.path(),
+        &["session-start", "--host", "claude"],
+        &json!({"hook_event_name":"SessionStart","session_id":"actual-host-session","source":"resume"}),
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["status"], "binding_required");
+    assert_eq!(value["session_id"], context["session_id"]);
+    assert_eq!(value["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    assert!(
+        value["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("Do not capture into the completed session")
+    );
+    assert!(bind_context(&config, &context).is_err());
+}

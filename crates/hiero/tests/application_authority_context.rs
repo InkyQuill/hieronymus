@@ -608,7 +608,7 @@ fn generated_claim_template_matches_canonical_dto_with_observed_series() {
     let files = hiero::agent_plugins::render(app.config()).unwrap();
     let skill = &files
         .iter()
-        .find(|(path, _)| path.ends_with("skills/hieronymus-learn/SKILL.md"))
+        .find(|(path, _)| path.ends_with("skills/hieronymus-learn/resources/claim-capture.md"))
         .unwrap()
         .1;
     assert!(skill.contains("use `concept_id:null` when identity is unknown"));

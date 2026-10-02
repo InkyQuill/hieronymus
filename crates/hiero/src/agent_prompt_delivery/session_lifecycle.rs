@@ -47,7 +47,8 @@ fn identity<'a>(h: &str, input: &'a Value, event: &str) -> Result<&'a str, Deliv
         .filter(|s| !s.is_empty() && s.len() <= 512)
         .ok_or_else(|| invalid("missing host session"))
 }
-/// Accept only the native SessionEnd envelope and the binding for that host.
+/// Validate a SessionEnd envelope and the binding for that host. Stdin does
+/// not attest native-host origin against another process of the same OS user.
 /// Failed transport leaves a bounded, replayable intent; it never starts a daemon.
 pub fn handle_session_end(
     config: &HieronymusConfig,
@@ -67,6 +68,31 @@ pub fn handle_session_start(
 ) -> Result<Value, DeliveryError> {
     let session = identity(h, input, "SessionStart")?;
     let _guard = conversation_lock(config, h, session)?;
+    // Explicit task completion need not create a host-ending journal. Do not
+    // advertise its stale binding as active when the conversation resumes.
+    let context = context_path(config, h, session);
+    if context.try_exists()? {
+        let binding: HostContext =
+            serde_json::from_slice(&hieronymus::private_file::read_private(&context)?)
+                .map_err(|_| invalid("invalid saved binding"))?;
+        if binding.version != 1 || binding.host != h || binding.host_session_id != session {
+            return Err(invalid("saved binding identity mismatch"));
+        }
+        let db = rusqlite::Connection::open_with_flags(
+            config.database_path(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let status: Option<String> = db.query_row(
+            "select t.status from task_sessions t join series s on s.slug=t.series_slug where t.id=?1 and s.id=?2",
+            params![binding.session_id, binding.series_id],
+            |r| r.get(0),
+        ).optional()?;
+        match status.as_deref() {
+            Some("active") => {}
+            Some(_) => return Ok(binding_required(binding.session_id)),
+            None => return Err(invalid("bound session ownership mismatch")),
+        }
+    }
     let path = ending_path(config, h, session);
     if path.try_exists()? {
         let ending = load_ending(&path)?;
@@ -79,9 +105,7 @@ pub fn handle_session_start(
         )?;
         let active: bool=db.query_row("select exists(select 1 from task_sessions t join series s on s.slug=t.series_slug where t.id=?1 and s.id=?2 and t.status='active')",params![ending.session_id,ending.series_id],|r|r.get(0))?;
         if ending.completed || !active {
-            return Ok(
-                json!({"status":"binding_required","session_id":ending.session_id,"reason":"memory session already completed; bind a fresh active session before capture","authority_changed":false}),
-            );
+            return Ok(binding_required(ending.session_id));
         }
         {
             clear_ending(config, h, session)?;
@@ -95,6 +119,17 @@ pub fn handle_session_start(
         }
     }
     Ok(json!({"status":"active","host":h,"host_session_id":session,"authority_changed":false}))
+}
+fn binding_required(session_id: i64) -> Value {
+    let reason = "memory session already completed; for new work use a fresh active session and explicitly bind it before capture";
+    json!({
+        "status":"binding_required", "session_id":session_id,
+        "reason":reason, "authority_changed":false,
+        "hookSpecificOutput": {
+            "hookEventName":"SessionStart",
+            "additionalContext":format!("Hieronymus memory session {session_id}: {reason}. Do not capture into the completed session or replay an earlier prompt.")
+        }
+    })
 }
 /// Explicit recovery requires the exact currently bound domain ID and an
 /// operator assertion that the host has stopped. No bulk or idle recovery.

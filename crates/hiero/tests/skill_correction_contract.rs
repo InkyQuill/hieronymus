@@ -7,7 +7,7 @@ fn generated_correction_examples_parse_in_every_host_bundle() {
     let files = hiero::agent_plugins::render(&HieronymusConfig::new(root.path())).unwrap();
     let mut bundles = 0;
     for (path, skill) in &files {
-        if !path.ends_with("skills/hieronymus-remember/SKILL.md") {
+        if !path.ends_with("skills/hieronymus-remember/resources/correction-input.md") {
             continue;
         }
         bundles += 1;
@@ -57,7 +57,7 @@ fn generated_bootstrap_discloses_classification_before_retention() {
     let files = hiero::agent_plugins::render(&HieronymusConfig::new(root.path())).unwrap();
     let mut bundles = 0;
     for (path, skill) in &files {
-        if !path.ends_with("skills/hieronymus-bootstrap/SKILL.md") {
+        if !path.ends_with("skills/hieronymus-bootstrap/resources/prompt-capture.md") {
             continue;
         }
         bundles += 1;
@@ -80,4 +80,35 @@ fn generated_bootstrap_discloses_classification_before_retention() {
         assert!(!skill.contains("technical/status messages skip without requiring binding"));
     }
     assert_eq!(bundles, 6);
+}
+
+#[test]
+fn workflow_skills_ship_their_linked_resources_and_doctor_in_each_bundle() {
+    let root = tempfile::tempdir().unwrap();
+    let files = hiero::agent_plugins::render(&HieronymusConfig::new(root.path()))
+        .unwrap()
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut skills = 0;
+    for (path, body) in &files {
+        if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
+            continue;
+        }
+        skills += 1;
+        for link in body.split("](").skip(1) {
+            let target = link.split_once(')').unwrap().0;
+            if target.starts_with("resources/") {
+                assert!(
+                    files.contains_key(&path.parent().unwrap().join(target)),
+                    "{}: {target}",
+                    path.display()
+                );
+            }
+        }
+        if path.ends_with("hieronymus-doctor/SKILL.md") {
+            assert!(body.contains("Do not bulk-close sessions by age"));
+            assert!(body.contains("do not restart setup blindly"));
+        }
+    }
+    assert_eq!(skills, 6 * 9);
 }
