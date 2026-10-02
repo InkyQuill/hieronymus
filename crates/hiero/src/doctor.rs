@@ -158,11 +158,7 @@ fn run_scoped(
         })
     }) || (agents["codex_cache"]["state"] == "inventory"
         && !crate::agent_sync::cache_is_current(&agents));
-    let stale = stale
-        || matches!(
-            agents["codex_cache"]["state"].as_str(),
-            Some("error" | "missing")
-        );
+    let stale = stale || agents["codex_cache"]["state"] == "error";
     report.push(
         if stale { Level::Warning } else { Level::Ok },
         "agent-bundles",

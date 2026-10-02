@@ -149,7 +149,12 @@ fn cache_inventory(config: &HieronymusConfig, host_home: &Path) -> Value {
             if !entry.file_type().map_err(|e| e.to_string())?.is_dir() {
                 return Err("non-directory cache entry".into());
             }
-            versions.push(json!({"directory_version":entry.file_name().to_string_lossy(),"bundle":bundle_status(config,"codex",&entry.path())?}));
+            let mut version = json!({"directory_version":entry.file_name().to_string_lossy()});
+            match bundle_status(config, "codex", &entry.path()) {
+                Ok(bundle) => version["bundle"] = json!(bundle),
+                Err(error) => version["error"] = json!(error),
+            }
+            versions.push(version);
         }
         versions.sort_by_key(|v| v["directory_version"].as_str().unwrap_or("").to_owned());
         Ok(json!({"state":"inventory","versions":versions,"active_version":"not_observed"}))
@@ -486,6 +491,18 @@ mod tests {
         assert_eq!(
             inspect(&config, Some(&host))["codex_cache"]["versions"][0]["bundle"]["state"],
             "current"
+        );
+        let broken = cache.parent().unwrap().join("broken");
+        std::fs::create_dir_all(broken.join(".codex-plugin/plugin.json")).unwrap();
+        let inventory = inspect(&config, Some(&host));
+        assert_eq!(inventory["codex_cache"]["state"], "inventory");
+        assert!(cache_is_current(&inventory));
+        let versions = inventory["codex_cache"]["versions"].as_array().unwrap();
+        assert_eq!(versions.len(), 2);
+        assert!(
+            versions
+                .iter()
+                .any(|v| v["directory_version"] == "broken" && v["error"].is_string())
         );
         let hook = cache.join("hooks/hooks.codex.json");
         std::fs::write(&hook, "{}").unwrap();

@@ -285,12 +285,51 @@ fn non_loopback_discovery_is_unhealthy() {
 
 #[test]
 fn reachable_daemon_is_healthy() {
+    // Set the host environment only in an isolated process: other tests run
+    // concurrently and must not observe a temporary process-global mutation.
+    const ISOLATED: &str = "HIERO_TEST_DOCTOR_ISOLATED";
+    if std::env::var_os(ISOLATED).is_none() {
+        let host = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "reachable_daemon_is_healthy", "--nocapture"])
+            .env(ISOLATED, "1")
+            .env("CODEX_HOME", host.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout).to_string()
+                + &String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     // ADR 0009: reachability is decided by an *authenticated* probe and a
     // process-instance comparison, so this needs a real daemon — a bare
     // listener on the recorded port is no longer evidence of anything.
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
     hiero::agent_plugins::generate(&config).unwrap();
+    let host = std::path::PathBuf::from(std::env::var_os("CODEX_HOME").unwrap());
+    let mut codex_config = toml_edit::DocumentMut::new();
+    codex_config["marketplaces"]["hieronymus-local"]["source"] =
+        toml_edit::value(config.agent_plugins_root().to_str().unwrap());
+    std::fs::write(host.join("config.toml"), codex_config.to_string()).unwrap();
+    // Registered marketplace without an installed plugin is healthy.
+    assert!(
+        run_doctor(&config)
+            .findings
+            .iter()
+            .any(|f| f.code == "agent-bundles" && f.level == Level::Ok)
+    );
+    std::fs::write(host.join("config.toml"), "invalid = [").unwrap();
+    assert!(
+        run_doctor(&config)
+            .findings
+            .iter()
+            .any(|f| f.code == "agent-bundles" && f.level == Level::Warning)
+    );
+    std::fs::write(host.join("config.toml"), codex_config.to_string()).unwrap();
     let hook = config
         .agent_plugins_root()
         .join("codex/hooks/hooks.codex.json");
