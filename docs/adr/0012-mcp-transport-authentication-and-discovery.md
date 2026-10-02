@@ -4,7 +4,7 @@
 
 Accepted on 2026-08-31. This ADR supersedes the “no authentication,
 authorization, TLS, or remote-deployment security layer” non-goal in
-`docs/superpowers/specs/2026-07-18-remediation-and-semantic-rag-design.md` for
+[historical document](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/superpowers/specs/2026-07-18-remediation-and-semantic-rag-design.md) for
 the local daemon. Remote deployment and TLS remain non-goals.
 
 > **Amendment (2026-09-03, owner):** local-first light authentication. The
@@ -37,7 +37,7 @@ the local daemon. Remote deployment and TLS remain non-goals.
 
 Browser authentication is optional and disabled by default for the local desktop deployment. Set `authentication_required = true` in the installation config root's `web.conf` to require the existing launch-grant/session-cookie flow. Host and Origin checks remain active in either mode. MCP and native trusted-ingress credentials remain required. Default browser corrections are attributed to the local desktop console, not to an authenticated individual.
 
-See [the release product direction](../maintenance/v0.9.0/product-direction.md).
+See [the release product direction](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/maintenance/v0.9.0/product-direction.md).
 
 ## Context
 

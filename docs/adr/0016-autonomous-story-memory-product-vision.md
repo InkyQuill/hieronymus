@@ -4,7 +4,7 @@
 
 Accepted on 2026-09-06 from the owner's product direction.
 
-Supersedes [ADR 0005](0005-product-vision.md) in full as the product vision.
+Supersedes [ADR 0005](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/adr/0005-product-vision.md) in full as the product vision.
 Amends [ADR 0011](0011-deterministic-terminology-and-graded-memory.md): its
 structured terminology authority and deterministic enforcement remain; its
 human-only approval and lifecycle policy is superseded by this decision.

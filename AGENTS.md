@@ -42,7 +42,7 @@ bun run build
 
 Real model and installed-artifact tests are explicitly ignored by default. Supply their documented disposable fixture inputs and run them explicitly when qualifying those paths; missing inputs must fail. See `docs/rust-cutover-rehearsal.md`. Passing synthetic provider or transport tests does not establish native agent-host acceptance.
 
-Current Rust plans and accepted ADR amendments govern product behavior. Preserve frozen Python fixtures as historical evidence; do not introduce a Python parity release gate. ADR 0016's autonomous authority design is not evidence that its runtime has been implemented.
+Current product contracts and accepted ADR amendments govern product behavior; see docs/README.md and docs/roadmap.md. Completed execution plans and one-off reports live in Git history. Preserve frozen Python fixtures as historical evidence; do not introduce a Python parity release gate. ADR 0016's autonomous authority design is not evidence that its runtime has been implemented.
 
 ## Release checks and blockers
 

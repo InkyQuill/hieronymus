@@ -251,11 +251,11 @@ retained captures/archives and do not touch the regular account's registrations.
 Current final-review-fix outputs/logs, reproduction scripts, native source
 harnesses and the durable report are under
 `qualification/.artifacts/desktop-final-fixes/` (git ignored). The exact-byte
-receipt is [desktop-final-fixes-linux-receipt.json](desktop-final-fixes-linux-receipt.json),
+receipt is [desktop-final-fixes-linux-receipt.json](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/desktop-final-fixes-linux-receipt.json),
 built from `1da8c61a72c370ba68917aac93aa7c44a088e92a`. This separate immutable
 candidate passed final inference/MCP/shutdown and genuine stopped 0.8.0 offline
 install/update/rollback/uninstall. Its native execution gaps remain as above.
-Task 14 outputs/logs and `docs/desktop-task14-linux-receipt.json` remain unchanged
+Task 14 outputs/logs and [historical document](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/desktop-task14-linux-receipt.json) remain unchanged
 under `qualification/.artifacts/desktop-task14/`; those earlier bytes do not
 qualify FR1–FR4.
 Historical Task 9–13 reports, rulings, logs and fixture sources are retained under
