@@ -33,6 +33,14 @@ An owner-authorized SQLite online backup contained 2,618 `only-sense-online` cry
 
 ## Limits and follow-up
 
-This is a comparison pilot, not a general Jev endorsement. Literary-vs-technical relevance needs its own rubric and gold set; do not reuse comparison thresholds as evidence for relevance. Support checking, reranking, entity alignment and structure recovery each have separate issues and must earn their own decisions. The multilingual sample is too small to estimate rare destructive errors or robust per-language accuracy. Keep #111 open until that additional relevance calibration is recorded.
+This is a comparison pilot, not a general Jev endorsement. Literary-vs-technical relevance needs its own rubric and gold set; do not reuse comparison thresholds as evidence for relevance. Support checking, reranking, entity alignment and structure recovery each have separate issues and must earn their own decisions. The multilingual sample is too small to estimate rare destructive errors or robust per-language accuracy. The separate relevance calibration is recorded below.
 
 The harness measures Jev answer acceptance, not the full production routing pipeline. Invalid answers are counted as abstentions here; production returns an error and may try an explicitly configured fallback. Production also applies provenance and semantic-anchor vetoes before asking Jev. Output files are created privately before writing because a provider could include unexpected echoed text in an answer.
+
+## Separate production relevance check
+
+The exact current Rust `literary`/`technical` Noul questions were also tested on twelve versioned RU/JA/EN messages, twice each (24 requests). At the configured 0.85 literary minimum and 0.15 technical maximum, 22/24 matched the authored capture labels. Both errors rejected the same Japanese character fact (`ja-character`); no technical or mixed message was accepted. These are message-capture decisions, not comparison decisions. Do not transfer the comparison 0.95 threshold here or tune the production thresholds around this single case.
+
+The adjacent relevance JSONL contains synthetic answers and usage. Reproduce with `bun scripts/evaluate-jev-relevance.ts /private/relevance.conf /private/results.json`; it extracts the exact current Rust question literal, fails if its shape changes, records its hash, uses explicit configured thresholds and caps the experiment to 24 requests/ten minutes with no retry. An independent choice-rubric exploration was less decisive and is not substituted for this production-rubric result.
+
+The explicitly ignored Rust `live_jev_synthetic_relevance` test also passed locally with four synthetic RU/EN inputs through the actual SDK/transport path. Private corpus identity controls remain separate from gold accuracy. This completes the bounded calibration task; the Japanese false negative is a measured limitation, not a reason to silently lower the capture gate.
