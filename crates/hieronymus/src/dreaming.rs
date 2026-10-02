@@ -1227,7 +1227,8 @@ impl DreamService {
                     return Err(tx_error(DreamError::StaleAuthority));
                 }
             }
-            DreamAuditStore::append_in_transaction(
+            if !context_copies.is_empty() {
+                DreamAuditStore::append_in_transaction(
                 transaction,
                 run_id,
                 Some(persistence_phase_run_id),
@@ -1237,6 +1238,7 @@ impl DreamService {
                 &json!({"memories":context_copies.iter().map(|m|json!({"id":m.id,"source_crystal_id":m.source_crystal_id,"text_hash":prompt_sha256(&m.text),"claims":m.claim_annotation,"source_snapshot":m.source_crystal_snapshot})).collect::<Vec<_>>()}),
             )
             .map_err(tx_error)?;
+            }
             let summary = self
                 .apply_outputs_in_transaction(
                     transaction,
