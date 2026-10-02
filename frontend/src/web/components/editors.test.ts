@@ -126,6 +126,7 @@ test("dreaming loads API models and saves a custom model", async () => {
       onSave,
     },
   });
+  await user.click(screen.getByText(/^Model and task settings/));
   expect(
     await screen.findByRole("option", { name: "gpt-5-mini" }),
   ).toBeTruthy();
@@ -156,6 +157,7 @@ test("dreaming preserves a saved custom model when discovery fails", async () =>
       onSave: vi.fn(),
     },
   });
+  await userEvent.click(screen.getByText(/^Model and task settings/));
   expect(await screen.findByText(/Could not load models/)).toBeTruthy();
   expect(
     (screen.getByLabelText("Custom model") as HTMLInputElement).value,
@@ -174,6 +176,7 @@ test("dreaming task prompts can be edited and restored without changing shared i
       onSave,
     },
   });
+  await user.click(screen.getByText(/^Model and task settings/));
   await user.click(screen.getByText("Task prompt · Default"));
   const task = screen.getByLabelText("concepts task prompt");
   expect((task as HTMLTextAreaElement).value).toBe(

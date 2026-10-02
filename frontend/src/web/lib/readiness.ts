@@ -76,7 +76,7 @@ function parseProvider(value: unknown): ProviderReadiness | null {
   };
 }
 
-function parseSummary(value: unknown): ReadinessSummary | null {
+export function parseSummary(value: unknown): ReadinessSummary | null {
   if (!isRecord(value) || "schema_version" in value) return null;
   if (
     !(

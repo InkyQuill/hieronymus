@@ -213,8 +213,9 @@
   });
 </script>
 
+<a href="#page-content" class="skip-link">Skip to page content</a>
 <main class="min-h-dvh bg-root font-sans text-primary">
-  <header class="sticky top-0 z-20 border-b border-default bg-surface">
+  <header class="z-20 sm:sticky sm:top-0 border-b border-default bg-surface">
     <div class="mx-auto flex w-full flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
     <div><a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
       <VersionInfo />
@@ -236,9 +237,9 @@
     </button>
     </div>
   </header>
-  <section class="mx-auto w-full px-4 py-6 sm:px-8 lg:px-12">
+  <section id="page-content" tabindex="-1" class="mx-auto w-full px-4 py-6 sm:px-8 lg:px-12">
     {#if ["providers", "dreaming", "ingest", "release"].includes(section)}<SettingsNavigation {section} />{/if}
-    {#if error && ["providers", "admin", "memory"].includes(section)}<div role="alert" class="mb-4 border border-danger px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
+    {#if error && ["providers", "admin", "memory"].includes(section)}<div role="alert" class="mb-4 border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
     {#if section === "connect"}
       <ConnectAgent />
     {:else if section === "admin" && adminDashboard}
@@ -249,17 +250,18 @@
       <div class="w-full">
         <div class="min-w-0">
         <header class="mb-8 flex flex-col gap-4 border-b border-default pb-6 sm:flex-row sm:items-end sm:justify-between">
-          <div><h2 class="text-display">AI providers</h2><p class="mt-2 max-w-2xl text-body text-secondary">Connect the AI services used to process your memories. Your writing agent is connected separately.</p></div>
+          <div><h1 class="text-display">AI providers</h1><p class="mt-2 max-w-2xl text-body text-secondary">Connect the AI services used to process your memories. Your writing agent is connected separately.</p></div>
           <button class="min-h-11 rounded-sm bg-accent px-4 py-2 text-body-sm font-medium text-root hover:opacity-90" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button>
         </header>
-        {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+
         {#if busy && providers.length === 0}
           <p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading profiles…</p>
         {:else if providers.length === 0}
           <div class="overflow-auto border border-default bg-surface"><table class="w-full border-collapse"><tbody><tr><td class="px-4 py-12 text-center text-body text-secondary">No AI providers yet. Add a hosted service or local Ollama server to use Dreaming.</td></tr></tbody></table></div>
         {:else}
-          <div class="overflow-auto border border-default"><table class="w-full min-w-[42rem] border-collapse text-left"><thead class="bg-surface"><tr><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Display name</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Type</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Endpoint</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class="cursor-pointer border-b border-default last:border-b-0 hover:bg-raised {selected?.id === provider.id ? 'bg-raised' : ''}" role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td class="px-4 py-3 text-body">{provider.name}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.type}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.url}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table></div>
+          <div class="overflow-auto border border-default"><table class="w-full min-w-[42rem] border-collapse text-left"><thead class="bg-surface"><tr><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Display name</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Type</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Endpoint</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class="cursor-pointer border-b border-default last:border-b-0 hover:bg-raised {selected?.id === provider.id ? 'bg-raised' : ''}" role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td class="px-4 py-3 text-body">{provider.name}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.type}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.url}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.key_configured ? "Configured" : provider.type === "ollama" ? "Not configured (optional)" : "Not configured"}</td></tr>{/each}</tbody></table></div>
         {/if}
+        <p class="mt-4 text-body-sm text-secondary">Open a provider to edit its connection or check it. Then assign its models in <a href="/config/dreaming" class="text-accent-text underline">Dreaming settings</a>.</p>
         </div>
       </div>
     {:else if section === "dreaming" && dreamSettings}

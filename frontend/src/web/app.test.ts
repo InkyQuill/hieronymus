@@ -165,8 +165,9 @@ test("inline error alerts use the semantic danger background", async () => {
   ]) {
     const component = await source(path);
     const alerts =
-      component.match(/<p class="[^"]*border-danger[^"]*text-danger[^"]*"/g) ??
-      [];
+      component.match(
+        /<(?:p|div)[^>]*class="[^"]*border-danger[^"]*text-danger[^"]*"/g,
+      ) ?? [];
     expect(
       alerts.length,
       `${path} should expose an inline error alert`,
