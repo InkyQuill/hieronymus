@@ -108,9 +108,17 @@ events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
 `caused_correction`.
 
 Dream cycles process completed sessions. Short-term memories stay pending until
-dreaming processes them or a user removes them. A run chooses whole completed
-sessions oldest-first, never splits one, and caps the selection at 500 memories.
-Every configured pass receives that same selection. Provider/model assignments
+dreaming processes them or a user removes them. Each provider batch selects memories from one completed session. Selection
+starts oldest-first, then rotates through pending sessions using the last
+committed persistence audit as a restart-safe cursor. A deferred old session
+cannot starve newer work on subsequent runs.
+It never interprets another session under that session's story context. Large
+sessions are split by the configured input cap and the tightest complete
+request/response budget among assigned providers. Omitted inputs stay pending;
+bounded drain runs select subsequent batches. Every configured pass receives
+that same snapshot, including per-source session, languages, story metadata and
+claim applicability. Dream-created concept identities are scoped to the series;
+facets must cite the specific selected source IDs supporting them. Provider/model assignments
 come from `~/.config/hieronymus/dream.conf`; provider profiles and API keys come
 from `~/.config/hieronymus/provider.conf`.
 
@@ -124,6 +132,20 @@ with explicit user-rule evidence can enforce a rendering. Reinforcement and
 compaction then inspect the affected memory set and decide what to reinforce, decay,
 combine, supersede, or archive. Optional discovery workflows can be assigned to a
 separate provider profile, such as a local Ollama model.
+
+Coverage enumeration alone never authorizes archival. In the persistence
+transaction each input receives an `input_dispositions` audit entry: represented
+by specific committed crystal/facet IDs, intentionally discarded with a reason,
+or deferred (`no_committed_successor`). Coverage may return `discarded_memories`
+entries containing a selected `memory_id` and a nonempty reason of at most 512
+characters. Explicit user evidence and rule-intent inputs cannot be discarded by
+this provider path. Accepted successors take precedence over discard requests.
+Rejected or empty outputs leave unsupported inputs pending and their session
+completed; the session becomes dreamed only when no pending input remains.
+Dispositions, successors, archive updates and phase completion commit together;
+a rollback leaves inputs eligible for retry. A zero-progress drain stops and
+reports `pending`, so deferred work does not cause a retry loop. Later explicit
+or scheduled runs can retry it after provider/prompt configuration is corrected.
 
 The affected memory set is bounded. It starts with the completed short-term
 memories selected for the cycle, then adds nearby concepts, facets, active rule

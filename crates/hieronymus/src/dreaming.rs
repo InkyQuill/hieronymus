@@ -606,6 +606,7 @@ struct ApplySummary {
     superseded_crystal_ids: Vec<i64>,
     reinforced_crystal_ids: Vec<i64>,
     archived_memory_ids: Vec<i64>,
+    dispositions: Vec<Value>,
     dreamed_session_ids: Vec<i64>,
     rejected_entries: Vec<Value>,
     skipped_candidates: Vec<Value>,
@@ -813,7 +814,7 @@ impl DreamService {
         let archived: i64 = connection.query_row(
             "select coalesce(sum(json_array_length(payload_json, '$.archived_short_term_memory_ids')), 0)
              from dream_audit_entries where dream_run_id=?1 and event_type='phase_completed'
-             and json_extract(payload_json, '$.phase_name')='reconsolidation'", [record.id], |row| row.get(0))?;
+             and json_extract(payload_json, '$.phase_name') in ('persistence','reconsolidation')", [record.id], |row| row.get(0))?;
         let feedback_events = connection.query_row("select count(*) from memory_events where cycle_id=?1 and event_type='recalled_again' and applied=1", [record.cycle_id], |row| row.get(0))?;
         let terminalized_pairs = connection.query_row(
             "select count(*) from dream_link_pairs where applied_cycle=?1 and status != 'queued'",
@@ -826,7 +827,7 @@ impl DreamService {
             |row| row.get(0),
         )?;
         Ok(DrainProgress {
-            archived_inputs: record.input_count + archived,
+            archived_inputs: archived,
             feedback_events,
             terminalized_pairs,
             completed_link_batches,
@@ -971,6 +972,9 @@ impl DreamService {
                     .provider_with_config(choice, &self.dream_config)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // One session is the conservative compatibility boundary: even equal
+        // series/languages do not establish equal story time or viewpoint.
+        groups.truncate(1);
         let selection_context = groups[0].context.clone();
         let mut selected_memories: Vec<ShortTermMemoryRecord> = groups
             .iter()
@@ -1001,7 +1005,7 @@ impl DreamService {
             .flat_map(|group| group.memories.iter().map(|memory| memory.id))
             .collect();
         let allowed_memory_ids: HashSet<i64> = selected_memory_ids.iter().copied().collect();
-        let valid_concept_ids = self.valid_concept_ids()?;
+        let valid_concept_ids = self.valid_concept_ids(&selection_context)?;
         // Same-context authorization sets (ruling: derived from the selected
         // affected-memory context BEFORE any store call): the crystals scoped
         // to the selection's series contexts, and the active rules no dream
@@ -1010,6 +1014,7 @@ impl DreamService {
         let active_rule_ids = self.active_rule_crystal_ids()?;
 
         let mut covered_memory_ids: HashSet<i64> = HashSet::new();
+        let mut discards = BTreeMap::new();
         let mut staged: Vec<NormalizedOutput> = Vec::new();
 
         for (choice, provider) in selected.iter().zip(&providers) {
@@ -1053,6 +1058,7 @@ impl DreamService {
 
             if choice.name == "coverage_audit" {
                 let covered = coverage_ids(&raw, &allowed_memory_ids)?;
+                discards = coverage_discards(&raw, &allowed_memory_ids)?;
                 let covered_count = covered.len() as i64;
                 covered_memory_ids.extend(covered);
                 self.complete_phase_run(phase_run_id, covered_count)?;
@@ -1166,6 +1172,7 @@ impl DreamService {
                     cycle_id,
                     &groups,
                     &staged,
+                    &discards,
                     &allowed_crystal_ids,
                     &active_rule_ids,
                 )
@@ -1259,6 +1266,19 @@ impl DreamService {
         }
         let mut connection = open_migrated(&self.config.database_path())?;
         let connection = connection.transaction()?;
+        // The last committed persistence audit is a durable round-robin cursor.
+        // Deferred oldest inputs cannot monopolize all future provider runs.
+        let last_session_id: i64 = connection.query_row(
+            "select coalesce((
+               select json_extract(payload_json, '$.request_summary.session_ids[0]')
+               from dream_audit_entries
+               where event_type='phase_completed'
+                 and json_extract(payload_json, '$.phase_name')='persistence'
+               order by id desc limit 1
+             ), 0)",
+            [],
+            |row| row.get(0),
+        )?;
         let mut statement = connection.prepare(
             "select task_sessions.id, short_term_memories.id
              from short_term_memories
@@ -1266,12 +1286,21 @@ impl DreamService {
              where task_sessions.status = 'completed'
                and short_term_memories.archived_at is null
                and short_term_memories.source_crystal_id is null
+               and task_sessions.id = (
+                 select s.id from task_sessions s
+                 join short_term_memories m on m.session_id = s.id
+                 where s.status = 'completed' and m.archived_at is null
+                   and m.source_crystal_id is null
+                 order by case when s.id > ?2 then 0 else 1 end, s.id
+                 limit 1
+               )
              order by task_sessions.id, short_term_memories.id
              limit ?1",
         )?;
-        let rows = statement.query_map([limit as i64], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-        })?;
+        let rows = statement
+            .query_map(rusqlite::params![limit as i64, last_session_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })?;
         let mut session_order: Vec<i64> = Vec::new();
         let mut by_session: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
         for row in rows {
@@ -1303,11 +1332,11 @@ impl DreamService {
         Ok(groups)
     }
 
-    fn valid_concept_ids(&self) -> Result<HashSet<i64>, DreamError> {
+    fn valid_concept_ids(&self, context: &TranslationContext) -> Result<HashSet<i64>, DreamError> {
         let connection = open_migrated(&self.config.database_path())?;
         let mut statement = connection
-            .prepare("select id from concepts where status not in ('archived', 'merged')")?;
-        let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+            .prepare("select id from concepts where status not in ('archived', 'merged') and scope_type = 'series' and scope_key = ?1")?;
+        let rows = statement.query_map([context.scope_key()], |row| row.get::<_, i64>(0))?;
         let mut ids = HashSet::new();
         for row in rows {
             ids.insert(row?);
@@ -1391,6 +1420,7 @@ impl DreamService {
         cycle_id: i64,
         groups: &[SelectionGroup],
         staged: &[NormalizedOutput],
+        discards: &BTreeMap<i64, String>,
         allowed_crystal_ids: &BTreeSet<i64>,
         active_rule_ids: &BTreeSet<i64>,
     ) -> Result<ApplySummary, DreamError> {
@@ -1399,6 +1429,23 @@ impl DreamService {
                 != group.authority_revision
             {
                 return Err(DreamError::StaleAuthority);
+            }
+            for memory in &group.memories {
+                let pending: bool = transaction.query_row(
+                    "select exists(
+                       select 1 from short_term_memories m
+                       join task_sessions s on s.id=m.session_id
+                       where m.id=?1 and m.archived_at is null and s.status='completed'
+                     )",
+                    [memory.id],
+                    |row| row.get(0),
+                )?;
+                if !pending || crate::workspace::hydrate_memory(transaction, memory.id)? != *memory
+                {
+                    return Err(DreamError::InvalidOutput(
+                        "selected input changed during provider execution; retry required".into(),
+                    ));
+                }
             }
         }
         let outputs = deduplicate_staged_outputs(staged);
@@ -1421,6 +1468,8 @@ impl DreamService {
             }
         }
 
+        let mut represented: BTreeMap<i64, Vec<Value>> = BTreeMap::new();
+        let context = &groups[0].context;
         let timestamp = now();
         for output in &outputs {
             skipped_candidates.extend(output.skipped_candidates.iter().cloned());
@@ -1436,14 +1485,18 @@ impl DreamService {
                     &concept.description,
                     &concept.tags,
                     concept.confidence_delta,
-                    "global",
-                    "",
+                    "series",
+                    &context.scope_key(),
                     &timestamp,
                 )?;
                 concept_ids_by_name.insert(concept.canonical_name.to_lowercase(), concept_id);
                 created_concept_ids.push(concept_id);
             }
             for facet in &output.facets {
+                if facet.source_memory_ids.is_empty() {
+                    rejected_entries.push(json!({"stage":"apply", "reason":"facet_requires_selected_source_memory_ids", "concept_name": bounded_rejection_title(&facet.concept_name)}));
+                    continue;
+                }
                 let key = facet.concept_name.to_lowercase();
                 let concept_id = match concept_ids_by_name.get(&key) {
                     Some(concept_id) => *concept_id,
@@ -1455,8 +1508,8 @@ impl DreamService {
                                 "",
                                 &[],
                                 0.2,
-                                "global",
-                                "",
+                                "series",
+                                &context.scope_key(),
                                 &timestamp,
                             )?;
                         concept_ids_by_name.insert(key, concept_id);
@@ -1479,14 +1532,18 @@ impl DreamService {
                     facet.is_canonical,
                     &timestamp,
                 )?;
-                // Facets have no provider source-id field. Conservatively inherit
-                // every selected assertion, never infer narrower lineage from prose.
-                for memory in groups.iter().flat_map(|g| &g.memories) {
+                for memory_id in &facet.source_memory_ids {
                     crate::claim_capture::copy_bindings_tx(
                         transaction,
-                        crate::claim_reads::ClaimTarget::ShortTerm(memory.id),
+                        crate::claim_reads::ClaimTarget::ShortTerm(*memory_id),
                         crate::claim_reads::ClaimTarget::Facet(facet_id),
                     )?;
+                }
+                for id in &facet.source_memory_ids {
+                    represented
+                        .entry(*id)
+                        .or_default()
+                        .push(json!({"facet_id":facet_id}));
                 }
                 created_facet_ids.push(facet_id);
             }
@@ -1508,6 +1565,7 @@ impl DreamService {
                 let candidate = resolve_candidate_concepts(
                     transaction,
                     candidate,
+                    context,
                     &mut concept_ids_by_name,
                     &timestamp,
                 )?;
@@ -1517,6 +1575,12 @@ impl DreamService {
                     &candidate,
                     cycle_id,
                 )?;
+                for id in &candidate.source_memory_ids {
+                    represented
+                        .entry(*id)
+                        .or_default()
+                        .push(json!({"crystal_id":crystal_id}));
+                }
                 created_crystal_ids.push(crystal_id);
                 created_links.extend(candidate.concept_ids.iter().map(|concept_id| {
                     json!({
@@ -1614,19 +1678,44 @@ impl DreamService {
             }
         }
 
-        let archived_memory_ids: Vec<i64> = groups
-            .iter()
-            .flat_map(|group| group.memories.iter().map(|memory| memory.id))
-            .collect();
+        // Enumeration is not coverage. Only actual committed successors or an
+        // explicit discard can terminalize an input. The audit commits this
+        // disposition and its lineage atomically with the archive update.
+        let mut archived_memory_ids = Vec::new();
+        let mut dispositions = Vec::new();
+        for memory in groups.iter().flat_map(|group| &group.memories) {
+            if let Some(outputs) = represented.get(&memory.id) {
+                dispositions.push(
+                    json!({"memory_id":memory.id, "disposition":"represented", "outputs":outputs}),
+                );
+                archived_memory_ids.push(memory.id);
+            } else if let Some(reason) = discards.get(&memory.id) {
+                // Provider discards cannot dispose of explicit author authority.
+                if matches!(
+                    memory.source_credibility.as_str(),
+                    "explicit_user" | "user_rule" | "user_suggestion"
+                ) || (!memory.rule_intent.is_empty() && memory.rule_intent != "none")
+                {
+                    dispositions.push(json!({"memory_id":memory.id, "disposition":"deferred", "reason":"protected_authority"}));
+                } else {
+                    dispositions.push(
+                        json!({"memory_id":memory.id, "disposition":"discarded", "reason":reason}),
+                    );
+                    archived_memory_ids.push(memory.id);
+                }
+            } else {
+                dispositions.push(json!({"memory_id":memory.id, "disposition":"deferred", "reason":"no_committed_successor"}));
+            }
+        }
         for memory_id in &archived_memory_ids {
             transaction.execute(
                 "update short_term_memories set archived_at = ?1 where id = ?2",
                 rusqlite::params![now(), memory_id],
             )?;
         }
-        let dreamed_session_ids: Vec<i64> = groups.iter().map(|group| group.session_id).collect();
-        for session_id in &dreamed_session_ids {
-            transaction.execute(
+        let mut dreamed_session_ids = Vec::new();
+        for group in groups {
+            let changed = transaction.execute(
                 "update task_sessions
                  set status = 'dreamed', cycle_id = ?1
                  where status = 'completed'
@@ -1636,8 +1725,11 @@ impl DreamService {
                      where short_term_memories.session_id = task_sessions.id
                        and archived_at is null
                    )",
-                rusqlite::params![cycle_id, session_id],
+                rusqlite::params![cycle_id, group.session_id],
             )?;
+            if changed > 0 {
+                dreamed_session_ids.push(group.session_id);
+            }
         }
         // Bounded affected-memory set for the audit record: related
         // candidates search from the concepts this run created or reinforced,
@@ -1657,6 +1749,7 @@ impl DreamService {
             superseded_crystal_ids,
             reinforced_crystal_ids,
             archived_memory_ids,
+            dispositions,
             dreamed_session_ids,
             rejected_entries,
             skipped_candidates,
@@ -2745,6 +2838,7 @@ impl DreamService {
             "reinforced_crystals".into(),
             json!(unique_ints(&summary.reinforced_crystal_ids)),
         );
+        payload.insert("input_dispositions".into(), json!(summary.dispositions));
         payload.insert("decayed_crystals".into(), json!([]));
         payload.insert(
             "archived_short_term_memory_ids".into(),
@@ -3127,6 +3221,7 @@ pub fn normalize_dict_output(
         if let Some(facet) = crate::dream_output::normalize_facet_entry(
             &item,
             &format!("facets[{index}]"),
+            allowed_memory_ids,
             &mut output.warnings,
             &mut output.rejected_entries,
         ) {
@@ -3583,11 +3678,9 @@ fn source_memory_ids(
     let clean_ids: Vec<i64> = clean_int_tuple(&[
         payload.get("source_memory_ids"),
         payload.get("source_memory_id"),
-    ])
-    .into_iter()
-    .filter(|memory_id| allowed_memory_ids.contains(memory_id))
-    .collect();
-    (!clean_ids.is_empty()).then_some(clean_ids)
+    ]);
+    (!clean_ids.is_empty() && clean_ids.iter().all(|id| allowed_memory_ids.contains(id)))
+        .then_some(clean_ids)
 }
 
 pub(crate) fn string_field(value: Option<&Value>) -> String {
@@ -3668,6 +3761,42 @@ fn validate_normalized_output(
     Ok(())
 }
 
+/// Explicit selective forgetting, independently validated against this snapshot.
+fn coverage_discards(
+    raw: &Value,
+    allowed: &HashSet<i64>,
+) -> Result<BTreeMap<i64, String>, DreamError> {
+    let mut result = BTreeMap::new();
+    let Some(entries) = raw.get("discarded_memories") else {
+        return Ok(result);
+    };
+    let entries = entries
+        .as_array()
+        .ok_or_else(|| DreamError::InvalidOutput("discarded_memories must be an array".into()))?;
+    for entry in entries {
+        let id = entry
+            .get("memory_id")
+            .and_then(Value::as_i64)
+            .filter(|id| allowed.contains(id));
+        let reason = entry
+            .get("reason")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty() && reason.chars().count() <= 512);
+        let (Some(id), Some(reason)) = (id, reason) else {
+            return Err(DreamError::InvalidOutput(
+                "discard requires a selected memory_id and bounded nonempty reason".into(),
+            ));
+        };
+        if result.insert(id, reason.to_owned()).is_some() {
+            return Err(DreamError::InvalidOutput(
+                "duplicate discarded memory_id".into(),
+            ));
+        }
+    }
+    Ok(result)
+}
+
 /// Port of `_coverage_ids`.
 fn coverage_ids(
     payload: &Value,
@@ -3700,10 +3829,10 @@ fn coverage_ids(
 }
 
 /// Port of `_deduplicate_staged_outputs`: passes run over the same selection,
-/// so identical crystals (type + case-insensitive title/text) and identical
+/// so identical crystals (type + title/text + exact source IDs) and identical
 /// concepts (case-insensitive canonical name) apply once.
 fn deduplicate_staged_outputs(staged: &[NormalizedOutput]) -> Vec<NormalizedOutput> {
-    let mut seen_crystals: HashSet<(String, String, String)> = HashSet::new();
+    let mut seen_crystals = HashSet::new();
     let mut seen_concepts: HashSet<String> = HashSet::new();
     let mut result = Vec::with_capacity(staged.len());
     for output in staged {
@@ -3713,6 +3842,7 @@ fn deduplicate_staged_outputs(staged: &[NormalizedOutput]) -> Vec<NormalizedOutp
                 crystal.crystal_type.to_lowercase(),
                 crystal.title.to_lowercase(),
                 crystal.text.to_lowercase(),
+                crystal.source_memory_ids.clone(),
             );
             if seen_crystals.insert(key) {
                 crystals.push(crystal.clone());
@@ -3740,10 +3870,11 @@ fn deduplicate_staged_outputs(staged: &[NormalizedOutput]) -> Vec<NormalizedOutp
 
 /// Python `_resolve_candidate_concepts`: resolve the candidate's concept
 /// names within this output's own map, creating or reinforcing missing
-/// concepts as global candidates, and merge the sorted id set.
+/// concepts as series candidates, and merge the sorted id set.
 fn resolve_candidate_concepts(
     transaction: &rusqlite::Transaction<'_>,
     candidate: &NormalizedCrystal,
+    context: &TranslationContext,
     concept_ids_by_name: &mut BTreeMap<String, i64>,
     timestamp: &str,
 ) -> Result<NormalizedCrystal, DreamError> {
@@ -3759,8 +3890,8 @@ fn resolve_candidate_concepts(
                     "",
                     &[],
                     0.2,
-                    "global",
-                    "",
+                    "series",
+                    &context.scope_key(),
                     timestamp,
                 )?;
                 concept_ids_by_name.insert(key, concept_id);

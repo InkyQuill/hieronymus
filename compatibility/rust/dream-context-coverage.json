@@ -1,0 +1,16 @@
+{
+  "scope": "Dream provider batching, concept/facet provenance and source disposition",
+  "rationale": "Issues #88 and #89 require context isolation before model interpretation and persisted outcomes before archival. Historical Python fixtures remain unchanged.",
+  "runtime": "One bounded session per provider snapshot. Pending sessions rotate using the last committed persistence audit. Complete provider request and response budgets still cap split sessions. Dream-created concepts are series-scoped, and facets require exact selected source IDs.",
+  "additions": [
+    "Provider prompts disclose session context, story viewpoint and source claim applicability",
+    "Persistence audits include input_dispositions with committed successor IDs, explicit discard reasons, or deferred reasons",
+    "coverage_audit may return discarded_memories with a selected memory_id and bounded nonempty reason; explicit user authority is protected"
+  ],
+  "corrections": [
+    "Unknown crystal source IDs reject the whole candidate instead of silently shrinking its evidence set",
+    "Input snapshots are revalidated in the audited transaction",
+    "Unsupported inputs remain pending and only fully consumed sessions become dreamed",
+    "Drain progress counts committed archival, and zero-progress batches yield a truthful pending outcome"
+  ]
+}

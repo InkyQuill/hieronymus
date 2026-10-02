@@ -576,6 +576,16 @@ fn provider_pass_sends_openai_payload_and_parses_fenced_output() {
         assert_eq!(payload["temperature"], json!(0.1));
         assert_eq!(payload["response_format"], json!({"type": "json_object"}));
         let prompt = payload["messages"][0]["content"].as_str().unwrap();
+        let rendered: Value = serde_json::from_str(prompt).unwrap();
+        assert_eq!(rendered["context"]["chapter"], json!(""));
+        assert_eq!(rendered["context"]["story_viewpoint"], json!("Unspecified"));
+        assert_eq!(rendered["memories"][0]["session_id"], json!(1));
+        assert_eq!(
+            rendered["memories"][0]["context"]["series_slug"],
+            json!("book")
+        );
+        assert!(rendered["memories"][0]["claim_annotation"]["claims"].is_array());
+
         assert!(
             prompt.contains("Dream pass: knowledge_crystals."),
             "{prompt}"
@@ -1391,7 +1401,7 @@ fn ollama_batches_fit_model_context_without_losing_pending_memories() {
         {
             json!({"covered_memory_ids": ids})
         } else {
-            json!({"crystals": []})
+            json!({"crystals": [{"text":"A complete memory about a fictional character.","source_memory_ids":ids}]})
         };
         (200, ollama_envelope(result))
     }));

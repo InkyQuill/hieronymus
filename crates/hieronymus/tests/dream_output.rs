@@ -216,6 +216,7 @@ fn graph_sections_apply_concepts_facets_and_crystal_links() {
                 "concept_name": "fiorire",
                 "value": "расцвести",
                 "kind": "rendering",
+                "source_memory_ids": memory_ids,
                 "language_tags": ["ru"],
                 "story_scopes": ["volume:1"],
                 "semantic_tags": ["flora"],
@@ -225,6 +226,7 @@ fn graph_sections_apply_concepts_facets_and_crystal_links() {
             {
                 "concept_name": "Fiorire",
                 "value": "цвести",
+                "source_memory_ids": memory_ids,
                 "kind": "name",
                 "is_canonical": true,
             },
@@ -243,13 +245,13 @@ fn graph_sections_apply_concepts_facets_and_crystal_links() {
     assert_eq!(run.status, "completed");
     assert_eq!(run.created_crystal_count, 1);
 
-    // Public concept projection: a global candidate with its tags.
+    // Public concept projection: a series candidate with its tags.
     let concepts = ConceptStore::open(&config).unwrap();
     let stored = concepts.list_concepts(None, None).unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].canonical_name, "Fiorire");
     assert_eq!(stored[0].status, "candidate");
-    assert_eq!(stored[0].scope_type, "global");
+    assert_eq!(stored[0].scope_type, "series");
     assert_eq!(stored[0].tags, vec!["flora".to_string()]);
 
     // Facets attach to the concept; canonical uniqueness holds even though
@@ -472,48 +474,49 @@ fn crystals_resolve_per_series_context_and_ambiguous_ones_are_rejected() {
     let run = run_one_cycle(&config, payload);
 
     assert_eq!(run.status, "completed");
-    assert_eq!(run.created_crystal_count, 2);
-
-    // Context isolation: each crystal carries its own series' scope, never
-    // the first group's context.
-    let scopes = query(
-        &config,
-        "select title, series_slug, scope_key from crystals order by title",
-        &[],
+    assert_eq!(run.created_crystal_count, 1);
+    assert_eq!(
+        scalar(&config, "select series_slug from crystals"),
+        json!("book")
     );
-    assert_eq!(scopes.len(), 2);
-    let zola = scopes.iter().find(|row| row[0] == json!("Zola")).unwrap();
-    assert_eq!(zola[1], json!("zola"));
-    assert_eq!(zola[2], json!("series:zola"));
-    let book = scopes.iter().find(|row| row[0] == json!("Book")).unwrap();
-    assert_eq!(book[1], json!("book"));
-    assert_eq!(book[2], json!("series:book"));
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(1)
+    );
+    let audit = persistence_audit(&config, run.id);
+    assert_eq!(audit["skipped_candidates"].as_array().unwrap().len(), 3);
+    assert!(
+        audit["skipped_candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["reason"] == "invalid_source_memory_ids")
+    );
 
-    // The shared concept resolved once (global) and both crystals link to it.
-    assert_eq!(scalar(&config, "select count(*) from concepts"), json!(1));
+    // The next batch resolves the same name independently in the other series.
+    let run = run_one_cycle(
+        &config,
+        json!({"crystals":[{
+            "crystal_type":"observation", "text":"Zola conclusion.",
+            "source_memory_ids":zola_ids, "concept_names":["Shared"]
+        }]}),
+    );
+    assert_eq!(run.created_crystal_count, 1);
+    assert_eq!(scalar(&config, "select count(*) from concepts"), json!(2));
     assert_eq!(
         scalar(&config, "select count(*) from crystal_concepts"),
         json!(2)
     );
-
-    // The ambiguous crystals are rejected with a durable audit reason.
-    let audit = persistence_audit(&config, run.id);
-    let rejected = audit["rejected_entries"].as_array().unwrap();
-    let ambiguous = rejected
-        .iter()
-        .find(|entry| entry["reason"] == json!("ambiguous_crystal_context"))
-        .unwrap();
-    assert_eq!(ambiguous["title"], json!("Ambiguous"));
-
-    // A provider-length title is echoed only as a bounded prefix with an
-    // explicit ellipsis marker ("Very " repeated 16 times = 80 chars).
-    let bounded = format!("{}[...]", "Very ".repeat(16));
-    let long = rejected
-        .iter()
-        .find(|entry| entry["title"] == json!(bounded))
-        .unwrap();
-    assert_eq!(long["reason"], json!("ambiguous_crystal_context"));
-    assert_eq!(long["source_memory_ids"], json!([book_ids[0], zola_ids[0]]));
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(0)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -661,10 +664,10 @@ fn mixed_output_applies_valid_entries_and_audits_rejections_individually() {
             {"canonical_name": "Leaky", "confidence": "sk-leak-secret"},
         ],
         "facets": [
-            {"concept_name": "Valid", "value": "значение", "kind": "note"},
+            {"concept_name": "Valid", "value": "значение", "kind": "note", "source_memory_ids":memory_ids},
             {"concept_name": "Valid"},
             {"concept_name": "Valid", "value": "x", "confidence": 1.5},
-            {"concept_name": "Valid", "value": "compat", "facet_type": "alias"},
+            {"concept_name": "Valid", "value": "compat", "facet_type": "alias", "source_memory_ids":memory_ids},
         ],
         "concept_proposals": [
             {
