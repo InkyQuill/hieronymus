@@ -10,11 +10,13 @@
   let busy = $state(false);
   let error = $state("");
   let saved = $state(false);
-  onMount(() => {
-    void loadRelevanceSettings().then(value => { settings = value; }).catch(reason => {
+  function load() {
+    busy = true; error = "";
+    void loadRelevanceSettings().then(value => { busy = false; settings = value; }).catch(reason => {
       error = reason instanceof Error ? reason.message : "Could not load relevance settings.";
-    });
-  });
+    }).finally(() => { busy = false; });
+  }
+  onMount(load);
   async function save() {
     if (!settings) return;
     busy = true; error = ""; saved = false;
@@ -58,6 +60,6 @@
     </form>
     <TechnicalDetails data={settings} label="Technical relevance configuration" />
   {:else if !error}<p class="mt-4 text-body-sm text-secondary">Loading relevance settings…</p>{/if}
-  {#if error}<p role="alert" class="mt-4 text-body-sm text-danger">{error}</p>{/if}
+  {#if error}<p role="alert" class="mt-4 text-body-sm text-danger">{error}</p>{#if !settings}<button class="mt-2 min-h-11 rounded-sm border border-default px-4 py-2 text-body-sm" onclick={load} disabled={busy}>Retry relevance settings</button>{/if}{/if}
   {#if saved}<p role="status" class="mt-4 text-body-sm text-secondary">Relevance settings saved.</p>{/if}
 </section>

@@ -78,3 +78,16 @@ test("new key clears on success and failed saves preserve editable draft", async
   await user.type(key, "another-key");
   expect(screen.queryByRole("status")).toBeNull();
 });
+
+test("failed initial relevance load can be retried locally", async () => {
+  vi.mocked(loadRelevanceSettings).mockRejectedValueOnce(new Error("Offline"));
+  const user = userEvent.setup();
+  render(HookRelevanceSettings);
+  await screen.findByRole("alert");
+  vi.mocked(loadRelevanceSettings).mockResolvedValue({ ...settings });
+  await user.click(
+    screen.getByRole("button", { name: "Retry relevance settings" }),
+  );
+  expect(await screen.findByLabelText("TypeSafe API key")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

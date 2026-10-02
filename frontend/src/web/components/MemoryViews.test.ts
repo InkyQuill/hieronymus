@@ -773,3 +773,16 @@ test("background updates retain the mounted table, open technical details and fo
   expect(details.open).toBe(true);
   expect(document.activeElement).toBe(copy);
 });
+
+test("memory source locations are readable without opening technical details", async () => {
+  const selected: AdminSnapshot = structuredClone(selectedSnapshot);
+  selected.snapshot.detail.fields = [
+    ["Source locations", "Vol 3, chapter 2"],
+    ["Series", "book"],
+  ];
+  loadSnapshotMock.mockReset().mockResolvedValue(selected);
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  const sources = await screen.findByRole("region", { name: "Memory sources" });
+  expect(sources.textContent).toContain("Vol 3, chapter 2");
+  expect(sources.closest("details")).toBeNull();
+});

@@ -256,3 +256,21 @@ test.each(["Timeout (seconds)", "Context window (tokens)"])(
     expect(details.open).toBe(true);
   },
 );
+
+test("Dreaming controls cannot change while their revision is saving", async () => {
+  render(DreamingEditor, {
+    initial: dream,
+    providers: [provider],
+    modelCache,
+    busy: true,
+    onSave: vi.fn(),
+  });
+  expect(screen.getByLabelText("Interval (minutes)").matches(":disabled")).toBe(
+    true,
+  );
+  expect(
+    screen
+      .getByRole("checkbox", { name: "Enable scheduled dreaming" })
+      .matches(":disabled"),
+  ).toBe(true);
+});

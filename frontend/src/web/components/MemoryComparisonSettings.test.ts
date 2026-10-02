@@ -98,3 +98,21 @@ test("changing either provider clears its previous model", async () => {
     ).toBe("");
   }
 });
+
+test("failed initial comparison load can be retried locally", async () => {
+  vi.mocked(loadComparisonSettings).mockRejectedValueOnce(new Error("Offline"));
+  const user = userEvent.setup();
+  render(MemoryComparisonSettings);
+  await screen.findByRole("alert");
+  vi.mocked(loadComparisonSettings).mockResolvedValue({
+    comparison: structuredClone(state),
+    providers: [],
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Retry comparison settings" }),
+  );
+  expect(
+    await screen.findByLabelText("Primary comparison provider"),
+  ).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
