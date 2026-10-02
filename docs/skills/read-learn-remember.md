@@ -17,7 +17,7 @@ cover every important term, concept, and detail; the limit applies to a block, n
 amount remembered. RAG stores the direct source, while short-term memory stores indirect
 understanding of it.
 
-Preferred storage primitive (up to 500 independently valid blocks per call):
+Preferred storage primitive (independently valid blocks, with no record-count ceiling per call):
 
 ```text
 hieronymus_short_term_add_batch
