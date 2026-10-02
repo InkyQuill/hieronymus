@@ -68,7 +68,7 @@ pub fn phase_instruction(pass_name: &str) -> Option<&'static str> {
         ),
         "coverage_audit" => Some(
             "Return covered_memory_ids containing every input memory ID exactly once, \
-             even when records have identical text. Use actual input IDs, not example IDs. Return JSON.",
+             even when records have identical text. This is an input inventory, not proof of persisted coverage. Only for justified intentional forgetting, include discarded_memories entries with memory_id and a specific nonempty reason. Never discard merely because extraction returned no output. Use actual input IDs, not example IDs. Return JSON.",
         ),
         _ => None,
     }
@@ -1019,10 +1019,10 @@ fn phase_prompt(
     let mut payload = dream_prompt_payload(context, memories);
     payload["instruction"] = json!(format!(
         "Dream pass: {pass_name}. {general_prompt} {instruction} \
-         Use only provided source memory ids. Every crystal must include a non-empty source_memory_ids array containing only the provided source memory ids that support that crystal. Return one JSON object without markdown."
+         Use only provided source memory ids. Every crystal and facet must include a non-empty source_memory_ids array containing only the provided source memory ids that support that crystal. Return one JSON object without markdown."
     ));
     if pass_name == "coverage_audit" {
-        payload["schema"] = json!({"covered_memory_ids": [1]});
+        payload["schema"] = json!({"covered_memory_ids": [1], "discarded_memories": [{"memory_id": 1, "reason": "Explicit reason for intentional selective forgetting; omit unless justified"}]});
     }
     Ok(payload.to_string())
 }
@@ -1047,9 +1047,16 @@ fn dream_prompt_payload(context: &TranslationContext, memories: &[ShortTermMemor
             "language_tags": context.language_tags,
             "story_scopes": context.story_scopes,
             "semantic_tags": context.semantic_tags,
+            "story_timeline_id": context.story_timeline_id,
+            "story_scene_key": context.story_scene_key,
+            "story_viewpoint": context.story_viewpoint,
+            "story_query_mode": context.story_query_mode,
         },
         "memories": memories.iter().map(|memory| json!({
             "id": memory.id,
+            "session_id": memory.session_id,
+            "context": {"series_slug":context.series_slug, "source_language":context.source_language, "target_language":context.target_language, "volume":context.volume, "chapter":context.chapter},
+            "claim_annotation": memory.claim_annotation,
             "source_role": memory.source_role,
             "kind": memory.kind,
             "text": memory.text,

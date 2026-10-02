@@ -703,7 +703,7 @@ fn dreaming_applies_the_previously_unsupported_concept_section() {
         json!("Concept application is no longer a later slice")
     );
     assert_eq!(concept[1], json!("candidate"));
-    assert_eq!(concept[2], json!("global"));
+    assert_eq!(concept[2], json!("series"));
     let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
     assert_eq!(session_row[0], json!("dreamed"));
     let audited_events = query(
@@ -880,19 +880,19 @@ fn evidence_dream_runs_all_passes_over_the_same_selection() {
         calls.iter().map(|(_pass, ids)| ids.clone()).collect();
     assert_eq!(distinct_selections.len(), 1);
     let selection = calls[0].1.clone();
-    assert_eq!(selection.len(), 3);
-    assert!(selection.contains(&extra_ids[0]));
+    assert_eq!(selection.len(), 2);
+    assert!(!selection.contains(&extra_ids[0]));
 
     let mut expected_phase_rows: Vec<(String, String, i64, i64)> = expected_passes
         .iter()
-        .map(|pass| (pass.to_string(), "completed".to_string(), 3, 0))
+        .map(|pass| (pass.to_string(), "completed".to_string(), 2, 0))
         .collect();
     // knowledge_crystals staged one crystal; coverage_audit accounted for
-    // all three selected memories.
+    // both selected memories.
     expected_phase_rows[3].3 = 1;
-    expected_phase_rows[6].3 = 3;
+    expected_phase_rows[6].3 = 2;
     // The persistence phase applies the one validated mutation batch.
-    expected_phase_rows.push(("persistence".to_string(), "completed".to_string(), 3, 1));
+    expected_phase_rows.push(("persistence".to_string(), "completed".to_string(), 2, 1));
     assert_eq!(phase_rows(&config), expected_phase_rows);
     assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
 
@@ -1286,4 +1286,406 @@ fn dream_error_records_redact_configured_api_key_value() {
 
     let stored_error = scalar(&config, "select error from dream_runs");
     assert_eq!(stored_error, json!("provider rejected [redacted]"));
+}
+
+#[test]
+fn enumeration_without_successors_defers_inputs_and_stops_the_drain() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ids = completed_session(
+        &config,
+        "book",
+        &["Mira trusts Ren.", "Ren has three keys."],
+    );
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(ScriptedProvider::new("empty", vec![]))),
+    )
+    .unwrap();
+    let result = service.run_all("manual", true, false).unwrap();
+    assert_eq!(result.outcome, "pending");
+    assert_eq!(result.batches, 1);
+    assert_eq!(result.progress.archived_inputs, 0);
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(2)
+    );
+    let audit: Value = serde_json::from_str(query(&config, "select payload_json from dream_audit_entries where event_type='phase_completed' and json_extract(payload_json, '$.phase_name')='persistence'", &[])[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(audit["input_dispositions"], json!(ids.iter().map(|id| json!({"memory_id":id,"disposition":"deferred","reason":"no_committed_successor"})).collect::<Vec<_>>()));
+    let reopened = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
+    let result = reopened.run_all("manual", true, false).unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(result.progress.archived_inputs, 2);
+    assert_eq!(
+        reopened
+            .run_all("manual", true, false)
+            .unwrap()
+            .progress
+            .archived_inputs,
+        0
+    );
+}
+
+#[test]
+fn mixed_accepted_and_rejected_outputs_archive_only_represented_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ids = completed_session(
+        &config,
+        "book",
+        &["Mira trusts Ren.", "Ren has three keys."],
+    );
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(ScriptedProvider::new(
+                "mixed",
+                vec![(
+                    "knowledge_crystals",
+                    json!({"crystals":[
+        {"text":"Mira trusts Ren.","source_memory_ids":[ids[0]]},
+        {"text":"Rejected source claim.","source_memory_ids":[ids[1],999999]}
+    ],"facets":[{"concept_name":"Ren","value":"three keys"}]}),
+                )],
+            ))
+        }),
+    )
+    .unwrap();
+    let result = service.run_all("manual", true, false).unwrap();
+    assert_eq!(result.outcome, "pending");
+    assert_eq!(result.batches, 2);
+    assert_eq!(result.progress.archived_inputs, 1);
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
+    assert_eq!(
+        scalar(&config, "select count(*) from concept_facets"),
+        json!(0)
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(&config, "select status from task_sessions"),
+        json!("completed")
+    );
+    let again = service.run_all("manual", true, false).unwrap();
+    assert_eq!(again.batches, 1);
+    assert_eq!(again.progress.archived_inputs, 0);
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
+}
+
+#[test]
+fn explicit_discard_has_durable_reason_but_cannot_dispose_of_user_rules() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ids = completed_session(
+        &config,
+        "book",
+        &["Temporary duplicate note.", "Always use this rendering."],
+    );
+    open_migrated(&config.database_path()).unwrap().execute("update short_term_memories set source_credibility='user_rule', rule_intent='rendering' where id=?1",[ids[1]]).unwrap();
+    let ids_for_provider = ids.clone();
+    let service = DreamService::open(&config,WorkflowResolver::serving(move || Box::new(ScriptedProvider::new("discard",vec![("coverage_audit",json!({"covered_memory_ids":ids_for_provider,"discarded_memories":[
+        {"memory_id":ids_for_provider[0],"reason":"Temporary note superseded by the reviewed draft."},
+        {"memory_id":ids_for_provider[1],"reason":"Provider wants to forget."}
+    ]}))])))).unwrap();
+    let run = service.run_cycle("manual", true).unwrap();
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(1)
+    );
+    let audit = query(
+        &config,
+        "select payload_json from dream_audit_entries where dream_run_id=?1 and event_type='phase_completed' and json_extract(payload_json, '$.phase_name')='persistence'",
+        &[&run.id],
+    );
+    let audit: Value = serde_json::from_str(audit[0][0].as_str().unwrap()).unwrap();
+    assert_eq!(
+        audit["input_dispositions"][0]["disposition"],
+        json!("discarded")
+    );
+    assert_eq!(
+        audit["input_dispositions"][0]["reason"],
+        json!("Temporary note superseded by the reviewed draft.")
+    );
+    assert_eq!(
+        audit["input_dispositions"][1]["reason"],
+        json!("protected_authority")
+    );
+}
+
+type ContextCallLog = Arc<Mutex<Vec<(TranslationContext, Vec<i64>)>>>;
+
+struct ContextRecordingProvider {
+    calls: ContextCallLog,
+}
+impl DreamProvider for ContextRecordingProvider {
+    fn name(&self) -> &str {
+        "context-recording"
+    }
+    fn run_pass(
+        &self,
+        pass: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<Value, DreamError> {
+        assert!(
+            memories
+                .iter()
+                .all(|memory| memory.session_id == memories[0].session_id)
+        );
+        self.calls.lock().unwrap().push((
+            context.clone(),
+            memories.iter().map(|memory| memory.id).collect(),
+        ));
+        if pass == "knowledge_crystals" {
+            return Ok(
+                json!({"crystals":memories.iter().map(|memory|json!({"text":memory.text,"source_memory_ids":[memory.id],"concept_names":["Mira"]})).collect::<Vec<_>>()}),
+            );
+        }
+        DeterministicDreamProvider.run_pass(pass, context, memories)
+    }
+}
+
+#[test]
+fn provider_batches_preserve_series_chapter_and_viewpoint_context() {
+    use hieronymus::story_applicability::Viewpoint;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    create_series(&config, "other");
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let mut expected = Vec::new();
+    for (slug, chapter, viewpoint) in [
+        ("book", "2", Viewpoint::Unspecified),
+        ("book", "3", Viewpoint::Narrator),
+        ("other", "4", Viewpoint::Unspecified),
+    ] {
+        let mut context = context(slug).chapter(chapter);
+        context.story_viewpoint = viewpoint;
+        let session = workspace.start_session(&context).unwrap();
+        let id = add_memory(
+            &workspace,
+            session.id,
+            "note",
+            &format!("Mira in {slug} chapter {chapter}."),
+        );
+        workspace.complete_session(session.id).unwrap();
+        expected.push((workspace.get_session(session.id).unwrap().context, vec![id]));
+    }
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let provider_calls = calls.clone();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(ContextRecordingProvider {
+                calls: provider_calls.clone(),
+            })
+        }),
+    )
+    .unwrap();
+    let result = service.run_all("manual", true, false).unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(result.progress.archived_inputs, 3);
+    let calls = calls.lock().unwrap();
+    for expected in expected {
+        assert!(calls.contains(&expected));
+    }
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from concepts where canonical_name='Mira'"
+        ),
+        json!(2)
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from concepts where scope_type='global'"
+        ),
+        json!(0)
+    );
+}
+
+#[test]
+fn facet_lineage_contains_only_its_cited_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ids = completed_session(
+        &config,
+        "book",
+        &["Mira carries three keys.", "Ren distrusts Mira."],
+    );
+    let provider_ids = ids.clone();
+    let service=DreamService::open(&config,WorkflowResolver::serving(move ||Box::new(ScriptedProvider::new("facet-lineage",vec![("knowledge_crystals",json!({"facets":[
+        {"concept_name":"Mira","kind":"note","value":"three keys","source_memory_ids":[provider_ids[0]]}
+    ]}))])))).unwrap();
+    let run = service.run_cycle("manual", true).unwrap();
+    assert_eq!(run.created_crystal_count, 0);
+    assert_eq!(
+        scalar(&config, "select count(*) from concept_facets"),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(1)
+    );
+    let sources = query(
+        &config,
+        "select claim_id from claim_bindings where short_term_id=?1 order by claim_id",
+        &[&ids[0]],
+    );
+    assert!(!sources.is_empty());
+    assert_eq!(
+        query(
+            &config,
+            "select claim_id from claim_bindings where facet_id=(select id from concept_facets) order by claim_id",
+            &[]
+        ),
+        sources
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from claim_bindings a join claim_bindings b on b.claim_id=a.claim_id where a.facet_id is not null and b.short_term_id=(select max(id) from short_term_memories)"
+        ),
+        json!(0)
+    );
+}
+
+struct MutatingInputProvider {
+    config: HieronymusConfig,
+}
+impl DreamProvider for MutatingInputProvider {
+    fn name(&self) -> &str {
+        "mutating-input"
+    }
+    fn run_pass(
+        &self,
+        pass: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<Value, DreamError> {
+        if pass == "coverage_audit" {
+            open_migrated(&self.config.database_path())?.execute(
+                "update short_term_memories set text='Changed after snapshot' where id=?1",
+                [memories[0].id],
+            )?;
+        }
+        DeterministicDreamProvider.run_pass(pass, context, memories)
+    }
+}
+
+#[test]
+fn changed_input_snapshot_rolls_back_successors_and_archival() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    completed_session(&config, "book", &["Initial claim."]);
+    let provider_config = config.clone();
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(move || {
+            Box::new(MutatingInputProvider {
+                config: provider_config.clone(),
+            })
+        }),
+    )
+    .unwrap();
+    let error = service.run_cycle("manual", true).unwrap_err();
+    assert!(
+        error.to_string().contains("selected input changed"),
+        "{error}"
+    );
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from short_term_memories where archived_at is null"
+        ),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(&config, "select text from short_term_memories"),
+        json!("Changed after snapshot")
+    );
+}
+
+struct SelectivelyDeferringProvider;
+impl DreamProvider for SelectivelyDeferringProvider {
+    fn name(&self) -> &str {
+        "selective-defer"
+    }
+    fn run_pass(
+        &self,
+        pass: &str,
+        context: &TranslationContext,
+        memories: &[ShortTermMemoryRecord],
+    ) -> Result<Value, DreamError> {
+        if pass != "coverage_audit" && memories[0].text == "Insufficient evidence." {
+            return Ok(json!({}));
+        }
+        DeterministicDreamProvider.run_pass(pass, context, memories)
+    }
+}
+
+#[test]
+fn deferred_oldest_session_does_not_starve_newer_sessions_after_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let old = completed_session(&config, "book", &["Insufficient evidence."]);
+    let new = completed_session(&config, "book", &["Mira carries three keys."]);
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(SelectivelyDeferringProvider)),
+    )
+    .unwrap();
+    let first = service.run_all("manual", true, false).unwrap();
+    assert_eq!(first.outcome, "pending");
+    assert_eq!(first.batches, 1);
+    assert_eq!(first.progress.archived_inputs, 0);
+    drop(service);
+    let reopened = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(SelectivelyDeferringProvider)),
+    )
+    .unwrap();
+    let next = reopened.run_all("manual", true, false).unwrap();
+    assert_eq!(next.outcome, "pending");
+    assert_eq!(next.batches, 2);
+    assert_eq!(next.progress.archived_inputs, 1);
+    assert_eq!(
+        query(
+            &config,
+            "select id from short_term_memories where archived_at is null",
+            &[]
+        ),
+        vec![vec![json!(old[0])]]
+    );
+    assert_eq!(
+        query(
+            &config,
+            "select id from short_term_memories where archived_at is not null",
+            &[]
+        ),
+        vec![vec![json!(new[0])]]
+    );
+    assert_eq!(reopened.run_all("manual", true, false).unwrap().batches, 1);
 }

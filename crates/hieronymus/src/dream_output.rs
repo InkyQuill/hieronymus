@@ -120,6 +120,8 @@ pub struct NormalizedConcept {
 /// Port of `_NormalizedDreamFacet`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedFacet {
+    /// The selected assertions that actually support this facet.
+    pub source_memory_ids: Vec<i64>,
     pub concept_name: String,
     pub value: String,
     pub kind: String,
@@ -240,6 +242,7 @@ pub(crate) fn normalize_concept_entry(
 pub(crate) fn normalize_facet_entry(
     item: &Value,
     entry_path: &str,
+    allowed_memory_ids: &std::collections::HashSet<i64>,
     warnings: &mut Vec<ParseWarning>,
     rejected_entries: &mut Vec<Value>,
 ) -> Option<NormalizedFacet> {
@@ -350,7 +353,24 @@ pub(crate) fn normalize_facet_entry(
             return None;
         }
     };
+    let source_memory_ids = match payload.get("source_memory_ids") {
+        None => Vec::new(), // Legacy output can normalize, but cannot establish lineage.
+        Some(Value::Array(ids))
+            if !ids.is_empty()
+                && ids.iter().all(|id| {
+                    id.as_i64()
+                        .is_some_and(|id| allowed_memory_ids.contains(&id))
+                }) =>
+        {
+            ids.iter().filter_map(Value::as_i64).collect()
+        }
+        Some(_) => {
+            rejected_entries.push(json!({"entry_path":entry_path, "reason":"facet_requires_selected_source_memory_ids"}));
+            return None;
+        }
+    };
     Some(NormalizedFacet {
+        source_memory_ids,
         concept_name,
         value,
         kind,
