@@ -15,7 +15,7 @@
 //!   tick, so a missed in-memory wakeup recovers from SQLite alone;
 //! - rebuilds run through [`SemanticJobStore::run_rebuild`] verbatim: bounded
 //!   batches, lease/generation checks, no SQLite transaction spanning
-//!   inference or LanceDB I/O;
+//!   inference or derived-index I/O;
 //! - the controller's state machine (`Acquiring`/`Rebuilding`/`Ready`/
 //!   `Failed`) is what `/status` serves and what
 //!   [`require_semantic_ready`] gates strict callers on. A missing runtime,

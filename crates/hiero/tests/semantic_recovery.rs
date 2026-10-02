@@ -783,6 +783,69 @@ fn a_vanished_index_is_still_invalidated_and_rebuilt() {
     group.stop_and_join().unwrap();
 }
 
+#[test]
+fn legacy_lance_artifacts_are_preserved_while_sqlite_generation_rebuilds() {
+    let (root, config) = seeded_root();
+    import(
+        &config,
+        root.path(),
+        "scroll.txt",
+        "The index directory vanished; the authoritative chunks never did.",
+    );
+
+    let arm = Arc::new(TestArm::new(&config));
+    let (group, controller) = start_controller(&config, Arc::clone(&arm) as Arc<dyn SemanticArm>);
+    assert!(wait_ready(&controller), "{:?}", controller.state());
+    let built = active_generation(&config);
+    // The generation is current in every C4 sense: same revision, same
+    // identity. Only the index on disk is about to go.
+    assert_eq!(built.corpus_revision, revision(&config));
+    group.stop_and_join().unwrap();
+
+    // Old release manifests have the same corpus/model fields but only a
+    // legacy artifact namespace. No legacy data is opened or converted.
+    let legacy = config
+        .semantic_root()
+        .join("lancedb")
+        .join("generation_old.lance");
+    std::fs::create_dir_all(&legacy).unwrap();
+    let marker = legacy.join("retained-artifact");
+    std::fs::write(&marker, b"old derived index must remain untouched").unwrap();
+    std::fs::remove_dir_all(SemanticStore::open(&config).unwrap().index_root()).unwrap();
+    assert!(
+        !SemanticStore::open(&config)
+            .unwrap()
+            .active_generation_intact()
+            .unwrap()
+    );
+
+    let arm = Arc::new(TestArm::new(&config));
+    let (group, controller) = start_controller(&config, arm as Arc<dyn SemanticArm>);
+    assert!(
+        wait_ready(&controller),
+        "the lost index must be rebuilt: {:?}",
+        controller.state()
+    );
+    let rebuilt = active_generation(&config);
+    assert_ne!(rebuilt.generation_id, built.generation_id);
+    assert_eq!(
+        SemanticStore::open(&config)
+            .unwrap()
+            .generation_manifest(&built.generation_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        "failed",
+        "an unusable generation is invalidated, never relabelled"
+    );
+    group.stop_and_join().unwrap();
+    assert_eq!(
+        std::fs::read(marker).unwrap(),
+        b"old derived index must remain untouched"
+    );
+    assert_eq!(rebuilt.expected_count, built.expected_count);
+}
+
 /// A generation carrying the pre-C4 sentinel (`corpus_revision = -1`) cannot
 /// be shown to cover anything, so it must be REBUILT — and never relabelled
 /// with a revision somebody guessed. This is the state a v2 database that had

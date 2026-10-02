@@ -90,3 +90,38 @@ Version-2 exact-target metadata binds one platform archive and one canonical com
 New metadata is named `release-<triple>.json`; there is no split `release.json` alias. Legacy monolithic input remains supported, while 0.8.0 users bootstrap split-release support with the current standalone installer. Final receipts bind platform/model archive hashes, exact-target metadata and assembled asset hashes. Linux release symbol stripping changes only Hieronymus executables; pinned upstream runtime bytes remain unchanged. macOS bundle contents are bound by an outside manifest, avoiding sealed-resource self-reference. Current candidates are unsigned and unnotarized.
 
 Linux x86_64, Windows x86_64 and Apple Silicon retain their separately pinned native runtime contracts. Intel macOS fails packaging until the source-built runtime is promoted. Native Windows/macOS install/update/rollback and in-use-image acceptance remain external qualification; cross-compilation and portable transaction tests cannot replace it. See `docs/desktop-tray.md`, `docs/desktop-platforms.md`, and the final target qualification records.
+
+## Amendment — 2026-10-02: exact SQLite vectors instead of LanceDB
+
+Accepted direction: minimize build dependencies and conceptual complexity while
+preserving exact retrieval quality. Replace the runtime LanceDB/Arrow data plane
+with the already bundled SQLite and an exhaustive cosine calculation in Rust.
+No ANN, sqlite-vec extension, vector quantization, or additional runtime is needed.
+The pinned inference model, tokenizer and ONNX Runtime remain unchanged.
+
+Each generation owns `semantic/sqlite-vectors/generation_<id>.sqlite3` (under the
+configured semantic root). Its independent format marker and complete embedding
+identity are validated before use. Rows carry corpus fingerprints and F32 vectors;
+series filtering uses bound SQL parameters before ranking. Cosine accumulation
+uses F64, ties use chunk id, and zero/nonfinite/mis-sized vectors fail closed.
+Batch writes are atomic. The existing main-database manifests, corpus revision,
+activation and durable recovery protocol remain authoritative and unchanged.
+
+The old `lancedb` directory is retained, not converted or deleted. It cannot satisfy
+SQLite readiness. On upgrade, existing missing-index recovery rebuilds a new
+derived generation from authoritative text using the unchanged model. Previously
+computed Lance vectors are not imported, so this first rebuild requires inference.
+Old binaries do not understand the new derived namespace either; rolling back
+requires their normal index recovery. No authoritative memories are migrated.
+
+Integrity diagnostics are read-only and do not repair/create indexes. A healthy
+large index must not be marked corrupt merely because validation is slow. Current
+validation deliberately scans stored vectors as well as SQLite integrity and
+identity; serving-path performance should be measured separately from the raw
+search benchmark before introducing caching or relaxing these checks.
+
+Historical Lance qualification harnesses/records remain evidence for the old
+backend only. Current focused generation/recovery/recall tests qualify the new
+storage contract; native model/host qualification must be reported separately.
+Source builds no longer require system protoc for the application. Independently
+building the pinned ONNX runtime retains its own toolchain requirements.
