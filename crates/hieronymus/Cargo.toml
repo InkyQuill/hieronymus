@@ -8,6 +8,11 @@ license.workspace = true
 publish = false
 
 [dependencies]
+typesafe-sdk-rust = { version = "=0.2.0", default-features = false }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+tower-service = "0.3"
 url = "2"
 home.workspace = true
 tempfile.workspace = true

@@ -1,0 +1,14 @@
+{
+  "issues": [90, 91, 93, 94, 96],
+  "accepted_changes": [
+    "Mixed recall includes multilingual semantic candidates for crystals and compatible pending short-term memories.",
+    "Mixed recall reports memory_semantic_pending or memory_semantic_unavailable independently of RAG readiness.",
+    "Dream inputs separate bounded activated context from fresh evidence and snapshot originals.",
+    "Changed or unresolved working copies stay pending; copying cannot increase confidence.",
+    "Only compatible verified equivalent crystal pairs can be absorbed; token similarity does not authorize mutation.",
+    "Private comparison.conf assigns a primary and optional explicit backup; valid uncertainty never triggers fallback."
+  ],
+  "frozen_python_fixtures": "unchanged",
+  "derived_tables": ["memory_vectors", "memory_comparison_cache"],
+  "default_remote_comparison": "disabled"
+}

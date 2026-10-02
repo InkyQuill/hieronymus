@@ -6,7 +6,7 @@ remain incompatible with mandatory MCP 2026-07-28, and zCode remains unverified.
 No legacy adapter, FTS-only alternative, live cutover, publication, user-host
 configuration change or additional approval/attestation system was introduced.
 
-This rehearsal uses Linux `x86_64-unknown-linux-gnu`, Rust 1.96.0, genuine Bun
+This rehearsal uses Linux `x86_64-unknown-linux-gnu`, Rust 1.98.0, genuine Bun
 1.4.0 for builds, and Chromium 152 through Playwright. App, data, HOME and unit
 roots are disposable. The installed CLI/daemon children have an empty PATH and
 no model/runtime environment overrides. Python/Playwright are test drivers;

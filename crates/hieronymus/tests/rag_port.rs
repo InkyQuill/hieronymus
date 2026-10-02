@@ -522,10 +522,9 @@ fn write_pdf_with_font(path: &Path, text: Option<&str>, font_dictionary: &str) {
     let mut objects = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
              /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
-        ),
+            .to_string(),
         format!(
             "<< /Length {} >>\nstream\n{content}\nendstream",
             content.len()

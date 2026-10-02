@@ -21,9 +21,7 @@ use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::dream_audit::{DreamAuditStore, commit_audited};
 use crate::dream_config::{DreamConfig, load_dream_config};
-use crate::dreaming::{
-    COMBINATION_SIMILARITY_THRESHOLD, DreamError, now, token_similarity, tx_error,
-};
+use crate::dreaming::{DreamError, now, tx_error};
 
 /// Weight of a `crystal_links` row created by hebbian co-activation.
 const LINK_INITIAL_WEIGHT: f64 = 0.5;
@@ -136,6 +134,7 @@ pub struct LinkProgressSummary {
 /// [`LinkProgress::process`] call, and resumes open batches on restart.
 pub struct LinkProgress {
     config: HieronymusConfig,
+    comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
     dream_config: DreamConfig,
     /// Audit context (dream run id, link phase run id) the per-pair and
     /// batch-completion audit entries are written under. The dreaming phase
@@ -154,10 +153,23 @@ pub struct LinkProgress {
 
 impl LinkProgress {
     pub fn open(config: &HieronymusConfig) -> Result<Self, DreamError> {
+        Self::with_comparator(
+            config,
+            std::rc::Rc::new(std::cell::RefCell::new(
+                crate::memory_comparison::Comparator::open(config)?,
+            )),
+        )
+    }
+
+    pub(crate) fn with_comparator(
+        config: &HieronymusConfig,
+        comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
+    ) -> Result<Self, DreamError> {
         open_migrated(&config.database_path())?;
         let dream_config = load_dream_config(config)?;
         Ok(Self {
             config: config.clone(),
+            comparator,
             dream_config,
             run: None,
             combination_budget: 0,
@@ -237,6 +249,7 @@ impl LinkProgress {
         cycle: i64,
         budget: &mut usize,
     ) -> Result<(), DreamError> {
+        let mut prefetched = 0;
         loop {
             // Legacy materialized work is read one row at a time, before any
             // lazy cursor work. Never load a quadratic queued-pair vector.
@@ -250,7 +263,31 @@ impl LinkProgress {
             if *budget == 0 {
                 return Ok(());
             }
+            if prefetched == 0 {
+                // Prefetch a bounded window without advancing the durable cursor.
+                // Each effect still re-reads snapshots and commits independently.
+                let upcoming = upcoming_pairs(connection, batch_id, (*budget).min(8))?;
+                prefetched = upcoming.len();
+                let mut snapshots = Vec::new();
+                for (left, right) in upcoming {
+                    if let (Some(a), Some(b)) = (
+                        crate::memory_comparison::snapshot(
+                            connection,
+                            crate::claim_reads::ClaimTarget::Crystal(left),
+                        )?,
+                        crate::memory_comparison::snapshot(
+                            connection,
+                            crate::claim_reads::ClaimTarget::Crystal(right),
+                        )?,
+                    ) {
+                        snapshots.push((a, b));
+                    }
+                }
+                let pairs = snapshots.iter().map(|(a, b)| (a, b)).collect::<Vec<_>>();
+                self.comparator.borrow_mut().compare_batch(&pairs)?;
+            }
             self.terminalize_pair(connection, batch_id, cycle, left, right)?;
+            prefetched = prefetched.saturating_sub(1);
             *budget -= 1;
         }
     }
@@ -308,6 +345,16 @@ impl LinkProgress {
         left: i64,
         right: i64,
     ) -> Result<(), DreamError> {
+        use crate::{
+            claim_reads::ClaimTarget,
+            memory_comparison::{Decision, snapshot},
+        };
+        let before_left = snapshot(connection, ClaimTarget::Crystal(left))?;
+        let before_right = snapshot(connection, ClaimTarget::Crystal(right))?;
+        let assessment = match (&before_left, &before_right) {
+            (Some(a), Some(b)) => Some(self.comparator.borrow_mut().compare(a, b)?),
+            _ => None,
+        };
         let combination_budget = self.combination_budget;
         let effect: PairEffect = commit_audited(connection, |transaction| {
             // Both insertion and cursor movement belong to the same effect
@@ -321,13 +368,20 @@ impl LinkProgress {
                     // Pairwise combination (July design; ADR 0011 guards):
                     // only active advisory crystals combine; active
                     // deterministic rules are never absorbed, never survivors.
-                    let combinable = combination_budget > 0
+                    let unchanged = snapshot(transaction, ClaimTarget::Crystal(left))
+                        .map_err(tx_error)?
+                        == before_left
+                        && snapshot(transaction, ClaimTarget::Crystal(right)).map_err(tx_error)?
+                            == before_right;
+                    let combinable = unchanged
+                        && assessment
+                            .as_ref()
+                            .is_some_and(|a| a.decision == Decision::Equivalent)
+                        && combination_budget > 0
                         && !is_active_rule(&left_core.crystal_type, &left_core.status)
                         && !is_active_rule(&right_core.crystal_type, &right_core.status)
                         && left_core.status == "active"
-                        && right_core.status == "active"
-                        && token_similarity(&left_core.text, &right_core.text)
-                            >= COMBINATION_SIMILARITY_THRESHOLD;
+                        && right_core.status == "active";
                     if combinable {
                         let survivor =
                             pick_combination_survivor(left, left_core, right, right_core);
@@ -361,7 +415,15 @@ impl LinkProgress {
                 rusqlite::params![
                     effect.status(),
                     cycle,
-                    effect.result_json(left, right).to_string(),
+                    {
+                        let mut result = effect.result_json(left, right);
+                        result["comparison"] = json!(assessment);
+                        result["snapshots"] = json!([
+                            before_left.as_ref().map(|s| s.audit_identity()),
+                            before_right.as_ref().map(|s| s.audit_identity())
+                        ]);
+                        result.to_string()
+                    },
                     batch_id,
                     left,
                     right,
@@ -413,6 +475,9 @@ impl LinkProgress {
         let Some((run_id, phase_run_id)) = self.run else {
             return Ok(());
         };
+        let result:String=transaction.query_row("select result_json from dream_link_pairs where batch_id=?1 and left_id=?2 and right_id=?3",rusqlite::params![batch_id,left,right],|r|r.get(0))?;
+        let comparison: Value =
+            serde_json::from_str(&result).map_err(|e| DreamError::Json(e.to_string()))?;
         let status = effect.status();
         DreamAuditStore::append_in_transaction(
             transaction,
@@ -422,6 +487,8 @@ impl LinkProgress {
             "info",
             &format!("{status} link pair ({left}, {right})"),
             &json!({
+                "comparison": comparison["comparison"],
+                "snapshots": comparison["snapshots"],
                 "batch_id": batch_id,
                 "left_id": left,
                 "right_id": right,
@@ -558,6 +625,34 @@ fn queued_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i6
         .optional()?)
 }
 
+/// Read at most `limit` future pairs using offsets, never a quadratic cross join.
+fn upcoming_pairs(
+    connection: &Connection,
+    batch: i64,
+    limit: usize,
+) -> Result<Vec<(i64, i64)>, DreamError> {
+    let mut stmt = connection.prepare("select left_id,right_id from dream_link_pairs where batch_id=?1 and status='queued' order by left_id,right_id limit ?2")?;
+    let queued = stmt
+        .query_map(rusqlite::params![batch, limit as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !queued.is_empty() {
+        return Ok(queued);
+    }
+    let (mut left, mut right, count, lazy): (i64,i64,i64,bool) = connection.query_row("select next_left_offset,next_right_offset,(select coalesce(max(member_offset)+1,0) from dream_link_crystals where batch_id=?1),lazy_pairs from dream_link_batches where id=?1", [batch], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+    let mut result = Vec::new();
+    while lazy && right < count && result.len() < limit {
+        result.push(connection.query_row("select l.crystal_id,r.crystal_id from dream_link_crystals l join dream_link_crystals r on r.batch_id=l.batch_id where l.batch_id=?1 and l.member_offset=?2 and r.member_offset=?3", rusqlite::params![batch,left,right], |r| Ok((r.get(0)?,r.get(1)?)))?);
+        right += 1;
+        if right >= count {
+            left += 1;
+            right = left + 1;
+        }
+    }
+    Ok(result)
+}
+
 fn lazy_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i64)>, DreamError> {
     use rusqlite::OptionalExtension;
     Ok(connection
@@ -574,7 +669,6 @@ fn lazy_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i64)
 
 /// Minimal crystal projection for combination decisions.
 struct CrystalCore {
-    text: String,
     status: String,
     crystal_type: String,
     source_credibility: String,
@@ -610,7 +704,6 @@ fn load_crystal_cores(
         Ok((
             row.get::<_, i64>(0)?,
             CrystalCore {
-                text: row.get(1)?,
                 status: row.get(2)?,
                 crystal_type: row.get(3)?,
                 source_credibility: row.get(4)?,
@@ -660,6 +753,23 @@ fn combine_crystals(
     cycle_id: i64,
 ) -> Result<(), DreamError> {
     crate::claim_capture::copy_crystal_lineage_tx(transaction, absorbed, survivor)?;
+    // Keep typed retrieval metadata on the survivor and the original row as
+    // immutable provenance. Scope compatibility was checked before this call.
+    for (table, columns) in [
+        ("crystal_story_scopes", "scope,confidence,created_at"),
+        ("crystal_semantic_tags", "tag,confidence,created_at"),
+        ("crystal_language_tags", "language_tag"),
+    ] {
+        transaction.execute(
+            &format!("insert or ignore into {table}(crystal_id,{columns}) select ?1,{columns} from {table} where crystal_id=?2"),
+            rusqlite::params![survivor, absorbed],
+        )?;
+    }
+    transaction.execute(
+        "update crystals set tags_json=(select json_group_array(value) from (select value from json_each(crystals.tags_json) union select value from json_each((select tags_json from crystals where id=?2)))) where id=?1",
+        rusqlite::params![survivor, absorbed],
+    )?;
+
     transaction.execute(
         "insert or ignore into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
          select ?1, concept_id, link_type, confidence, created_at

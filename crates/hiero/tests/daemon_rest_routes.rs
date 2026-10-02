@@ -1174,3 +1174,59 @@ fn dreaming_prompt_settings_persist_over_authenticated_rest() {
         7
     );
 }
+
+#[test]
+fn comparison_assignments_are_guarded_validated_and_persisted() {
+    let (fixture, root, _daemon) = start_daemon_with_browser_session();
+    let path = "/api/settings/comparison";
+    assert_eq!(
+        send_request(fixture.port, "GET", path, &[], b"").status,
+        401
+    );
+    let headers = browser_headers(&fixture, &[("Origin", same_origin(fixture.port))]);
+    let initial = send_request(fixture.port, "GET", path, &headers, b"");
+    assert_eq!(initial.status, 200);
+    assert_eq!(
+        initial.body()["comparison"]["settings"]["primary"],
+        Value::Null
+    );
+    let mut draft = json!({"comparison":{"primary":{"provider":"jev","model":"jev-1.13.0"},"fallback":{"provider":"offline-local","model":"small-model"},"max_pairs_per_run":4,"timeout_seconds":3}});
+    let response = send_request(
+        fixture.port,
+        "POST",
+        path,
+        &headers,
+        &serde_json::to_vec(&draft).unwrap(),
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body()["comparison"]["fallback_ready"], false);
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    assert_eq!(
+        hieronymus::comparison_config::load(&config)
+            .unwrap()
+            .max_pairs_per_run,
+        4
+    );
+    draft["comparison"]["primary"] = Value::Null;
+    assert_eq!(
+        send_request(
+            fixture.port,
+            "POST",
+            path,
+            &headers,
+            &serde_json::to_vec(&draft).unwrap()
+        )
+        .status,
+        400
+    );
+    assert!(
+        hieronymus::comparison_config::load(&config)
+            .unwrap()
+            .primary
+            .is_some()
+    );
+    std::fs::write(config.provider_config_path(), "invalid = [ private-secret").unwrap();
+    let corrupt = send_request(fixture.port, "GET", path, &headers, b"");
+    assert_eq!(corrupt.status, 400);
+    assert!(!corrupt.body().to_string().contains("private-secret"));
+}

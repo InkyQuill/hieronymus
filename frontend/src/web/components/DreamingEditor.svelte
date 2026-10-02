@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MemoryComparisonSettings from "./MemoryComparisonSettings.svelte";
   import SettingsSaveState from "./SettingsSaveState.svelte";
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import { workflowGuide } from "../lib/presentation";
@@ -139,3 +140,5 @@
   <TechnicalDetails data={settings} label="Technical Dreaming configuration" />
   {#if error}<p role="alert" class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
 </form>
+
+<MemoryComparisonSettings />

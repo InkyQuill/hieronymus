@@ -8,6 +8,9 @@
 //! consumed). A batch's activations are stamped consumed only when its last
 //! pair is applied or explicitly skipped.
 
+#[path = "support/current_story.rs"]
+mod current_story;
+
 use hieronymus::crystals::{CrystalStore, NewCrystal};
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
@@ -1056,6 +1059,25 @@ fn combination_transfers_original_claims_to_survivor() {
         "book",
         "The same source assertion in a near duplicate crystal.",
     );
+    current_story::register_public(&config, "book", "I", "Opening");
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    for id in [a, b] {
+        let claim = current_story::claim(
+            &config,
+            "book",
+            "The same source assertion in a near duplicate crystal.",
+        );
+        let tx = db.transaction().unwrap();
+        tx.execute("delete from claim_bindings where crystal_id=?", [id])
+            .unwrap();
+        hieronymus::claim_capture::capture_claim_tx(
+            &tx,
+            hieronymus::claim_reads::ClaimTarget::Crystal(id),
+            &claim,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
     let before = query(
         &config,
         "select claim_id from claim_bindings where crystal_id in (?1,?2) order by claim_id",

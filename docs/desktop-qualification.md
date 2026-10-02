@@ -271,7 +271,7 @@ was rerun and which native gates remain unavailable.
 
 No Windows or Mac binary has been built on this Linux host. If the native CI
 candidate artifacts do not yet exist, build on the actual target from the reviewed
-source. Native development prerequisites are Rust 1.96.0, Bun 1.4.0, protobuf
+source. Native development prerequisites are Rust 1.98.0, Bun 1.4.0, protobuf
 compiler **and its standard includes**, and the platform C/C++ toolchain (MSVC on
 Windows, Xcode command-line tools on macOS; GTK development headers on Linux).
 The packaged application itself does not require Rust, Bun or Python. Use

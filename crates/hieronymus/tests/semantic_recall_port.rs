@@ -136,11 +136,7 @@ fn rag_hit_ids(response: &RecallResponse) -> Vec<i64> {
         .hits
         .iter()
         .filter_map(|hit| match hit {
-            RecallHit::Rag {
-                chunk,
-                conflicts_with_rule_ids: _,
-                ..
-            } => Some(chunk.id),
+            RecallHit::Rag { chunk, .. } => Some(chunk.id),
             _ => None,
         })
         .collect()

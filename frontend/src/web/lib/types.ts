@@ -211,6 +211,19 @@ export type AdminActionResult = {
   run?: Record<string, unknown>;
 };
 
+export type ComparisonAssignment = { provider: string; model: string };
+export type ComparisonSettings = {
+  primary: ComparisonAssignment | null;
+  fallback: ComparisonAssignment | null;
+  max_pairs_per_run: number;
+  timeout_seconds: number;
+};
+export type ComparisonState = {
+  settings: ComparisonSettings;
+  primary_ready: boolean;
+  fallback_ready: boolean;
+  qualified: boolean;
+};
 export type RelevanceSettings = {
   key_configured: boolean;
   model: string;

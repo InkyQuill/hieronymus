@@ -888,7 +888,7 @@ pub(crate) fn hydrate_memory(
     let row = connection
         .query_row(
             "select id, session_id, source_role, kind, text, source_ref, metadata_json,
-                    source_credibility, rule_intent, soft_origin
+                    source_credibility, rule_intent, soft_origin, source_crystal_id
              from short_term_memories where id = ?1",
             [memory_id],
             |row| {
@@ -903,6 +903,7 @@ pub(crate) fn hydrate_memory(
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, Option<String>>(8)?,
                     row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<i64>>(10)?,
                 ))
             },
         )
@@ -944,7 +945,25 @@ pub(crate) fn hydrate_memory(
         tags if !tags.is_empty() => tags,
         _ => metadata_strings(metadata.get("semantic_tags"), false),
     };
+    let source_crystal_snapshot = if let Some(id) = row.10 {
+        let mut snapshot = connection.query_row(
+            "select text,status,updated_at,series_slug,source_language,target_language from crystals where id=?",
+            [id],
+            |r| Ok(serde_json::json!({"id":id,"text":r.get::<_,String>(0)?,"status":r.get::<_,String>(1)?,"updated_at":r.get::<_,String>(2)?,"series_slug":r.get::<_,String>(3)?,"source_language":r.get::<_,String>(4)?,"target_language":r.get::<_,String>(5)?}))
+        ).optional()?;
+        if let Some(value) = snapshot.as_mut() {
+            value["claims"] = serde_json::json!(crate::claim_reads::source_annotation(
+                connection,
+                crate::claim_reads::ClaimTarget::Crystal(id),
+            )?);
+        }
+        snapshot
+    } else {
+        None
+    };
     Ok(ShortTermMemoryRecord {
+        source_crystal_id: row.10,
+        source_crystal_snapshot,
         claim_annotation: crate::claim_reads::source_annotation(
             connection,
             crate::claim_reads::ClaimTarget::ShortTerm(memory_id),

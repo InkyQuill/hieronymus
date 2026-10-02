@@ -1688,8 +1688,8 @@ fn mixed_recall_warns_when_required_semantics_did_not_run() {
     );
     assert_eq!(
         warnings.len(),
-        1,
-        "the condition is reported once, not logged: {payload}"
+        2,
+        "memory and RAG semantic availability are reported separately: {payload}"
     );
 }
 
