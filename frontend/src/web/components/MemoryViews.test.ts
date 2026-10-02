@@ -730,27 +730,43 @@ test("a failed server page restores the last successful page", async () => {
   expect(screen.getByText("Page 1 of 2 · 40 records")).toBeTruthy();
 });
 
-
 test("background updates retain the mounted table, open technical details and focus", async () => {
   const user = userEvent.setup();
   loadSnapshotMock.mockReset();
-  loadSnapshotMock.mockResolvedValueOnce(listSnapshot).mockResolvedValueOnce(selectedSnapshot);
-  const component = render(MemoryViews, { props: { dashboard, onNotice: vi.fn() } });
-  await user.click(await screen.findByRole("button", { name: /Crystal Alpha/ }));
-  const summary = await screen.findByText("Technical record data", { exact: true });
+  loadSnapshotMock
+    .mockResolvedValueOnce(listSnapshot)
+    .mockResolvedValueOnce(selectedSnapshot);
+  const component = render(MemoryViews, {
+    props: { dashboard, onNotice: vi.fn() },
+  });
+  await user.click(
+    await screen.findByRole("button", { name: /Crystal Alpha/ }),
+  );
+  const summary = await screen.findByText("Technical record data", {
+    exact: true,
+  });
   await user.click(summary);
   const details = summary.closest("details")!;
   const table = screen.getByRole("table");
   const copy = screen.getByRole("button", { name: "Copy technical details" });
   copy.focus();
   let finish!: (value: AdminSnapshot) => void;
-  loadSnapshotMock.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  loadSnapshotMock.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
   await component.rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
   expect(screen.queryByText("Loading Crystals…")).toBeNull();
   expect(screen.getByRole("table")).toBe(table);
   expect(details.open).toBe(true);
   expect(document.activeElement).toBe(copy);
-  finish({snapshot:{...selectedSnapshot.snapshot, rows:[{...row, status:"updated"}]}});
+  finish({
+    snapshot: {
+      ...selectedSnapshot.snapshot,
+      rows: [{ ...row, status: "updated" }],
+    },
+  });
   await screen.findByText("updated");
   expect(screen.getByRole("table")).toBe(table);
   expect(summary.closest("details")).toBe(details);
