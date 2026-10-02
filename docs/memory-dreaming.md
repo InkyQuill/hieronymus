@@ -71,7 +71,7 @@ links, semantic tags, or rule relevance are strong.
 
 Crystals are long-term memory records. They are searchable by context, concept
 links, facets, semantic tags, story scopes, and text, carry strength and
-confidence scores, and can decay across dream cycles. The current crystal types
+confidence scores; advisory strength can decay after meaningful sessions. The current crystal types
 are:
 
 - `lesson`: a user-facing rule, preference, correction, or workflow lesson.
@@ -175,10 +175,31 @@ the following maintenance phase in one dream run, so audit inspection can trace
 provider input, provider output, parse warnings, and maintenance mutations
 together.
 
-Decay is cycle-based, not wall-clock based. A crystal should weaken when
-translation work keeps happening without that crystal being recalled or
-reinforced. Wall-clock time would punish idle projects and long breaks; cycles
-instead tie decay to actual Hieronymus processing.
+Passive decay uses the `completed_session_v1` policy: one opportunity per fully
+consumed task session whose fresh evidence was persisted as a crystal or facet,
+at successful Dream completion. Partial drain batches, idle time, empty runs,
+skips, errors and work in another series do not create opportunities. Unknown
+story order or applicability cannot establish non-use. Candidates must match the
+session's series and language pair and have current claims in its persisted story
+context. Request-local research mode is not persisted as session metadata; decay
+uses the stored context rather than inferring a research flag.
+
+An unused advisory crystal loses 0.02 strength, with a floor of 0.20. Confidence,
+text and status never change through passive decay, and no record is deleted.
+Rules, explicit user authority or confirmation, recall/working copies, and
+records created or changed since the session began are protected. Records with
+unknown, qualified or invalid claims are also protected. Recent concurrent use
+protects a record even if it happened in another session.
+
+The phase scans at most `max_total_affected_crystals` candidates per opportunity
+and consumes only the remaining minimum of the three existing crystal-change
+caps after preceding phases. A capped opportunity is terminal; later batches or
+restarts cannot apply additional decay for it. There is no catch-up decay owed
+for failed sessions. Successful completion, opportunity markers, exact affected
+IDs and strength deltas commit in one transaction. The `salience_decay` audit
+records the policy, limits and before/after scores; `cycle_decay` memory events
+also appear in the existing Dream review. Strength remains above the floor and
+can recover through the usual evidence-based reinforcement paths.
 
 Automatic dreaming is cycle-based. Scheduled dreaming respects the configured
 minimum pending-memory threshold by default. It may run sooner only when the

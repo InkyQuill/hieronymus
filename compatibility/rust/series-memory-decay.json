@@ -1,0 +1,9 @@
+{
+  "scope": "Passive advisory salience decay",
+  "rationale": "Issue #95 requires meaningful series/context opportunities rather than idle time or drain batch count. Frozen Python fixtures remain unchanged.",
+  "policy": "completed_session_v1",
+  "runtime": "Successful Dream completion counts a fully consumed session with persisted fresh evidence once. Current claims in its persisted series, language and story context permit a 0.02 strength reduction down to 0.20 within residual existing caps.",
+  "protections": ["Active rules and explicit user authority or confirmation", "Recall and working copies", "Records created or modified since session start", "Unknown, qualified, invalid or incompatible claims"],
+  "invariants": ["No passive confidence, text, status or deletion writes", "No decay for idle, skipped, empty, failed or partial batches", "Opportunity ledger, exact score events, phase audit and run completion commit atomically", "Capped opportunities cannot replay on restart"],
+  "limitations": ["Session context does not persist request-local research mode", "No catch-up opportunity for failed sessions"]
+}

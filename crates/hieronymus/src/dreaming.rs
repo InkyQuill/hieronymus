@@ -24,8 +24,9 @@
 //! transaction. Supersede and reinforce targets are authorized against the
 //! selected context and active-rule protection (ADR 0011) before any store
 //! call; rule-related model output can only ever produce candidates and
-//! proposals. Passive feedback events, decay, and the scheduler's interval
-//! clock belong to the daemon's dream controller (task D5): this module
+//! proposals. Passive feedback and session-based salience decay are audited domain
+//! operations; the scheduler's interval clock belongs to the daemon's dream
+//! controller (task D5). This module
 //! owns the bounded single cycle, the drain over successive capped batches
 //! ([`DreamService::run_all`], [`drain_batches`]), and the scheduling
 //! threshold decision ([`scheduled_decision`], ADR 0005).
@@ -2429,20 +2430,31 @@ impl DreamService {
         created_crystal_count: i64,
         proposal_count: i64,
     ) -> Result<DreamRunRecord, DreamError> {
-        let connection = open_migrated(&self.config.database_path())?;
-        connection.execute(
-            "update dream_runs
-             set status = 'completed', input_count = ?1, created_crystal_count = ?2,
-                 proposal_count = ?3, completed_at = ?4
-             where id = ?5",
-            rusqlite::params![
-                input_count,
-                created_crystal_count,
-                proposal_count,
-                now(),
-                run_id
-            ],
-        )?;
+        let mut connection = open_migrated(&self.config.database_path())?;
+        commit_audited(&mut connection, |transaction| {
+            transaction.execute(
+                "update dream_runs
+                 set status = 'completed', input_count = ?1, created_crystal_count = ?2,
+                     proposal_count = ?3, completed_at = ?4
+                 where id = ?5",
+                rusqlite::params![
+                    input_count,
+                    created_crystal_count,
+                    proposal_count,
+                    now(),
+                    run_id
+                ],
+            )?;
+            crate::dream_decay::complete_in_transaction(
+                transaction,
+                &self.config,
+                &self.dream_config,
+                run_id,
+                cycle_id,
+            )
+            .map_err(tx_error)?;
+            Ok(())
+        })?;
         Ok(DreamRunRecord {
             id: run_id,
             cycle_id,
