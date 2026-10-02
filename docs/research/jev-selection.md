@@ -1,0 +1,15 @@
+# Exact source-span selection: safe offline prototype
+
+Issue #115. Live `jev-1.13.0` pilot on 2026-10-03. Retain the deterministic candidate/validation prototype, but **do not add an automatic remote selection call to evidence capture**. It shows useful bounded selection behavior; a twelve-case study does not establish a benefit over agents on real documents sufficient to expand the production tool surface.
+
+`scripts/source-span-candidates.ts` computes paragraph candidates from original bytes, with position-specific IDs, SHA-256, absolute UTF-8 offsets and verbatim text. It does not normalize Unicode or rewrite CRLF. Repeated equal paragraphs have distinct IDs. Selection accepts only a code-owned ID or `no_match`, regenerates the closed set against the current document and rejects changed hashes, text, offsets and unknown IDs. The output is an advisory pointer, never an evidence receipt. At most eight candidates/8 KiB are exposed from a source bounded to 256 KiB; absence among this shortlist is not proof of absence in the complete document.
+
+The synthetic RU/JA/EN fixture covers direct answers, no answer, repeated text, occurrence-specific selection, chronology, emoji, normalization, unsupported viewpoint and injected instructions. Single/repeat/batch modes accepted respectively 10/12, 10/12 and 11/12 correct choices, with 2/12, 2/12 and 1/12 abstentions. No wrong selected ID passed the fixed 0.95 confidence/probability rule. No-match is a real closed-set option; a forced top-ranked paragraph is never treated as proof of sufficiency.
+
+All three local pointer tests pass (18 assertions): valid UTF-8 slices, distinct repeated locations, normalization/source edits, tampered offsets, unknown IDs, explicit no-match and size bounds. These establish coordinate integrity, not semantic relevance. Existing `EvidenceProducer::capture` remains the final hash, expected-text, byte-boundary, applicability and transaction gate; the prototype neither calls it nor weakens it. It cannot create authority, receipts or mutate source files.
+
+The 26 requests consumed 24,438 input and 1,842 output tokens; median latency 333–341 ms/request. Full synthetic responses are in the adjacent JSONL. Dollar cost was not returned. We did not run a head-to-head agent-workflow benchmark, so no productivity or quality improvement over current agents is claimed. Retaining an opt-in research helper costs no runtime dependency or API latency.
+
+Reproduce pointer checks with `bun test scripts/source-span-candidates.test.ts`; reproduce model choices with the shared `scripts/evaluate-jev-pilot.ts` from #112 and `scripts/fixtures/jev/selection-v1.json`, explicit private config and output. Remote disclosure happens only via that explicit command. Existing capture regressions should be run separately for stale-file and UTF-8 behavior; model probability does not bypass them.
+
+Inspiration: [line-by-line selection](https://docs.typesafe.ai/cookbooks/semantic_find), [pre-parsed value extraction](https://docs.typesafe.ai/cookbooks/pre_parsed_value_extraction_cookbook). Cookbook thresholds are not production literary thresholds.
