@@ -204,6 +204,7 @@ type RecordedCall = (String, Vec<(String, String)>);
 struct FakeTransport {
     outcomes: Mutex<VecDeque<Result<HttpResponse, HttpError>>>,
     calls: Mutex<Vec<RecordedCall>>,
+    payloads: Mutex<Vec<Value>>,
 }
 
 impl FakeTransport {
@@ -211,6 +212,7 @@ impl FakeTransport {
         Arc::new(Self {
             outcomes: Mutex::new(outcomes.into_iter().collect()),
             calls: Mutex::new(Vec::new()),
+            payloads: Mutex::new(Vec::new()),
         })
     }
 
@@ -227,6 +229,7 @@ impl ProviderTransport for FakeTransport {
         _payload: &Value,
         _timeout: Duration,
     ) -> Result<HttpResponse, HttpError> {
+        self.payloads.lock().unwrap().push(_payload.clone());
         self.get_json(url, headers, _timeout)
     }
 
@@ -935,10 +938,16 @@ fn provider_pass_builds_each_provider_types_payload() {
     assert_eq!(headers[0].1, SECRET_KEY);
 
     // anthropic wire shape.
-    let transport = FakeTransport::new(vec![Ok(HttpResponse {
-        status: 200,
-        body: json!({"content": [{"text": "{}"}]}).to_string(),
-    })]);
+    let transport = FakeTransport::new(vec![
+        Ok(HttpResponse {
+            status: 200,
+            body: json!({"max_tokens": 128000}).to_string(),
+        }),
+        Ok(HttpResponse {
+            status: 200,
+            body: json!({"content": [{"text": "{}"}]}).to_string(),
+        }),
+    ]);
     let provider = LlmDreamProvider::new(
         "anthropic-api",
         ProviderProfile::new(
@@ -955,10 +964,12 @@ fn provider_pass_builds_each_provider_types_payload() {
     provider
         .run_pass("rule_crystals", &context("book"), &[])
         .unwrap();
-    let (url, headers) = &transport.calls.lock().unwrap()[0];
+    let (url, headers) = &transport.calls.lock().unwrap()[1];
     assert_eq!(url, "http://anth.invalid/v1/messages");
     assert!(headers.contains(&("x-api-key".to_string(), SECRET_KEY.to_string())));
     assert!(headers.contains(&("anthropic-version".to_string(), "2023-06-01".to_string())));
+
+    assert_eq!(transport.payloads.lock().unwrap()[0]["max_tokens"], 128000);
 
     // Native Ollama discovers its model limit before setting the chat context.
     let transport = FakeTransport::new(vec![
@@ -1554,4 +1565,103 @@ fn completed_ollama_empty_extraction_is_valid_but_unknown_shapes_are_not() {
             valid
         );
     }
+}
+
+#[test]
+fn deepseek_uses_advertised_output_capacity_without_thinking_or_local_context_cap() {
+    let transport = FakeTransport::new(vec![
+        Ok(HttpResponse {
+            status: 200,
+            body: json!({"data":[{"id":"deepseek-flash","max_output_tokens":393216}]}).to_string(),
+        }),
+        Ok(HttpResponse {
+            status: 200,
+            body: openai_envelope("{}"),
+        }),
+        Ok(HttpResponse {
+            status: 200,
+            body: openai_envelope("{}"),
+        }),
+    ]);
+    let profile = openai_profile("https://api.deepseek.com").with_context_window(Some(1024));
+    let provider = LlmDreamProvider::new("deepseek", profile, "deepseek-flash")
+        .unwrap()
+        .with_transport(transport.clone());
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let text = "Evidence ".repeat(500);
+    let memories = completed_session(&config, "book", &[&text]);
+    assert_eq!(
+        provider
+            .fitting_memory_count("concepts", &context("book"), &memories)
+            .unwrap(),
+        1
+    );
+    for _ in 0..2 {
+        provider
+            .run_pass("concepts", &context("book"), &[])
+            .unwrap();
+    }
+    assert_eq!(transport.call_count(), 3, "model metadata is cached");
+    for payload in transport.payloads.lock().unwrap().iter() {
+        assert_eq!(payload["thinking"], json!({"type":"disabled"}));
+        assert_eq!(payload["max_tokens"], json!(393216));
+    }
+}
+
+#[test]
+fn openai_truncation_and_empty_content_report_the_actual_failure_without_source_text() {
+    for (body, expected) in [
+        (json!({"choices":[{"finish_reason":"length","message":{"content":"{broken SECRET"}}],"usage":{"completion_tokens":4096,"completion_tokens_details":{"reasoning_tokens":4096}}}).to_string(), "truncated"),
+        (json!({"choices":[{"finish_reason":"stop","message":{"content":""}}]}).to_string(), "empty content"),
+    ] {
+        let transport = FakeTransport::new(vec![Ok(HttpResponse { status: 200, body })]);
+        let provider = LlmDreamProvider::new("local", openai_profile("http://127.0.0.1:9/v1"), "m").unwrap().with_transport(transport.clone());
+        let error = provider.run_pass("concepts", &context("book"), &[]).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}"); assert!(!error.contains("SECRET"));
+        assert_eq!(transport.call_count(),1,"invalid generation is not transport-retried");
+    }
+}
+
+#[test]
+fn memory_storage_accepts_batches_larger_than_five_hundred() {
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let store = WorkspaceStore::open(&config).unwrap();
+    let session = store.start_session(&context("book")).unwrap();
+    let inputs: Vec<_> = (0..601)
+        .map(|id| ShortTermMemoryInput::new("note", format!("Memory {id}.")))
+        .collect();
+    assert_eq!(
+        store
+            .add_short_term_memories_batch(session.id, &inputs)
+            .unwrap()
+            .len(),
+        601
+    );
+    assert_eq!(
+        store.list_short_term_memories(session.id).unwrap().len(),
+        601
+    );
+}
+
+#[test]
+fn structured_answers_ignore_a_completed_thinking_prefix() {
+    let transport = FakeTransport::new(vec![Ok(HttpResponse {
+        status: 200,
+        body: json!({"choices":[{"finish_reason":"stop","message":{"content":"<think>Private reasoning</think>\n```json\n{\"crystals\":[]}\n```"}}]}).to_string(),
+    })]);
+    let provider = LlmDreamProvider::new(
+        "cloud",
+        ProviderProfile::new("Cloud", "openai", "https://cloud.invalid", SECRET_KEY, 5.0),
+        "model",
+    )
+    .unwrap()
+    .with_transport(transport);
+    assert_eq!(
+        provider
+            .run_pass("concepts", &context("book"), &[])
+            .unwrap(),
+        json!({"crystals":[]})
+    );
 }
