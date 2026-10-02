@@ -523,6 +523,16 @@ impl WorkspaceStore {
         session_id: i64,
         items: impl IntoIterator<Item = &'a ShortTermMemoryInput>,
     ) -> Result<Vec<ShortTermCapture>, WorkspaceError> {
+        let mut connection = self.connection()?;
+        self.capture_short_term_memories_with_connection(&mut connection, session_id, items)
+    }
+
+    fn capture_short_term_memories_with_connection<'a>(
+        &self,
+        connection: &mut Connection,
+        session_id: i64,
+        items: impl IntoIterator<Item = &'a ShortTermMemoryInput>,
+    ) -> Result<Vec<ShortTermCapture>, WorkspaceError> {
         let items: Vec<&ShortTermMemoryInput> = items.into_iter().collect();
         if items.is_empty() {
             return Err(WorkspaceError::EmptyBatch);
@@ -534,8 +544,10 @@ impl WorkspaceStore {
             .map(|item| prepare_short_term_memory(item, &short_memory_limits))
             .collect::<Result<_, WorkspaceError>>()?;
 
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
+        // Acquire the writer before reading session state: upgrading a WAL
+        // read snapshot can fail immediately when another writer intervenes.
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         require_active_session(&transaction, session_id)?;
 
         let mut records = Vec::with_capacity(prepared.len());
@@ -1093,6 +1105,86 @@ fn validate_session_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_waits_for_concurrent_writer_before_checking_session() {
+        use std::cell::RefCell;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        thread_local! {
+            static WRITER: RefCell<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>> = const { RefCell::new(None) };
+        }
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        Registry::open(&config)
+            .unwrap()
+            .create_series("demo", "Demo", "ja", "en", None)
+            .unwrap();
+        let store = WorkspaceStore::open(&config).unwrap();
+        let session = store
+            .start_session(&TranslationContext::new("demo", "ja", "en", "translation"))
+            .unwrap();
+        let mut connection = store.connection().unwrap();
+        let mut writer = store.connection().unwrap();
+        let (ready_send, ready) = mpsc::channel();
+        let (release, release_receive) = mpsc::channel();
+        let (committed_send, committed) = mpsc::channel();
+        let competing = std::thread::spawn(move || {
+            let transaction = writer
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .unwrap();
+            transaction
+                .execute(
+                    "update task_sessions set status='completed' where id=?1",
+                    [session.id],
+                )
+                .unwrap();
+            ready_send.send(()).unwrap();
+            release_receive
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            transaction.commit().unwrap();
+            committed_send.send(()).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        WRITER.set(Some((release.clone(), committed)));
+        connection
+            .busy_handler(Some(|_| {
+                WRITER.with_borrow_mut(|writer| {
+                    let Some((release, committed)) = writer.take() else {
+                        return false;
+                    };
+                    release.send(()).is_ok()
+                        && committed.recv_timeout(Duration::from_secs(5)).is_ok()
+                })
+            }))
+            .unwrap();
+        // Immediate BEGIN invokes the busy handler before reading the session.
+        // A deferred read-to-write upgrade returns BUSY without invoking it.
+        let result = store.capture_short_term_memories_with_connection(
+            &mut connection,
+            session.id,
+            [&ShortTermMemoryInput::new(
+                "note",
+                "Observation during a concurrent completion",
+            )],
+        );
+        let _ = release.send(()); // Also release the writer on the regression path.
+        competing.join().unwrap();
+        WRITER.set(None);
+        assert!(
+            matches!(result, Err(WorkspaceError::InactiveSession)),
+            "{result:?}"
+        );
+        assert_eq!(
+            connection
+                .query_row("select count(*) from short_term_memories", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
 
     #[test]
     fn session_path_writes_typed_metadata_and_activity() {
