@@ -197,7 +197,9 @@ test("every advertised view is selectable and renders its returned rows", async 
     );
     await screen.findByText(`${view} record one`);
     if (view === "Dream Audits") {
-      await user.click(screen.getByText("Technical record data", { exact: true }));
+      await user.click(
+        screen.getByText("Technical record data", { exact: true }),
+      );
       await screen.findByText(`${view} body`, { exact: false });
     } else {
       await screen.findByText(`${view} body`);
@@ -677,15 +679,32 @@ test("server pagination uses the full memory count and fetches the next page", a
   );
 });
 
-
 test("a removed final server page is refetched at its valid offset", async () => {
   const first = { snapshot: { ...listSnapshot.snapshot, total_count: 21 } };
-  loadSnapshotMock.mockReset().mockResolvedValueOnce(first).mockResolvedValueOnce({ snapshot: { ...listSnapshot.snapshot, total_count: 20, rows: [] } }).mockResolvedValue({ snapshot: { ...listSnapshot.snapshot, total_count: 20 } });
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce({
+      snapshot: { ...listSnapshot.snapshot, total_count: 20, rows: [] },
+    })
+    .mockResolvedValue({
+      snapshot: { ...listSnapshot.snapshot, total_count: 20 },
+    });
   render(MemoryViews, { dashboard, onNotice: vi.fn() });
   await screen.findByText("Page 1 of 2 · 21 records");
-  await waitFor(() => expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("button", { name: "Next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
   await userEvent.click(screen.getByRole("button", { name: "Next" }));
   await waitFor(() => expect(loadSnapshotMock).toHaveBeenCalledTimes(3));
-  expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", undefined, undefined, { limit: 20, offset: 0 });
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+    "Crystals",
+    undefined,
+    undefined,
+    { limit: 20, offset: 0 },
+  );
   await screen.findByRole("button", { name: /Crystal Alpha/ });
 });
