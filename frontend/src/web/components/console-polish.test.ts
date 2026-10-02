@@ -23,7 +23,7 @@ test("overview reports disabled scheduling and the actual pending count", () => 
   expect(screen.queryByText("Ready for the next run")).toBeNull();
   expect(
     screen
-      .getByRole("button", { name: "Processing…" })
+      .getByRole("button", { name: "Process memories now" })
       .hasAttribute("disabled"),
   ).toBe(true);
 });

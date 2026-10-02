@@ -88,6 +88,7 @@
 
   function applySnapshot(next: AdminSnapshot["snapshot"]) {
     snapshot = next;
+    page = Math.min(page, Math.max(0, Math.ceil(next.rows.length / pageSize) - 1));
     selectedIds = selectedIds.filter((id) => next.rows.some((row) => row.id === id));
   }
 

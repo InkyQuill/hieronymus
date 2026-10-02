@@ -124,7 +124,7 @@
   }
 
   async function remove() {
-    if (!selected || !confirm(`Delete ${selected.name}?`)) return;
+    if (!selected) return;
     busy = true; error = "";
     try { await deleteProvider(selected.id); selected = null; models = []; await loadProviders(); showNotice("Provider deleted."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
@@ -236,6 +236,7 @@
   </header>
   <section class="mx-auto w-full max-w-[90rem] px-4 py-6 sm:px-8 lg:px-12">
     {#if ["providers", "dreaming", "ingest", "release"].includes(section)}<SettingsNavigation {section} />{/if}
+    {#if error && ["providers", "admin", "memory"].includes(section)}<div role="alert" class="mb-4 border border-danger px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
     {#if section === "connect"}
       <ConnectAgent />
     {:else if section === "admin" && adminDashboard}

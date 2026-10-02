@@ -15,6 +15,7 @@
   };
 
   let { provider = null, models = [], busy = false, error = "", onSave, onDelete, onRefreshModels, onCheck, onClose }: Props = $props();
+  let limitsOpen = $state(false);
   const blankDraft = (): ProviderDraft => ({ id: "", name: "", type: "openai", url: "", key: "", timeout_seconds: "30", context_window: "" });
   let confirmDelete = $state(false);
   let draft = $state<ProviderDraft>(blankDraft());
@@ -51,8 +52,8 @@
     <label class="grid gap-1.5 text-caption text-secondary">Provider type<select class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.type}><option value="openai">OpenAI compatible</option><option value="google">Google GenAI</option><option value="anthropic">Anthropic</option><option value="ollama">Ollama</option></select></label>
     <label class="grid gap-1.5 text-caption text-secondary">Endpoint<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.url} required placeholder="https://api.example.com/v1" /></label>
     <label class="grid gap-1.5 text-caption text-secondary">API key<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.key} type="password" placeholder={provider?.key_configured ? "Stored key (leave blank to keep)" : "Required for remote providers"} /></label>
-    <details><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Advanced model limits</summary><div class="mt-3 grid gap-4">
-    <label class="grid gap-1.5 text-caption text-secondary">Timeout (seconds)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.timeout_seconds} inputmode="numeric" required /></label>
+    <details bind:open={limitsOpen}><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Advanced model limits</summary><div class="mt-3 grid gap-4">
+    <label class="grid gap-1.5 text-caption text-secondary">Timeout (seconds)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.timeout_seconds} inputmode="numeric" oninvalid={() => limitsOpen = true} required /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Context window (tokens)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={draft.context_window} inputmode="numeric" pattern="[0-9]+" placeholder="Optional" aria-describedby="context-window-help" /></label>
     <p id="context-window-help" class="text-body-sm text-secondary">Dream fits whole memories into this limit, reserving room for the reply. Use a limit supported by every model assigned to this profile. Blank uses model discovery for native Ollama; other providers keep the batch count limit.</p>
     </div></details>

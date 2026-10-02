@@ -44,7 +44,7 @@
     <p class="mt-3 max-w-prose text-body text-secondary">{dashboard.header.tagline}</p>
     <div class="mt-6 flex flex-wrap gap-2 border-t border-default pt-4">
       <a class="inline-flex min-h-11 items-center rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text no-underline" href="/admin/connect">Connect your agent</a>
-      <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)]" disabled={busy || dreamState === "WORKING"} onclick={onDream}>{busy || dreamState === "WORKING" ? "Processing…" : "Process memories now"}</button>
+      <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)]" disabled={busy || dreamState === "WORKING"} onclick={onDream}>{dreamState === "WORKING" ? "Processing…" : "Process memories now"}</button>
       <a class="inline-flex min-h-11 items-center rounded-sm border border-default bg-surface px-4 py-2 text-body-sm text-primary no-underline hover:bg-raised" href="/admin/memory">Browse memory</a>
       <a class="inline-flex min-h-11 items-center rounded-sm border border-default bg-surface px-4 py-2 text-body-sm text-primary no-underline hover:bg-raised" href="/config">Memory settings</a>
     </div>

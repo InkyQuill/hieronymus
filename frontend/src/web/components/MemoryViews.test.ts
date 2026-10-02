@@ -575,3 +575,25 @@ test("long lists have pages and omit combine checkboxes when unavailable", async
   ).toBeNull();
   expect(screen.getByText("Page 2 of 3 · 45 records")).toBeTruthy();
 });
+
+test("shrinking lists clamp the page before navigating backwards", async () => {
+  const rows = Array.from({ length: 45 }, (_, index) => ({
+    ...row,
+    id: index + 1,
+    label: `Memory ${index + 1}`,
+  }));
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValue({ snapshot: { ...listSnapshot.snapshot, rows } });
+  const component = render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await screen.findByText("Page 1 of 3 · 45 records");
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  loadSnapshotMock.mockResolvedValue({
+    snapshot: { ...listSnapshot.snapshot, rows: rows.slice(0, 25) },
+  });
+  await component.rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
+  await screen.findByText("Page 2 of 2 · 25 records");
+  await userEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(screen.getByText("Page 1 of 2 · 25 records")).toBeTruthy();
+});

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import type {
@@ -218,4 +218,20 @@ test("provider deletion requires a separate confirmation and can be cancelled", 
   await user.click(screen.getByRole("button", { name: "Delete provider" }));
   await user.click(screen.getByRole("button", { name: "Confirm deletion" }));
   expect(onDelete).toHaveBeenCalledOnce();
+});
+
+test("invalid timeout reveals its advanced disclosure", async () => {
+  render(ProviderEditor, {
+    provider,
+    onSave: vi.fn(),
+    onDelete: vi.fn(),
+    onRefreshModels: vi.fn(),
+    onCheck: vi.fn(),
+    onClose: vi.fn(),
+  });
+  const input = screen.getByLabelText("Timeout (seconds)");
+  const details = input.closest("details")!;
+  expect(details.open).toBe(false);
+  await fireEvent.invalid(input);
+  expect(details.open).toBe(true);
 });
