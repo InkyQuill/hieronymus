@@ -51,6 +51,7 @@
       : path.endsWith("/release")
         ? "release"
         : "providers";
+  let bookHeader = $state<HTMLDivElement>();
   let providers = $state.raw<ProviderProfile[]>([]);
   let selected = $state.raw<ProviderProfile | null>(null);
   let createOpen = $state(false);
@@ -214,7 +215,7 @@
 
 <main class="min-h-dvh bg-root font-sans text-primary">
   <header class="sticky top-0 z-20 border-b border-default bg-surface">
-    <div class="mx-auto flex w-full max-w-[90rem] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
+    <div class="mx-auto flex w-full flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
     <div><a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
       <VersionInfo />
     </div>
@@ -224,6 +225,7 @@
       <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'memory' ? 'bg-raised text-primary' : ''}" href="/admin/memory" aria-current={section === "memory" ? "page" : undefined}>Memory</a>
       <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory' || section === 'connect') ? 'bg-raised text-primary' : ''}" href="/config" aria-current={!["admin", "memory", "connect"].includes(section) ? "page" : undefined}>Settings</a>
     </nav>
+    <div bind:this={bookHeader}></div>
     <button class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-sm border border-default px-3 py-2 text-body-sm text-secondary hover:border-accent hover:text-primary" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
         {#if themeToggle.theme === "dark"}
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 10a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm-6.36-1.05a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.42 1.41l-.7-.7a1 1 0 0 1 0-1.42Zm10.61 0a1 1 0 0 1 1.42 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71ZM3 9h1a1 1 0 1 1 0 2H3a1 1 0 1 1 0-2Zm13 0h1a1 1 0 1 1 0 2h-1a1 1 0 1 1 0-2ZM4.34 3.64a1 1 0 0 1 1.41 0l.71.7a1 1 0 1 1-1.42 1.42l-.7-.71a1 1 0 0 1 0-1.41Zm10.61 0a1 1 0 0 1 0 1.41l-.7.71a1 1 0 1 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Z" /></svg>
@@ -234,7 +236,7 @@
     </button>
     </div>
   </header>
-  <section class="mx-auto w-full max-w-[90rem] px-4 py-6 sm:px-8 lg:px-12">
+  <section class="mx-auto w-full px-4 py-6 sm:px-8 lg:px-12">
     {#if ["providers", "dreaming", "ingest", "release"].includes(section)}<SettingsNavigation {section} />{/if}
     {#if error && ["providers", "admin", "memory"].includes(section)}<div role="alert" class="mb-4 border border-danger px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
     {#if section === "connect"}
@@ -242,9 +244,9 @@
     {:else if section === "admin" && adminDashboard}
       <AdminDashboard dashboard={adminDashboard} {busy} {error} onDream={runDreaming} />
     {:else if section === "memory" && adminDashboard}
-      <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />
+      <MemoryViews dashboard={adminDashboard} {bookHeader} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}
-      <div class="mx-auto max-w-5xl">
+      <div class="w-full">
         <div class="min-w-0">
         <header class="mb-8 flex flex-col gap-4 border-b border-default pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div><h2 class="text-display">AI providers</h2><p class="mt-2 max-w-2xl text-body text-secondary">Connect the AI services used to process your memories. Your writing agent is connected separately.</p></div>

@@ -27,7 +27,7 @@
   }
 </script>
 
-<section class="mx-auto grid max-w-4xl gap-8" aria-labelledby="connect-heading">
+<section class="grid w-full gap-8" aria-labelledby="connect-heading">
   <header>
     <h1 id="connect-heading" class="text-display">Connect your agent</h1>
     <p class="mt-4 max-w-2xl text-body text-secondary">Give Codex, Cowork, or pi access to your project memory. Setup adds a memory connection (MCP) and Hieronymus skills: the connection lets your agent read and update memory; the skills teach it how to use that memory while you write.</p>

@@ -14,9 +14,9 @@
   import ActionDialog from "./ActionDialog.svelte";
 
   type Notice = { message: string; tone: "success" | "error" };
-  type Props = { dashboard: AdminDashboard; onNotice: (notice: Notice) => void };
+  type Props = { dashboard: AdminDashboard; bookHeader?: HTMLDivElement; onNotice: (notice: Notice) => void };
 
-  let { dashboard, onNotice }: Props = $props();
+  let { dashboard, onNotice, bookHeader }: Props = $props();
 
   // The per-view action buttons and their selection requirement come from the
   // daemon's command catalog (`dashboard.command_options` = `ADMIN_COMMANDS`),
@@ -76,6 +76,12 @@
   let dialogError = $state("");
   let correction = $state<{ target?: ClaimTarget } | null>(null);
   let inspection = $state.raw<AdminActionResult | null>(null);
+
+  // Keep filter state with the memory view while presenting it in the app header.
+  function placeBookControl(node: HTMLDivElement, target?: HTMLDivElement) {
+    if (target) target.appendChild(node);
+    return { update(next?: HTMLDivElement) { if (next) next.appendChild(node); } };
+  }
 
   function commandsFor(view: string): AdminCommand[] {
     return commands.filter((command) => command.views.includes(view));
@@ -219,13 +225,13 @@
   class="grid gap-5"
   aria-label="Memory views"
 >
-  {#if !globalView}<div class="col-span-full">
-    <label for="memory-series" class="block text-caption text-secondary">Book</label>
-    <select id="memory-series" class="mt-2 min-h-11 w-full rounded-sm border border-default bg-surface px-3 text-body text-primary sm:max-w-sm" value={selectedSeries} onchange={(event) => chooseSeries(event.currentTarget.value)} disabled={runningAction !== null}>
+  {#if !globalView}<div use:placeBookControl={bookHeader} class="flex items-center gap-2">
+    <label for="memory-series" class="text-caption text-secondary">Book</label>
+    <select id="memory-series" class="min-h-11 w-64 rounded-sm border border-default bg-surface px-3 text-body text-primary" value={selectedSeries} onchange={(event) => chooseSeries(event.currentTarget.value)} disabled={runningAction !== null}>
       <option value="">All books</option>
       {#each books as book (book.slug)}<option value={book.slug}>{book.title || book.slug}</option>{/each}
     </select>
-    <p class="mt-2 text-caption text-secondary">{globalView ? "This activity log covers all books." : selectedSeries ? "Showing memories for this book. Shared concepts may also appear." : "Choose a book to focus on its memories."}</p>
+
   </div>
   {/if}
   {#if correction}<div class="col-span-full">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}

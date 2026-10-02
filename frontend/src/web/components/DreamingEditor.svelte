@@ -67,7 +67,7 @@
   }
 </script>
 
-<section class="mx-auto max-w-5xl" aria-label="Dreaming settings">
+<section class="w-full" aria-label="Dreaming settings">
   <header class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6">
     <div><h2 class="text-display">Dreaming</h2><p class="mt-2 max-w-2xl text-body text-secondary">Dreaming processes recent memories into lasting knowledge: concepts, terms, writing rules and connections. Choose which AI model handles each task.</p></div>
     <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save dreaming</button>
@@ -78,7 +78,7 @@
     <label class="grid gap-1.5 text-caption text-secondary">Interval (minutes)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.schedule_interval_minutes} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Minimum pending memories<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.min_pending_short_term_memories} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Maximum pending memories<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.max_pending_short_term_memories} /></label>
-    <label class="grid gap-1.5 text-caption text-secondary">Maximum memories per run<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" max="500" bind:value={settings.dreaming.max_short_term_memories_per_run} /></label>
+    <label class="grid gap-1.5 text-caption text-secondary">Maximum memories per run<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.max_short_term_memories_per_run} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Maximum long-term records per run<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.max_long_term_records_affected_per_run} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Maximum relations per pass<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.max_relation_records_per_pass} /></label>
   </div>

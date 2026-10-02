@@ -12,7 +12,7 @@
   onMount(() => { settings = structuredClone(initial); });
 </script>
 
-<section class="mx-auto max-w-5xl" aria-label="Incoming memory settings">
+<section class="w-full" aria-label="Incoming memory settings">
   <header class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6"><div><h2 class="text-display">Incoming memory</h2><p class="mt-2 max-w-2xl text-body text-secondary">Control which messages can enter memory and how long an individual memory can be. These limits do not edit your manuscript.</p></div><button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save memory settings</button></header>
   <div class="mt-6 grid gap-4 sm:grid-cols-2">
     <label class="grid gap-1.5 text-caption text-secondary">Warn above this many sentences<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.short_memory.warning_sentence_count} /></label>
