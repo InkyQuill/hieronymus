@@ -716,9 +716,17 @@ pub(crate) fn start_guarded(
             return Ok(lines);
         }
         if Instant::now() >= deadline {
-            return Err(LifecycleError::Service(
-                "the local service was started but never published a live endpoint".to_string(),
-            ));
+            return Err(LifecycleError::Service(format!(
+                "the local service was started but never published a live endpoint; last probe: {}; completed steps: {}; inspect diagnostics under {}{}",
+                health.detail(),
+                lines.join("; "),
+                config.data_root().display(),
+                if cfg!(target_os = "linux") {
+                    "; also inspect journalctl --user -u hieronymus.service"
+                } else {
+                    ""
+                }
+            )));
         }
         std::thread::sleep(POLL);
     }
