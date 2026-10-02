@@ -220,7 +220,7 @@ test("provider deletion requires a separate confirmation and can be cancelled", 
   expect(onDelete).toHaveBeenCalledOnce();
 });
 
-test.each(["Timeout (seconds)", "Context window"])(
+test.each(["Timeout (seconds)", "Context window (tokens)"])(
   "invalid %s reveals its advanced disclosure",
   async (label) => {
     render(ProviderEditor, {
