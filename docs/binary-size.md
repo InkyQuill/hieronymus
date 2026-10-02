@@ -164,7 +164,7 @@ itself.
 
 ## Historical Task 12 unpublished 0.9.0 candidate — 2026-09-11
 
-The historical Task 12 Linux package receipt is [desktop-task12-linux-receipt.json](desktop-task12-linux-receipt.json). It binds the actual rebuilt binaries, platform archive, shared model and final installed assets. The real disposable test passed offline install, genuine stopped 0.8.0→0.9.0 upgrade, complete-pair rollback and uninstall preservation. The stripped installed CLI also ran its actual semantic lane and completed authenticated shutdown. Native managed active-update and live tray replacement were not qualified here.
+The historical Task 12 Linux package receipt is [desktop-task12-linux-receipt.json](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/desktop-task12-linux-receipt.json). It binds the actual rebuilt binaries, platform archive, shared model and final installed assets. The real disposable test passed offline install, genuine stopped 0.8.0→0.9.0 upgrade, complete-pair rollback and uninstall preservation. The stripped installed CLI also ran its actual semantic lane and completed authenticated shutdown. Native managed active-update and live tray replacement were not qualified here.
 
 | Executable | Before strip | Shipped | Saving |
 |---|---:|---:|---:|
@@ -176,7 +176,7 @@ The platform archive is 97,753,102 bytes (93.22 MiB); the one unchanged model ar
 
 ## Historical Task 14 local Linux candidate — 2026-09-11
 
-[The Task 14 receipt](desktop-task14-linux-receipt.json) replaced Task 12 bytes for
+[The Task 14 receipt](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/desktop-task14-linux-receipt.json) replaced Task 12 bytes for
 that qualification. It does not qualify the later final-review fixes. This deliberate rebuild includes the Task 13 embedded
 console and Task 14 ownership correction. It is an unpublished `dev` candidate;
 there is no remote candidate-run or release-promotion claim.
@@ -206,7 +206,7 @@ candidate and separate diagnostic files are distinct measurements.
 
 ## Final review fixes: current local Linux candidate — 2026-09-11
 
-[The new exact-byte receipt](desktop-final-fixes-linux-receipt.json) binds source
+[The new exact-byte receipt](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/desktop-final-fixes-linux-receipt.json) binds source
 commit `1da8c61a72c370ba68917aac93aa7c44a088e92a` and the separate immutable
 `qualification/.artifacts/desktop-final-fixes/final-release/` output. The Task 14
 archive above remains unchanged and is historical evidence.

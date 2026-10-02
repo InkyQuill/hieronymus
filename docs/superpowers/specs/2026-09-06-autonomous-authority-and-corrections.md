@@ -18,7 +18,7 @@ Status: proposed implementation design for accepted ADR 0016; documentation only
 - F1/F2 remain unimplemented. This plan neither credits them as done nor expands them into a new attestation platform.
 - Preserve existing dirty ADR/product documents; write new focused artifacts. No live migration, publication or user-host configuration rewrite during tests.
 
-Governing references: [ADR 0016](../../adr/0016-autonomous-story-memory-product-vision.md), [ADR 0010](../../adr/0010-data-locations-schema-ownership-and-upgrade.md), and ADRs 0006–0015 where not amended by 0016. The [implementation review](../../astra-implementation-review-2026-09-06.md), [correctness prerequisites](../plans/2026-09-06-merged-port-correctness.md) and [F1/F2 plan](../plans/2026-09-05-rust-port-release.md) retain their historical scope and grades. Python assets describe historical behavior only.
+Governing references: [ADR 0016](../../adr/0016-autonomous-story-memory-product-vision.md), [ADR 0010](../../adr/0010-data-locations-schema-ownership-and-upgrade.md), and ADRs 0006–0015 where not amended by 0016. The [implementation review](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/astra-implementation-review-2026-09-06.md), [correctness prerequisites](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/superpowers/plans/2026-09-06-merged-port-correctness.md) and [F1/F2 plan](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/superpowers/plans/2026-09-05-rust-port-release.md) retain their historical scope and grades. Python assets describe historical behavior only.
 
 ## Existing entry points and seven acceptance scenarios
 

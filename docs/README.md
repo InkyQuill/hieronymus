@@ -1,45 +1,44 @@
-# Documentation Index
+# Documentation
 
-Historical Python application and later Rust-port tooling have separate
-snapshots. See [the archive policy](archive/python-v0.7.0.md).
+Hieronymus runs on Rust. Current work is optimization and behavior fixes; see the
+[roadmap](roadmap.md), including deferred 1.0 work.
 
-Status classification after the start of the Rust rewrite (2026-09-03).
-The Rust migration is normative; Python-era documents are kept as the
-behavioral reference being ported, then retired at cutover.
+## Using and operating Hieronymus
 
-## Normative — drives the Rust rewrite
+- [Usage](usage.md), [installation and distribution](distribution.md)
+- [Agent workflows](agent-workflows.md), [authority ingress](authority-ingress.md)
+- [Memory and Dreaming](memory-dreaming.md)
+- [Desktop platforms](desktop-platforms.md), [tray](desktop-tray.md)
+- [Automatic releases](automatic-releases.md), [CI checks](ci-checks.md)
 
-- `adr/` — decisions 0006–0016 are current (0016 supersedes 0005 and
-  amends 0011; 0002/0004 are retained history;
-  0003 is a historical data-model reference; 0008 governs the rewrite;
-  0012 as amended 2026-09-03 defines light local authentication).
-- [ADR 0016](adr/0016-autonomous-story-memory-product-vision.md) — autonomous
-  story-memory product vision; takes precedence over human-review requirements
-  in earlier specifications and workflow documents.
-- `superpowers/specs/2026-08-31-rust-*.md` — the nine normative migration
-  specifications (certification trimmed 2026-09-03; see amendment notes).
-- `roadmap.md` — current Rust implementation, optimization and behavior fixes,
-  and deferred 1.0 release work.
-- `adr/0008`, `adr/0013`, `qualification/records/` — cutover authority,
-  semantic decision, accepted qualification evidence (archived, nothing
-  further builds on the records).
-- `../AGENTS.md` — working rules.
+## Engineering contracts and verification
 
-## Behavioral reference — describes the Python behavior being ported
+- [Project rules](../AGENTS.md) and [conventions](project-conventions.md)
+- [Product direction — ADR 0016](adr/0016-autonomous-story-memory-product-vision.md)
+- [Semantic storage — ADR 0013](adr/0013-semantic-index-and-platform-support.md)
+  and [SQLite decision](research/2026-10-02-sqlite-vector-decision.md)
+- [Semantic validation](semantic-validation.md),
+  [disposable runtime qualification](rust-cutover-rehearsal.md)
+- [Agent-host acceptance](agent-host-acceptance.md) and
+  [deferred qualification and quality work](deferred/2026-09-10-native-host-qualification.md)
 
-Retire (archive or delete) at cutover, after the corresponding Rust slice
-passes its ported tests:
+The remaining ADRs preserve architecture decisions and their amendments. Read
+amendments before older text. Retained Rust/authority/desktop specifications in
+superpowers/specs/ describe detailed contracts, not unfinished port tasks;
+current code, tests and amended ADRs take precedence over obsolete phase wording.
+They are retained where their contract has not yet been replaced by a concise
+maintained guide. Qualification procedures do not establish a passing result.
 
-- `current-baseline.md`, `usage.md`, `agent-workflows.md`,
-  `service-toolkit.md`, `translation-workspace-integration.md`,
-  `memory-dreaming.md`, `project-conventions.md`
-- `superpowers/specs/2026-07-*.md` — Python implementation design history
-- `tui-design-improvements.md` — untracked owner draft
+## History
 
-## Historical — kept for context, not needed for work
+Completed execution plans, superseded UI ADRs, Python baseline documents and
+one-off reports/receipts have been removed. They remain available at
+[the pre-cleanup revision](https://github.com/InkyQuill/hieronymus/tree/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs).
+Use git log --all -- docs/<path> and git show <revision>:docs/<path> to retrieve
+an earlier document. Historical citations use immutable Git links; they are not
+current release requirements. Frozen compatibility fixtures and qualification
+harness inputs remain untouched.
 
-- `adr/0005` — superseded product vision; replaced by ADR 0016.
-- `adr/0002`, `adr/0004` — retired terminal-UI migrations
-- `archive/` — retired documents (OpenTUI conventions)
-- `rust-migration-proposal/` — superseded design input; see
-  `rust-migration-proposal/README.md`
+Keep current instructions, accepted decisions and unresolved work here. Put
+one-off CI results in run artifacts or issue/PR records rather than accumulating
+copies of logs and completed task reports in the documentation tree.
