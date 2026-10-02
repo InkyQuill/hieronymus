@@ -105,7 +105,8 @@
   }
 
   function applySnapshot(next: AdminSnapshot["snapshot"]) {
-    snapshot = next;
+    // Keep unchanged data and its DOM bindings stable during progress events.
+    if (JSON.stringify(snapshot) !== JSON.stringify(next)) snapshot = next;
     loadedSnapshot = next;
     loadedPage = page;
     page = Math.min(page, Math.max(0, Math.ceil((next.total_count ?? next.rows.length) / pageSize) - 1));
@@ -117,13 +118,13 @@
   // overwrite newer state.
   let loadSequence = 0;
 
-  async function load(view: string, selectedId?: string | number) {
+  async function load(view: string, selectedId?: string | number, background = false) {
     const sequence = ++loadSequence;
     if (selectedView !== view) { selectedIds = []; page = 0; loadedSnapshot = null; correction = null; }
     selectedView = view;
-    loading = true;
+    loading = !background;
     error = "";
-    inspection = null;
+    if (!background) inspection = null;
     try {
       const paging = ["Crystals", "Lessons", "Short-Term Memory"].includes(view)
         ? { limit: pageSize, offset: page * pageSize } : undefined;
@@ -133,7 +134,7 @@
         const lastPage = Math.max(0, Math.ceil(next.total_count / pageSize) - 1);
         if (page > lastPage) {
           page = lastPage;
-          await load(view, selectedId);
+          await load(view, selectedId, background);
           return;
         }
       }
@@ -167,7 +168,7 @@
         refreshQueued = false;
         // Re-read the selected row each pass so a selection change during the
         // in-flight fetch is honored by the coalesced follow-up.
-        await load(untrack(() => selectedView), untrack(() => snapshot?.selected?.id));
+        await load(untrack(() => selectedView), untrack(() => snapshot?.selected?.id), true);
       } while (refreshQueued);
     })().finally(() => {
       refreshInFlight = null;
