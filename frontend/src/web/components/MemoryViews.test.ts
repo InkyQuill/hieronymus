@@ -121,7 +121,10 @@ test.each(["{Enter}", " "])(
     memoryRow.focus();
     await user.keyboard(key);
     await waitFor(() =>
-      expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", 7),
+      expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", 7, undefined, {
+        limit: 20,
+        offset: 0,
+      }),
     );
   },
 );
@@ -183,7 +186,14 @@ test("every advertised view is selectable and renders its returned rows", async 
   for (const view of ALL_VIEWS) {
     await user.click(screen.getByRole("button", { name: view }));
     await waitFor(() =>
-      expect(loadSnapshotMock).toHaveBeenCalledWith(view, undefined),
+      expect(loadSnapshotMock).toHaveBeenCalledWith(
+        view,
+        undefined,
+        undefined,
+        ["Crystals", "Lessons", "Short-Term Memory"].includes(view)
+          ? { limit: 20, offset: 0 }
+          : undefined,
+      ),
     );
     await screen.findByText(`${view} record one`);
     await screen.findByText(`${view} body`);
@@ -204,13 +214,21 @@ test("selection survives a background dashboard refresh by stable id", async () 
     await screen.findByRole("button", { name: /Crystal Alpha/ }),
   );
   await screen.findByText("Evidence");
-  expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", 7);
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", 7, undefined, {
+    limit: 20,
+    offset: 0,
+  });
 
   // A fresh dashboard object (what App.svelte hands down after an admin event)
   // must trigger a reload that keeps the selected row.
   await rerender({ dashboard: { ...dashboard }, onNotice: vi.fn() });
   await waitFor(() =>
-    expect(loadSnapshotMock).toHaveBeenLastCalledWith("Crystals", 7),
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+      "Crystals",
+      7,
+      undefined,
+      { limit: 20, offset: 0 },
+    ),
   );
 });
 
@@ -222,7 +240,12 @@ test("the dashboard effect does not fetch on first render", async () => {
   // Give any stray effect run a tick to fire; the count must not move.
   await new Promise((resolve) => setTimeout(resolve, 10));
   expect(loadSnapshotMock).toHaveBeenCalledTimes(1);
-  expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", undefined);
+  expect(loadSnapshotMock).toHaveBeenCalledWith(
+    "Crystals",
+    undefined,
+    undefined,
+    { limit: 20, offset: 0 },
+  );
 });
 
 test("a stale snapshot response does not overwrite a newer one", async () => {
@@ -446,6 +469,7 @@ test("book selection scopes requests, survives view changes and remembers the ch
       "Crystals",
       undefined,
       "book-b",
+      { limit: 20, offset: 0 },
     ),
   );
   await user.click(screen.getByRole("button", { name: "Concepts" }));
@@ -454,12 +478,18 @@ test("book selection scopes requests, survives view changes and remembers the ch
       "Concepts",
       undefined,
       "book-b",
+      undefined,
     ),
   );
   expect(localStorage.getItem("hieronymus.memory.series")).toBe("book-b");
   await user.selectOptions(screen.getByLabelText("Book"), "");
   await waitFor(() =>
-    expect(loadSnapshotMock).toHaveBeenLastCalledWith("Concepts", undefined),
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+      "Concepts",
+      undefined,
+      undefined,
+      undefined,
+    ),
   );
   localStorage.clear();
 });
@@ -479,6 +509,7 @@ test("saved book is restored and add-memory uses its slug", async () => {
       "Crystals",
       undefined,
       "book-a",
+      { limit: 20, offset: 0 },
     ),
   );
   await user.click(await screen.findByRole("button", { name: "Add Memory" }));
@@ -509,7 +540,10 @@ test("action results are refreshed through the active book filter", async () => 
     await screen.findByRole("button", { name: "Reinforce Crystal" }),
   );
   await waitFor(() =>
-    expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", 7, "book-a"),
+    expect(loadSnapshotMock).toHaveBeenCalledWith("Crystals", 7, "book-a", {
+      limit: 20,
+      offset: 0,
+    }),
   );
   expect(screen.queryByText("Other book")).toBeNull();
 });
@@ -549,4 +583,85 @@ test("a late response from the previous book cannot replace the selected book", 
     expect(screen.queryByText("Stale book record")).toBeNull(),
   );
   expect((screen.getByLabelText("Book") as HTMLSelectElement).value).toBe("b");
+});
+
+test("server pagination uses the full memory count and fetches the next page", async () => {
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: { ...listSnapshot.snapshot, total_count: 749 },
+    })
+    .mockResolvedValue({
+      snapshot: {
+        ...listSnapshot.snapshot,
+        total_count: 749,
+        rows: [{ ...row, id: 21, label: "Memory 21" }],
+      },
+    });
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await screen.findByText("Page 1 of 38 · 749 records");
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("button", { name: "Next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByRole("button", { name: /Memory 21/ });
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+    "Crystals",
+    undefined,
+    undefined,
+    { limit: 20, offset: 20 },
+  );
+});
+
+test("a removed final server page is refetched at its valid offset", async () => {
+  const first = { snapshot: { ...listSnapshot.snapshot, total_count: 21 } };
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce({
+      snapshot: { ...listSnapshot.snapshot, total_count: 20, rows: [] },
+    })
+    .mockResolvedValue({
+      snapshot: { ...listSnapshot.snapshot, total_count: 20 },
+    });
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await screen.findByText("Page 1 of 2 · 21 records");
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("button", { name: "Next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(loadSnapshotMock).toHaveBeenCalledTimes(3));
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+    "Crystals",
+    undefined,
+    undefined,
+    { limit: 20, offset: 0 },
+  );
+  await screen.findByRole("button", { name: /Crystal Alpha/ });
+});
+
+test("a failed server page never displays the previous page under its new number", async () => {
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: { ...listSnapshot.snapshot, total_count: 40 },
+    })
+    .mockRejectedValue(new Error("Page unavailable"));
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await screen.findByText("Page 1 of 2 · 40 records");
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("button", { name: "Next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Page unavailable");
+  expect(screen.queryByRole("button", { name: /Crystal Alpha/ })).toBeNull();
 });

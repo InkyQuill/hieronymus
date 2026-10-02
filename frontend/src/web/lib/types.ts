@@ -140,6 +140,7 @@ export type AdminSnapshot = {
   snapshot: {
     view: string;
     rows: AdminRow[];
+    total_count?: number;
     selected: AdminRow | null;
     detail: AdminDetail;
     /// Active filter labels for the view (empty today; W2 keeps the key so

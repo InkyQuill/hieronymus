@@ -545,3 +545,47 @@ fn view_details_match_the_python_shape() {
         ]
     );
 }
+
+#[test]
+fn memory_counts_and_later_pages_are_not_capped_at_five_hundred() {
+    let (_root, config) = seeded_root();
+    let mut c = open_migrated(&config.database_path()).unwrap();
+    let t = c.transaction().unwrap();
+    let session: i64 = t
+        .query_row(
+            "select id from task_sessions where series_slug='main'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    for id in 0..601 {
+        t.execute("insert into short_term_memories(session_id, source_role, kind, text, created_at) values(?1,'user','note',?2,?3)", rusqlite::params![session,format!("Record {id}"),TS]).unwrap();
+        t.execute("insert into crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,status,created_at,updated_at) values('lesson','evidence',?1,'series','series:main','main','ja','en','[]',0.8,0.9,'active',?2,?2)",rusqlite::params![format!("Crystal {id}"),TS]).unwrap();
+    }
+    t.commit().unwrap();
+    for (view, total) in [
+        ("Short-Term Memory", 602),
+        ("Crystals", 603),
+        ("Lessons", 602),
+    ] {
+        let page = snapshot(
+            &config,
+            view,
+            &json!({"series":"main","limit":20,"offset":500}),
+        )
+        .unwrap();
+        assert_eq!(page["total_count"], json!(total), "{view}");
+        assert_eq!(page["rows"].as_array().unwrap().len(), 20, "{view}");
+        let last = snapshot(
+            &config,
+            view,
+            &json!({"series":"main","limit":20,"offset":600}),
+        )
+        .unwrap();
+        assert_eq!(
+            last["rows"].as_array().unwrap().len(),
+            (total - 600) as usize,
+            "{view}"
+        );
+    }
+}

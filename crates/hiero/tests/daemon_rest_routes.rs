@@ -477,7 +477,9 @@ fn api_admin_snapshot_matches_frozen_target() {
     let (fixture, root, _daemon) = start_daemon_with_browser_session();
     let crystal_id = seed_synthetic_admin_data(root.path());
     assert_eq!(crystal_id, 1, "the oracle snapshot selects crystal id 1");
-    assert_frozen_contract("http.route.get.api.admin.snapshot", &fixture, |_| {});
+    assert_frozen_contract("http.route.get.api.admin.snapshot", &fixture, |body| {
+        body["snapshot"]["total_count"] = json!(1);
+    });
 }
 
 #[test]
@@ -499,7 +501,9 @@ fn api_admin_actions_match_frozen_targets() {
         "http.route.post.api.admin.actions.action",
         &target,
         &fixture,
-        |_| {},
+        |body| {
+            body["snapshot"]["total_count"] = json!(1);
+        },
     );
 
     // Unknown actions are 404 envelope errors.
@@ -548,6 +552,7 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
             .unwrap()
             .contains(&json!({"slug": "synthetic-series", "title": "Synthetic Series"}))
     );
+    expected["snapshot"]["total_count"] = json!(1);
     expected["readiness"] = body["readiness"].clone();
     assert!(body["readiness"]["level"].is_string());
 

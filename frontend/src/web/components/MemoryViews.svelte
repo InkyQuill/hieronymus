@@ -53,6 +53,7 @@
   const globalView = $derived(["Dream Runs", "Dream Audits", "Audit Log"].includes(selectedView));
   function chooseSeries(value: string) {
     selectedSeries = value;
+    page = 0;
     selectedIds = []; snapshot = null; correction = null; dialogCommand = null;
     try { localStorage.setItem("hieronymus.memory.series", value); } catch { /* Storage may be disabled. */ }
     const url = new URL(window.location.href);
@@ -62,6 +63,18 @@
   }
   let selectedView = $state("");
   let selectedIds = $state<Array<string | number>>([]);
+  let page = $state(0);
+  const pageSize = 20;
+  const recordCount = $derived(snapshot?.total_count ?? snapshot?.rows.length ?? 0);
+  const pageCount = $derived(Math.max(1, Math.ceil(recordCount / pageSize)));
+  const visibleRows = $derived(snapshot?.total_count !== undefined ? snapshot.rows : (snapshot?.rows ?? []).slice(page * pageSize, (page + 1) * pageSize));
+  function changePage(next: number) {
+    page = next;
+    if (snapshot?.total_count !== undefined) {
+      snapshot = null;
+      void load(selectedView);
+    }
+  }
   let snapshot = $state.raw<AdminSnapshot["snapshot"] | null>(null);
   let loading = $state(false);
   let error = $state("");
@@ -82,6 +95,7 @@
 
   function applySnapshot(next: AdminSnapshot["snapshot"]) {
     snapshot = next;
+    page = Math.min(page, Math.max(0, Math.ceil((next.total_count ?? next.rows.length) / pageSize) - 1));
     selectedIds = selectedIds.filter((id) => next.rows.some((row) => row.id === id));
   }
 
@@ -92,14 +106,24 @@
 
   async function load(view: string, selectedId?: string | number) {
     const sequence = ++loadSequence;
-    if (selectedView !== view) { selectedIds = []; correction = null; }
+    if (selectedView !== view) { selectedIds = []; page = 0; correction = null; }
     selectedView = view;
     loading = true;
     error = "";
     inspection = null;
     try {
-      const next = (await (selectedSeries ? loadAdminSnapshot(view, selectedId, selectedSeries) : loadAdminSnapshot(view, selectedId))).snapshot;
+      const paging = ["Crystals", "Lessons", "Short-Term Memory"].includes(view)
+        ? { limit: pageSize, offset: page * pageSize } : undefined;
+      const next = (await loadAdminSnapshot(view, selectedId, selectedSeries || undefined, paging)).snapshot;
       if (sequence !== loadSequence) return;
+      if (paging && next.total_count !== undefined) {
+        const lastPage = Math.max(0, Math.ceil(next.total_count / pageSize) - 1);
+        if (page > lastPage) {
+          page = lastPage;
+          await load(view, selectedId);
+          return;
+        }
+      }
       applySnapshot(next);
     } catch (reason) {
       if (sequence !== loadSequence) return;
@@ -147,7 +171,7 @@
       dashboardSeen = true;
       return;
     }
-    refreshCurrentView();
+    untrack(refreshCurrentView);
   });
 
   async function post(command: AdminCommand, body: AdminActionBody) {
@@ -161,7 +185,7 @@
       loadSequence += 1;
       loading = false;
       selectedIds = [];
-      if (selectedSeries) await load(selectedView, result.snapshot.selected?.id);
+      if (selectedSeries || result.snapshot.total_count !== undefined || snapshot?.total_count !== undefined) await load(selectedView, result.snapshot.selected?.id);
       else applySnapshot(result.snapshot);
       dialogCommand = null;
       if (result.provenance || result.reasons || result.review || result.run) {
@@ -235,7 +259,7 @@
       Find a record, read its context, and correct a rendering or claim when needed.
     </p>
     <div class="mt-6 border-t border-default pt-4 text-caption text-secondary">
-      {snapshot?.rows.length ?? 0} records
+      {recordCount} records
     </div>
   </div>
   <div class="min-w-0">
@@ -257,6 +281,7 @@
     {#if loading}
       <p class="text-body text-secondary">Loading {selectedView}…</p>
     {:else if snapshot}
+      {#if recordCount > pageSize}<nav class="mb-4 flex flex-wrap items-center gap-3" aria-label="Record pages"><span class="text-body-sm text-secondary">Page {page + 1} of {pageCount} · {recordCount} records</span><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page === 0 || loading} onclick={() => changePage(page - 1)}>Previous</button><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page >= pageCount - 1 || loading} onclick={() => changePage(page + 1)}>Next</button></nav>{/if}
       <div class="grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(20rem,.8fr)]">
         <div
           class="overflow-x-auto rounded-md border border-default"
@@ -281,7 +306,7 @@
                   ></tr
                 ></thead
               ><tbody>
-                {#each snapshot.rows as row (row.id)}
+                {#each visibleRows as row (row.id)}
                   <tr
                     class="cursor-pointer border-b border-default last:border-b-0 hover:[&>td]:bg-raised {snapshot.selected
                       ?.id === row.id
