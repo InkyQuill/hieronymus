@@ -1,5 +1,6 @@
 use chrono::Utc;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 use serde_json::json;
 
 use crate::data_root::HieronymusConfig;
@@ -18,6 +19,8 @@ const MAX_SEARCH_LIMIT: usize = 50;
 pub enum WorkspaceError {
     #[error(transparent)]
     Claim(#[from] crate::authority_models::DecisionErrorV1),
+    #[error("bound session changed or belongs to another series")]
+    SessionChanged,
     #[error("unknown session: {0}")]
     UnknownSession(i64),
     #[error("research mode is request-local and cannot be stored in a session")]
@@ -457,6 +460,32 @@ impl WorkspaceStore {
             }
             return Ok(false);
         }
+        Ok(true)
+    }
+
+    /// Complete exactly the observed bound session. Concurrent capture wins
+    /// or termination wins under the same SQLite write lock; stale recovery
+    /// cannot close a session whose activity changed after observation.
+    pub fn complete_bound_session(
+        &self,
+        session_id: i64,
+        series_id: i64,
+        observed_activity: &str,
+    ) -> Result<bool, WorkspaceError> {
+        let mut db = self.connection()?;
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let current: Option<(String,String)> = tx.query_row("select t.status,t.last_activity_at from task_sessions t join series s on s.slug=t.series_slug where t.id=?1 and s.id=?2",rusqlite::params![session_id,series_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        let Some((status, activity)) = current else {
+            return Err(WorkspaceError::SessionChanged);
+        };
+        if status != "active" {
+            return Ok(false);
+        }
+        if activity != observed_activity {
+            return Err(WorkspaceError::SessionChanged);
+        }
+        tx.execute("update task_sessions set status='completed',completed_at=?1 where id=?2 and status='active'",rusqlite::params![now_iso8601(),session_id])?;
+        tx.commit()?;
         Ok(true)
     }
 

@@ -1,0 +1,8 @@
+{
+  "scope": "Bound host session completion and advisory Dream history",
+  "rationale": "Issues #92, #100 and #101 connect session termination, meaningful Dream opportunities and truthful completion history. Frozen Python fixtures remain unchanged.",
+  "additions": ["Native SessionEnd/SessionStart handlers in generated Codex and Claude-compatible bundles", "Explicit stopped-host recover-session command for one exact binding", "Optional paired expected_series_id/expected_last_activity_at guards on session_complete", "Private termination intent journal and replay acknowledgement"],
+  "corrections": ["Identity-free legacy session-end reports handled=false and no memory completion", "Inactive sessions cannot be rebound for capture", "Advisory decay failure rolls back scores and completes persisted work with an audited warning", "Failure history retains the committed provider prefix and never marks completed persistence phases failed", "Passive decay leaves the edit timestamp unchanged so overlapping independent sessions can each count"],
+  "invariants": ["No idle-based automatic abandonment", "Resume cancels pending termination only after verifying an active bound session", "Missing or foreign bindings do not complete unrelated sessions", "Capture and conditional completion serialize in SQLite", "No factual-confidence or active-rule changes through passive decay"],
+  "qualification": "Disposable CLI/daemon tests validate the implementation, not native installed-host acceptance"
+}

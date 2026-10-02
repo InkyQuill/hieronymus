@@ -584,3 +584,290 @@ fn fresh_monolingual_session_binds_observed_zero_revision_without_authority_chan
         0
     );
 }
+
+#[test]
+fn native_session_end_completes_only_bound_session_and_replays() {
+    use hiero::agent_prompt_delivery::handle_session_end;
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let event =
+        json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session","reason":"other"});
+    assert_eq!(
+        handle_session_end(&config, "codex", &event).unwrap()["reason"],
+        "no_bound_session"
+    );
+    assert_eq!(
+        handle_session_end(
+            &config,
+            "claude",
+            &json!({"hook_event_name":"SessionEnd","session_id":"foreign"})
+        )
+        .unwrap()["reason"],
+        "no_bound_session"
+    );
+    assert!(
+        handle_session_end(
+            &config,
+            "claude",
+            &json!({"hook_event_name":"Stop","session_id":"actual-host-session"})
+        )
+        .is_err()
+    );
+    let before = context["expected_revision"].as_i64().unwrap();
+    let first = handle_session_end(&config, "claude", &event).unwrap();
+    assert_eq!(first["status"], "completed", "{first}");
+    assert_eq!(first["session_id"], context["session_id"]);
+    assert_eq!(
+        handle_session_end(&config, "claude", &event).unwrap()["replayed"],
+        true
+    );
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    let status: String = db
+        .query_row(
+            "select status from task_sessions where id=?",
+            [context["session_id"].as_i64().unwrap()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "completed");
+    assert_eq!(
+        db.query_row(
+            "select revision from authority_state where series_id=?",
+            [context["series_id"].as_i64().unwrap()],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        before
+    );
+    assert_eq!(submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"})).unwrap()["reason"],"capture_paused");
+    assert!(bind_context(&config, &context).is_err());
+}
+
+#[test]
+fn offline_termination_is_durable_and_explicit_recovery_completes_after_restart() {
+    use hiero::agent_prompt_delivery::{handle_session_end, recover_session};
+    let (root, daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    drop(daemon);
+    let event = json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session"});
+    assert_eq!(
+        handle_session_end(&config, "claude", &event).unwrap()["status"],
+        "pending"
+    );
+    let recovery = json!({"host_session_id":"actual-host-session","session_id":context["session_id"],"confirm_abandoned":true});
+    assert!(recover_session(&config,"claude",&json!({"host_session_id":"actual-host-session","session_id":999,"confirm_abandoned":true})).is_err());
+    assert!(
+        recover_session(
+            &config,
+            "claude",
+            &json!({"host_session_id":"actual-host-session","session_id":context["session_id"]})
+        )
+        .is_err()
+    );
+    let _daemon = common::start_daemon(root.path());
+    assert_eq!(
+        recover_session(&config, "claude", &recovery).unwrap()["status"],
+        "completed"
+    );
+    for entry in std::fs::read_dir(root.path().join("host-endings")).unwrap() {
+        let bytes = hieronymus::private_file::read_private(&entry.unwrap().path()).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["completed"],
+            true
+        );
+    }
+}
+
+#[test]
+fn resume_cancels_pending_termination_without_closing_live_session() {
+    use hiero::agent_prompt_delivery::{handle_session_end, handle_session_start};
+    let (root, daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    drop(daemon);
+    assert_eq!(
+        handle_session_end(
+            &config,
+            "claude",
+            &json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session"})
+        )
+        .unwrap()["status"],
+        "pending"
+    );
+    assert_eq!(handle_session_start(&config,"claude",&json!({"hook_event_name":"SessionStart","session_id":"actual-host-session","source":"resume"})).unwrap()["status"],"active");
+    assert_eq!(
+        std::fs::read_dir(root.path().join("host-endings"))
+            .unwrap()
+            .count(),
+        0
+    );
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row(
+            "select status from task_sessions where id=?",
+            [context["session_id"].as_i64().unwrap()],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "active"
+    );
+    let _daemon = common::start_daemon(root.path());
+    let response=submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"})).unwrap();
+    assert!(response["result"].get("Applied").is_some(), "{response}");
+}
+
+#[test]
+fn conditional_completion_rejects_concurrent_activity_and_foreign_series() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    let id = context["session_id"].as_i64().unwrap();
+    let series = context["series_id"].as_i64().unwrap();
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    let activity: String = db
+        .query_row(
+            "select last_activity_at from task_sessions where id=?",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let store = hieronymus::workspace::WorkspaceStore::open(&config).unwrap();
+    assert!(
+        store
+            .complete_bound_session(id, series + 1, &activity)
+            .is_err()
+    );
+    store
+        .add_short_term_memory(
+            id,
+            &hieronymus::workspace::ShortTermMemoryInput::new(
+                "note",
+                "A concurrent new observation",
+            ),
+        )
+        .unwrap();
+    assert!(store.complete_bound_session(id, series, &activity).is_err());
+    let current: String = db
+        .query_row(
+            "select last_activity_at from task_sessions where id=?",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(store.complete_bound_session(id, series, &current).unwrap());
+    assert!(
+        store
+            .add_short_term_memory(
+                id,
+                &hieronymus::workspace::ShortTermMemoryInput::new(
+                    "note",
+                    "Capture after termination"
+                )
+            )
+            .is_err()
+    );
+    assert!(!store.complete_bound_session(id, series, &activity).unwrap());
+}
+
+#[test]
+fn lifecycle_cli_uses_native_envelope_and_generated_hooks() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let output = cli(
+        root.path(),
+        &["session-end", "--host", "claude"],
+        &json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session","reason":"other"}),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["status"], "completed");
+    let files = hiero::agent_plugins::render(&config).unwrap();
+    let hooks = files
+        .iter()
+        .find(|(p, _)| p.ends_with("codex/hooks/hooks.codex.json"))
+        .unwrap();
+    let hooks: Value = serde_json::from_str(&hooks.1).unwrap();
+    for (event, command) in [
+        ("SessionEnd", "session-end"),
+        ("SessionStart", "session-start"),
+    ] {
+        assert!(
+            hooks["hooks"][event][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{command} --host codex"))
+        );
+    }
+}
+
+#[test]
+fn resume_does_not_undo_explicit_unbind_pause() {
+    use hiero::agent_prompt_delivery::{handle_session_end, handle_session_start, unbind_context};
+    let (root, daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    drop(daemon);
+    handle_session_end(
+        &config,
+        "claude",
+        &json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session"}),
+    )
+    .unwrap();
+    unbind_context(
+        &config,
+        &json!({"host":"claude","host_session_id":"actual-host-session"}),
+    )
+    .unwrap();
+    handle_session_start(&config,"claude",&json!({"hook_event_name":"SessionStart","session_id":"actual-host-session","source":"resume"})).unwrap();
+    assert_eq!(submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"})).unwrap()["reason"],"capture_paused");
+}
+
+#[test]
+fn resume_after_lost_completion_ack_requires_fresh_active_binding() {
+    use hiero::agent_prompt_delivery::{handle_session_end, handle_session_start};
+    let (root, daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    drop(daemon);
+    handle_session_end(
+        &config,
+        "claude",
+        &json!({"hook_event_name":"SessionEnd","session_id":"actual-host-session"}),
+    )
+    .unwrap();
+    // Simulate server commit followed by lost acknowledgement: journal remains pending.
+    hieronymus::workspace::WorkspaceStore::open(&config)
+        .unwrap()
+        .complete_session(context["session_id"].as_i64().unwrap())
+        .unwrap();
+    let result=handle_session_start(&config,"claude",&json!({"hook_event_name":"SessionStart","session_id":"actual-host-session","source":"resume"})).unwrap();
+    assert_eq!(result["status"], "binding_required");
+    assert_eq!(submit_prompt(&config,"claude",&json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"})).unwrap()["reason"],"capture_paused");
+}
+
+#[test]
+fn crashed_host_without_termination_event_has_explicit_cli_recovery() {
+    let (root, _daemon, context) = prepared();
+    let config = HieronymusConfig::new(root.path());
+    bind_context(&config, &context).unwrap();
+    let output = cli(
+        root.path(),
+        &["recover-session", "--host", "claude"],
+        &json!({"host_session_id":"actual-host-session","session_id":context["session_id"],"confirm_abandoned":true}),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["status"],
+        "completed"
+    );
+}

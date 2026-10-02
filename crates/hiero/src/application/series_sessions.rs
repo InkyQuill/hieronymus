@@ -147,6 +147,8 @@ fn session_start(application: &Application, arguments: &Value) -> Result<Value, 
 #[derive(Deserialize)]
 struct SessionComplete {
     session_id: i64,
+    expected_series_id: Option<i64>,
+    expected_last_activity_at: Option<String>,
 }
 
 /// Complete a session so it can be dreamed. Like the Python tool, a session
@@ -154,7 +156,22 @@ struct SessionComplete {
 fn session_complete(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let args = decode::<SessionComplete>(arguments)?;
     let store = WorkspaceStore::open(application.config()).map_err(domain)?;
-    store.complete_session(args.session_id).map_err(domain)?;
+    match (args.expected_series_id, args.expected_last_activity_at) {
+        (Some(series), Some(activity)) => {
+            store
+                .complete_bound_session(args.session_id, series, &activity)
+                .map_err(domain)?;
+        }
+        (None, None) => {
+            store.complete_session(args.session_id).map_err(domain)?;
+        }
+        _ => {
+            return Err(AppError::Invalid(
+                "bound completion requires both expected_series_id and expected_last_activity_at"
+                    .into(),
+            ));
+        }
+    }
     Ok(json!({ "session_id": args.session_id, "completed": true }))
 }
 

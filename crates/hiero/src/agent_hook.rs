@@ -1,10 +1,10 @@
 //! `hiero agent-hook`: the Codex-style session hooks (the Python
 //! `agent_hooks` behavior). `session-start` reports the nearest
-//! `.hieronymus.json` project context; `session-end` reports completion. With
+//! `.hieronymus.json` project context; `session-end` reports missing host identity. With
 //! `--json` both embed the local service discovery payload, rendered exactly
 //! like the Python `render_json` (`json.dumps(..., ensure_ascii=False,
-//! sort_keys=True)`) so the frozen compatibility fixtures byte-match. The
-//! session hooks are read-only: they never start a daemon or write state.
+//! sort_keys=True)`) so the frozen compatibility fixtures byte-match. These
+//! legacy discovery hooks are read-only: they never start a daemon or write state.
 //! Trusted prompt binding/delivery commands are separate in `agent_prompt_delivery`.
 
 use std::path::Path;
@@ -71,12 +71,16 @@ fn cws_message() -> &'static str {
 pub fn session_end(config: &HieronymusConfig) -> HookOutput {
     let fields = vec![
         ("event", Field::text("session-end")),
-        ("handled", Field::flag(true)),
+        ("handled", Field::flag(false)),
+        (
+            "reason",
+            Field::text("host identity missing; memory session not completed"),
+        ),
         ("service", service_field(config)),
     ];
     HookOutput {
         json: render(&Field::object(fields)),
-        human: "Hieronymus session hook complete".to_string(),
+        human: "Host identity missing; Hieronymus memory session not completed".to_string(),
     }
 }
 

@@ -172,16 +172,16 @@ fn unknown_context_empty_and_failed_completion_never_decay() {
     let result = DreamService::open(&f.config, WorkflowResolver::deterministic())
         .unwrap()
         .run_all("manual", true, false);
-    assert!(result.is_err(), "{result:?}");
+    assert!(result.is_ok(), "{result:?}");
     assert_eq!(f.scores(id), (0.5, 0.5));
     assert_eq!(f.count("select count(*) from memory_events where event_type in ('cycle_decay','dream_decay_opportunity')"),0);
     assert_eq!(
-        f.count("select count(*) from dream_phase_runs where phase='salience_decay'"),
+        f.count("select count(*) from dream_phase_runs where phase='salience_decay' and status='completed'"),
         0
     );
     assert_eq!(
         f.count("select count(*) from dream_runs where status='failed'"),
-        1
+        0
     );
 }
 
@@ -213,19 +213,19 @@ fn decay_audit_failure_rolls_back_score_ledger_and_success_status() {
     let f = Fixture::new();
     let id = f.crystal("book", NewCrystal::new("lesson", "Audited lesson"));
     f.session(&Fixture::context("book"), 1);
-    open_migrated(&f.config.database_path()).unwrap().execute_batch("create trigger reject_decay_audit before insert on dream_audit_entries when json_extract(new.payload_json,'$.phase_name')='salience_decay' begin select raise(abort,'fixture audit failure'); end;").unwrap();
+    open_migrated(&f.config.database_path()).unwrap().execute_batch("create trigger reject_decay_audit before insert on dream_audit_entries when new.event_type='phase_completed' and json_extract(new.payload_json,'$.phase_name')='salience_decay' begin select raise(abort,'fixture audit failure'); end;").unwrap();
     let result = DreamService::open(&f.config, WorkflowResolver::deterministic())
         .unwrap()
         .run_all("manual", true, false);
-    assert!(result.is_err(), "{result:?}");
+    assert!(result.is_ok(), "{result:?}");
     assert_eq!(f.scores(id), (0.5, 0.5));
     assert_eq!(f.count("select count(*) from memory_events where event_type in ('cycle_decay','dream_decay_opportunity')"),0);
     assert_eq!(
         f.count("select count(*) from dream_runs where status='completed'"),
-        0
+        1
     );
     assert_eq!(
-        f.count("select count(*) from dream_phase_runs where phase='salience_decay'"),
+        f.count("select count(*) from dream_phase_runs where phase='salience_decay' and status='completed'"),
         0
     );
 }
@@ -254,5 +254,115 @@ fn ambiguous_context_at_completion_skips_decay_without_failing_run() {
     assert_eq!(
         f.count("select count(*) from memory_events where event_type='dream_decay_opportunity'"),
         0
+    );
+}
+
+#[test]
+fn overlapping_sessions_each_decay_without_masking_real_edits() {
+    let f = Fixture::new();
+    let eligible = f.crystal("book", NewCrystal::new("lesson", "Shared unused lesson"));
+    let edited = f.crystal(
+        "book",
+        NewCrystal::new("lesson", "Edited during overlapping work"),
+    );
+    f.session(&Fixture::context("book"), 1);
+    f.session(&Fixture::context("book"), 1);
+    let db = open_migrated(&f.config.database_path()).unwrap();
+    db.execute(
+        "update crystals set text='A real correction',updated_at='2099-01-01T00:00:00Z' where id=?",
+        [edited],
+    )
+    .unwrap();
+    f.run();
+    assert!((f.scores(eligible).0 - 0.46).abs() < 1e-9);
+    assert_eq!(f.scores(edited), (0.5, 0.5));
+    assert_eq!(
+        f.count("select count(*) from memory_events where event_type='dream_decay_opportunity'"),
+        2
+    );
+    f.run();
+    assert!((f.scores(eligible).0 - 0.46).abs() < 1e-9);
+}
+
+#[test]
+fn advisory_failure_keeps_persistence_history_and_drains_remaining_sessions() {
+    let f = Fixture::new();
+    f.crystal("book", NewCrystal::new("lesson", "Eligible lesson"));
+    f.session(&Fixture::context("book"), 1);
+    f.session(&Fixture::context("book"), 1);
+    open_migrated(&f.config.database_path()).unwrap().execute_batch("create trigger reject_decay before insert on memory_events when new.event_type='dream_decay_opportunity' begin select raise(abort,'fixture completion failure'); end;").unwrap();
+    let result = DreamService::open(&f.config, WorkflowResolver::deterministic())
+        .unwrap()
+        .run_all("manual", true, false)
+        .unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(result.input_count, 2);
+    assert_eq!(result.created_crystal_count, 2);
+    assert!(result.record.error.contains("salience_decay skipped"));
+    assert_eq!(
+        f.count(
+            "select count(*) from dream_phase_runs where phase='persistence' and status='completed'"
+        ),
+        2
+    );
+    assert_eq!(f.count("select count(*) from dream_audit_entries where event_type='phase_failed' and json_extract(payload_json,'$.phase_name')='salience_decay'"),2);
+    assert_eq!(f.count("select count(*) from dream_runs where status='completed' and input_count=1 and created_crystal_count=1"),2);
+}
+
+#[test]
+fn unavailable_warning_audit_keeps_committed_counts_and_phase_history() {
+    let f = Fixture::new();
+    f.crystal("book", NewCrystal::new("lesson", "Applicable lesson"));
+    f.session(&Fixture::context("book"), 1);
+    open_migrated(&f.config.database_path()).unwrap().execute_batch("create trigger reject_all_decay_audits before insert on dream_audit_entries when json_extract(new.payload_json,'$.phase_name')='salience_decay' begin select raise(abort,'fixture diagnostic storage failure'); end;").unwrap();
+    let result = DreamService::open(&f.config, WorkflowResolver::deterministic())
+        .unwrap()
+        .run_all("manual", true, false);
+    assert!(result.is_err());
+    assert_eq!(f.count("select count(*) from dream_runs where status='failed' and input_count=1 and created_crystal_count=1"),1);
+    assert_eq!(
+        f.count(
+            "select count(*) from dream_phase_runs where phase='persistence' and status='completed'"
+        ),
+        1
+    );
+    assert_eq!(
+        f.count("select count(*) from short_term_memories where archived_at is not null"),
+        1
+    );
+}
+
+#[test]
+fn unavailable_warning_audit_keeps_committed_reconsolidation_count() {
+    let f = Fixture::new();
+    let original = f.crystal(
+        "book",
+        NewCrystal::new("lesson", "The binding ritual needs chalk."),
+    );
+    let session = f.session(&Fixture::context("book"), 2);
+    let db = open_migrated(&f.config.database_path()).unwrap();
+    // Turn one captured observation into a divergent working copy; the other
+    // observation still exercises provider persistence before reconsolidation.
+    db.execute(
+        "update short_term_memories set source_crystal_id=?1,
+         text='Completely different content about quantum tea ceremony protocols.'
+         where id=(select min(id) from short_term_memories where session_id=?2)",
+        params![original, session],
+    )
+    .unwrap();
+    db.execute_batch("create trigger reject_all_decay_audits before insert on dream_audit_entries when json_extract(new.payload_json,'$.phase_name')='salience_decay' begin select raise(abort,'fixture diagnostic storage failure'); end;").unwrap();
+    let result = DreamService::open(&f.config, WorkflowResolver::deterministic())
+        .unwrap()
+        .run_all("manual", true, false);
+    assert!(result.is_err());
+    assert_eq!(f.count("select count(*) from dream_runs where status='failed' and input_count=1 and created_crystal_count=2"), 1);
+    assert_eq!(
+        f.count("select count(*) from crystals where supersedes_crystal_id is not null"),
+        1
+    );
+    assert_eq!(f.count("select count(*) from dream_phase_runs where phase in ('persistence','reconsolidation') and status='completed'"), 2);
+    assert_eq!(
+        f.count("select count(*) from short_term_memories where archived_at is not null"),
+        2
     );
 }

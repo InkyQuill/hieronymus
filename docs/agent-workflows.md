@@ -169,10 +169,17 @@ approve MCP tools. Disposable qualification must explicitly authorize the intend
 server tools with the host's supported tool approval settings.
 
 Hook enablement remains an optional host trust/configuration choice. Current generated
-hooks subscribe to UserPromptSubmit, not an assumed cross-host SessionEnd event.
-Older legacy session-start/session-end CLI entrypoints remain available independently.
-Diagnostic native probes confirmed this hook shape on Claude 2.1.241, Codex 0.147.0 and
-zCode 3.11.2; candidate installation and complete S1–S7 workflows are separate gates.
+hooks subscribe to UserPromptSubmit, SessionStart and SessionEnd. SessionEnd
+completes only the actual saved host binding; SessionStart/resume cancels pending
+termination or requests a fresh active binding after completion. Hosts or host
+versions lacking termination hooks use the explicit recovery described in
+[agent-hook-context.md](agent-hook-context.md#session-termination-and-recovery).
+Legacy session-start/session-end CLI discovery remains available; identity-free
+session-end now reports that no memory session was completed.
+Earlier diagnostic native probes confirmed the prompt-hook shape on Claude
+2.1.241, Codex 0.147.0 and zCode 3.11.2. Those probes do not qualify the newly
+added SessionStart/SessionEnd handlers; candidate installation and complete
+S1–S7 workflows remain separate advisory checks.
 
 ## First session and explicit selection
 
