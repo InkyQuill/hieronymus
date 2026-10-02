@@ -8,6 +8,10 @@ The server serves the main web interface. Authors use it to inspect what their a
 
 `hiero` is a convenience CLI for quick tasks. The running server owns its tray presence, directly or through a supervised sidecar, whenever the desktop supports it. Browser authentication is off by default and optional in configuration; this does not disable authenticated MCP access.
 
+## Frontend design
+
+Read [PRODUCT.md](PRODUCT.md) and [DESIGN.md](DESIGN.md) before changing the console. Use the vendored Thoth palette through Hieronymus semantic tokens; preserve both themes and author-facing progressive disclosure.
+
 ## Development Defaults
 
 - Use `Pavel Obruchnikov <me@inkyquill.net>` for formal author metadata unless local git config overrides it.

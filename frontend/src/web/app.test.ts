@@ -24,7 +24,11 @@ const contrastRatio = (foreground: string, background: string) => {
 };
 
 const hexToken = (theme: string, token: string) => {
-  const match = theme.match(new RegExp(`${token}:\\s*(#[0-9a-f]{6})`, "i"));
+  const alias = theme.match(
+    new RegExp(`${token}:\\s*var\\((--thoth-[\\w-]+)\\)`),
+  );
+  const resolved = alias?.[1] ?? token;
+  const match = theme.match(new RegExp(`${resolved}:\\s*(#[0-9a-f]{6})`, "i"));
   expect(match, `${token} should be a six-digit hex color`).not.toBeNull();
   return match![1];
 };
@@ -59,15 +63,37 @@ test("accent foregrounds use a contrast-safe semantic text token", async () => {
   const css = await source("./app.css");
   expect(css).toContain("--color-accent-text: var(--hiero-accent-text)");
 
-  const lightTheme = css.match(
-    /:root,\s*\n\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/,
-  )?.[1];
-  expect(lightTheme).toBeDefined();
-  const accentText = hexToken(lightTheme!, "--hiero-accent-text");
-  for (const backgroundToken of ["--hiero-bg-surface", "--hiero-bg-raised"]) {
-    expect(
-      contrastRatio(accentText, hexToken(lightTheme!, backgroundToken)),
-    ).toBeGreaterThanOrEqual(4.5);
+  const palette = await source("./theme/thoth.css");
+  for (const name of ["light", "dark"]) {
+    const block = new RegExp(
+      `\\[data-theme="${name}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`,
+    );
+    const theme = css.match(block)?.[1];
+    const primitives = palette.match(block)?.[1];
+    expect(theme).toBeDefined();
+    expect(primitives).toBeDefined();
+    const resolved = `${theme}\n${primitives}`;
+    for (const foreground of [
+      "--hiero-accent-text",
+      "--hiero-text-primary",
+      "--hiero-text-secondary",
+      "--hiero-danger",
+      "--hiero-success",
+    ]) {
+      for (const background of [
+        "--hiero-bg-root",
+        "--hiero-bg-surface",
+        "--hiero-bg-raised",
+      ]) {
+        expect(
+          contrastRatio(
+            hexToken(resolved, foreground),
+            hexToken(resolved, background),
+          ),
+          `${name}: ${foreground} on ${background}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   }
 
   for (const path of [

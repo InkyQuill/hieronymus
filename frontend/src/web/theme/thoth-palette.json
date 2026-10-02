@@ -1,0 +1,74 @@
+{
+  "light": {
+    "web": {
+      "background": "#f7f3ed",
+      "surface": "#fffdf9",
+      "surfaceRaised": "#f1eae0",
+      "foreground": "#29231d",
+      "muted": "#65594c",
+      "border": "#e5d9ca",
+      "accent": "#9b4c13",
+      "keyword": "#78567d",
+      "string": "#547241",
+      "number": "#8b620d"
+    },
+    "terminal": {
+      "cursor": "#9b4c13",
+      "selection": "#e9d2bf",
+      "ansi": [
+        "#29231d",
+        "#a94434",
+        "#4e703e",
+        "#8b620d",
+        "#2f6d73",
+        "#78567d",
+        "#3c7369",
+        "#e5d9ca",
+        "#75695b",
+        "#c35e47",
+        "#65874f",
+        "#aa7920",
+        "#478b92",
+        "#936b98",
+        "#568d80",
+        "#fffdf9"
+      ]
+    }
+  },
+  "dark": {
+    "web": {
+      "background": "#211d19",
+      "surface": "#29231e",
+      "surfaceRaised": "#352d25",
+      "foreground": "#f7f0e7",
+      "muted": "#c9b9a7",
+      "border": "#4a3d31",
+      "accent": "#e2a46f",
+      "keyword": "#d2a3d2",
+      "string": "#b8c990",
+      "number": "#e8c97a"
+    },
+    "terminal": {
+      "cursor": "#e2a46f",
+      "selection": "#5a3b2b",
+      "ansi": [
+        "#211d19",
+        "#c76b5b",
+        "#8fae78",
+        "#d2aa5f",
+        "#77a8ac",
+        "#b68bb9",
+        "#85afa1",
+        "#d9cbb9",
+        "#77695b",
+        "#f08c76",
+        "#b8c990",
+        "#e8c97a",
+        "#9bc6ca",
+        "#d2a3d2",
+        "#acd1c1",
+        "#f7f0e7"
+      ]
+    }
+  }
+}

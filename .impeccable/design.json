@@ -1,0 +1,501 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-02T21:01:45.122Z",
+  "title": "Design System: Hieronymus — Thoth",
+  "extensions": {
+    "colorMeta": {
+      "light-background": {
+        "role": "neutral",
+        "displayName": "light-background",
+        "tonalRamp": [
+          "oklch(from #f7f3ed 15% c h)",
+          "oklch(from #f7f3ed 26% c h)",
+          "oklch(from #f7f3ed 38% c h)",
+          "oklch(from #f7f3ed 49% c h)",
+          "oklch(from #f7f3ed 61% c h)",
+          "oklch(from #f7f3ed 72% c h)",
+          "oklch(from #f7f3ed 84% c h)",
+          "oklch(from #f7f3ed 95% c h)"
+        ]
+      },
+      "light-surface": {
+        "role": "neutral",
+        "displayName": "light-surface",
+        "tonalRamp": [
+          "oklch(from #fffdf9 15% c h)",
+          "oklch(from #fffdf9 26% c h)",
+          "oklch(from #fffdf9 38% c h)",
+          "oklch(from #fffdf9 49% c h)",
+          "oklch(from #fffdf9 61% c h)",
+          "oklch(from #fffdf9 72% c h)",
+          "oklch(from #fffdf9 84% c h)",
+          "oklch(from #fffdf9 95% c h)"
+        ]
+      },
+      "light-surfaceRaised": {
+        "role": "neutral",
+        "displayName": "light-surfaceRaised",
+        "tonalRamp": [
+          "oklch(from #f1eae0 15% c h)",
+          "oklch(from #f1eae0 26% c h)",
+          "oklch(from #f1eae0 38% c h)",
+          "oklch(from #f1eae0 49% c h)",
+          "oklch(from #f1eae0 61% c h)",
+          "oklch(from #f1eae0 72% c h)",
+          "oklch(from #f1eae0 84% c h)",
+          "oklch(from #f1eae0 95% c h)"
+        ]
+      },
+      "light-foreground": {
+        "role": "neutral",
+        "displayName": "light-foreground",
+        "tonalRamp": [
+          "oklch(from #29231d 15% c h)",
+          "oklch(from #29231d 26% c h)",
+          "oklch(from #29231d 38% c h)",
+          "oklch(from #29231d 49% c h)",
+          "oklch(from #29231d 61% c h)",
+          "oklch(from #29231d 72% c h)",
+          "oklch(from #29231d 84% c h)",
+          "oklch(from #29231d 95% c h)"
+        ]
+      },
+      "light-muted": {
+        "role": "neutral",
+        "displayName": "light-muted",
+        "tonalRamp": [
+          "oklch(from #65594c 15% c h)",
+          "oklch(from #65594c 26% c h)",
+          "oklch(from #65594c 38% c h)",
+          "oklch(from #65594c 49% c h)",
+          "oklch(from #65594c 61% c h)",
+          "oklch(from #65594c 72% c h)",
+          "oklch(from #65594c 84% c h)",
+          "oklch(from #65594c 95% c h)"
+        ]
+      },
+      "light-border": {
+        "role": "neutral",
+        "displayName": "light-border",
+        "tonalRamp": [
+          "oklch(from #e5d9ca 15% c h)",
+          "oklch(from #e5d9ca 26% c h)",
+          "oklch(from #e5d9ca 38% c h)",
+          "oklch(from #e5d9ca 49% c h)",
+          "oklch(from #e5d9ca 61% c h)",
+          "oklch(from #e5d9ca 72% c h)",
+          "oklch(from #e5d9ca 84% c h)",
+          "oklch(from #e5d9ca 95% c h)"
+        ]
+      },
+      "light-accent": {
+        "role": "primary",
+        "displayName": "light-accent",
+        "tonalRamp": [
+          "oklch(from #9b4c13 15% c h)",
+          "oklch(from #9b4c13 26% c h)",
+          "oklch(from #9b4c13 38% c h)",
+          "oklch(from #9b4c13 49% c h)",
+          "oklch(from #9b4c13 61% c h)",
+          "oklch(from #9b4c13 72% c h)",
+          "oklch(from #9b4c13 84% c h)",
+          "oklch(from #9b4c13 95% c h)"
+        ]
+      },
+      "light-keyword": {
+        "role": "neutral",
+        "displayName": "light-keyword",
+        "tonalRamp": [
+          "oklch(from #78567d 15% c h)",
+          "oklch(from #78567d 26% c h)",
+          "oklch(from #78567d 38% c h)",
+          "oklch(from #78567d 49% c h)",
+          "oklch(from #78567d 61% c h)",
+          "oklch(from #78567d 72% c h)",
+          "oklch(from #78567d 84% c h)",
+          "oklch(from #78567d 95% c h)"
+        ]
+      },
+      "light-string": {
+        "role": "neutral",
+        "displayName": "light-string",
+        "tonalRamp": [
+          "oklch(from #547241 15% c h)",
+          "oklch(from #547241 26% c h)",
+          "oklch(from #547241 38% c h)",
+          "oklch(from #547241 49% c h)",
+          "oklch(from #547241 61% c h)",
+          "oklch(from #547241 72% c h)",
+          "oklch(from #547241 84% c h)",
+          "oklch(from #547241 95% c h)"
+        ]
+      },
+      "light-number": {
+        "role": "neutral",
+        "displayName": "light-number",
+        "tonalRamp": [
+          "oklch(from #8b620d 15% c h)",
+          "oklch(from #8b620d 26% c h)",
+          "oklch(from #8b620d 38% c h)",
+          "oklch(from #8b620d 49% c h)",
+          "oklch(from #8b620d 61% c h)",
+          "oklch(from #8b620d 72% c h)",
+          "oklch(from #8b620d 84% c h)",
+          "oklch(from #8b620d 95% c h)"
+        ]
+      },
+      "dark-background": {
+        "role": "neutral",
+        "displayName": "dark-background",
+        "tonalRamp": [
+          "oklch(from #211d19 15% c h)",
+          "oklch(from #211d19 26% c h)",
+          "oklch(from #211d19 38% c h)",
+          "oklch(from #211d19 49% c h)",
+          "oklch(from #211d19 61% c h)",
+          "oklch(from #211d19 72% c h)",
+          "oklch(from #211d19 84% c h)",
+          "oklch(from #211d19 95% c h)"
+        ]
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "dark-surface",
+        "tonalRamp": [
+          "oklch(from #29231e 15% c h)",
+          "oklch(from #29231e 26% c h)",
+          "oklch(from #29231e 38% c h)",
+          "oklch(from #29231e 49% c h)",
+          "oklch(from #29231e 61% c h)",
+          "oklch(from #29231e 72% c h)",
+          "oklch(from #29231e 84% c h)",
+          "oklch(from #29231e 95% c h)"
+        ]
+      },
+      "dark-surfaceRaised": {
+        "role": "neutral",
+        "displayName": "dark-surfaceRaised",
+        "tonalRamp": [
+          "oklch(from #352d25 15% c h)",
+          "oklch(from #352d25 26% c h)",
+          "oklch(from #352d25 38% c h)",
+          "oklch(from #352d25 49% c h)",
+          "oklch(from #352d25 61% c h)",
+          "oklch(from #352d25 72% c h)",
+          "oklch(from #352d25 84% c h)",
+          "oklch(from #352d25 95% c h)"
+        ]
+      },
+      "dark-foreground": {
+        "role": "neutral",
+        "displayName": "dark-foreground",
+        "tonalRamp": [
+          "oklch(from #f7f0e7 15% c h)",
+          "oklch(from #f7f0e7 26% c h)",
+          "oklch(from #f7f0e7 38% c h)",
+          "oklch(from #f7f0e7 49% c h)",
+          "oklch(from #f7f0e7 61% c h)",
+          "oklch(from #f7f0e7 72% c h)",
+          "oklch(from #f7f0e7 84% c h)",
+          "oklch(from #f7f0e7 95% c h)"
+        ]
+      },
+      "dark-muted": {
+        "role": "neutral",
+        "displayName": "dark-muted",
+        "tonalRamp": [
+          "oklch(from #c9b9a7 15% c h)",
+          "oklch(from #c9b9a7 26% c h)",
+          "oklch(from #c9b9a7 38% c h)",
+          "oklch(from #c9b9a7 49% c h)",
+          "oklch(from #c9b9a7 61% c h)",
+          "oklch(from #c9b9a7 72% c h)",
+          "oklch(from #c9b9a7 84% c h)",
+          "oklch(from #c9b9a7 95% c h)"
+        ]
+      },
+      "dark-border": {
+        "role": "neutral",
+        "displayName": "dark-border",
+        "tonalRamp": [
+          "oklch(from #4a3d31 15% c h)",
+          "oklch(from #4a3d31 26% c h)",
+          "oklch(from #4a3d31 38% c h)",
+          "oklch(from #4a3d31 49% c h)",
+          "oklch(from #4a3d31 61% c h)",
+          "oklch(from #4a3d31 72% c h)",
+          "oklch(from #4a3d31 84% c h)",
+          "oklch(from #4a3d31 95% c h)"
+        ]
+      },
+      "dark-accent": {
+        "role": "primary",
+        "displayName": "dark-accent",
+        "tonalRamp": [
+          "oklch(from #e2a46f 15% c h)",
+          "oklch(from #e2a46f 26% c h)",
+          "oklch(from #e2a46f 38% c h)",
+          "oklch(from #e2a46f 49% c h)",
+          "oklch(from #e2a46f 61% c h)",
+          "oklch(from #e2a46f 72% c h)",
+          "oklch(from #e2a46f 84% c h)",
+          "oklch(from #e2a46f 95% c h)"
+        ]
+      },
+      "dark-keyword": {
+        "role": "neutral",
+        "displayName": "dark-keyword",
+        "tonalRamp": [
+          "oklch(from #d2a3d2 15% c h)",
+          "oklch(from #d2a3d2 26% c h)",
+          "oklch(from #d2a3d2 38% c h)",
+          "oklch(from #d2a3d2 49% c h)",
+          "oklch(from #d2a3d2 61% c h)",
+          "oklch(from #d2a3d2 72% c h)",
+          "oklch(from #d2a3d2 84% c h)",
+          "oklch(from #d2a3d2 95% c h)"
+        ]
+      },
+      "dark-string": {
+        "role": "neutral",
+        "displayName": "dark-string",
+        "tonalRamp": [
+          "oklch(from #b8c990 15% c h)",
+          "oklch(from #b8c990 26% c h)",
+          "oklch(from #b8c990 38% c h)",
+          "oklch(from #b8c990 49% c h)",
+          "oklch(from #b8c990 61% c h)",
+          "oklch(from #b8c990 72% c h)",
+          "oklch(from #b8c990 84% c h)",
+          "oklch(from #b8c990 95% c h)"
+        ]
+      },
+      "dark-number": {
+        "role": "neutral",
+        "displayName": "dark-number",
+        "tonalRamp": [
+          "oklch(from #e8c97a 15% c h)",
+          "oklch(from #e8c97a 26% c h)",
+          "oklch(from #e8c97a 38% c h)",
+          "oklch(from #e8c97a 49% c h)",
+          "oklch(from #e8c97a 61% c h)",
+          "oklch(from #e8c97a 72% c h)",
+          "oklch(from #e8c97a 84% c h)",
+          "oklch(from #e8c97a 95% c h)"
+        ]
+      },
+      "light-danger": {
+        "role": "neutral",
+        "displayName": "light-danger",
+        "tonalRamp": [
+          "oklch(from #b83030 15% c h)",
+          "oklch(from #b83030 26% c h)",
+          "oklch(from #b83030 38% c h)",
+          "oklch(from #b83030 49% c h)",
+          "oklch(from #b83030 61% c h)",
+          "oklch(from #b83030 72% c h)",
+          "oklch(from #b83030 84% c h)",
+          "oklch(from #b83030 95% c h)"
+        ]
+      },
+      "dark-danger": {
+        "role": "neutral",
+        "displayName": "dark-danger",
+        "tonalRamp": [
+          "oklch(from #ff8a8a 15% c h)",
+          "oklch(from #ff8a8a 26% c h)",
+          "oklch(from #ff8a8a 38% c h)",
+          "oklch(from #ff8a8a 49% c h)",
+          "oklch(from #ff8a8a 61% c h)",
+          "oklch(from #ff8a8a 72% c h)",
+          "oklch(from #ff8a8a 84% c h)",
+          "oklch(from #ff8a8a 95% c h)"
+        ]
+      },
+      "light-success": {
+        "role": "neutral",
+        "displayName": "light-success",
+        "tonalRamp": [
+          "oklch(from #3a6e45 15% c h)",
+          "oklch(from #3a6e45 26% c h)",
+          "oklch(from #3a6e45 38% c h)",
+          "oklch(from #3a6e45 49% c h)",
+          "oklch(from #3a6e45 61% c h)",
+          "oklch(from #3a6e45 72% c h)",
+          "oklch(from #3a6e45 84% c h)",
+          "oklch(from #3a6e45 95% c h)"
+        ]
+      },
+      "dark-success": {
+        "role": "neutral",
+        "displayName": "dark-success",
+        "tonalRamp": [
+          "oklch(from #5ea870 15% c h)",
+          "oklch(from #5ea870 26% c h)",
+          "oklch(from #5ea870 38% c h)",
+          "oklch(from #5ea870 49% c h)",
+          "oklch(from #5ea870 61% c h)",
+          "oklch(from #5ea870 72% c h)",
+          "oklch(from #5ea870 84% c h)",
+          "oklch(from #5ea870 95% c h)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "display",
+        "purpose": "Existing display type role."
+      },
+      "headline": {
+        "displayName": "headline",
+        "purpose": "Existing headline type role."
+      },
+      "title": {
+        "displayName": "title",
+        "purpose": "Existing title type role."
+      },
+      "body": {
+        "displayName": "body",
+        "purpose": "Existing body type role."
+      },
+      "body-small": {
+        "displayName": "body-small",
+        "purpose": "Existing body-small type role."
+      },
+      "caption": {
+        "displayName": "caption",
+        "purpose": "Existing caption type role."
+      },
+      "label": {
+        "displayName": "label",
+        "purpose": "Existing label type role."
+      },
+      "mono": {
+        "displayName": "mono",
+        "purpose": "Source data and identifiers."
+      }
+    },
+    "shadows": [
+      {
+        "name": "editor-drawer",
+        "value": "-16px 0 40px rgb(0 0 0 / 15%)",
+        "purpose": "Right-hand modal editor."
+      }
+    ],
+    "motion": [
+      {
+        "name": "smooth",
+        "value": "cubic-bezier(0.32, 0.72, 0, 1)",
+        "purpose": "Drawer and toast entrances."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "xs",
+        "value": "480px"
+      },
+      {
+        "name": "sm",
+        "value": "720px"
+      },
+      {
+        "name": "md",
+        "value": "960px"
+      },
+      {
+        "name": "lg",
+        "value": "1080px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Extracted from the existing console; preview content is illustrative.",
+      "html": "<button class=\"ds-primary\">Save changes</button>",
+      "css": ".ds-primary { background:var(--hiero-accent);color:var(--hiero-bg-root);border:0;border-radius:4px;padding:8px 16px;min-height:44px;font:500 13px/1.5 var(--font-sans); } .ds-primary:hover { opacity:.9; } :is(button,input,a,summary):focus-visible { outline:2px solid var(--hiero-accent);outline-offset:2px; }"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Extracted from the existing console; preview content is illustrative.",
+      "html": "<button class=\"ds-secondary\">Browse memory</button>",
+      "css": ".ds-secondary { background:var(--hiero-bg-surface);color:var(--hiero-text-primary);border:1px solid var(--hiero-border-default);border-radius:4px;padding:8px 16px;min-height:44px;font:400 13px/1.5 var(--font-sans); } .ds-secondary:hover { background:var(--hiero-bg-raised); } :is(button,input,a,summary):focus-visible { outline:2px solid var(--hiero-accent);outline-offset:2px; }"
+    },
+    {
+      "name": "Text field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Extracted from the existing console; preview content is illustrative.",
+      "html": "<label class=\"ds-label\">Display name<input class=\"ds-input\" value=\"Local writing model\"></label>",
+      "css": ".ds-label { display:grid;gap:8px;color:var(--hiero-text-secondary);font:400 13px/1.5 var(--font-sans); } .ds-input { background:var(--hiero-bg-surface);color:var(--hiero-text-primary);border:1px solid var(--hiero-border-default);border-radius:4px;padding:8px 12px;min-height:44px;font:400 14px/1.55 var(--font-sans); } :is(button,input,a,summary):focus-visible { outline:2px solid var(--hiero-accent);outline-offset:2px; }"
+    },
+    {
+      "name": "Settings navigation",
+      "kind": "nav",
+      "description": "Extracted from the existing console; preview content is illustrative.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Configuration sections\"><a href=\"#providers\" aria-current=\"page\">AI providers</a><a href=\"#dreaming\">Dreaming</a></nav>",
+      "css": ".ds-nav { display:flex;flex-wrap:wrap;gap:4px;padding-bottom:12px;border-bottom:1px solid var(--hiero-border-default); } .ds-nav a { padding:12px;color:var(--hiero-text-secondary);font:400 13px/1.5 var(--font-sans);text-decoration:none;border-radius:4px; } .ds-nav a:hover,.ds-nav [aria-current] { background:var(--hiero-bg-raised);color:var(--hiero-text-primary); } :is(button,input,a,summary):focus-visible { outline:2px solid var(--hiero-accent);outline-offset:2px; }"
+    },
+    {
+      "name": "Status panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Extracted from the existing console; preview content is illustrative.",
+      "html": "<section class=\"ds-panel\"><h3>Local service status</h3><p>The service reports that it is ready.</p></section>",
+      "css": ".ds-panel { background:var(--hiero-bg-surface);color:var(--hiero-text-primary);border:1px solid var(--hiero-border-default);border-radius:6px;padding:20px; } .ds-panel h3 { margin:0;font:600 15px/1.3 var(--font-sans); } .ds-panel p { font:400 13px/1.5 var(--font-sans);color:var(--hiero-text-secondary); } :is(button,input,a,summary):focus-visible { outline:2px solid var(--hiero-accent);outline-offset:2px; }"
+    },
+    {
+      "name": "Technical disclosure",
+      "kind": "custom",
+      "description": "Extracted from the existing console; preview content is illustrative.",
+      "html": "<details class=\"ds-details\"><summary>Technical details</summary><pre>status: ready</pre></details>",
+      "css": ".ds-details { color:var(--hiero-text-secondary);font:400 13px/1.5 var(--font-sans); } .ds-details summary { cursor:pointer;padding:12px 0; } .ds-details pre { background:var(--hiero-bg-raised);padding:16px;font:400 13px/1.5 var(--font-mono); } :is(button,input,a,summary):focus-visible { outline:2px solid var(--hiero-accent);outline-offset:2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Warm Memory Desk",
+    "overview": "A quiet reading desk for inspecting agent memory. Warm paper and brown-black surfaces support precise tables and plain-language settings; serif headings give the console an editorial identity without turning controls into book typography.\n\nThe approved Thoth palette supplies color; the existing Hieronymus implementation supplies typography, layout, interaction and component shapes. This is a color adaptation and documentation of the incumbent interface, not a new component system.",
+    "keyCharacteristics": [
+      "Warm paired themes with one copper-amber accent.",
+      "Editorial headings, compact sans-serif controls and monospaced source data.",
+      "Flat bordered surfaces; details appear when the author needs them."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Color Rule",
+        "body": "Use Hieronymus role tokens in components; map those roles to Thoth in the theme layer. Never scatter palette hex values across components.",
+        "section": "colors"
+      },
+      {
+        "name": "The Three Voices Rule",
+        "body": "Use Literata for page and section headings, Geist for interaction and explanations, and Inconsolata LGC for code, identifiers and structured data.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Surface Rule",
+        "body": "Use borders and surface tones for ordinary grouping. Reserve the existing offset shadow for the modal editor drawer.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do support both themes and preserve the saved theme preference.",
+      "Do keep technical detail available through disclosure while leading with author-facing language.",
+      "Do check text contrast on root, surface, raised and accent backgrounds.",
+      "Do reuse the existing spacing, type utilities and semantic color roles."
+    ],
+    "donts": [
+      "Don't use syntax colors as arbitrary UI status colors.",
+      "Don't introduce a second component library or remote font dependency for visual consistency.",
+      "Don't replace real provenance or readiness information with decorative metrics.",
+      "Don't make a subtle border the only indication of an interactive control or selected state."
+    ]
+  }
+}
