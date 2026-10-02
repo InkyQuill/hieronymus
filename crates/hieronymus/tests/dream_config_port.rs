@@ -315,3 +315,18 @@ enabled = true
     assert!(error.is_migration_required(), "{error}");
     assert_eq!(fs::read_to_string(config.dream_config_path()).unwrap(), raw);
 }
+
+#[test]
+fn custom_workflow_prompt_round_trips_and_legacy_defaults_stay_empty() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    let mut dream = default_dream_config();
+    assert!(dream.workflows["concepts"].prompt.is_empty());
+    dream.workflows.get_mut("concepts").unwrap().prompt =
+        "Extract character motivations.\nPreserve evidence.".into();
+    save_dream_config(&config, &dream).unwrap();
+    assert_eq!(
+        load_dream_config(&config).unwrap().workflows["concepts"].prompt,
+        dream.workflows["concepts"].prompt
+    );
+}

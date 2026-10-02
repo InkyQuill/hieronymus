@@ -69,6 +69,7 @@ export async function loadDreamSettings(): Promise<{
   dream: DreamSettings;
   providers: ProviderProfile[];
   model_cache: ModelCache;
+  default_prompts?: Record<string, string>;
 }> {
   return request("/api/settings/dream");
 }

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use hieronymus::data_root::HieronymusConfig;
 use hieronymus::db::open_migrated;
-use hieronymus::dream_config::{default_dream_config, save_dream_config};
+use hieronymus::dream_config::{default_dream_config, load_dream_config, save_dream_config};
 use hieronymus::dream_workflows::{WorkflowChoice, WorkflowResolver, enabled_choices};
 use hieronymus::dreaming::DreamService;
 use hieronymus::provider_config::{
@@ -89,6 +89,7 @@ fn enabled_choices_rejects_enabled_workflow_without_provider_or_model() {
 
 /// One recorded chat request: the model it asked for and its auth header.
 struct RecordedRequest {
+    body: String,
     model: String,
     authorization: String,
 }
@@ -212,6 +213,7 @@ fn serve_connection(mut stream: TcpStream, status: u16, requests: &Mutex<Vec<Rec
         .unwrap_or_default()
         .to_string();
     requests.lock().unwrap().push(RecordedRequest {
+        body: request.body.clone(),
         model,
         authorization,
     });
@@ -358,6 +360,15 @@ fn enabled_workflows_run_on_their_own_provider_and_model() {
     completed_session(&config, "book", &["The two-lane memory is important."]);
     save_two_lane_wiring(&config, &server.endpoint("/v1"));
 
+    let mut configured = load_dream_config(&config).unwrap();
+    configured.general_prompt = "Prefer concise bilingual memory.".into();
+    configured
+        .workflows
+        .get_mut("knowledge_crystals")
+        .unwrap()
+        .prompt = "Extract character motivations with evidence.".into();
+    save_dream_config(&config, &configured).unwrap();
+
     let resolver = WorkflowResolver::from_catalog(load_provider_catalog(&config).unwrap());
     let service = DreamService::open(&config, resolver).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
@@ -374,6 +385,25 @@ fn enabled_workflows_run_on_their_own_provider_and_model() {
     assert_eq!(requests[0].authorization, format!("Bearer {KEY_A}"));
     assert_eq!(requests[1].model, "model-audit");
     assert_eq!(requests[1].authorization, format!("Bearer {KEY_B}"));
+    for (index, request) in requests.iter().enumerate() {
+        let wire: Value = serde_json::from_str(&request.body).unwrap();
+        let prompt: Value =
+            serde_json::from_str(wire["messages"][0]["content"].as_str().unwrap()).unwrap();
+        let instruction = prompt["instruction"].as_str().unwrap();
+        assert!(instruction.contains("Prefer concise bilingual memory."));
+        assert!(!instruction.contains("Use English memory prose by default"));
+        assert!(
+            instruction.contains("Every crystal must include a non-empty source_memory_ids array")
+        );
+        assert!(instruction.contains("Return one JSON object without markdown"));
+        if index == 0 {
+            assert!(instruction.contains("Extract character motivations with evidence."));
+            assert!(!instruction.contains("Extract factual, narrative"));
+        } else {
+            assert!(!instruction.contains("Extract character motivations"));
+            assert!(instruction.contains("every input memory ID exactly once"));
+        }
+    }
     drop(requests);
 
     // Phase records carry each pass's actual resolved profile id and model,

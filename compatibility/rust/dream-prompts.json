@@ -1,0 +1,10 @@
+{
+  "scope": "dreaming prompt settings and request composition",
+  "rationale": "User-requested editable pass instructions and correction of the unused general_prompt setting. Historical Python fixtures remain unchanged.",
+  "additions": [
+    "workflows.<pass>.prompt is a string override; absent, empty or whitespace uses the built-in pass instruction",
+    "GET /api/settings/dream returns default_prompts for the seven passes",
+    "Settings and dashboard workflow projections include prompt"
+  ],
+  "runtime": "Configured LLM passes combine the saved general_prompt and their own override or default. Budget calculation and audit hashing use the same rendered prompt that is sent. JSON schema, source ID constraints and domain authority/evidence checks remain enforced."
+}

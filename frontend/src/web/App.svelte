@@ -58,6 +58,7 @@
   let error = $state("");
   let dreamSettings = $state.raw<DreamSettings | null>(null);
   let dreamProviders = $state.raw<ProviderProfile[]>([]);
+  let defaultPrompts = $state.raw<Record<string, string>>({});
   let modelCache = $state.raw<ModelCache>({ providers: {} });
   let ingestSettings = $state.raw<IngestSettings | null>(null);
   let releaseSettings = $state.raw<ReleaseSettings | null>(null);
@@ -139,6 +140,7 @@
         dreamSettings = payload.dream;
         dreamProviders = payload.providers;
         modelCache = payload.model_cache;
+        defaultPrompts = payload.default_prompts ?? {};
       }
       if (section === "ingest") ingestSettings = await loadIngestSettings();
       if (section === "release") releaseSettings = await loadReleaseSettings();
@@ -260,7 +262,7 @@
         </div>
       </div>
     {:else if section === "dreaming" && dreamSettings}
-      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections"><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a><a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/dreaming">Dreaming</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>{#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {modelCache} {busy} {error} onSave={saveDream} />{/key}
+      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections"><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a><a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/dreaming">Dreaming</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>{#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {defaultPrompts} {modelCache} {busy} {error} onSave={saveDream} />{/key}
     {:else if section === "ingest" && ingestSettings}
       <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections">
         <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>

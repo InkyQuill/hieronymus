@@ -146,6 +146,22 @@ impl WorkflowResolver {
     /// local by construction: the instance lives only inside the pass that
     /// asked for it).
     pub fn provider(&self, choice: &WorkflowChoice) -> Result<Box<dyn DreamProvider>, DreamError> {
+        self.provider_for_dream(choice, None)
+    }
+
+    pub(crate) fn provider_with_config(
+        &self,
+        choice: &WorkflowChoice,
+        config: &DreamConfig,
+    ) -> Result<Box<dyn DreamProvider>, DreamError> {
+        self.provider_for_dream(choice, Some(config))
+    }
+
+    fn provider_for_dream(
+        &self,
+        choice: &WorkflowChoice,
+        config: Option<&DreamConfig>,
+    ) -> Result<Box<dyn DreamProvider>, DreamError> {
         let Some(fixed) = &self.fixed else {
             if choice.provider == "deterministic" {
                 return Err(DreamError::InvalidWorkflow(format!(
@@ -157,6 +173,17 @@ impl WorkflowResolver {
             let profile = self.profile(choice)?;
             let provider =
                 LlmDreamProvider::new(choice.provider.clone(), profile, choice.model.clone())?;
+            let provider = if let Some(config) = config {
+                provider.with_prompts(
+                    &config.general_prompt,
+                    config
+                        .workflows
+                        .get(&choice.name)
+                        .map_or("", |workflow| workflow.prompt.as_str()),
+                )
+            } else {
+                provider
+            };
             let provider = if let Some((observer, revision)) = &self.observation {
                 provider.with_observer(
                     Arc::clone(observer),

@@ -50,6 +50,7 @@ pub(super) fn get(_request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Re
                     "dream": table_value(&redacted_dream_config_payload(&dream_config)),
                     "providers": providers_payload(&catalog),
                     "model_cache": model_cache_payload(config),
+                    "default_prompts": hieronymus::dream_config::DREAM_WORKFLOW_NAMES.iter().map(|name| (name.to_string(), json!(hieronymus::dream_providers::phase_instruction(name).unwrap_or_default()))).collect::<serde_json::Map<String, Value>>(),
                     "error": first_error(&[dream_error, provider_error]),
                 }),
             )
@@ -218,6 +219,9 @@ fn apply_dream_draft(base: DreamConfig, draft: &Value) -> DreamConfig {
             let mut workflow = next.workflows.get(name).cloned().unwrap_or_default();
             if let Some(provider) = raw_workflow.get("provider").and_then(Value::as_str) {
                 workflow.provider = provider.to_string();
+            }
+            if let Some(prompt) = raw_workflow.get("prompt").and_then(Value::as_str) {
+                workflow.prompt = prompt.to_string();
             }
             if let Some(model) = raw_workflow.get("model").and_then(Value::as_str) {
                 workflow.model = model.to_string();
