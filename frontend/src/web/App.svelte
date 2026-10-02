@@ -234,7 +234,8 @@
           <Sun size={20} aria-hidden="true" />
         {:else}
           <Moon size={20} aria-hidden="true" />
-        {/if}        {themeToggle.theme === "dark" ? "Light" : "Dark"}
+        {/if}
+        {themeToggle.theme === "dark" ? "Light" : "Dark"}
     </button>
     </div>
   </header>
