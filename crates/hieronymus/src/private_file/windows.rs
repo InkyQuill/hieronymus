@@ -306,7 +306,7 @@ pub(super) fn open_append(path: &Path) -> io::Result<File> {
     let file = unsafe {
         file_from_handle(CreateFileW(
             path.as_ptr(),
-            FILE_APPEND_DATA | READ_CONTROL,
+            FILE_APPEND_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             ptr::null(),
             OPEN_EXISTING,

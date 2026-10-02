@@ -287,6 +287,7 @@ pub struct LlmDreamProvider {
     observation: Option<Observation>,
     ollama_context: OnceCell<PromptBudget>,
     cloud_output_limit: OnceCell<usize>,
+    cloud_context: OnceCell<PromptBudget>,
     general_prompt: String,
     workflow_prompt: String,
 }
@@ -295,11 +296,13 @@ pub struct LlmDreamProvider {
 struct PromptBudget {
     limit: usize,
     template_budget: usize,
+    advertised_output: Option<usize>,
 }
 
 impl PromptBudget {
     fn output_budget(self) -> usize {
-        (self.limit / 4).min(4096)
+        self.advertised_output
+            .unwrap_or_else(|| (self.limit / 4).min(4096))
     }
 
     fn required_context(self, prompt: &str) -> usize {
@@ -335,6 +338,7 @@ impl LlmDreamProvider {
             observation: None,
             ollama_context: OnceCell::new(),
             cloud_output_limit: OnceCell::new(),
+            cloud_context: OnceCell::new(),
             general_prompt: ENGLISH_MEMORY_PROSE.to_string(),
             workflow_prompt: String::new(),
             profile,
@@ -526,8 +530,13 @@ impl LlmDreamProvider {
         if self.wire()? == Wire::Ollama {
             return self.ollama_context().map(Some);
         }
-        // Cloud APIs own their context limits. Do not split or cap a large
-        // configured cloud batch using Ollama's conservative local estimate.
+        let wire = self.wire()?;
+        if wire == Wire::Anthropic
+            || (wire == Wire::OpenAi && deepseek_json_profile(&self.profile, &self.model))
+        {
+            self.cloud_output_limit(wire)?;
+            return Ok(self.cloud_context.get().copied());
+        }
         Ok(None)
     }
 
@@ -535,6 +544,12 @@ impl LlmDreamProvider {
         if let Some(limit) = self.cloud_output_limit.get() {
             return Ok(*limit);
         }
+        let sequence = self.observation.as_ref().map(Observation::start);
+        let finish = |outcome| {
+            if let (Some(observer), Some(sequence)) = (&self.observation, sequence) {
+                observer.finish(sequence, outcome);
+            }
+        };
         let response = self
             .core
             .get_json(
@@ -546,15 +561,28 @@ impl LlmDreamProvider {
                 &auth_headers(wire, &self.profile),
                 self.timeout().min(Duration::from_secs(5)),
             )
-            .map_err(|_| DreamError::Provider("Cannot discover Cloud model output limit".into()))?;
+            .map_err(|failure| {
+                finish(match failure.error {
+                    HttpError::TooLarge { .. } => ProviderOutcome::InvalidResponse,
+                    _ => ProviderOutcome::Unavailable,
+                });
+                DreamError::Provider("Cannot discover Cloud model output limit".into())
+            })?;
         if !(200..300).contains(&response.status) {
+            finish(match response.status {
+                401 | 403 => ProviderOutcome::Authentication,
+                429 => ProviderOutcome::RateLimited,
+                _ => ProviderOutcome::Unavailable,
+            });
             return Err(DreamError::Provider(format!(
                 "Cloud model discovery returned HTTP {}",
                 response.status
             )));
         }
-        let metadata: Value = serde_json::from_str(&response.body)
-            .map_err(|_| DreamError::Provider("Invalid Cloud model metadata".into()))?;
+        let metadata: Value = serde_json::from_str(&response.body).map_err(|_| {
+            finish(ProviderOutcome::InvalidResponse);
+            DreamError::Provider("Invalid Cloud model metadata".into())
+        })?;
         let advertised = if wire == Wire::Anthropic {
             metadata["max_tokens"].as_u64()
         } else {
@@ -576,8 +604,42 @@ impl LlmDreamProvider {
             .and_then(|limit| usize::try_from(limit).ok())
             .filter(|limit| *limit > 0)
             .ok_or_else(|| {
+                finish(ProviderOutcome::InvalidResponse);
                 DreamError::Provider("Cloud model metadata has no output limit".into())
             })?;
+        let input = if wire == Wire::Anthropic {
+            metadata["max_input_tokens"].as_u64()
+        } else {
+            metadata["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|model| {
+                    model["id"].as_str()
+                        == Some(if self.model == "deepseek-v4-flash" {
+                            "deepseek-flash"
+                        } else {
+                            &self.model
+                        })
+                })
+                .and_then(|model| model["context_window"].as_u64())
+        };
+        if let Some(input) = input
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n > 0)
+        {
+            let total = if wire == Wire::Anthropic {
+                input.saturating_add(limit)
+            } else {
+                input
+            };
+            let _ = self.cloud_context.set(PromptBudget {
+                limit: total,
+                template_budget: 512,
+                advertised_output: Some(limit),
+            });
+        }
+        finish(ProviderOutcome::Success);
         let _ = self.cloud_output_limit.set(limit);
         Ok(limit)
     }
@@ -633,6 +695,7 @@ impl LlmDreamProvider {
                     .context_window()
                     .map_or(limit, |value| value as usize),
             ),
+            advertised_output: None,
             template_budget: payload["template"]
                 .as_str()
                 .unwrap_or_default()

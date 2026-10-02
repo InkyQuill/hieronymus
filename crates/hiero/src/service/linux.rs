@@ -64,7 +64,18 @@ fn run_manager(
     use std::time::{Duration, Instant};
     let mut command = Command::new(executable);
     command.arg("--user").args(arguments);
-    crate::diagnostics::redirect(&mut command, root, "service-manager.log")?;
+    if let Err(error) = crate::diagnostics::redirect(&mut command, root, "service-manager.log") {
+        if arguments == ["daemon-reload"] {
+            eprintln!(
+                "Service diagnostics unavailable: {error}; running daemon-reload with inherited output"
+            );
+            command
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit());
+        } else {
+            return Err(error.into());
+        }
+    }
     let mut child = command.spawn().map_err(|_| {
         ServiceError::Manager("could not run systemctl; check the user service manager".into())
     })?;
@@ -534,6 +545,40 @@ mod tests {
         assert!(!error.to_string().contains("SECRET"));
         let pid = std::fs::read_to_string(pid_file).unwrap();
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn teardown_reload_runs_even_when_log_root_is_invalid() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let manager = root.path().join("manager");
+        let marker = root.path().join("reloaded");
+        std::fs::write(
+            &manager,
+            format!("#!/bin/sh\nprintf reloaded > '{}'\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&manager, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let invalid_root = root.path().join("not-a-directory");
+        std::fs::write(&invalid_root, "preserve").unwrap();
+        run_manager(
+            &manager,
+            &["daemon-reload"],
+            std::time::Duration::from_secs(1),
+            &invalid_root,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "reloaded");
+        assert!(
+            run_manager(
+                &manager,
+                &["start", SERVICE_UNIT_NAME],
+                std::time::Duration::from_secs(1),
+                &invalid_root
+            )
+            .is_err()
+        );
     }
 
     #[test]

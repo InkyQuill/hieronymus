@@ -1665,3 +1665,74 @@ fn structured_answers_ignore_a_completed_thinking_prefix() {
         json!({"crystals":[]})
     );
 }
+
+#[test]
+fn cloud_input_window_bounds_selection_without_the_local_profile_cap() {
+    let transport = FakeTransport::new(vec![Ok(HttpResponse {
+        status: 200,
+        body:
+            json!({"data":[{"id":"deepseek-flash","max_output_tokens":1000,"context_window":2000}]})
+                .to_string(),
+    })]);
+    let provider = LlmDreamProvider::new(
+        "deepseek",
+        openai_profile("https://api.deepseek.com").with_context_window(Some(64)),
+        "deepseek-flash",
+    )
+    .unwrap()
+    .with_transport(transport.clone());
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let text = "Evidence ".repeat(500);
+    let memories = completed_session(&config, "book", &[&text]);
+    assert_eq!(
+        provider
+            .fitting_memory_count("concepts", &context("book"), &memories)
+            .unwrap(),
+        0
+    );
+    assert_eq!(transport.call_count(), 1);
+}
+
+#[test]
+fn discovery_failures_publish_typed_provider_outcomes() {
+    use hieronymus::provider_observation::{ProviderKey, ProviderObserver, ProviderOutcome};
+    #[derive(Default)]
+    struct Observer(Mutex<Vec<ProviderOutcome>>);
+    impl ProviderObserver for Observer {
+        fn completed(&self, _: &ProviderKey, _: u64, outcome: ProviderOutcome) {
+            self.0.lock().unwrap().push(outcome);
+        }
+    }
+    for (status, expected) in [
+        (401, ProviderOutcome::Authentication),
+        (429, ProviderOutcome::RateLimited),
+        (503, ProviderOutcome::Unavailable),
+    ] {
+        let observer = Arc::new(Observer::default());
+        let provider = LlmDreamProvider::new(
+            "deepseek",
+            openai_profile("https://api.deepseek.com"),
+            "deepseek-flash",
+        )
+        .unwrap()
+        .with_transport(FakeTransport::new(vec![Ok(HttpResponse {
+            status,
+            body: "{}".into(),
+        })]))
+        .with_observer(
+            observer.clone(),
+            ProviderKey {
+                profile: "deepseek".into(),
+                model: "deepseek-flash".into(),
+                revision: 1,
+            },
+        );
+        assert!(
+            provider
+                .run_pass("concepts", &context("book"), &[])
+                .is_err()
+        );
+        assert_eq!(*observer.0.lock().unwrap(), vec![expected]);
+    }
+}

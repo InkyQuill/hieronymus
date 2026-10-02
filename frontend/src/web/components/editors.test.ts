@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import type {
@@ -79,6 +79,7 @@ test("provider editor opens, submits edited fields, and closes", async () => {
   const name = screen.getByLabelText("Display name");
   await user.clear(name);
   await user.type(name, "Primary OpenAI");
+  await user.click(screen.getByText("Advanced model limits"));
   await user.type(screen.getByLabelText("Context window (tokens)"), "16384");
   await user.click(screen.getByRole("button", { name: "Save profile" }));
   expect(onSave).toHaveBeenCalledWith({
@@ -125,6 +126,7 @@ test("dreaming loads API models and saves a custom model", async () => {
       onSave,
     },
   });
+  await user.click(screen.getByText(/^Model and task settings/));
   expect(
     await screen.findByRole("option", { name: "gpt-5-mini" }),
   ).toBeTruthy();
@@ -155,6 +157,7 @@ test("dreaming preserves a saved custom model when discovery fails", async () =>
       onSave: vi.fn(),
     },
   });
+  await userEvent.click(screen.getByText(/^Model and task settings/));
   expect(await screen.findByText(/Could not load models/)).toBeTruthy();
   expect(
     (screen.getByLabelText("Custom model") as HTMLInputElement).value,
@@ -173,6 +176,7 @@ test("dreaming task prompts can be edited and restored without changing shared i
       onSave,
     },
   });
+  await user.click(screen.getByText(/^Model and task settings/));
   await user.click(screen.getByText("Task prompt · Default"));
   const task = screen.getByLabelText("concepts task prompt");
   expect((task as HTMLTextAreaElement).value).toBe(
@@ -196,3 +200,44 @@ test("dreaming task prompts can be edited and restored without changing shared i
   await user.click(screen.getByRole("button", { name: "Save dreaming" }));
   expect(onSave.mock.calls.at(-1)?.[0].workflows.concepts.prompt).toBe("");
 });
+
+test("provider deletion requires a separate confirmation and can be cancelled", async () => {
+  const user = userEvent.setup();
+  const onDelete = vi.fn();
+  render(ProviderEditor, {
+    props: {
+      provider,
+      onSave: vi.fn(),
+      onDelete,
+      onRefreshModels: vi.fn(),
+      onCheck: vi.fn(),
+      onClose: vi.fn(),
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Delete provider" }));
+  expect(onDelete).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Keep provider" }));
+  expect(screen.queryByRole("button", { name: "Confirm deletion" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Delete provider" }));
+  await user.click(screen.getByRole("button", { name: "Confirm deletion" }));
+  expect(onDelete).toHaveBeenCalledOnce();
+});
+
+test.each(["Timeout (seconds)", "Context window (tokens)"])(
+  "invalid %s reveals its advanced disclosure",
+  async (label) => {
+    render(ProviderEditor, {
+      provider,
+      onSave: vi.fn(),
+      onDelete: vi.fn(),
+      onRefreshModels: vi.fn(),
+      onCheck: vi.fn(),
+      onClose: vi.fn(),
+    });
+    const input = screen.getByLabelText(label);
+    const details = input.closest("details")!;
+    expect(details.open).toBe(false);
+    await fireEvent.invalid(input);
+    expect(details.open).toBe(true);
+  },
+);
