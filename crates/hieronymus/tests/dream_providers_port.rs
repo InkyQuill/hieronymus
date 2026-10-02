@@ -1716,10 +1716,17 @@ fn discovery_failures_publish_typed_provider_outcomes() {
             "deepseek-flash",
         )
         .unwrap()
-        .with_transport(FakeTransport::new(vec![Ok(HttpResponse {
-            status,
-            body: "{}".into(),
-        })]))
+        .with_transport(FakeTransport::new(
+            (0..3)
+                .map(|_| {
+                    Ok(HttpResponse {
+                        status,
+                        body: "{}".into(),
+                    })
+                })
+                .collect(),
+        ))
+        .with_retry_backoff(Duration::ZERO)
         .with_observer(
             observer.clone(),
             ProviderKey {
