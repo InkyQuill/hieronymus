@@ -3590,33 +3590,6 @@ fn source_memory_ids(
     (!clean_ids.is_empty()).then_some(clean_ids)
 }
 
-#[cfg(test)]
-mod source_evidence_tests {
-    use super::*;
-
-    #[test]
-    fn missing_sources_never_inherit_the_selected_batch() {
-        let allowed = HashSet::from([1, 2]);
-        for payload in [
-            json!({}),
-            json!({"source_memory_ids": []}),
-            json!({"source_memory_ids": [999]}),
-        ] {
-            assert_eq!(
-                source_memory_ids(payload.as_object().unwrap(), &allowed),
-                None
-            );
-        }
-        assert_eq!(
-            source_memory_ids(
-                json!({"source_memory_ids": [2]}).as_object().unwrap(),
-                &allowed
-            ),
-            Some(vec![2])
-        );
-    }
-}
-
 pub(crate) fn string_field(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(text)) => text.clone(),
@@ -4191,4 +4164,31 @@ fn archive_working_copy(
         rusqlite::params![now(), memory_id],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod source_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn missing_sources_never_inherit_the_selected_batch() {
+        let allowed = HashSet::from([1, 2]);
+        for payload in [
+            json!({}),
+            json!({"source_memory_ids": []}),
+            json!({"source_memory_ids": [999]}),
+        ] {
+            assert_eq!(
+                source_memory_ids(payload.as_object().unwrap(), &allowed),
+                None
+            );
+        }
+        assert_eq!(
+            source_memory_ids(
+                json!({"source_memory_ids": [2]}).as_object().unwrap(),
+                &allowed
+            ),
+            Some(vec![2])
+        );
+    }
 }

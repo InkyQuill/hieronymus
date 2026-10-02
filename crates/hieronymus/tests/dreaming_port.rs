@@ -661,21 +661,21 @@ fn dreaming_applies_the_previously_unsupported_concept_section() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
-    completed_session(&config, "book", &["Valid input."]);
+    let source_ids = completed_session(&config, "book", &["Valid input."]);
 
     // Task D2 closed the gap this run used to fail closed on: the
     // `concepts` section now normalizes, applies, and audits cleanly
     // alongside the crystal that was always supported.
     let service = DreamService::open(
         &config,
-        WorkflowResolver::serving(|| {
+        WorkflowResolver::serving(move || {
             Box::new(ScriptedProvider::new(
                 "concept-sections",
                 vec![(
                     "knowledge_crystals",
                     json!({
                         "crystals": [{
-                            "crystal_type": "observation",
+                            "source_memory_ids": source_ids, "crystal_type": "observation",
                             "title": "Applied crystal",
                             "text": "This crystal applies with its concept.",
                             "confidence": 0.8
@@ -724,7 +724,7 @@ fn dreaming_fails_closed_when_pass_output_exceeds_max_records_per_pass() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
-    completed_session(&config, "book", &["One.", "Two.", "Three."]);
+    let source_ids = completed_session(&config, "book", &["One.", "Two.", "Three."]);
 
     let mut dream_config = default_dream_config();
     dream_config
@@ -736,14 +736,14 @@ fn dreaming_fails_closed_when_pass_output_exceeds_max_records_per_pass() {
 
     let service = DreamService::open(
         &config,
-        WorkflowResolver::serving(|| {
+        WorkflowResolver::serving(move || {
             Box::new(ScriptedProvider::new(
                 "over-pass-cap",
                 vec![(
                     "knowledge_crystals",
                     json!({"crystals": [
-                        {"crystal_type": "observation", "text": "First conclusion."},
-                        {"crystal_type": "observation", "text": "Second conclusion."}
+                        {"source_memory_ids": source_ids, "crystal_type": "observation", "text": "First conclusion."},
+                        {"source_memory_ids": source_ids, "crystal_type": "observation", "text": "Second conclusion."}
                     ]}),
                 )],
             ))
@@ -778,7 +778,7 @@ fn dreaming_fails_closed_when_batch_exceeds_max_long_term_records_affected_per_r
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
-    completed_session(&config, "book", &["Valid input."]);
+    let source_ids = completed_session(&config, "book", &["Valid input."]);
 
     // Three staged crystals across passes: under every per-pass cap but
     // over the run cap.
@@ -788,21 +788,21 @@ fn dreaming_fails_closed_when_batch_exceeds_max_long_term_records_affected_per_r
 
     let service = DreamService::open(
         &config,
-        WorkflowResolver::serving(|| {
+        WorkflowResolver::serving(move || {
             Box::new(ScriptedProvider::new(
                 "over-run-cap",
                 vec![
                     (
                         "rule_crystals",
                         json!({"rule_crystals": [
-                            {"crystal_type": "rule", "text": "Rule conclusion."}
+                            {"source_memory_ids": source_ids, "crystal_type": "rule", "text": "Rule conclusion."}
                         ]}),
                     ),
                     (
                         "knowledge_crystals",
                         json!({"crystals": [
-                            {"crystal_type": "observation", "text": "First conclusion."},
-                            {"crystal_type": "observation", "text": "Second conclusion."}
+                            {"source_memory_ids": source_ids, "crystal_type": "observation", "text": "First conclusion."},
+                            {"source_memory_ids": source_ids, "crystal_type": "observation", "text": "Second conclusion."}
                         ]}),
                     ),
                 ],
@@ -1135,18 +1135,18 @@ fn malformed_rule_crystal_gets_penalties_and_parse_warnings() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
-    completed_session(&config, "book", &["Cooking term guidance."]);
+    let source_ids = completed_session(&config, "book", &["Cooking term guidance."]);
 
     let service = DreamService::open(
         &config,
-        WorkflowResolver::serving(|| {
+        WorkflowResolver::serving(move || {
             Box::new(ScriptedProvider::new(
                 "malformed-dict",
                 vec![(
                     "rule_crystals",
                     json!({
                         "rule_crystals": [{
-                            "body": "Keep cooking terminology practical and concrete.",
+                            "source_memory_ids": source_ids, "body": "Keep cooking terminology practical and concrete.",
                             "kind": "rule_crystal",
                             "source_credibility": "user_rule",
                             "rule_intent": "terminology",
