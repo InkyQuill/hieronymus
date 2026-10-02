@@ -874,27 +874,6 @@ fn run_update_core(
         if service_options.use_manager {
             crate::desktop::installation::validate_native(&service_options, operation)?;
         }
-        // Use the candidate generator, never the updater's older embedded bundles.
-        // Host cache refresh is advisory; it cannot invalidate verified app assets.
-        match crate::agent_sync::sync_candidate(
-            &config,
-            &version_dir.join(crate::platform::install::executable_name("hiero")),
-        ) {
-            Ok(report) => {
-                if report["generated"] == true {
-                    lines.push(
-                        "candidate generated current agent bundles; reopen agent conversations"
-                            .into(),
-                    );
-                }
-                if report["codex"]["state"] != "refreshed" {
-                    lines.push("host cache refresh is advisory and not confirmed; inspect hiero plugins status and private logs/agent-sync.log".into());
-                }
-            }
-            Err(error) => lines.push(format!(
-                "agent bundle refresh warning: {error}; run hiero plugins sync after update"
-            )),
-        }
         let doctor_output =
             Command::new(version_dir.join(crate::platform::install::executable_name("hiero")))
                 .arg("doctor")
@@ -913,8 +892,11 @@ fn run_update_core(
             .map_err(|error| format!("candidate doctor report is invalid: {error}"))?;
         require_independent_doctor_scope(&doctor_report)?;
         if let Some(findings) = doctor_report["findings"].as_array() {
-            for finding in findings.iter().filter(|f| f["level"] != "ok").take(16) {
-                lines.push(format!("candidate doctor: {}", finding));
+            let count = findings.iter().filter(|f| f["level"] != "ok").count();
+            if count > 0 {
+                lines.push(format!(
+                    "candidate doctor: {count} non-ok findings; run hiero doctor for details"
+                ));
             }
         }
 
@@ -996,6 +978,29 @@ fn run_update_core(
             degraded,
         }) => (daemon_started, degraded),
     };
+
+    // Activation is complete; advisory host work must not retain root ownership.
+    drop(ownership.take());
+    // Use the candidate generator, never the updater's older embedded bundles.
+    // Host cache refresh is advisory; it cannot invalidate verified app assets.
+    match crate::agent_sync::sync_candidate(
+        &config,
+        &version_dir.join(crate::platform::install::executable_name("hiero")),
+    ) {
+        Ok(report) => {
+            if report["generated"] == true {
+                lines.push(
+                    "candidate generated current agent bundles; reopen agent conversations".into(),
+                );
+            }
+            if report["codex"]["state"] != "refreshed" {
+                lines.push("host cache refresh is advisory and not confirmed; inspect hiero plugins status and private logs/agent-sync.log".into());
+            }
+        }
+        Err(error) => lines.push(format!(
+            "agent bundle refresh warning: {error}; run hiero plugins sync after update"
+        )),
+    }
 
     lines.push(if degraded && !daemon_started { "offline installation verified; configuration initialization and daemon readiness are deferred until explicit Start".into() } else if degraded {
         "health check: degraded (doctor warnings) but the candidate confirmed ready; \
