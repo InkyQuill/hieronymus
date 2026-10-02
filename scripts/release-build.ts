@@ -64,19 +64,6 @@ if (values["dry-run"]) {
       "hiero/console-embed",
       "--bins",
     ]);
-    if (target.includes("apple"))
-      run([
-        "cargo",
-        "run",
-        "--locked",
-        "-p",
-        "hiero-desktop",
-        "--bin",
-        "build-icons",
-        "--",
-        "--out",
-        "target/desktop-icons",
-      ]);
     let reviewed:
       | { archive: string; receipt: string; name: string }
       | undefined;

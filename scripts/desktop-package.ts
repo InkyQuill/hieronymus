@@ -343,7 +343,7 @@ export async function packageDesktop(o: Options) {
       names.push("Hieronymus.app/Contents/Info.plist");
       const iconset = resolve(
         process.env.HIERO_RELEASE_ICONSET ??
-          "target/desktop-icons/app/hieronymus.iconset",
+          "assets/icons/native/hieronymus.iconset",
       );
       mkdirSync(join(payload, "Hieronymus.app/Contents/Resources"), {
         recursive: true,

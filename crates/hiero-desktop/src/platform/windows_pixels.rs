@@ -4,7 +4,12 @@ pub fn convert(rgba: &[u8], size: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
         return Err("Invalid native icon dimensions".into());
     }
     let mut bgra = rgba.to_vec();
-    for (dest, src) in bgra.chunks_exact_mut(4).zip(rgba.chunks_exact(4)) {
+    for (dest, src) in bgra
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(rgba.as_chunks::<4>().0.iter().copied())
+    {
         let a = src[3] as u16;
         dest.copy_from_slice(&[
             (src[2] as u16 * a / 255) as u8,
@@ -15,7 +20,7 @@ pub fn convert(rgba: &[u8], size: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
     }
     let stride = (size as usize).div_ceil(32) * 4;
     let mut mask = vec![0; stride * size as usize];
-    for (index, pixel) in rgba.chunks_exact(4).enumerate() {
+    for (index, pixel) in rgba.as_chunks::<4>().0.iter().copied().enumerate() {
         if pixel[3] == 0 {
             let x = index % size as usize;
             let y = index / size as usize;
