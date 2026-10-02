@@ -525,6 +525,7 @@ if (import.meta.main) {
         `\n\nAvailable binary targets: ${releases.map((r) => r.target).join(", ")}.\n` +
         `Missing targets: ${TARGETS.filter((t) => !releases.some((r) => r.target === t)).join(", ") || "none"}.\n` +
         `Missing installers: ${setupNames.filter((n) => !availableSetup.includes(n)).join(", ") || "none"}.\n` +
+        "The Windows and macOS installers are unsigned. macOS may require **Open Anyway** in Privacy & Security. Intel macOS is included, but native desktop qualification remains incomplete.\n" +
         "Native installation checks and evidence are advisory; see the linked workflow and open release-warning issues for failures or untested behavior.\n",
     );
     try {
