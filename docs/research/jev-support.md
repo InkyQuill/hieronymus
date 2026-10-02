@@ -1,0 +1,13 @@
+# Bounded Dream support checks: keep offline
+
+Issue #112. Live pilot on 2026-10-03 with `jev-1.13.0`. **Do not add a runtime enforcement pass yet.** Use this fixture as an offline regression. A support classifier cannot establish truth beyond the provided evidence, and low confidence must preserve pending inputs rather than turn into successful coverage or intentional forgetting.
+
+Twelve synthetic RU/JA/EN cases distinguish supported, contradicted, unsupported and insufficient-context claims. They cover negation, quantity, chronology, viewpoint, indirect inference, ambiguity and quoted instructions. Single, repeat and batch modes each accepted 10/12 correct decisions and abstained on 2/12, with zero accepted errors in this small sample. The 26 requests used 14,292 input and 1,954 output tokens; median request latency was 307–313 ms. Probabilities, model identity, timing and usage are recorded in the adjacent JSONL. No dollar cost was returned. This is not a rare-error estimate or a calibrated probability guarantee.
+
+An owner-authorized private database copy supplied 12 existing crystals with their linked short-term evidence. Across the three modes, 22/36 decisions accepted support and 14 abstained. These records have **no independent gold labels**, so those counts are neither accuracy nor proof that existing Dream output is correct. Private input/answers are not committed; the original database was not changed.
+
+Reproduce: `bun scripts/evaluate-jev-pilot.ts scripts/fixtures/jev/support-v1.json /private/relevance.conf /private/results.json`. Limits: 64 requests, 10 minutes, 20 seconds/request, 8 questions/batch, 32 KiB request body, no retry. Missing credentials and network failure fail explicitly. The harness does not alter memories, coverage, evidence or policy. Invalid/low-confidence answers become no accepted decision. The 0.95 acceptance floor is a fixed conservative research rule, not a tuned threshold for support enforcement.
+
+For a future pilot, source scope/revision validation must happen in code first. Preserve `inferred` versus source-fact status; unsupported, contradictory or unavailable checks must not archive inputs without an existing justified outcome. This study deliberately adds no approval queue, automatic rewrite, retry-until-approved loop or mandatory cloud step. Offline evidence is sufficient for this issue's go/no-go decision; broader representative labeled data is required before enforcement.
+
+Inspiration: [TypeSafe citation checking](https://docs.typesafe.ai/cookbooks/citation_check). Its example results do not establish literary-domain thresholds.
