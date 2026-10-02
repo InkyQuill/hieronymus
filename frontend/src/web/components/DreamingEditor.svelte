@@ -7,12 +7,13 @@
     initial: DreamSettings;
     providers: ProviderProfile[];
     modelCache: ModelCache;
+    defaultPrompts?: Record<string, string>;
     busy?: boolean;
     error?: string;
     onSave: (settings: DreamSettings) => void;
   };
 
-  let { initial, providers, modelCache, busy = false, error = "", onSave }: Props = $props();
+  let { initial, providers, modelCache, defaultPrompts = {}, busy = false, error = "", onSave }: Props = $props();
   const emptySettings = (): DreamSettings => ({
     dreaming: {
       enabled: false,
@@ -82,11 +83,17 @@
     <label class="grid gap-1.5 text-caption text-secondary">Maximum relations per pass<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={settings.dreaming.max_relation_records_per_pass} /></label>
   </div>
 
+  <section class="mt-8 border-t border-default pt-6" aria-labelledby="shared-instructions-heading">
+    <h3 id="shared-instructions-heading" class="text-h3">Shared instructions</h3>
+    <p id="shared-instructions-help" class="mt-2 max-w-[70ch] text-body-sm text-secondary">Applied to every dreaming pass, alongside its task prompt. Use this for memory language, writing style and project-wide guidance.</p>
+    <label class="mt-4 grid gap-1.5 text-caption text-secondary">General prompt<textarea class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" aria-describedby="shared-instructions-help" bind:value={settings.dreaming.general_prompt} rows="4"></textarea></label>
+  </section>
+
   <section class="mt-8"><h3 class="text-h3">Workflows</h3>
     {#each Object.entries(settings.workflows) as [name, workflow] (name)}
       <article class="mt-3 rounded-md border border-default bg-surface p-4"><div>
         <header class="flex items-center justify-between gap-4"><h4 class="text-body font-medium capitalize">{name.replaceAll("_", " ")}</h4><label class="flex min-h-11 cursor-pointer items-center"><input class="peer sr-only" type="checkbox" checked={workflow.enabled} onchange={(event) => updateWorkflow(name, { enabled: event.currentTarget.checked })} /><span class="relative h-[22px] w-10 shrink-0 rounded-full border border-strong bg-raised transition peer-checked:border-accent peer-checked:[&>span]:translate-x-[18px] peer-checked:[&>span]:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40"><span class="absolute top-0.5 left-0.5 size-4 rounded-full bg-secondary transition-transform"></span></span><span class="sr-only">Enable {name.replaceAll("_", " ")}</span></label></header>
-        <div class="mt-4 grid gap-4 sm:grid-cols-3">
+        <div class="mt-4 grid items-start gap-4 sm:grid-cols-3">
           <label class="grid gap-1.5 text-caption text-secondary">Provider<select class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={workflow.provider} onchange={(event) => { const id = event.currentTarget.value; updateWorkflow(name, { provider: id, model: "" }); customModels[name] = false; void loadModels(id); }}><option value="">Choose profile</option>{#each providers as provider (provider.id)}<option value={provider.id}>{provider.name} · {provider.type}</option>{/each}</select></label>
           <div class="grid gap-1.5 text-caption text-secondary">
             <label class="grid gap-1.5">Model
@@ -105,9 +112,17 @@
           </div>
           <label class="grid gap-1.5 text-caption text-secondary">Maximum records<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={workflow.max_records_per_pass} /></label>
         </div>
+        <details class="mt-5 border-t border-default pt-3">
+          <summary class="min-h-11 cursor-pointer py-3 text-body-sm text-accent-text focus-visible:outline-2 focus-visible:outline-accent">Task prompt · {workflow.prompt?.trim() ? "Custom" : "Default"}</summary>
+          <p class="mb-3 max-w-[70ch] text-body-sm text-secondary">These instructions apply only to this pass. Shared instructions, source memories and the required JSON format are added automatically.</p>
+          <label class="grid gap-1.5 text-caption text-secondary">{name.replaceAll("_", " ")} task prompt<textarea class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" rows="5" value={workflow.prompt?.trim() ? workflow.prompt : (defaultPrompts[name] ?? "")} oninput={(event) => updateWorkflow(name, { prompt: event.currentTarget.value })}></textarea></label>
+          <button type="button" class="mt-2 min-h-11 text-body-sm text-accent-text disabled:opacity-60" disabled={!workflow.prompt?.trim()} onclick={() => updateWorkflow(name, { prompt: "" })}>Restore default prompt</button>
+        </details>
       </div></article>
     {/each}
   </section>
-  <label class="mt-8 grid gap-1.5 text-caption text-secondary">General prompt<textarea class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" bind:value={settings.dreaming.general_prompt} rows="5"></textarea></label>
+  <footer class="mt-8 flex justify-end border-t border-default pt-4">
+    <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save changes</button>
+  </footer>
   {#if error}<p class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
 </section>

@@ -966,7 +966,10 @@ impl DreamService {
         }
         let providers = selected
             .iter()
-            .map(|choice| self.resolver.provider(choice))
+            .map(|choice| {
+                self.resolver
+                    .provider_with_config(choice, &self.dream_config)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let selection_context = groups[0].context.clone();
         let mut selected_memories: Vec<ShortTermMemoryRecord> = groups

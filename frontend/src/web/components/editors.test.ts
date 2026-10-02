@@ -160,3 +160,39 @@ test("dreaming preserves a saved custom model when discovery fails", async () =>
     (screen.getByLabelText("Custom model") as HTMLInputElement).value,
   ).toBe("private-model");
 });
+
+test("dreaming task prompts can be edited and restored without changing shared instructions", async () => {
+  const user = userEvent.setup();
+  const onSave = vi.fn();
+  render(DreamingEditor, {
+    props: {
+      initial: dream,
+      providers: [provider],
+      modelCache,
+      defaultPrompts: { concepts: "Extract supported concepts." },
+      onSave,
+    },
+  });
+  await user.click(screen.getByText("Task prompt · Default"));
+  const task = screen.getByLabelText("concepts task prompt");
+  expect((task as HTMLTextAreaElement).value).toBe(
+    "Extract supported concepts.",
+  );
+  await user.clear(task);
+  await user.type(task, "Extract character motivations.");
+  await user.click(screen.getByRole("button", { name: "Save dreaming" }));
+  expect(onSave.mock.calls.at(-1)?.[0].workflows.concepts.prompt).toBe(
+    "Extract character motivations.",
+  );
+  expect(onSave.mock.calls.at(-1)?.[0].dreaming.general_prompt).toBe(
+    dream.dreaming.general_prompt,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Restore default prompt" }),
+  );
+  expect((task as HTMLTextAreaElement).value).toBe(
+    "Extract supported concepts.",
+  );
+  await user.click(screen.getByRole("button", { name: "Save dreaming" }));
+  expect(onSave.mock.calls.at(-1)?.[0].workflows.concepts.prompt).toBe("");
+});

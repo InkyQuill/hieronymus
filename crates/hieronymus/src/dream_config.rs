@@ -32,7 +32,13 @@ pub const DREAMING_FIELDS: [&str; 15] = [
     "general_prompt",
 ];
 
-const WORKFLOW_FIELDS: [&str; 4] = ["provider", "model", "enabled", "max_records_per_pass"];
+const WORKFLOW_FIELDS: [&str; 5] = [
+    "provider",
+    "model",
+    "enabled",
+    "max_records_per_pass",
+    "prompt",
+];
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
@@ -73,6 +79,8 @@ pub struct WorkflowProfile {
     pub model: String,
     pub enabled: bool,
     pub max_records_per_pass: i64,
+    /// Empty uses the built-in instruction for this pass.
+    pub prompt: String,
 }
 
 impl WorkflowProfile {
@@ -82,6 +90,7 @@ impl WorkflowProfile {
             model: model.into(),
             enabled,
             max_records_per_pass: 500,
+            prompt: String::new(),
         }
     }
 }
@@ -93,6 +102,7 @@ impl Default for WorkflowProfile {
             model: String::new(),
             enabled: true,
             max_records_per_pass: 500,
+            prompt: String::new(),
         }
     }
 }
@@ -370,6 +380,7 @@ fn dream_payload(dream_config: &DreamConfig) -> Table {
         let mut payload = Table::new();
         payload.insert("provider".into(), workflow.provider.clone().into());
         payload.insert("model".into(), workflow.model.clone().into());
+        payload.insert("prompt".into(), workflow.prompt.clone().into());
         payload.insert("enabled".into(), workflow.enabled.into());
         payload.insert(
             "max_records_per_pass".into(),
@@ -528,6 +539,7 @@ fn dream_config_from_payload(payload: &Table) -> Result<DreamConfig, DreamConfig
                 match field_name.as_str() {
                     "provider" => workflow.provider = require_exact_str(&prefix, value)?,
                     "model" => workflow.model = require_exact_str(&prefix, value)?,
+                    "prompt" => workflow.prompt = require_exact_str(&prefix, value)?,
                     "enabled" => workflow.enabled = require_exact_bool(&prefix, value)?,
                     "max_records_per_pass" => {
                         workflow.max_records_per_pass = require_exact_int(&prefix, value)?;

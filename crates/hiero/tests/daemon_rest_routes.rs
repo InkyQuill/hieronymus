@@ -441,11 +441,31 @@ fn api_provider_routes_match_frozen_targets() {
     );
 }
 
+// Additive dreaming prompt fields; preserve the historical fixture itself.
+fn add_workflow_prompts(workflows: &mut Value) {
+    for workflow in workflows.as_object_mut().unwrap().values_mut() {
+        workflow["prompt"] = json!("");
+    }
+}
+
 #[test]
 fn api_settings_routes_match_frozen_targets() {
     let (fixture, _root, _daemon) = start_daemon_with_browser_session();
-    assert_frozen_contract("http.route.get.api.settings.dream", &fixture, |_| {});
-    assert_frozen_contract("http.route.post.api.settings.dream", &fixture, |_| {});
+    assert_frozen_contract("http.route.get.api.settings.dream", &fixture, |expected| {
+        add_workflow_prompts(&mut expected["dream"]["workflows"]);
+        expected["default_prompts"] = json!(
+            hieronymus::dream_config::DREAM_WORKFLOW_NAMES
+                .iter()
+                .map(|name| (
+                    name.to_string(),
+                    json!(hieronymus::dream_providers::phase_instruction(name).unwrap())
+                ))
+                .collect::<serde_json::Map<String, Value>>()
+        );
+    });
+    assert_frozen_contract("http.route.post.api.settings.dream", &fixture, |expected| {
+        add_workflow_prompts(&mut expected["dream"]["workflows"]);
+    });
     assert_frozen_contract("http.route.get.api.settings.ingest", &fixture, |_| {});
     assert_frozen_contract("http.route.post.api.settings.ingest", &fixture, |_| {});
     assert_frozen_contract("http.route.get.api.settings.release", &fixture, |_| {});
@@ -504,6 +524,8 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
         &route_target("http.route.get.api.admin.dashboard")["success"]["response"]["body"],
         &fixture,
     );
+    add_workflow_prompts(&mut expected["config_editor"]["config"]["workflows"]);
+    add_workflow_prompts(&mut expected["config_editor"]["workflows"]);
     expected["header"]["version"] = json!(format!("v{}α", env!("CARGO_PKG_VERSION")));
     let response = send_request(
         fixture.port,
@@ -1117,5 +1139,33 @@ fn version_route_reports_running_server_and_obeys_browser_guards() {
         )
         .status,
         403
+    );
+}
+
+#[test]
+fn dreaming_prompt_settings_persist_over_authenticated_rest() {
+    let (fixture, _root, _daemon) = start_daemon_with_browser_session();
+    let headers = browser_headers(&fixture, &[("Origin", same_origin(fixture.port))]);
+    let draft = json!({"dream":{"dreaming":{"general_prompt":"Preserve bilingual evidence."},"workflows":{"concepts":{"prompt":"Extract motivations."}}}});
+    let saved = send_request(
+        fixture.port,
+        "POST",
+        "/api/settings/dream",
+        &headers,
+        &serde_json::to_vec(&draft).unwrap(),
+    );
+    assert_eq!(saved.status, 200);
+    let loaded = send_request(fixture.port, "GET", "/api/settings/dream", &headers, b"");
+    assert_eq!(
+        loaded.body()["dream"]["dreaming"]["general_prompt"],
+        draft["dream"]["dreaming"]["general_prompt"]
+    );
+    assert_eq!(
+        loaded.body()["dream"]["workflows"]["concepts"]["prompt"],
+        draft["dream"]["workflows"]["concepts"]["prompt"]
+    );
+    assert_eq!(
+        loaded.body()["default_prompts"].as_object().unwrap().len(),
+        7
     );
 }

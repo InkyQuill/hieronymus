@@ -27,6 +27,7 @@ export type ProviderCheck = {
 };
 
 export type Workflow = {
+  prompt?: string;
   provider: string;
   model: string;
   enabled: boolean;

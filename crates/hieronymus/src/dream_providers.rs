@@ -38,8 +38,8 @@ const REQUEST_ID_HEADER: &str = "X-Hieronymus-Request-Id";
 
 const ENGLISH_MEMORY_PROSE: &str = "Use English memory prose by default. Japanese, Russian, or other languages may appear only as terms, names, renderings, quotes, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.";
 
-/// Port of `dream_workflows.PHASE_PROMPTS` (per-pass instruction text).
-fn phase_instruction(pass_name: &str) -> Option<&'static str> {
+/// Built-in editable task instruction for a Dream pass.
+pub fn phase_instruction(pass_name: &str) -> Option<&'static str> {
     match pass_name {
         "concepts" => Some(
             "Extract every supported concept and its advisory facets. Do not create \
@@ -286,6 +286,8 @@ pub struct LlmDreamProvider {
     core: HttpClientCore,
     observation: Option<Observation>,
     ollama_context: OnceCell<PromptBudget>,
+    general_prompt: String,
+    workflow_prompt: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -331,10 +333,19 @@ impl LlmDreamProvider {
             profile_id,
             observation: None,
             ollama_context: OnceCell::new(),
+            general_prompt: ENGLISH_MEMORY_PROSE.to_string(),
+            workflow_prompt: String::new(),
             profile,
             model,
             core: HttpClientCore::new(Arc::new(BlockingHttpTransport::default())),
         })
+    }
+
+    /// Configure authored instructions; protocol and evidence guards remain fixed.
+    pub fn with_prompts(mut self, general: &str, workflow: &str) -> Self {
+        self.general_prompt = general.to_string();
+        self.workflow_prompt = workflow.to_string();
+        self
     }
 
     /// Attach content-free observations to actual generation calls only.
@@ -691,7 +702,13 @@ impl DreamProvider for LlmDreamProvider {
         context: &TranslationContext,
         memories: &[ShortTermMemoryRecord],
     ) -> Result<String, DreamError> {
-        phase_prompt(pass_name, context, memories)
+        phase_prompt(
+            pass_name,
+            context,
+            memories,
+            &self.general_prompt,
+            &self.workflow_prompt,
+        )
     }
 
     fn run_pass(
@@ -819,12 +836,19 @@ fn phase_prompt(
     pass_name: &str,
     context: &TranslationContext,
     memories: &[ShortTermMemoryRecord],
+    general_prompt: &str,
+    workflow_prompt: &str,
 ) -> Result<String, DreamError> {
-    let instruction = phase_instruction(pass_name)
+    let default_instruction = phase_instruction(pass_name)
         .ok_or_else(|| DreamError::Provider(format!("unknown Dream pass: {pass_name}")))?;
+    let instruction = if workflow_prompt.trim().is_empty() {
+        default_instruction
+    } else {
+        workflow_prompt
+    };
     let mut payload = dream_prompt_payload(context, memories);
     payload["instruction"] = json!(format!(
-        "Dream pass: {pass_name}. {ENGLISH_MEMORY_PROSE} {instruction} \
+        "Dream pass: {pass_name}. {general_prompt} {instruction} \
          Use only provided source memory ids. Return one JSON object without markdown."
     ));
     if pass_name == "coverage_audit" {

@@ -550,3 +550,18 @@ one finite nonzero vector with at most 16,384 components, bound response reads t
 1 MiB, and use a 30-second inference deadline (5 seconds for model discovery).
 Errors leave the semantic lane unavailable; FTS results cannot count as semantic
 success.
+
+### Dreaming prompts
+
+In **Settings → Dreaming**, **General prompt** supplies shared instructions to every
+configured LLM pass. Each workflow's **Task prompt** shows its built-in instruction
+and accepts an override. **Restore default prompt** removes that override; an empty
+or whitespace-only override also uses the built-in instruction.
+
+`dream.conf` stores shared text as `dreaming.general_prompt` and per-pass overrides
+as `workflows.<pass>.prompt`. Existing files without `prompt` retain the built-in
+pass instructions. The request combines the shared instructions, the selected
+pass instruction, project context and source memories. JSON schemas, source-ID
+requirements and runtime evidence/authority validation remain enforced by the
+application. Editing prompts does not grant dreaming authority to approve terms
+or explicit user rules.
