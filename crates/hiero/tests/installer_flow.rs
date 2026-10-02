@@ -102,7 +102,7 @@ fn build_release(root: &Path, binary: &str) -> PathBuf {
     std::fs::copy(binary, payload.join("hiero")).unwrap();
     assert!(
         Command::new("strip")
-            .arg("--strip-debug")
+            .arg("--strip-all")
             .arg(payload.join("hiero"))
             .status()
             .unwrap()

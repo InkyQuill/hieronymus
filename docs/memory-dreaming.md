@@ -375,8 +375,9 @@ provider = "my-ollama"
 model = "my-local-model"
 ```
 
-A comparison sends only one pair and its scope/provenance, capped at 16 KiB,
-after deterministic checks. The shared drain budget is 1–32 model pairs (eight
+Comparisons gather up to eight same-scope pairs per Jev request after deterministic
+checks, capped at 16 KiB per pair and 32 KiB of combined pair state. Other model
+providers receive one pair per request. See [SDK and batching](jev-sdk-batching.md). The shared drain budget is 1–32 model pairs (eight
 by default), with one attempt per assignment, 1–30 seconds per assignment and a
 60-second shared deadline including model discovery. Ollama uses discovered
 context limits and refuses truncation; configured cloud budgets follow the
@@ -388,6 +389,14 @@ Valid assessments are cached by exact pair versions and routing identity.
 Outages have a five-minute cooldown; configuration, credentials or content changes
 invalidate the key. Corrupt cache entries are discarded. A cached model answer
 still requires transaction-time snapshot validation before mutation.
+
+Unresolved working copies retain their source records, but an unchanged checked
+snapshot no longer blocks later copies or repeatedly schedules Dream. Durable
+markers include copy/source content, claim/evidence revisions and routing identity.
+Changes reopen the work; transient provider outages reopen after five minutes.
+Markers commit with the phase audit. Budget exhaustion never parks unassessed work.
+A completed drain therefore means no eligible work remains, not that unresolved
+copies were accepted or archived.
 
 Readiness means the assignment and credentials exist, not that the selected
 model has been calibrated. Controlled provider and multilingual embedding tests

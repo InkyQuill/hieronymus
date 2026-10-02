@@ -493,7 +493,9 @@ impl LlmDreamProvider {
                     wire.name()
                 )));
             }
-            if wire == Wire::Ollama && pass_name != "correction decisions" {
+            if wire == Wire::Ollama
+                && !matches!(pass_name, "correction decisions" | "memory comparison")
+            {
                 let keys: &[&str] = if pass_name == "coverage_audit" {
                     &["covered_memory_ids"]
                 } else {

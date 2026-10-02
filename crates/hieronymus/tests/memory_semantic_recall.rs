@@ -253,3 +253,91 @@ fn malformed_derived_vectors_rebuild_without_source_changes() {
         );
     }
 }
+
+struct Unavailable(FakeEmbeddingProvider);
+impl EmbeddingProvider for Unavailable {
+    fn identity(&self) -> &EmbeddingIdentity {
+        self.0.identity()
+    }
+    fn verify_identity(&self) -> Result<(), SemanticError> {
+        Err(SemanticError::ModelUnavailable("test offline".into()))
+    }
+    fn embed_document(&mut self, _: &[u32]) -> Result<Vec<f32>, SemanticError> {
+        self.verify_identity()?;
+        unreachable!()
+    }
+    fn embed_query(&mut self, _: &[u32]) -> Result<Vec<f32>, SemanticError> {
+        self.verify_identity()?;
+        unreachable!()
+    }
+}
+#[test]
+fn preparation_and_search_failure_emit_one_warning_in_both_entry_points() {
+    let (_root, config, context) = setup();
+    let session = WorkspaceStore::open(&config)
+        .unwrap()
+        .start_session(&context)
+        .unwrap();
+    let recall = RecallService::open(&config)
+        .unwrap()
+        .with_semantic_lane(SemanticLane::new(
+            Box::new(Unavailable(FakeEmbeddingProvider::new(4))),
+            Box::new(Tokens),
+        ));
+    for result in [
+        recall.recall_context(&context, "tea", 10).unwrap(),
+        recall.recall(session.id, &context, "tea", 10).unwrap(),
+    ] {
+        assert_eq!(
+            result
+                .warnings
+                .iter()
+                .filter(|w| w.kind == "memory_semantic_unavailable")
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn semantic_claim_hydration_budget_reports_an_incomplete_candidate_pool() {
+    let (_root, config, context) = setup();
+    let store = CrystalStore::open(&config).unwrap();
+    for _ in 0..512 {
+        store
+            .add_crystal(
+                &context,
+                "lesson",
+                &NewCrystal::new("lesson", "tea with unresolved provenance"),
+            )
+            .unwrap();
+    }
+    open_migrated(&config.database_path())
+        .unwrap()
+        .execute("update memory_claims set status='invalid'", [])
+        .unwrap();
+    store
+        .add_crystal(
+            &context,
+            "lesson",
+            &claimed(&config, "book", "tea with verified provenance"),
+        )
+        .unwrap();
+    let recall = service(&config);
+    for _ in 0..17 {
+        recall.recall_context(&context, "чай", 10).unwrap();
+    }
+    let db = open_migrated(&config.database_path()).unwrap();
+    let indexed: i64 = db
+        .query_row("select count(*) from memory_vectors", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(indexed, 513);
+    let result = recall.recall_context(&context, "чай", 10).unwrap();
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.kind == "memory_semantic_pending"),
+        "a full vector index does not mean every claim candidate was examined"
+    );
+}

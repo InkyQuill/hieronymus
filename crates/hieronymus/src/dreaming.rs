@@ -653,6 +653,7 @@ impl DreamService {
         // so the precise redacted error text is the audit record.
         let choices = resolver.translate_choices(&dream_config)?;
         let audit = DreamAuditStore::open(config)?;
+        crate::reconsolidation_progress::initialize(&open_migrated(&config.database_path())?)?;
         let comparator = std::rc::Rc::new(std::cell::RefCell::new(
             crate::memory_comparison::Comparator::open(config)?,
         ));
@@ -760,7 +761,13 @@ impl DreamService {
                 let progress = match record.status.as_str() {
                     "completed" => {
                         let effects = self.batch_progress(&record)?;
-                        let total = effects.total();
+                        let db = open_migrated(&self.config.database_path())?;
+                        let checked: i64 = db.query_row(
+                            "select count(*) from reconsolidation_checked where dream_run_id=?",
+                            [record.id],
+                            |r| r.get(0),
+                        )?;
+                        let total = effects.total() + checked.max(0) as usize;
                         progress_total.add(&effects);
                         total
                     }
@@ -1078,13 +1085,17 @@ impl DreamService {
                 &identity,
             )?;
             phase_run_ids.push(phase_run_id);
+            // Coverage authorizes only fresh evidence. Render and execute
+            // the same input so context-only IDs never enter its coverage set.
+            let model_input = if provider.is_deterministic() || choice.name == "coverage_audit" {
+                &selected_memories[..fresh_count]
+            } else {
+                &selected_memories[..]
+            };
             // The prompt is rendered before the request audit so the stored
             // hash binds the exact text the pass runs against (spec §Audit).
-            let prompt = provider.render_pass_prompt(
-                &choice.name,
-                &selection_context,
-                &selected_memories,
-            )?;
+            let prompt =
+                provider.render_pass_prompt(&choice.name, &selection_context, model_input)?;
             let prompt_hash = prompt_sha256(&prompt);
             self.audit_provider_request(
                 run_id,
@@ -1098,11 +1109,6 @@ impl DreamService {
                 &identity,
             )?;
 
-            let model_input = if provider.is_deterministic() {
-                &selected_memories[..fresh_count]
-            } else {
-                &selected_memories[..]
-            };
             let raw = provider.run_pass(&choice.name, &selection_context, model_input)?;
             if !raw.is_object() {
                 return Err(DreamError::InvalidOutput(format!(
@@ -2057,18 +2063,11 @@ impl DreamService {
         Ok(total)
     }
 
-    /// True when any non-archived session-scoped working copy exists.
+    /// A parked unchanged snapshot is retained evidence, not runnable work.
     fn reconsolidation_pending(&self) -> Result<bool, DreamError> {
         let connection = open_migrated(&self.config.database_path())?;
-        let pending: i64 = connection.query_row(
-            "select exists (
-                 select 1 from short_term_memories
-                 where archived_at is null and source_crystal_id is not null
-             )",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(pending != 0)
+        let routing = self.comparator.borrow().routing_fingerprint();
+        Ok(!crate::reconsolidation_progress::select(&connection, &routing, None, 1)?.is_empty())
     }
 
     /// Reconsolidate only verified equivalent copies. Changed or unresolved
@@ -2087,35 +2086,14 @@ impl DreamService {
             return Ok(DeterministicSummary::default());
         }
 
-        // Bounded plan: absolute limit from max_short_term_memories_per_run,
-        // evaluated before persistence.
         let connection = open_migrated(&self.config.database_path())?;
-        let copies: Vec<(i64, i64, i64, String)> = {
-            let selected = serde_json::to_string(
-                &selected_copies.map(|ids| ids.iter().copied().collect::<Vec<_>>()),
-            )
-            .map_err(|e| DreamError::Json(e.to_string()))?;
-            let mut statement = connection.prepare(
-                "select id, session_id, source_crystal_id, text
-                 from short_term_memories
-                 where archived_at is null and source_crystal_id is not null
-                 and (?2='null' or id in (select value from json_each(?2)))
-                 order by id
-                 limit ?1",
-            )?;
-            let rows = statement.query_map(
-                rusqlite::params![self.dream_config.max_short_term_memories_per_run, selected],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                },
-            )?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
+        let routing = self.comparator.borrow().routing_fingerprint();
+        let copies = crate::reconsolidation_progress::select(
+            &connection,
+            &routing,
+            selected_copies,
+            self.dream_config.max_short_term_memories_per_run as usize,
+        )?;
         drop(connection);
         if copies.is_empty() {
             return Ok(DeterministicSummary::default());
@@ -2133,14 +2111,19 @@ impl DreamService {
         };
         let db = open_migrated(&self.config.database_path())?;
         let mut assessments = HashMap::new();
-        for (memory, _, crystal, _) in &copies {
+        let mut snapshots = Vec::new();
+        for copy in &copies {
             if let (Some(a), Some(b)) = (
-                snapshot(&db, ClaimTarget::Crystal(*crystal))?,
-                snapshot(&db, ClaimTarget::ShortTerm(*memory))?,
+                snapshot(&db, ClaimTarget::Crystal(copy.crystal_id))?,
+                snapshot(&db, ClaimTarget::ShortTerm(copy.memory_id))?,
             ) {
-                let decision = self.comparator.borrow_mut().compare(&a, &b)?;
-                assessments.insert(*memory, (a, b, decision));
+                snapshots.push((copy.memory_id, a, b));
             }
+        }
+        let pairs = snapshots.iter().map(|(_, a, b)| (a, b)).collect::<Vec<_>>();
+        let decisions = self.comparator.borrow_mut().compare_batch(&pairs)?;
+        for ((id, a, b), decision) in snapshots.into_iter().zip(decisions) {
+            assessments.insert(id, (a, b, decision));
         }
         drop(db);
         // One immediate write transaction: the phase's crystal and memory
@@ -2151,7 +2134,11 @@ impl DreamService {
         let committed = commit_audited(&mut connection, |transaction| {
             let mut summary = DeterministicSummary::default();
             let mut budget = crystal_budget;
-            for (memory_id, session_id, crystal_id, working_text) in copies {
+            for copy in copies {
+                let memory_id = copy.memory_id;
+                let session_id = copy.session_id;
+                let crystal_id = copy.crystal_id;
+                let working_text = copy.text.as_str();
                 // The crystal-mutation cost is charged against the remaining
                 // run budget before persistence. Reinforcement changes one
                 // crystal; protected copies are free and unresolved ones wait.
@@ -2159,6 +2146,14 @@ impl DreamService {
                     load_reconsolidation_source(transaction, crystal_id).map_err(tx_error)?
                 else {
                     // Preserve the copy when its source cannot be verified.
+                    crate::reconsolidation_progress::park(
+                        transaction,
+                        &copy,
+                        &routing,
+                        run_id,
+                        "source_missing",
+                    )
+                    .map_err(tx_error)?;
                     summary.actions.push(
                         json!({"memory_id":memory_id,"action":"pending","reason":"source_missing"}),
                     );
@@ -2166,11 +2161,27 @@ impl DreamService {
                 };
                 if original.status != "active" {
                     // Keep changed evidence even when its original is retired.
+                    crate::reconsolidation_progress::park(
+                        transaction,
+                        &copy,
+                        &routing,
+                        run_id,
+                        "source_inactive",
+                    )
+                    .map_err(tx_error)?;
                     summary.actions.push(json!({"memory_id":memory_id,"action":"pending","reason":"source_inactive"}));
                     continue;
                 }
                 let Some((before_source, before_copy, assessment)) = assessments.get(&memory_id)
                 else {
+                    crate::reconsolidation_progress::park(
+                        transaction,
+                        &copy,
+                        &routing,
+                        run_id,
+                        "snapshot_unavailable",
+                    )
+                    .map_err(tx_error)?;
                     summary.actions.push(json!({"memory_id":memory_id,"action":"pending","reason":"comparison snapshot unavailable"}));
                     continue;
                 };
@@ -2188,6 +2199,14 @@ impl DreamService {
                     || (assessment.decision != Decision::Equivalent
                         && !(original.text == working_text && same_lineage))
                 {
+                    crate::reconsolidation_progress::park(
+                        transaction,
+                        &copy,
+                        &routing,
+                        run_id,
+                        &assessment.reason,
+                    )
+                    .map_err(tx_error)?;
                     summary.actions.push(json!({"memory_id":memory_id,"action":"pending","comparison":assessment,"snapshot_current":unchanged,"snapshots":[before_source.audit_identity(),before_copy.audit_identity()]}));
                     continue;
                 }

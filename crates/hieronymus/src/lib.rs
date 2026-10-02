@@ -83,3 +83,8 @@ pub mod private_file;
 pub mod provider_observation;
 #[cfg(windows)]
 pub mod windows_file;
+
+mod reconsolidation_progress;
+
+/// Shared bounded Jev SDK adapter.
+pub mod jev;

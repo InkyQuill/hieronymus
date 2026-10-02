@@ -40,14 +40,14 @@
   {#if state}
     <form class="mt-4 grid gap-4 sm:grid-cols-2" oninput={() => { saved = false; }} onsubmit={event => { event.preventDefault(); void save(); }}>
       <label class="grid gap-1.5 text-caption text-secondary">Primary comparison provider
-        <select class={inputClass} bind:value={primary} disabled={busy}>
+        <select class={inputClass} bind:value={primary} onchange={() => { primaryModel = ""; }} disabled={busy}>
           <option value="">No model comparison</option><option value="jev">Jev (TypeSafe)</option>
           {#each providers as provider (provider.id)}<option value={provider.id}>{provider.name}</option>{/each}
         </select>
       </label>
       <label class="grid gap-1.5 text-caption text-secondary">Primary comparison model<input class={inputClass} bind:value={primaryModel} required={!!primary} disabled={busy || !primary} /></label>
       <label class="grid gap-1.5 text-caption text-secondary">Backup comparison provider
-        <select class={inputClass} bind:value={fallback} disabled={busy || !primary}>
+        <select class={inputClass} bind:value={fallback} onchange={() => { fallbackModel = ""; }} disabled={busy || !primary}>
           <option value="">No backup</option><option value="jev">Jev (TypeSafe)</option>
           {#each providers as provider (provider.id)}<option value={provider.id}>{provider.name}</option>{/each}
         </select>

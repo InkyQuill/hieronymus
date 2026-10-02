@@ -246,6 +246,7 @@ impl LinkProgress {
         cycle: i64,
         budget: &mut usize,
     ) -> Result<(), DreamError> {
+        let mut prefetched = 0;
         loop {
             // Legacy materialized work is read one row at a time, before any
             // lazy cursor work. Never load a quadratic queued-pair vector.
@@ -259,7 +260,31 @@ impl LinkProgress {
             if *budget == 0 {
                 return Ok(());
             }
+            if prefetched == 0 {
+                // Prefetch a bounded window without advancing the durable cursor.
+                // Each effect still re-reads snapshots and commits independently.
+                let upcoming = upcoming_pairs(connection, batch_id, (*budget).min(8))?;
+                prefetched = upcoming.len();
+                let mut snapshots = Vec::new();
+                for (left, right) in upcoming {
+                    if let (Some(a), Some(b)) = (
+                        crate::memory_comparison::snapshot(
+                            connection,
+                            crate::claim_reads::ClaimTarget::Crystal(left),
+                        )?,
+                        crate::memory_comparison::snapshot(
+                            connection,
+                            crate::claim_reads::ClaimTarget::Crystal(right),
+                        )?,
+                    ) {
+                        snapshots.push((a, b));
+                    }
+                }
+                let pairs = snapshots.iter().map(|(a, b)| (a, b)).collect::<Vec<_>>();
+                self.comparator.borrow_mut().compare_batch(&pairs)?;
+            }
             self.terminalize_pair(connection, batch_id, cycle, left, right)?;
+            prefetched = prefetched.saturating_sub(1);
             *budget -= 1;
         }
     }
@@ -595,6 +620,34 @@ fn queued_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i6
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?)
+}
+
+/// Read at most `limit` future pairs using offsets, never a quadratic cross join.
+fn upcoming_pairs(
+    connection: &Connection,
+    batch: i64,
+    limit: usize,
+) -> Result<Vec<(i64, i64)>, DreamError> {
+    let mut stmt = connection.prepare("select left_id,right_id from dream_link_pairs where batch_id=?1 and status='queued' order by left_id,right_id limit ?2")?;
+    let queued = stmt
+        .query_map(rusqlite::params![batch, limit as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !queued.is_empty() {
+        return Ok(queued);
+    }
+    let (mut left, mut right, count, lazy): (i64,i64,i64,bool) = connection.query_row("select next_left_offset,next_right_offset,(select coalesce(max(member_offset)+1,0) from dream_link_crystals where batch_id=?1),lazy_pairs from dream_link_batches where id=?1", [batch], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+    let mut result = Vec::new();
+    while lazy && right < count && result.len() < limit {
+        result.push(connection.query_row("select l.crystal_id,r.crystal_id from dream_link_crystals l join dream_link_crystals r on r.batch_id=l.batch_id where l.batch_id=?1 and l.member_offset=?2 and r.member_offset=?3", rusqlite::params![batch,left,right], |r| Ok((r.get(0)?,r.get(1)?)))?);
+        right += 1;
+        if right >= count {
+            left += 1;
+            right = left + 1;
+        }
+    }
+    Ok(result)
 }
 
 fn lazy_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i64)>, DreamError> {

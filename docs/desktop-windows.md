@@ -36,7 +36,7 @@ System taskbar theme, high contrast and taskbar DPI are observed on native setti
 
 ## Reproducible Windows tests
 
-Run from a native interactive, non-elevated Windows user account with the required Rust 1.96/MSVC build prerequisites. Default fixtures create fresh temporary roots and task names; no installed book root or existing registration is an input.
+Run from a native interactive, non-elevated Windows user account with the required Rust 1.98/MSVC build prerequisites. Default fixtures create fresh temporary roots and task names; no installed book root or existing registration is an input.
 
 ```powershell
 cargo test -p hiero --locked --test windows_desktop

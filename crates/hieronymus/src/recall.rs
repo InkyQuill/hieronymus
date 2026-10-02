@@ -530,7 +530,12 @@ impl RecallService {
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut response.warnings);
         }
-        if let Some(reason) = preparation_warning {
+        if let Some(reason) = preparation_warning
+            && !response
+                .warnings
+                .iter()
+                .any(|w| w.kind == "memory_semantic_unavailable")
+        {
             response.warnings.push(RecallWarning {
                 kind: "memory_semantic_unavailable".into(),
                 reason,
@@ -572,7 +577,12 @@ impl RecallService {
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut response.warnings);
         }
-        if let Some(reason) = preparation_warning {
+        if let Some(reason) = preparation_warning
+            && !response
+                .warnings
+                .iter()
+                .any(|w| w.kind == "memory_semantic_unavailable")
+        {
             response.warnings.push(RecallWarning {
                 kind: "memory_semantic_unavailable".into(),
                 reason,
@@ -779,10 +789,13 @@ impl RecallService {
                         ranks.insert(key(hit), 1.0 / (60.0 + i as f64 + 1.0));
                     }
                     for (rank, (kind, id)) in candidates.ids.into_iter().enumerate() {
-                        let score = ranks.entry((kind.clone(), id)).or_insert(0.0);
-                        *score += 1.0 / (60.0 + rank as f64 + 1.0);
-                        if !memory.iter().any(|h| key(h) == (kind.clone(), id)) {
-                            if kind == "crystal" {
+                        let candidate_key = (kind, id);
+                        let present = ranks.contains_key(&candidate_key);
+                        let is_crystal = candidate_key.0 == "crystal";
+                        *ranks.entry(candidate_key).or_insert(0.0) +=
+                            1.0 / (60.0 + rank as f64 + 1.0);
+                        if !present {
+                            if is_crystal {
                                 memory.push(RecallHit::LongTerm {
                                     crystal: crystals.get_with_connection(connection, id)?,
                                     score: 0.0,
@@ -1380,6 +1393,7 @@ fn rehydrate_hits(
                     annotate(tag);
                 }
                 if redacted {
+                    memory.source_crystal_snapshot = None;
                     memory.metadata.clear();
                     memory.source_ref.clear();
                     memory.rule_intent.clear();

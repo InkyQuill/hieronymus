@@ -19,7 +19,7 @@ are distinct from that candidate qualification.
 | Initial desktop targets | Linux x86_64, Windows x86_64, macOS arm64 and x86_64 (Intel runtime promotion pending) |
 | Semantic retrieval | Required — qualified multilingual MiniLM replacement; see `docs/semantic-validation.md` |
 | Release readiness | Real semantic lane must report `ready`; acquiring, rebuilding, missing/mismatched assets and FTS-only operation do not pass |
-| Rust pin | 1.96.0 (`rust-toolchain.toml`) |
+| Rust pin | 1.98.0 (`rust-toolchain.toml`) |
 | Bun pin (console and release helpers) | 1.4.0 (`frontend/bun.lock`, CI `setup-bun`) |
 
 The approved desktop amendment adds native installers and helper packages.

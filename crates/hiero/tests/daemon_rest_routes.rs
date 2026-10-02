@@ -1225,4 +1225,8 @@ fn comparison_assignments_are_guarded_validated_and_persisted() {
             .primary
             .is_some()
     );
+    std::fs::write(config.provider_config_path(), "invalid = [ private-secret").unwrap();
+    let corrupt = send_request(fixture.port, "GET", path, &headers, b"");
+    assert_eq!(corrupt.status, 400);
+    assert!(!corrupt.body().to_string().contains("private-secret"));
 }

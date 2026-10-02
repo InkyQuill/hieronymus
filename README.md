@@ -41,7 +41,7 @@ For configuration, updates, removal, and advanced offline installation, see the
 
 ## Develop and verify
 
-The application is a Rust 1.96 workspace with SQLite/FTS5, LanceDB and mandatory
+The application is a Rust 1.98 workspace with SQLite/FTS5, LanceDB and mandatory
 ONNX semantic inference. A Svelte 5 console is built with Bun 1.4.0 and embedded
 in the release binary. Python is not required to build, test, release or run it.
 

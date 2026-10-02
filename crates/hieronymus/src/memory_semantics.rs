@@ -9,6 +9,10 @@ use crate::{
 };
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+};
 
 const SOURCES: &str = "select 'crystal' kind,c.id,c.text,c.series_slug,c.source_language,c.target_language from crystals c where c.status='active' union all select 'short_term',m.id,m.text,s.series_slug,s.source_language,s.target_language from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and s.status in ('active','completed')";
 pub const BATCH: usize = 32;
@@ -128,12 +132,13 @@ pub fn search(
         )
         .map_err(|e| e.to_string())?;
     let pending:bool=db.query_row(&format!("select exists(select 1 from ({SOURCES}) s left join memory_vectors v on v.kind=s.kind and v.id=s.id and v.source_text=s.text and v.identity=?4 where {filter} and v.id is null)"),params![context.series_slug,context.source_language,context.target_language,model],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let incomplete = pending;
+    let mut incomplete = pending;
     let story = crate::story_applicability::StoryApplicability::resolve_context(db, context)
         .map_err(|e| e.to_string())?;
-    let mut ranked = Vec::new();
-    // Stream the complete index, retaining only eligible top-k. No fixed ID
-    // prefix can permanently hide later memories.
+    let mut ranked = BinaryHeap::new();
+    let mut scored = 0;
+    // Score the complete index without an ID cutoff, but perform expensive
+    // claim hydration only for the strongest bounded candidate pool.
     for row in rows {
         let (kind, id, encoded) = row.map_err(|e| e.to_string())?;
         let vector: Vec<f32> =
@@ -148,10 +153,28 @@ pub fn search(
         if norm == 0.0 {
             return Err("invalid persisted memory vector".into());
         }
-        let target = if kind == "crystal" {
-            crate::claim_reads::ClaimTarget::Crystal(id)
+        let score = dot / norm;
+        if !score.is_finite() {
+            return Err("invalid persisted memory vector norm".into());
+        }
+        scored += 1;
+        retain_candidate(
+            &mut ranked,
+            Ranked { score, kind, id },
+            crate::claim_reads::CANDIDATE_BUDGET,
+        );
+    }
+    let mut candidates = ranked.into_iter().map(|Reverse(v)| v).collect::<Vec<_>>();
+    candidates.sort_unstable_by(|a, b| b.cmp(a));
+    let mut ids = Vec::new();
+    for candidate in candidates {
+        if ids.len() >= limit {
+            break;
+        }
+        let target = if candidate.kind == "crystal" {
+            crate::claim_reads::ClaimTarget::Crystal(candidate.id)
         } else {
-            crate::claim_reads::ClaimTarget::ShortTerm(id)
+            crate::claim_reads::ClaimTarget::ShortTerm(candidate.id)
         };
         let annotation =
             crate::claim_reads::read_annotation(db, target, &story).map_err(|e| e.to_string())?;
@@ -160,11 +183,75 @@ pub fn search(
             crate::claim_reads::ClaimDisposition::Current
                 | crate::claim_reads::ClaimDisposition::Qualified(_)
         ) {
-            ranked.push((dot / norm, kind, id));
-            ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-            ranked.truncate(limit);
+            ids.push((candidate.kind, candidate.id));
         }
     }
-    let ids = ranked.into_iter().map(|(_, kind, id)| (kind, id)).collect();
+    incomplete |= ids.len() < limit && scored > crate::claim_reads::CANDIDATE_BUDGET;
     Ok(Candidates { ids, incomplete })
+}
+
+/// Higher score, then lexicographically smaller identity, wins a tie.
+struct Ranked {
+    score: f32,
+    kind: String,
+    id: i64,
+}
+impl PartialEq for Ranked {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Ranked {}
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Ranked {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.score
+            .total_cmp(&other.score)
+            .then_with(|| other.kind.cmp(&self.kind))
+            .then_with(|| other.id.cmp(&self.id))
+    }
+}
+
+/// Retain at most the strongest `budget` candidates, with the weakest at the root.
+fn retain_candidate(heap: &mut BinaryHeap<Reverse<Ranked>>, candidate: Ranked, budget: usize) {
+    if budget == 0 {
+        return;
+    }
+    if heap.len() < budget {
+        heap.push(Reverse(candidate));
+    } else if heap.peek().is_some_and(|weakest| candidate > weakest.0) {
+        heap.pop();
+        heap.push(Reverse(candidate));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn heap_keeps_late_best_candidates_with_stable_ties() {
+        let mut heap = BinaryHeap::new();
+        for (id, score) in [(9, 0.1), (3, 0.5), (2, 0.5), (100, 0.9), (1, 0.5)] {
+            retain_candidate(
+                &mut heap,
+                Ranked {
+                    id,
+                    score,
+                    kind: "crystal".into(),
+                },
+                3,
+            );
+            assert!(heap.len() <= 3);
+        }
+        let mut values = heap.into_iter().map(|Reverse(v)| v).collect::<Vec<_>>();
+        values.sort_unstable_by(|a, b| b.cmp(a));
+        assert_eq!(
+            values.iter().map(|v| v.id).collect::<Vec<_>>(),
+            vec![100, 1, 2]
+        );
+    }
 }

@@ -30,10 +30,16 @@ impl ProviderTransport for Wire {
     fn post_json(
         &self,
         url: &str,
-        _: &[(String, String)],
+        headers: &[(String, String)],
         body: &Value,
         _: Duration,
     ) -> Result<HttpResponse, HttpError> {
+        assert!(
+            !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-type")),
+            "the underlying transport owns content type"
+        );
         self.calls.lock().unwrap().push((url.into(), body.clone()));
         if url.ends_with("/api/show") {
             return Ok(HttpResponse{status:200,body:json!({"model_info":{"llama.context_length":8192,"general.architecture":"llama"},"template":"","parameters":"num_ctx 8192"}).to_string()});
@@ -196,7 +202,7 @@ fn missing_key_timeout_and_invalid_answer_use_only_explicit_fallback() {
 fn ollama_fallback_fits_complete_request_and_disables_truncation() {
     let (_root, config) = fixture("jev", Some("local"), false);
     let transport = wire(vec![Ok(
-        json!({"message":{"content":"{\"decision\":\"equivalent\"}"}}),
+        json!({"message":{"content":"{\"decision\":\"equivalent\"}"},"done":true,"done_reason":"stop"}),
     )]);
     let (a, b) = pair();
     let result = Comparator::open(&config)
@@ -205,6 +211,9 @@ fn ollama_fallback_fits_complete_request_and_disables_truncation() {
         .compare(&a, &b)
         .unwrap();
     assert_eq!(result.provider, "local");
+    assert_eq!(result.decision, Decision::Equivalent);
+    assert_eq!(result.reason, "validated pair assessment");
+    assert!(result.fallback_reason.is_some());
     let calls = transport.calls.lock().unwrap();
     let body = &calls.last().unwrap().1;
     assert_eq!(body["truncate"], false);
@@ -387,7 +396,7 @@ fn real_jev_synthetic_pair_calibration() {
     comparison_config::save(&config, &settings).unwrap();
     let mut service = Comparator::open(&config).unwrap();
     let mut accepted_equivalents = 0;
-    for (left, right, equivalent) in [
+    let cases = [
         ("the gate is closed", "the gate is shut", true),
         ("she purchased a bicycle", "she bought a bicycle", true),
         ("the door is locked", "the door is unlocked", false),
@@ -398,13 +407,21 @@ fn real_jev_synthetic_pair_calibration() {
         ),
         ("the red vial is safe", "the red vial is poisonous", false),
         ("he borrowed the book", "he lent the book", false),
-    ] {
-        let (mut a, mut b) = pair();
-        a.text = left.into();
-        b.text = right.into();
-        a.scope["subject_identity"] = json!("same verified subject");
-        b.scope = a.scope.clone();
-        let result = service.compare(&a, &b).unwrap();
+    ];
+    let snapshots = cases
+        .iter()
+        .map(|(left, right, _)| {
+            let (mut a, mut b) = pair();
+            a.text = (*left).into();
+            b.text = (*right).into();
+            a.scope["subject_identity"] = json!("same verified subject");
+            b.scope = a.scope.clone();
+            (a, b)
+        })
+        .collect::<Vec<_>>();
+    let pairs = snapshots.iter().map(|(a, b)| (a, b)).collect::<Vec<_>>();
+    let outcomes = service.compare_batch(&pairs).unwrap();
+    for ((left, right, equivalent), result) in cases.into_iter().zip(outcomes) {
         eprintln!(
             "synthetic pair: {left:?} / {right:?}: {:?} ({}; {:?})",
             result.decision, result.reason, result.fallback_reason
@@ -423,4 +440,112 @@ fn real_jev_synthetic_pair_calibration() {
         accepted_equivalents > 0,
         "calibration must exercise positive recognition as well as safe abstention"
     );
+}
+
+#[test]
+fn jev_batches_named_pairs_and_only_falls_back_for_missing_answers() {
+    let (_root, config) = fixture("jev", Some("cloud"), true);
+    let answer = jev("equivalent")["answers"]["comparison"].clone();
+    let transport = wire(vec![
+        Ok(json!({"model":"test-model","usage":{},"answers":{"comparison_0":answer}})),
+        Ok(cloud("distinct")),
+    ]);
+    let (a, b) = pair();
+    let mut c = a.clone();
+    c.target = ClaimTarget::Crystal(3);
+    c.text = "the door is closed".into();
+    let mut d = b.clone();
+    d.target = ClaimTarget::Crystal(4);
+    d.text = "the door is shut".into();
+    let mut comparator = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone());
+    let outcomes = comparator.compare_batch(&[(&a, &b), (&c, &d)]).unwrap();
+    assert_eq!(outcomes[0].decision, Decision::Equivalent);
+    assert_eq!(outcomes[0].provider, "jev");
+    assert_eq!(outcomes[1].decision, Decision::Distinct);
+    assert_eq!(outcomes[1].provider, "cloud");
+    assert!(outcomes[1].fallback_reason.is_some());
+    assert_eq!(transport.calls.lock().unwrap().len(), 2);
+    assert_eq!(
+        transport.calls.lock().unwrap()[0].1["questions"]
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+    comparator.compare_batch(&[(&a, &b), (&c, &d)]).unwrap();
+    assert_eq!(
+        transport.calls.lock().unwrap().len(),
+        2,
+        "each answer cached independently"
+    );
+}
+
+#[test]
+fn batched_uncertainty_is_terminal_and_answer_order_is_irrelevant() {
+    let (_root, config) = fixture("jev", Some("cloud"), true);
+    let yes = jev("equivalent")["answers"]["comparison"].clone();
+    let uncertain = jev("insufficient_context")["answers"]["comparison"].clone();
+    let transport = wire(vec![Ok(
+        json!({"model":"test-model","usage":{},"answers":{"comparison_1":yes,"comparison_0":uncertain}}),
+    )]);
+    let (a, b) = pair();
+    let mut c = a.clone();
+    c.target = ClaimTarget::Crystal(3);
+    let result = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone())
+        .compare_batch(&[(&a, &b), (&c, &b)])
+        .unwrap();
+    assert_eq!(result[0].decision, Decision::InsufficientContext);
+    assert_eq!(result[1].decision, Decision::Equivalent);
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn jev_question_batches_respect_shared_pair_budget() {
+    let (_root, config) = fixture("jev", None, true);
+    let mut settings = comparison_config::load(&config).unwrap();
+    settings.max_pairs_per_run = 10;
+    comparison_config::save(&config, &settings).unwrap();
+    let reply = |count: usize| {
+        let answers = (0..count)
+            .map(|i| {
+                (
+                    format!("comparison_{i}"),
+                    jev("distinct")["answers"]["comparison"].clone(),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        Ok(json!({"model":"test-model","usage":{},"answers":answers}))
+    };
+    let transport = wire(vec![reply(8), reply(2)]);
+    let snapshots = (0..12)
+        .map(|i| {
+            let (mut a, b) = pair();
+            a.target = ClaimTarget::Crystal(i + 10);
+            (a, b)
+        })
+        .collect::<Vec<_>>();
+    let pairs = snapshots.iter().map(|(a, b)| (a, b)).collect::<Vec<_>>();
+    let results = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone())
+        .compare_batch(&pairs)
+        .unwrap();
+    assert!(
+        results[..10]
+            .iter()
+            .all(|r| r.decision == Decision::Distinct)
+    );
+    assert!(
+        results[10..]
+            .iter()
+            .all(|r| r.reason == "comparison run budget exhausted")
+    );
+    let calls = transport.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].1["questions"].as_object().unwrap().len(), 8);
+    assert_eq!(calls[1].1["questions"].as_object().unwrap().len(), 2);
 }

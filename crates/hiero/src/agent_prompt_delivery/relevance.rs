@@ -5,8 +5,9 @@ use hieronymus::{
     relevance_config::{self, RelevanceConfig},
 };
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
+#[cfg(test)]
 const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 
 pub(super) struct Decision {
@@ -18,13 +19,13 @@ pub(super) fn evaluate(config: &HieronymusConfig, text: &str) -> Decision {
     evaluate_with(
         relevance_config::load(config),
         text,
-        &BlockingHttpTransport::new(65_536),
+        Arc::new(BlockingHttpTransport::new(65_536)),
     )
 }
 fn evaluate_with(
     settings: Result<RelevanceConfig, &'static str>,
     text: &str,
-    transport: &dyn ProviderTransport,
+    transport: Arc<dyn ProviderTransport>,
 ) -> Decision {
     let settings = match settings {
         Ok(settings) => settings,
@@ -51,7 +52,7 @@ fn local(text: &str, fallback: Option<&str>) -> Decision {
 fn remote(
     settings: &RelevanceConfig,
     text: &str,
-    transport: &dyn ProviderTransport,
+    transport: Arc<dyn ProviderTransport>,
 ) -> Result<(f64, f64), &'static str> {
     let payload = json!({
         "model":settings.model,
@@ -75,24 +76,12 @@ fn remote(
             }
         }
     });
-    let response = transport
-        .post_json(
-            ENDPOINT,
-            &[(
-                "Authorization".into(),
-                format!("Bearer {}", settings.key.expose_secret()),
-            )],
-            &payload,
-            Duration::from_secs(settings.timeout_seconds),
-        )
-        .map_err(|_| "transport_error")?;
-    if response.status != 200 {
-        return Err("http_error");
-    }
-    if response.body.len() > 65_536 {
-        return Err("invalid_response");
-    }
-    let value: Value = serde_json::from_str(&response.body).map_err(|_| "invalid_response")?;
+    let value = hieronymus::jev::ask(
+        settings.key.expose_secret(),
+        &payload,
+        Duration::from_secs(settings.timeout_seconds),
+        transport,
+    )?;
     parse_answers(&value)
 }
 fn parse_answers(value: &Value) -> Result<(f64, f64), &'static str> {
@@ -269,9 +258,11 @@ mod remote_tests {
         ) -> Result<HttpResponse, HttpError> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             assert_eq!(url, ENDPOINT);
-            assert_eq!(
-                headers,
-                &[("Authorization".into(), "Bearer synthetic-key".into())]
+            assert!(
+                headers
+                    .iter()
+                    .any(|(name, value)| name.eq_ignore_ascii_case("authorization")
+                        && value == "Bearer synthetic-key")
             );
             assert_eq!(timeout, Duration::from_secs(5));
             assert_eq!(payload["model"], "jev-1.13.0");
@@ -301,28 +292,39 @@ mod remote_tests {
     }
     #[test]
     fn remote_can_accept_without_keywords_and_reject_local_positive() {
-        let mock = Mock {
+        let mock = Arc::new(Mock {
             response: Ok(response(json!(0.95), json!(0.02))),
             calls: AtomicUsize::new(0),
-        };
-        let accepted = evaluate_with(Ok(settings()), "Он никогда не был её отцом.", &mock);
+        });
+        let accepted = evaluate_with(Ok(settings()), "Он никогда не был её отцом.", mock.clone());
         assert!(accepted.relevant);
         assert_eq!(accepted.diagnostic["method"], "jev");
         assert_eq!(mock.calls.load(Ordering::Relaxed), 1);
-        let mock = Mock {
+        let mock = Arc::new(Mock {
             response: Ok(response(json!(0.1), json!(0.9))),
             calls: AtomicUsize::new(0),
-        };
-        assert!(!evaluate_with(Ok(settings()), "Please translate this chapter.", &mock).relevant);
+        });
+        assert!(
+            !evaluate_with(
+                Ok(settings()),
+                "Please translate this chapter.",
+                mock.clone()
+            )
+            .relevant
+        );
     }
     #[test]
     fn uncertainty_and_mixed_technical_content_skip_without_fallback() {
         for (literary, technical) in [(0.84, 0.02), (0.95, 0.16), (0.5, 0.5)] {
-            let mock = Mock {
+            let mock = Arc::new(Mock {
                 response: Ok(response(json!(literary), json!(technical))),
                 calls: AtomicUsize::new(0),
-            };
-            let decision = evaluate_with(Ok(settings()), "Please translate this chapter.", &mock);
+            });
+            let decision = evaluate_with(
+                Ok(settings()),
+                "Please translate this chapter.",
+                mock.clone(),
+            );
             assert!(!decision.relevant);
             assert_eq!(decision.diagnostic["method"], "jev");
         }
@@ -342,16 +344,20 @@ mod remote_tests {
                 body: "not JSON synthetic-key".into(),
             }),
         ] {
-            let mock = Mock {
+            let mock = Arc::new(Mock {
                 response: result,
                 calls: AtomicUsize::new(0),
-            };
-            let decision = evaluate_with(Ok(settings()), "Please translate this chapter.", &mock);
+            });
+            let decision = evaluate_with(
+                Ok(settings()),
+                "Please translate this chapter.",
+                mock.clone(),
+            );
             assert!(decision.relevant);
             assert_eq!(decision.diagnostic["method"], "local");
             assert!(decision.diagnostic["fallback_reason"].is_string());
             assert!(!decision.diagnostic.to_string().contains("synthetic-key"));
-            assert!(!evaluate_with(Ok(settings()), "Check GitHub issues", &mock).relevant);
+            assert!(!evaluate_with(Ok(settings()), "Check GitHub issues", mock.clone()).relevant);
         }
     }
     #[test]
@@ -367,7 +373,7 @@ mod remote_tests {
             key: Secret::new(key),
             ..Default::default()
         };
-        let transport = BlockingHttpTransport::new(65_536);
+        let transport = Arc::new(BlockingHttpTransport::new(65_536));
         for (text, expected) in [
             ("Персонаж не знает тайну до третьей главы.", true),
             (
@@ -381,7 +387,7 @@ mod remote_tests {
             ("Fix the translation parser and run Cargo tests.", false),
         ] {
             let (literary, technical) =
-                remote(&settings, text, &transport).expect("live Jev classification failed");
+                remote(&settings, text, transport.clone()).expect("live Jev classification failed");
             assert_eq!(
                 literary >= settings.minimum_relevance && technical <= settings.maximum_technical,
                 expected,
@@ -392,19 +398,26 @@ mod remote_tests {
 
     #[test]
     fn absent_key_and_configuration_error_never_call_remote() {
-        let mock = Mock {
+        let mock = Arc::new(Mock {
             response: Err("unused"),
             calls: AtomicUsize::new(0),
-        };
+        });
         assert!(
             evaluate_with(
                 Ok(RelevanceConfig::default()),
                 "Please translate this chapter.",
-                &mock
+                mock.clone()
             )
             .relevant
         );
-        assert!(!evaluate_with(Err("bad configuration"), "Check GitHub issues", &mock).relevant);
+        assert!(
+            !evaluate_with(
+                Err("bad configuration"),
+                "Check GitHub issues",
+                mock.clone()
+            )
+            .relevant
+        );
         assert_eq!(mock.calls.load(Ordering::Relaxed), 0);
     }
 }

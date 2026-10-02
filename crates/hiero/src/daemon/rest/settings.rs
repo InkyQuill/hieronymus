@@ -36,10 +36,16 @@ pub(super) fn get(_request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Re
     let config = &runtime.config;
     match kind {
         Kind::Comparison => match hieronymus::comparison_config::load(config) {
-            Ok(value) => Response::json(
-                200,
-                &json!({"comparison":hieronymus::comparison_config::public_payload(config,&value),"providers":providers_payload(&load_provider_catalog(config).unwrap_or_default()),"error":""}),
-            ),
+            Ok(value) => match load_provider_catalog(config) {
+                Ok(catalog) => Response::json(
+                    200,
+                    &json!({
+                        "comparison": hieronymus::comparison_config::public_payload(config, &value),
+                        "providers": providers_payload(&catalog), "error": ""
+                    }),
+                ),
+                Err(_) => envelope_400("cannot load provider catalog for memory comparison"),
+            },
             Err(error) => envelope_400(error),
         },
         Kind::Relevance => match hieronymus::relevance_config::load(config) {

@@ -1240,6 +1240,13 @@ impl hieronymus::dreaming::DreamProvider for ContextProvider {
         context: &TranslationContext,
         memories: &[hieronymus::memory_models::ShortTermMemoryRecord],
     ) -> Result<Value, hieronymus::dreaming::DreamError> {
+        if pass == "coverage_audit" {
+            assert!(
+                memories
+                    .iter()
+                    .all(|memory| memory.source_crystal_id.is_none())
+            );
+        }
         self.seen.lock().unwrap().push(memories.to_vec());
         if let Some(config) = &self.mutate
             && let Some(id) = memories.iter().find_map(|m| m.source_crystal_id)
@@ -1316,7 +1323,7 @@ fn activated_context_is_bounded_and_omitted_copies_remain_pending() {
         let seen = seen.lock().unwrap();
         assert!(!seen.is_empty());
         for input in seen.iter() {
-            assert_eq!(input.len(), 3);
+            assert!(matches!(input.len(), 2 | 3));
             assert_eq!(
                 input
                     .iter()
@@ -1324,10 +1331,9 @@ fn activated_context_is_bounded_and_omitted_copies_remain_pending() {
                     .count(),
                 2
             );
-            let copy = input
-                .iter()
-                .find(|m| m.source_crystal_id.is_some())
-                .unwrap();
+            let Some(copy) = input.iter().find(|m| m.source_crystal_id.is_some()) else {
+                continue; // Coverage receives only fresh inputs.
+            };
             assert_eq!(
                 copy.source_crystal_snapshot.as_ref().unwrap()["id"],
                 copy.source_crystal_id.unwrap()
@@ -1356,4 +1362,119 @@ fn activated_context_is_bounded_and_omitted_copies_remain_pending() {
             json!(1)
         );
     }
+}
+
+#[test]
+fn unresolved_oldest_copy_does_not_starve_later_work_and_edits_reopen_it() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session) = active_session(&root, "demo");
+    let first = add_crystal(&config, &context("demo"), "tea stays warm");
+    recall(&config, session, "demo", "tea stays warm");
+    let copy = working_copy_id(&config, first);
+    set_working_copy_text(&config, copy, "tea turns cold");
+    let second = add_crystal(&config, &context("demo"), "candles light the room");
+    recall(&config, session, "demo", "candles light the room");
+    let mut settings = default_dream_config();
+    settings.max_short_term_memories_per_run = 1;
+    save_dream_config(&config, &settings).unwrap();
+    dream(&config);
+    assert_eq!(
+        scalar_params(
+            &config,
+            "select archived_at is null from short_term_memories where id=?",
+            &[&copy]
+        ),
+        json!(1)
+    );
+    assert_eq!(
+        scalar_params(
+            &config,
+            "select count(*) from short_term_memories where source_crystal_id=? and archived_at is not null",
+            &[&second]
+        ),
+        json!(1)
+    );
+    assert_eq!(
+        scalar(&config, "select count(*) from reconsolidation_checked"),
+        json!(1)
+    );
+    let before = scalar(&config, "select dream_run_id from reconsolidation_checked");
+    dream(&config); // Restart preserves the checked snapshot.
+    assert_eq!(
+        scalar(&config, "select dream_run_id from reconsolidation_checked"),
+        before
+    );
+    let comparison = hieronymus::comparison_config::ComparisonConfig {
+        timeout_seconds: 11,
+        ..Default::default()
+    };
+    hieronymus::comparison_config::save(&config, &comparison).unwrap();
+    dream(&config);
+    assert_ne!(
+        scalar(&config, "select dream_run_id from reconsolidation_checked"),
+        before
+    );
+    set_working_copy_text(&config, copy, "tea stays warm");
+    dream(&config);
+    assert_eq!(
+        scalar_params(
+            &config,
+            "select archived_at is not null from short_term_memories where id=?",
+            &[&copy]
+        ),
+        json!(1)
+    );
+}
+
+#[test]
+fn invalid_working_copy_metadata_cannot_expose_original_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session) = active_session(&root, "demo");
+    let source = add_crystal(&config, &context("demo"), "secret tea recipe");
+    recall(&config, session, "demo", "secret tea recipe");
+    let copy = working_copy_id(&config, source);
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    db.execute("update memory_claims set status='invalid' where id in(select claim_id from claim_bindings where short_term_id=?)",[copy]).unwrap();
+    let result = recall(&config, session, "demo", "secret tea recipe");
+    let item = result
+        .non_current
+        .iter()
+        .find_map(|h| match h {
+            RecallHit::ShortTerm { memory, .. } if memory.id == copy => Some(memory),
+            _ => None,
+        })
+        .expect("invalid copy remains typed metadata");
+    assert!(item.text.is_empty());
+    assert!(item.source_crystal_snapshot.is_none());
+}
+
+#[test]
+fn parked_copy_marker_rolls_back_with_phase_and_expired_cooldown_reopens() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session) = active_session(&root, "demo");
+    let source = add_crystal(&config, &context("demo"), "tea stays warm");
+    recall(&config, session, "demo", "tea stays warm");
+    let copy = working_copy_id(&config, source);
+    set_working_copy_text(&config, copy, "tea turns cold");
+    let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    db.execute_batch("create trigger reject_checked before update of status on dream_phase_runs when new.status='completed' begin select raise(abort,'phase blocked'); end;").unwrap();
+    assert!(service.run_cycle("test", false).is_err());
+    assert_eq!(
+        scalar(&config, "select count(*) from reconsolidation_checked"),
+        json!(0)
+    );
+    db.execute_batch("drop trigger reject_checked").unwrap();
+    dream(&config);
+    let before = scalar(&config, "select dream_run_id from reconsolidation_checked");
+    db.execute(
+        "update reconsolidation_checked set retry_after=datetime('now','-1 second')",
+        [],
+    )
+    .unwrap();
+    dream(&config);
+    assert_ne!(
+        scalar(&config, "select dream_run_id from reconsolidation_checked"),
+        before
+    );
 }
