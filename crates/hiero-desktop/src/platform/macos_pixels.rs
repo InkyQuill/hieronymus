@@ -21,7 +21,7 @@ mod tests {
             assert!(f64::from(size) >= 18.0 * scale);
             let rgba = crate::render_icon([24; 3], [46, 173, 104], size).unwrap();
             assert_eq!(rgba.len(), (size * size * 4) as usize);
-            assert!(rgba.chunks_exact(4).any(|p| p[3] > 0));
+            assert!(rgba.as_chunks::<4>().0.iter().copied().any(|p| p[3] > 0));
         }
     }
 }

@@ -11,7 +11,9 @@
     "format:write": "prettier --write src",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@lucide/svelte": "1.50.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tailwindcss/vite": "^4",

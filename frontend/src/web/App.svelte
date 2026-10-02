@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Sun from "@lucide/svelte/icons/sun";
+  import Moon from "@lucide/svelte/icons/moon";
   import SettingsNavigation from "./components/SettingsNavigation.svelte";
   import { onMount } from "svelte";
   import { connectAdminEvents } from "./lib/admin-events.svelte";
@@ -229,9 +231,9 @@
     <div bind:this={bookHeader}></div>
     <button class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-sm border border-default px-3 py-2 text-body-sm text-secondary hover:border-accent hover:text-primary" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
         {#if themeToggle.theme === "dark"}
-          <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 10a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm-6.36-1.05a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.42 1.41l-.7-.7a1 1 0 0 1 0-1.42Zm10.61 0a1 1 0 0 1 1.42 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71ZM3 9h1a1 1 0 1 1 0 2H3a1 1 0 1 1 0-2Zm13 0h1a1 1 0 1 1 0 2h-1a1 1 0 1 1 0-2ZM4.34 3.64a1 1 0 0 1 1.41 0l.71.7a1 1 0 1 1-1.42 1.42l-.7-.71a1 1 0 0 1 0-1.41Zm10.61 0a1 1 0 0 1 0 1.41l-.7.71a1 1 0 1 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Z" /></svg>
+          <Sun size={20} aria-hidden="true" />
         {:else}
-          <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M17.29 13.29A8 8 0 0 1 6.71 2.71a8 8 0 1 0 10.58 10.58Z" /></svg>
+          <Moon size={20} aria-hidden="true" />
         {/if}
         {themeToggle.theme === "dark" ? "Light" : "Dark"}
     </button>

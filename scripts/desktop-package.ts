@@ -13,6 +13,7 @@ import {
   existsSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -343,7 +344,7 @@ export async function packageDesktop(o: Options) {
       names.push("Hieronymus.app/Contents/Info.plist");
       const iconset = resolve(
         process.env.HIERO_RELEASE_ICONSET ??
-          "target/desktop-icons/app/hieronymus.iconset",
+          fileURLToPath(new URL("../assets/icons/native/hieronymus.iconset", import.meta.url)),
       );
       mkdirSync(join(payload, "Hieronymus.app/Contents/Resources"), {
         recursive: true,
