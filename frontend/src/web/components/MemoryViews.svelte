@@ -53,6 +53,7 @@
   const globalView = $derived(["Dream Runs", "Dream Audits", "Audit Log"].includes(selectedView));
   function chooseSeries(value: string) {
     selectedSeries = value;
+    page = 0;
     selectedIds = []; snapshot = null; correction = null; dialogCommand = null;
     try { localStorage.setItem("hieronymus.memory.series", value); } catch { /* Storage may be disabled. */ }
     const url = new URL(window.location.href);
@@ -62,6 +63,11 @@
   }
   let selectedView = $state("");
   let selectedIds = $state<Array<string | number>>([]);
+  let page = $state(0);
+  const pageSize = 20;
+  const pageCount = $derived(Math.max(1, Math.ceil((snapshot?.rows.length ?? 0) / pageSize)));
+  const visibleRows = $derived((snapshot?.rows ?? []).slice(Math.min(page, pageCount - 1) * pageSize, (Math.min(page, pageCount - 1) + 1) * pageSize));
+  const canCombine = $derived(commandsFor(selectedView).some(command => command.id === "merge_selected"));
   let snapshot = $state.raw<AdminSnapshot["snapshot"] | null>(null);
   let loading = $state(false);
   let error = $state("");
@@ -92,7 +98,7 @@
 
   async function load(view: string, selectedId?: string | number) {
     const sequence = ++loadSequence;
-    if (selectedView !== view) { selectedIds = []; correction = null; }
+    if (selectedView !== view) { selectedIds = []; page = 0; correction = null; }
     selectedView = view;
     loading = true;
     error = "";
@@ -224,10 +230,10 @@
   {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">A stored memory can still be wrong or outdated. Its status describes storage, not accuracy. Use “Correct this memory” to correct a specific statement.</p>{/if}
   {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">These older translation choices are historical records. Use “Correct a rendering” to inspect and change the current approved translation.</p>{/if}
   <div class="self-start lg:sticky lg:top-24">
-    <h2 class="text-display">Your project memory</h2>
-    <button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = {}}>Correct a rendering</button>
+    <h2 class="text-display">{globalView ? "Processing history" : "Your project memory"}</h2>
+    {#if !globalView}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = {}}>Correct a rendering</button>{/if}
     <p class="mt-3 max-w-prose text-body text-secondary">
-      Choose a book, open a memory and read its source. If it is wrong or outdated, use “Correct this memory”.
+      {globalView ? "Open a processing run to review its output and understand what Hieronymus did." : "Choose a book, open a memory and read its source. If it is wrong or outdated, use “Correct this memory”."}
     </p>
     <div class="mt-6 border-t border-default pt-4 text-caption text-secondary">
       {snapshot?.rows.length ?? 0} records
@@ -253,7 +259,9 @@
     {#if loading}
       <p class="text-body text-secondary">Loading {selectedView}…</p>
     {:else if snapshot}
-      <div class="grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(20rem,.8fr)]">
+      {#if canCombine}<p class="mb-3 text-body-sm text-secondary">Open a record by its title. Checkboxes select memories to combine. {selectedIds.length} selected for combining.</p>{/if}
+      {#if snapshot.rows.length > pageSize}<nav class="mb-4 flex flex-wrap items-center gap-3" aria-label="Record pages"><span class="text-body-sm text-secondary">Page {Math.min(page + 1, pageCount)} of {pageCount} · {snapshot.rows.length} records</span><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page === 0 || loading} onclick={() => page -= 1}>Previous</button><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page >= pageCount - 1 || loading} onclick={() => page += 1}>Next</button></nav>{/if}
+      <div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(20rem,.8fr)]">
         <div
           class="overflow-x-auto rounded-md border border-default"
           aria-label={`${selectedView} records`}
@@ -262,7 +270,7 @@
             <table class="data-table min-w-[42rem] text-left"
               ><thead class="bg-surface"
                 ><tr
-                  ><th class="border-b border-default px-4 py-3 text-eyebrow">Select</th><th
+                  >{#if canCombine}<th class="border-b border-default px-4 py-3 text-eyebrow">Combine</th>{/if}<th
                     class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary"
                     >Record</th
                   ><th
@@ -277,17 +285,17 @@
                   ></tr
                 ></thead
               ><tbody>
-                {#each snapshot.rows as row (row.id)}
+                {#each visibleRows as row (row.id)}
                   <tr
                     class="cursor-pointer border-b border-default last:border-b-0 hover:[&>td]:bg-raised {snapshot.selected
                       ?.id === row.id
                       ? '[&>td]:bg-raised [&>td:first-child]:border-l-2 [&>td:first-child]:border-l-accent'
                       : ''}"
-                    ><td class="px-4 py-3">
+                    >{#if canCombine}<td class="px-4 py-3">
                       <input type="checkbox" aria-label={`Select ${row.label}`}
                         checked={selectedIds.includes(row.id)}
                         onchange={(event) => toggleSelection(row, event.currentTarget.checked)} />
-                    </td><td class="px-4 py-3 text-body">
+                    </td>{/if}<td class="px-4 py-3 text-body">
                       <button class="w-full text-left" onclick={() => { correction = null; void load(selectedView, row.id); }}
                       ><strong class="block font-medium">{row.label}</strong
                       ><small class="mt-1 block text-caption text-secondary"
@@ -317,7 +325,7 @@
           {/if}
         </div>
         <aside
-          class="flex min-h-[22.5rem] flex-col overflow-hidden rounded-md border border-default bg-surface"
+          class="order-first flex flex-col overflow-hidden rounded-md border border-default bg-surface lg:sticky lg:top-4 lg:order-last"
           aria-label="Selected memory record"
         >
           {#if snapshot.selected}
@@ -331,20 +339,8 @@
                 {snapshot.detail.subtitle}
               </p>
             </div>
-            {#if snapshot.detail.body}<pre
-                class="mx-5 min-h-30 overflow-auto border border-default bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap"
-                >{snapshot.detail.body}</pre
-              >{/if}
-            {#if snapshot.detail.fields.length}<details class="p-5"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Source and record details</summary><dl class="grid gap-2">
-                {#each snapshot.detail.fields as [name, value] (name)}<div
-                    class="border-t border-default pt-2"
-                  >
-                    <dt class="text-caption text-secondary">{name}</dt>
-                    <dd class="mt-1 break-words text-mono">{value}</dd>
-                  </div>{/each}
-              </dl></details>{/if}
             {#if commandsFor(selectedView).length}<div
-                class="mt-auto border-t border-default p-5"
+                class="border-b border-default p-5"
               >
                 <h4 class="mb-2 text-body-sm font-medium">Actions</h4>
                 <div class="flex flex-wrap gap-2">
@@ -363,6 +359,18 @@
                     >{/each}
                 </div>
               </div>{/if}
+            {#if snapshot.detail.body}<pre
+                class="mx-5 min-h-30 max-h-[50vh] overflow-auto border border-default bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap"
+                >{snapshot.detail.body}</pre
+              >{/if}
+            {#if snapshot.detail.fields.length}<details class="p-5"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Source and record details</summary><dl class="grid gap-2">
+                {#each snapshot.detail.fields as [name, value] (name)}<div
+                    class="border-t border-default pt-2"
+                  >
+                    <dt class="text-caption text-secondary">{name}</dt>
+                    <dd class="mt-1 break-words text-mono">{value}</dd>
+                  </div>{/each}
+              </dl></details>{/if}
             {#if inspection}<div
                 class="m-5 rounded-sm border border-default bg-raised p-4 text-body-sm"
                 aria-live="polite"

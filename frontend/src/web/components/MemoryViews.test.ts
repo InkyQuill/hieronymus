@@ -550,3 +550,28 @@ test("a late response from the previous book cannot replace the selected book", 
   );
   expect((screen.getByLabelText("Book") as HTMLSelectElement).value).toBe("b");
 });
+
+test("long lists have pages and omit combine checkboxes when unavailable", async () => {
+  const rows = Array.from({ length: 45 }, (_, index) => ({
+    ...row,
+    id: index + 1,
+    label: `Memory ${index + 1}`,
+  }));
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValue({ snapshot: { ...listSnapshot.snapshot, rows } });
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await screen.findByRole("button", { name: /^Memory 1\s*en-ru$/ });
+  expect(
+    screen.queryByRole("button", { name: /^Memory 21\s*en-ru$/ }),
+  ).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(
+    screen.getByRole("button", { name: /^Memory 21\s*en-ru$/ }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: /^Memory 1\s*en-ru$/ }),
+  ).toBeNull();
+  expect(screen.getByText("Page 2 of 3 · 45 records")).toBeTruthy();
+});

@@ -16,3 +16,9 @@ The primary user writes with an agent. The console helps them connect it, inspec
 All seven routes were rendered in headless Chromium at 1440px dark and 390px light with synthetic API fixtures. There was no page overflow or JavaScript exception. Screenshots were inspected locally. Frontend regression checks cover disabled processing, pending counts, active navigation and provider deletion confirmation.
 
 Fixtures establish presentation behavior, not live provider availability or acceptance by an agent host. This work does not change the installed runtime or the visual theme. Internal memory categories and diagnostic views remain available; consolidating those categories would be a separate information-architecture change rather than a visual polish.
+
+## Dreaming list follow-up
+
+The author found the unbounded run list, bottom-aligned actions and unexplained selection controls difficult to use. Lists now render 20 records per page. Record actions sit above content in a separate, naturally sized panel; long content scrolls within that panel. Checkboxes appear only where combining records is supported, with an explicit explanation and selection count. Processing history uses its own heading and omits unrelated rendering correction.
+
+The product owner explicitly excludes mobile qualification for this project. This follow-up was verified on desktop at 1440px dark and 1280px light with 100 synthetic runs and a long selected body: actions in the first viewport, page navigation functional, no irrelevant checkboxes, overflow or JavaScript errors. 101 frontend tests passed. These screenshots use synthetic content, not the user's project records.
