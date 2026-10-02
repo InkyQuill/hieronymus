@@ -955,5 +955,14 @@ fn resume_after_explicit_completion_requests_new_binding_in_host_context() {
             .unwrap()
             .contains("Do not capture into the completed session")
     );
+    let next_prompt = submit_prompt(
+        &config,
+        "claude",
+        &json!({"hook_event_name":"UserPromptSubmit","session_id":"actual-host-session","prompt":"translate this as B"}),
+    )
+    .unwrap();
+    assert_eq!(next_prompt["reason"], "capture_paused");
+    assert_eq!(next_prompt["retained"], false);
+    assert!(!root.path().join("host-deliveries").exists());
     assert!(bind_context(&config, &context).is_err());
 }

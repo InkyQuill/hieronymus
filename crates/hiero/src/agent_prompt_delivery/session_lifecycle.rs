@@ -89,7 +89,10 @@ pub fn handle_session_start(
         ).optional()?;
         match status.as_deref() {
             Some("active") => {}
-            Some(_) => return Ok(binding_required(binding.session_id)),
+            Some(_) => {
+                save(&pause_path(config, h, session), &json!({"paused":true}))?;
+                return Ok(binding_required(binding.session_id));
+            }
             None => return Err(invalid("bound session ownership mismatch")),
         }
     }
