@@ -4,9 +4,9 @@
 //!
 //! Discipline (design acceptance):
 //! - SQLite owns everything authoritative; semantic state is derived and
-//!   rebuildable. Losing the complete LanceDB directory is a rebuild, never
+//!   rebuildable. Losing the complete derived vector index directory is a rebuild, never
 //!   data loss.
-//! - No SQLite write transaction ever spans inference or LanceDB I/O: batches
+//! - No SQLite write transaction ever spans inference or derived vector index I/O: batches
 //!   embed and append first, then a short transaction records the receipt;
 //!   activation validates everything first and then performs exactly one
 //!   metadata transaction.
@@ -180,9 +180,11 @@ impl SemanticStore {
         })
     }
 
-    /// Root of the LanceDB database holding one table per generation.
+    /// Root of the disposable SQLite files, one database per generation.
     pub fn index_root(&self) -> PathBuf {
-        self.config.semantic_root().join("lancedb")
+        self.config
+            .semantic_root()
+            .join(crate::semantic_index::INDEX_DIRECTORY)
     }
 
     /// Path of the acquired embedding model file.
@@ -563,7 +565,7 @@ impl SemanticStore {
 
     /// Embeds and appends one bounded batch, then records the receipt.
     ///
-    /// Native I/O (inference, LanceDB append) happens BEFORE the short
+    /// Native I/O (inference, derived vector index append) happens BEFORE the short
     /// manifest transaction — no SQLite write transaction ever spans native
     /// I/O. The store resolves each chunk's series and checksum from the
     /// authoritative rows, so stale or foreign identifiers are rejected.
@@ -596,7 +598,7 @@ impl SemanticStore {
             )));
         }
 
-        // Native section: inference and LanceDB append, no open transaction.
+        // Native section: inference and derived vector index append, no open transaction.
         let mut index =
             VectorIndex::open(&self.index_root(), manifest.identity.clone(), generation_id)?;
         let mut rows = Vec::with_capacity(batch.len());
@@ -914,7 +916,7 @@ impl SemanticStore {
         Ok(Some(active.generation_id))
     }
 
-    /// Garbage collection: drops the LanceDB tables and manifest rows of
+    /// Garbage collection: drops the derived vector index tables and manifest rows of
     /// terminal generations only (superseded, cancelled, failed). The active
     /// generation and any building generation are never collected — with no
     /// reader registry yet, terminal state is the only provably unreferenced
@@ -1034,7 +1036,9 @@ impl SemanticStore {
             Some(active) => {
                 active.written_count == active.expected_count
                     && generation_table_intact(
-                        &config.semantic_root().join("lancedb"),
+                        &config
+                            .semantic_root()
+                            .join(crate::semantic_index::INDEX_DIRECTORY),
                         &active.generation_id,
                         &active.identity,
                         active.expected_count,

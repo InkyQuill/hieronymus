@@ -90,17 +90,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends protobuf-compiler libprotobuf-dev libgtk-3-dev libxdo-dev
-      - name: macOS protobuf
-        if: runner.os == 'macOS'
-        run: brew install protobuf
-      - name: Windows protobuf
-        if: runner.os == 'Windows'
-        run: choco install protoc --yes --no-progress
-      - name: Protobuf standard import preflight
-        run: |
-          protoc --version
-          ./scripts/check-protobuf.sh
+          sudo apt-get install --yes --no-install-recommends libgtk-3-dev libxdo-dev
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend build
       # Source lint, unit tests and rustdoc run in pr.yml. This job builds

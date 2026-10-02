@@ -19,7 +19,7 @@ The server serves the main web interface. Authors use it to inspect what their a
 ## Current Stack
 
 - Rust 1.98 workspace: `crates/hieronymus` owns SQLite/domain operations; `crates/hiero` owns CLI, daemon, MCP and distribution.
-- SQLite with FTS5; LanceDB/ONNX and the pinned multilingual tokenizer provide mandatory semantic retrieval.
+- SQLite with FTS5; exact SQLite vector search, ONNX and the pinned multilingual tokenizer provide mandatory semantic retrieval.
 - Svelte 5 console in `frontend`; Bun 1.4.0 builds and tests it. The release binary embeds its production assets.
 - Authenticated local MCP HTTP (revision 2026-07-28) and a stdio adapter.
 - Bun TypeScript in `scripts` owns release acquisition and metadata validation. No Python tooling is required. The previous Python implementation is archived on `stale/python-v0.7.0`.
