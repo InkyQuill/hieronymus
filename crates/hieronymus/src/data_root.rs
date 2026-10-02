@@ -54,7 +54,7 @@ impl HieronymusConfig {
         self.config_root().join("agent-plugins")
     }
 
-    /// Derived semantic RAG state: the LanceDB store and acquired embedding
+    /// Derived semantic RAG state: the SQLite vector store and acquired embedding
     /// models. Everything under this root is rebuildable from the database.
     pub fn semantic_root(&self) -> PathBuf {
         self.config_root().join("semantic")

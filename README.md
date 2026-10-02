@@ -41,18 +41,16 @@ For configuration, updates, removal, and advanced offline installation, see the
 
 ## Develop and verify
 
-The application is a Rust 1.98 workspace with SQLite/FTS5, LanceDB and mandatory
+The application is a Rust 1.98 workspace with SQLite/FTS5, exact SQLite vector search and mandatory
 ONNX semantic inference. A Svelte 5 console is built with Bun 1.4.0 and embedded
 in the release binary. Python is not required to build, test, release or run it.
 
 Install the pinned Rust toolchain and Bun 1.4.0 (`rust-toolchain.toml`, `mise.toml`).
-Build dependencies are Rust/Cargo, Bun, Git, the standard Linux build tools and
-`protoc` (Protocol Buffers compiler, required by LanceDB). On Debian/Ubuntu,
-install it and the standard proto definitions with
-`sudo apt-get install protobuf-compiler libprotobuf-dev`.
-Run `./scripts/check-protobuf.sh` to verify compilation of standard imports.
-These dependencies are only needed when
-building from source, not when running the installed application.
+Build dependencies are Rust/Cargo, Bun, Git and the standard native build tools.
+The desktop helper additionally needs the platform desktop development libraries.
+No LanceDB, Arrow/DataFusion or system Protocol Buffers compiler is needed for
+the application. The separately maintained ONNX runtime source build has its own
+toolchain requirements.
 
 ```bash
 bun install --cwd frontend --frozen-lockfile

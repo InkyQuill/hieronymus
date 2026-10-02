@@ -334,3 +334,13 @@ HIERO_OLLAMA_TEST_TOKENIZER=/absolute/path/to/pinned/tokenizer.json \
 A real installed Ollama model and public MCP query must be exercised separately
 for practical integration acceptance. Native Claude/Codex/Pi host-matrix
 qualification is deferred and is not implied by either fixture suite.
+
+### Storage backend amendment (2026-10-02)
+
+Current storage uses exact SQLite vectors (ADR 0013 amendment), not LanceDB.
+Historical native Lance evidence above does not qualify the replacement. The
+new storage runs the existing generation/job/recall/recovery suites plus exact
+cosine, atomic batch, full identity and legacy-artifact recovery regressions.
+Inference/model selection is unchanged; real-model and native-host checks remain
+separate from synthetic correctness tests. Integrity checks currently scan the
+whole derived generation, so raw search benchmark latency is not full RAG latency.

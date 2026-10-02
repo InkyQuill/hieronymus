@@ -15,6 +15,19 @@ follow-up planning. The frozen baseline below does not require preserving
 human approval gates; this documentation change does not implement their
 replacement or alter cutover requirements.
 
+## Release backlog — 1.0
+
+- [ ] **Retire LanceDB transition compatibility when preparing 1.0.** Deferred
+  until the explicitly approved 1.0 release; keep the transition behavior during
+  0.x. Audit and remove LanceDB-specific recovery assumptions, compatibility
+  tests and obsolete upgrade documentation after the SQLite vector-store
+  transition ([ADR 0013](adr/0013-semantic-index-and-platform-support.md)).
+  Define the supported upgrade path for installations that still contain old
+  LanceDB generations and document how their unused files can be cleaned up.
+  Preserve authoritative SQLite data and generic missing/corrupt-index rebuild
+  behavior; retiring compatibility must not silently delete user data or bring
+  back LanceDB dependencies. Historical research evidence may remain archived.
+
 ## Rust Rewrite (active program)
 
 Normative sources: the 2026-08-31 ADRs (0008–0015) and

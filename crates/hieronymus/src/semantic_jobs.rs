@@ -3,7 +3,7 @@
 //! lifecycle. Shapes are lifted from the qualified harness's scenario runner
 //! (`qualification/harnesses/semantic-native`): SQLite is the only recovery
 //! state, every write transaction is short, and native I/O (inference and
-//! LanceDB) never runs inside one.
+//! derived vector index) never runs inside one.
 //!
 //! Scope decisions (documented per the design's §Durable Jobs):
 //! - One job drives one whole-corpus generation rebuild. Task 7's generations
@@ -16,7 +16,7 @@
 //!   authoritative ids past the manifest cursor and must never be skipped, or
 //!   the generation would wedge below its expected count.
 //! - The runner never holds a SQLite write transaction across inference or
-//!   LanceDB I/O: the claim transaction commits first, [`SemanticStore::
+//!   derived vector index I/O: the claim transaction commits first, [`SemanticStore::
 //!   write_batch`] embeds and appends with no transaction open and then
 //!   commits its own short manifest receipt, and the job receipt is a third
 //!   short transaction. The manifest is the authoritative cursor; every job
@@ -838,7 +838,7 @@ impl SemanticJobStore {
     /// - building generations with no job row are in-process Task 7 builds
     ///   and are never touched.
     ///
-    /// Reconcile performs no LanceDB I/O; the deep persisted-state check runs
+    /// Reconcile performs no derived vector index I/O; the deep persisted-state check runs
     /// at takeover.
     pub fn reconcile(&self) -> Result<ReconcileReport, SemanticError> {
         let store = SemanticStore::open(&self.config)?;
@@ -1056,7 +1056,7 @@ impl SemanticJobStore {
 
     /// Reads the authoritative rows, tokenizes them, and writes one bounded
     /// batch. This is the only native section of the loop: no SQLite write
-    /// transaction is open while inference or LanceDB I/O runs, and the batch
+    /// transaction is open while inference or derived vector index I/O runs, and the batch
     /// is exactly the pending window Task 7's cursor contract mandates.
     fn embed_and_write(
         &self,
