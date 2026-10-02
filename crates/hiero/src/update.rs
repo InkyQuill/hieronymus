@@ -876,24 +876,21 @@ fn run_update_core(
         }
         // Use the candidate generator, never the updater's older embedded bundles.
         // Host cache refresh is advisory; it cannot invalidate verified app assets.
-        match Command::new(version_dir.join(crate::platform::install::executable_name("hiero")))
-            .args(["plugins", "sync", "--json", "--data-root"])
-            .arg(config.data_root())
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        match crate::agent_sync::sync_candidate(
+            &config,
+            &version_dir.join(crate::platform::install::executable_name("hiero")),
+        ) {
+            Ok(report) => {
                 if report["generated"] == true {
-                    lines.push("candidate generated current agent bundles; reopen agent conversations".into());
+                    lines.push(
+                        "candidate generated current agent bundles; reopen agent conversations"
+                            .into(),
+                    );
                 }
                 if report["codex"]["state"] != "refreshed" {
-                    lines.push("host cache refresh is advisory and not confirmed; inspect hiero plugins status and run hiero plugins sync if stale".into());
+                    lines.push("host cache refresh is advisory and not confirmed; inspect hiero plugins status and private logs/agent-sync.log".into());
                 }
             }
-            Ok(output) => lines.push(format!(
-                "agent bundle refresh warning: candidate exited {}; run hiero plugins sync after update",
-                output.status
-            )),
             Err(error) => lines.push(format!(
                 "agent bundle refresh warning: {error}; run hiero plugins sync after update"
             )),
