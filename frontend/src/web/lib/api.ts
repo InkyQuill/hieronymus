@@ -171,6 +171,23 @@ export async function prepareAgentConnection(): Promise<AgentConnection[]> {
   ).agents;
 }
 
+export function loadComparisonSettings(): Promise<{
+  comparison: import("./types").ComparisonState;
+  providers: ProviderProfile[];
+}> {
+  return request("/api/settings/comparison");
+}
+export async function saveComparisonSettings(
+  comparison: import("./types").ComparisonSettings,
+): Promise<import("./types").ComparisonState> {
+  return (
+    await request<{ comparison: import("./types").ComparisonState }>(
+      "/api/settings/comparison",
+      { method: "POST", body: JSON.stringify({ comparison }) },
+    )
+  ).comparison;
+}
+
 export async function loadRelevanceSettings(): Promise<
   import("./types").RelevanceSettings
 > {

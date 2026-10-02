@@ -9,6 +9,7 @@
 
 pub mod agent_context;
 pub mod atomic;
+pub mod comparison_config;
 pub mod concept_models;
 pub mod concepts;
 pub mod consolidation;
@@ -31,7 +32,9 @@ pub mod dream_workflows;
 pub mod dreaming;
 pub mod feedback;
 pub mod ingest_config;
+pub mod memory_comparison;
 pub mod memory_models;
+mod memory_semantics;
 pub mod migrate;
 pub mod ownership;
 pub mod provider_config;

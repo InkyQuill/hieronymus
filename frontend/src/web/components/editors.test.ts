@@ -10,6 +10,21 @@ import type {
 import { refreshModels } from "../lib/api";
 vi.mock("../lib/api", () => ({
   refreshModels: vi.fn(async () => ["gpt-5", "gpt-5-mini"]),
+  loadComparisonSettings: vi.fn(async () => ({
+    comparison: {
+      settings: {
+        primary: null,
+        fallback: null,
+        max_pairs_per_run: 8,
+        timeout_seconds: 10,
+      },
+      primary_ready: false,
+      fallback_ready: false,
+      qualified: false,
+    },
+    providers: [],
+  })),
+  saveComparisonSettings: vi.fn(),
 }));
 import DreamingEditor from "./DreamingEditor.svelte";
 import ProviderEditor from "./ProviderEditor.svelte";

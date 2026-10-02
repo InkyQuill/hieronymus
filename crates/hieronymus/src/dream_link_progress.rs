@@ -21,9 +21,7 @@ use crate::data_root::HieronymusConfig;
 use crate::db::open_migrated;
 use crate::dream_audit::{DreamAuditStore, commit_audited};
 use crate::dream_config::{DreamConfig, load_dream_config};
-use crate::dreaming::{
-    COMBINATION_SIMILARITY_THRESHOLD, DreamError, now, token_similarity, tx_error,
-};
+use crate::dreaming::{DreamError, now, tx_error};
 
 /// Weight of a `crystal_links` row created by hebbian co-activation.
 const LINK_INITIAL_WEIGHT: f64 = 0.5;
@@ -136,6 +134,7 @@ pub struct LinkProgressSummary {
 /// [`LinkProgress::process`] call, and resumes open batches on restart.
 pub struct LinkProgress {
     config: HieronymusConfig,
+    comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
     dream_config: DreamConfig,
     /// Audit context (dream run id, link phase run id) the per-pair and
     /// batch-completion audit entries are written under. The dreaming phase
@@ -158,12 +157,22 @@ impl LinkProgress {
         let dream_config = load_dream_config(config)?;
         Ok(Self {
             config: config.clone(),
+            comparator: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::memory_comparison::Comparator::open(config)?,
+            )),
             dream_config,
             run: None,
             combination_budget: 0,
             terminalized_in_call: 0,
             summary: LinkProgressSummary::default(),
         })
+    }
+
+    pub(crate) fn set_comparator(
+        &mut self,
+        comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
+    ) {
+        self.comparator = comparator;
     }
 
     /// Attach the audit context (dream run and link phase run) whose records
@@ -308,6 +317,16 @@ impl LinkProgress {
         left: i64,
         right: i64,
     ) -> Result<(), DreamError> {
+        use crate::{
+            claim_reads::ClaimTarget,
+            memory_comparison::{Decision, snapshot},
+        };
+        let before_left = snapshot(connection, ClaimTarget::Crystal(left))?;
+        let before_right = snapshot(connection, ClaimTarget::Crystal(right))?;
+        let assessment = match (&before_left, &before_right) {
+            (Some(a), Some(b)) => Some(self.comparator.borrow_mut().compare(a, b)?),
+            _ => None,
+        };
         let combination_budget = self.combination_budget;
         let effect: PairEffect = commit_audited(connection, |transaction| {
             // Both insertion and cursor movement belong to the same effect
@@ -321,13 +340,20 @@ impl LinkProgress {
                     // Pairwise combination (July design; ADR 0011 guards):
                     // only active advisory crystals combine; active
                     // deterministic rules are never absorbed, never survivors.
-                    let combinable = combination_budget > 0
+                    let unchanged = snapshot(transaction, ClaimTarget::Crystal(left))
+                        .map_err(tx_error)?
+                        == before_left
+                        && snapshot(transaction, ClaimTarget::Crystal(right)).map_err(tx_error)?
+                            == before_right;
+                    let combinable = unchanged
+                        && assessment
+                            .as_ref()
+                            .is_some_and(|a| a.decision == Decision::Equivalent)
+                        && combination_budget > 0
                         && !is_active_rule(&left_core.crystal_type, &left_core.status)
                         && !is_active_rule(&right_core.crystal_type, &right_core.status)
                         && left_core.status == "active"
-                        && right_core.status == "active"
-                        && token_similarity(&left_core.text, &right_core.text)
-                            >= COMBINATION_SIMILARITY_THRESHOLD;
+                        && right_core.status == "active";
                     if combinable {
                         let survivor =
                             pick_combination_survivor(left, left_core, right, right_core);
@@ -361,7 +387,15 @@ impl LinkProgress {
                 rusqlite::params![
                     effect.status(),
                     cycle,
-                    effect.result_json(left, right).to_string(),
+                    {
+                        let mut result = effect.result_json(left, right);
+                        result["comparison"] = json!(assessment);
+                        result["snapshots"] = json!([
+                            before_left.as_ref().map(|s| s.audit_identity()),
+                            before_right.as_ref().map(|s| s.audit_identity())
+                        ]);
+                        result.to_string()
+                    },
                     batch_id,
                     left,
                     right,
@@ -413,6 +447,9 @@ impl LinkProgress {
         let Some((run_id, phase_run_id)) = self.run else {
             return Ok(());
         };
+        let result:String=transaction.query_row("select result_json from dream_link_pairs where batch_id=?1 and left_id=?2 and right_id=?3",rusqlite::params![batch_id,left,right],|r|r.get(0))?;
+        let comparison: Value =
+            serde_json::from_str(&result).map_err(|e| DreamError::Json(e.to_string()))?;
         let status = effect.status();
         DreamAuditStore::append_in_transaction(
             transaction,
@@ -422,6 +459,8 @@ impl LinkProgress {
             "info",
             &format!("{status} link pair ({left}, {right})"),
             &json!({
+                "comparison": comparison["comparison"],
+                "snapshots": comparison["snapshots"],
                 "batch_id": batch_id,
                 "left_id": left,
                 "right_id": right,
@@ -574,7 +613,6 @@ fn lazy_pair(connection: &Connection, batch_id: i64) -> Result<Option<(i64, i64)
 
 /// Minimal crystal projection for combination decisions.
 struct CrystalCore {
-    text: String,
     status: String,
     crystal_type: String,
     source_credibility: String,
@@ -610,7 +648,6 @@ fn load_crystal_cores(
         Ok((
             row.get::<_, i64>(0)?,
             CrystalCore {
-                text: row.get(1)?,
                 status: row.get(2)?,
                 crystal_type: row.get(3)?,
                 source_credibility: row.get(4)?,
@@ -660,6 +697,23 @@ fn combine_crystals(
     cycle_id: i64,
 ) -> Result<(), DreamError> {
     crate::claim_capture::copy_crystal_lineage_tx(transaction, absorbed, survivor)?;
+    // Keep typed retrieval metadata on the survivor and the original row as
+    // immutable provenance. Scope compatibility was checked before this call.
+    for (table, columns) in [
+        ("crystal_story_scopes", "scope,confidence,created_at"),
+        ("crystal_semantic_tags", "tag,confidence,created_at"),
+        ("crystal_language_tags", "language_tag"),
+    ] {
+        transaction.execute(
+            &format!("insert or ignore into {table}(crystal_id,{columns}) select ?1,{columns} from {table} where crystal_id=?2"),
+            rusqlite::params![survivor, absorbed],
+        )?;
+    }
+    transaction.execute(
+        "update crystals set tags_json=(select json_group_array(value) from (select value from json_each(crystals.tags_json) union select value from json_each((select tags_json from crystals where id=?2)))) where id=?1",
+        rusqlite::params![survivor, absorbed],
+    )?;
+
     transaction.execute(
         "insert or ignore into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
          select ?1, concept_id, link_type, confidence, created_at

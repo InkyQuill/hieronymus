@@ -90,8 +90,8 @@ input. They are marked as inferred, use lower credibility, and rank below
 source-backed memories until later evidence reinforces them.
 
 Most crystals are advisory. Active rule crystals are mandatory translation
-rules; they do not decay while active, but they may be superseded or combined by
-later higher-confidence rules.
+rules; they do not decay while active. Changing their authority requires the
+validated correction path; confidence and Dream comparison cannot override them.
 
 Recall uses a dual-lane strategy. The memory lane searches active short-term
 memories, crystals, concepts, facets, metadata, and protected rule crystals. The
@@ -315,3 +315,91 @@ stored active session context by default, and rejects calls whose explicit
 context arguments do not match the session. Legacy memory-add and termbase MCP
 tools remain available as compatibility wrappers; user corrections enter
 short-term memory and deterministic validation reads active rule crystals.
+
+## Semantic memory retrieval and pair comparison
+
+Mixed recall embeds active crystals and pending short-term memories, including
+compatible sessions, with the same pinned multilingual embedding provider used
+by semantic retrieval. Lexical, metadata and semantic candidates are fused before
+the common story, viewpoint, language, evidence and correction checks. Approved
+termbase rules remain an independent deterministic contract.
+
+Derived vectors live in SQLite `memory_vectors`. Missing, changed-text or
+changed-model rows are a durable queue: each recall prepares at most 32 records
+before its coherent read. Archived/deleted sources are excluded immediately;
+bounded cleanup follows. Malformed vectors are rebuilt. Search streams the full
+eligible index while retaining only top candidates; it has no fixed ID cutoff.
+`memory_semantic_pending` reports unfinished indexing and
+`memory_semantic_unavailable` reports a missing/failing embedding lane. Lexical
+results do not imply that semantic retrieval succeeded. These rebuildable tables
+are derived caches, not claim authority or a separate source migration.
+
+Dream model input separates fresh `memories` from `activated_memories`.
+Only working copies already activated in the compatible session are considered.
+Candidates are ranked by overlap with fresh observations and useful activation
+evidence, from at most 512 recent copies, with at most eight added to a request.
+Fresh observations retain at least one complete record and three quarters of
+their fitted record allowance. Every workflow fits the final rendered request,
+including instructions, source snapshots and reserved output; a copy that does
+not fit stays pending. Context copies cannot supply fresh coverage or authorize
+a second model reinforcement of their originals. Their exact hydrated records
+and original snapshots are revalidated before persistence and recorded in audit.
+
+Text edit ratios and token similarity never authorize discarding a change or
+absorbing a crystal. Changed names, numbers and polarity receive conservative
+deterministic vetoes. Other changes require a verified equivalent assessment;
+distinct, contradictory, unavailable or uncertain comparisons preserve the
+working copy. Unchanged copies can reinforce activation strength once, without
+increasing confidence. Active rules, explicit user authority and correction
+effects cannot be overridden by comparison. Absorption requires compatible
+series/language/applicability/concept scope, evidence and current snapshots;
+lineage, typed metadata and links are retained, including the absorbed source
+row. Otherwise coactivation may record an advisory association.
+
+The **Memory comparison** settings in Dream configure an independent primary
+provider/model and an optional explicit backup. Nothing is assigned by default.
+`jev` uses the TypeSafe credential saved under Prompt relevance; other provider
+IDs reuse the provider catalog. No cloud fallback is implicit. Configuration is
+stored privately in `comparison.conf`, for example:
+
+```toml
+max_pairs_per_run = 8
+timeout_seconds = 10
+
+[primary]
+provider = "jev"
+model = "jev-1.13.0"
+
+[fallback]
+provider = "my-ollama"
+model = "my-local-model"
+```
+
+A comparison sends only one pair and its scope/provenance, capped at 16 KiB,
+after deterministic checks. The shared drain budget is 1–32 model pairs (eight
+by default), with one attempt per assignment, 1–30 seconds per assignment and a
+60-second shared deadline including model discovery. Ollama uses discovered
+context limits and refuses truncation; configured cloud budgets follow the
+existing provider planner. A valid uncertain answer is terminal; only missing
+configuration, transport/timeout or malformed output can invoke the backup.
+Audit records provider/model assignment, fallback reason and decision.
+
+Valid assessments are cached by exact pair versions and routing identity.
+Outages have a five-minute cooldown; configuration, credentials or content changes
+invalidate the key. Corrupt cache entries are discarded. A cached model answer
+still requires transaction-time snapshot validation before mutation.
+
+Readiness means the assignment and credentials exist, not that the selected
+model has been calibrated. Controlled provider and multilingual embedding tests
+verify routing, budgets and safety, not native model accuracy. The optional
+`real_jev_synthetic_pair_calibration` test sends only six synthetic pairs, uses a
+disposable database and requires an explicit
+`HIERO_TEST_COMPARISON_CREDENTIAL_ROOT` containing a private `relevance.conf`.
+
+
+On 2026-10-02 the optional live Jev fixture accepted both synonym pairs
+(closed/shut, purchased/bought), rejected before/after and safe/poisonous as
+contradictory, and abstained on locked/unlocked and borrowed/lent. All six calls
+returned validated assessments with no unsafe equivalence. This is a small
+synthetic calibration, not a general accuracy guarantee or real Ollama/cloud
+qualification. The default remains unassigned.

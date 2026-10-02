@@ -102,6 +102,7 @@ fn working_copy_only_drain_counts_archives() {
     let config = HieronymusConfig::new(root.path());
     seed(&config, 1);
     let connection = open_migrated(&config.database_path()).unwrap();
+    connection.execute("update crystals set series_slug='book',source_language='ja',target_language='ru' where id=1", []).unwrap();
     connection.execute_batch("insert into short_term_memories(session_id,source_role,kind,text,source_crystal_id,created_at)
       values(1,'system','note','text 1',1,'now'),(1,'system','note','text 1',1,'now'),(1,'system','note','text 1',1,'now');").unwrap();
     let mut settings = default_dream_config();

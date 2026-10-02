@@ -497,6 +497,10 @@ impl RecallService {
         limit: usize,
         required_decision_id: Option<&str>,
     ) -> Result<RecallResponse, RecallError> {
+        let preparation_warning = self.semantic_lane.as_ref().and_then(|lane| {
+            lane.prepare_memories(&self.config, &context.series_slug)
+                .err()
+        });
         let observed = crate::coherent_reads::stable_read_with_publish(
             &self.config,
             &context.series_slug,
@@ -526,6 +530,12 @@ impl RecallService {
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut response.warnings);
         }
+        if let Some(reason) = preparation_warning {
+            response.warnings.push(RecallWarning {
+                kind: "memory_semantic_unavailable".into(),
+                reason,
+            });
+        }
         Ok(response)
     }
 
@@ -547,6 +557,10 @@ impl RecallService {
         limit: usize,
         required_decision_id: Option<&str>,
     ) -> Result<RecallResponse, RecallError> {
+        let preparation_warning = self.semantic_lane.as_ref().and_then(|lane| {
+            lane.prepare_memories(&self.config, &context.series_slug)
+                .err()
+        });
         let observed = crate::coherent_reads::stable_read(
             &self.config,
             &context.series_slug,
@@ -557,6 +571,12 @@ impl RecallService {
         response.resulting_revision = observed.resulting_revision;
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut response.warnings);
+        }
+        if let Some(reason) = preparation_warning {
+            response.warnings.push(RecallWarning {
+                kind: "memory_semantic_unavailable".into(),
+                reason,
+            });
         }
         Ok(response)
     }
@@ -735,6 +755,69 @@ impl RecallService {
         let mut memory: Vec<RecallHit> = long_term;
         memory.extend(short_term_hits);
         memory.sort_by(|left, right| sort_key(left).cmp(&sort_key(right)));
+        let mut memory_warnings = Vec::new();
+        if let Some(lane) = &self.semantic_lane {
+            match lane.memory_candidates(
+                connection,
+                context,
+                query,
+                limit.saturating_mul(4).min(200),
+            ) {
+                Ok(candidates) => {
+                    if candidates.incomplete {
+                        memory_warnings.push(RecallWarning{kind:"memory_semantic_pending".into(),reason:"memory indexing or candidate scan is incomplete; bounded maintenance continues on subsequent recall".into()});
+                    }
+                    let key = |hit: &RecallHit| match hit {
+                        RecallHit::ShortTerm { memory, .. } => {
+                            ("short_term".to_string(), memory.id)
+                        }
+                        RecallHit::LongTerm { crystal, .. } => ("crystal".to_string(), crystal.id),
+                        _ => ("rag".to_string(), 0),
+                    };
+                    let mut ranks = std::collections::HashMap::new();
+                    for (i, hit) in memory.iter().enumerate() {
+                        ranks.insert(key(hit), 1.0 / (60.0 + i as f64 + 1.0));
+                    }
+                    for (rank, (kind, id)) in candidates.ids.into_iter().enumerate() {
+                        let score = ranks.entry((kind.clone(), id)).or_insert(0.0);
+                        *score += 1.0 / (60.0 + rank as f64 + 1.0);
+                        if !memory.iter().any(|h| key(h) == (kind.clone(), id)) {
+                            if kind == "crystal" {
+                                memory.push(RecallHit::LongTerm {
+                                    crystal: crystals.get_with_connection(connection, id)?,
+                                    score: 0.0,
+                                    reason: "memory semantic match".into(),
+                                    activation_id: 0,
+                                });
+                            } else {
+                                memory.push(RecallHit::ShortTerm {
+                                    memory: crate::workspace::hydrate_memory(connection, id)?,
+                                    score: 0.0,
+                                });
+                            }
+                        }
+                    }
+                    for hit in &mut memory {
+                        let score = ranks[&key(hit)];
+                        match hit {
+                            RecallHit::ShortTerm { score: s, .. }
+                            | RecallHit::LongTerm { score: s, .. } => *s = score,
+                            _ => {}
+                        }
+                    }
+                    memory.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
+                }
+                Err(reason) => memory_warnings.push(RecallWarning {
+                    kind: "memory_semantic_unavailable".into(),
+                    reason,
+                }),
+            }
+        } else {
+            memory_warnings.push(RecallWarning {
+                kind: "memory_semantic_unavailable".into(),
+                reason: "memory semantic lane is not armed".into(),
+            });
+        }
 
         // Deterministic term contract (ADR 0011): computed from the same
         // query/source context BEFORE any lane fusion. Advisory chunks that
@@ -788,6 +871,8 @@ impl RecallService {
                 }
             }
         };
+
+        warnings.extend(memory_warnings);
 
         // Task C5 (review finding A5): required semantics that did not run is
         // reported, never inferred from the absence of a warning. A degraded

@@ -69,11 +69,6 @@ pub const MALFORMED_CONFIDENCE_PENALTY: f64 = 0.2;
 
 pub(crate) const MIN_NORMALIZED_CONFIDENCE: f64 = 0.05;
 
-/// Token-set Jaccard similarity at or above which two co-activated `useful`
-/// crystals are near-duplicates and combine pairwise (July design
-/// §Dream-Time Integration, LinkReinforcer).
-pub const COMBINATION_SIMILARITY_THRESHOLD: f64 = 0.7;
-
 /// Longest provider free-text title echoed verbatim into a rejection
 /// record; longer titles are cut to this prefix with an explicit marker
 /// (see [`bounded_rejection_title`]).
@@ -620,6 +615,7 @@ struct ApplySummary {
 /// One instance may run any number of cycles; each cycle takes the OS
 /// dream-cycle lock.
 pub struct DreamService {
+    comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
     config: HieronymusConfig,
     dream_config: DreamConfig,
     resolver: WorkflowResolver,
@@ -657,8 +653,12 @@ impl DreamService {
         // so the precise redacted error text is the audit record.
         let choices = resolver.translate_choices(&dream_config)?;
         let audit = DreamAuditStore::open(config)?;
+        let comparator = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::memory_comparison::Comparator::open(config)?,
+        ));
         Ok(Self {
             config: config.clone(),
+            comparator,
             dream_config,
             resolver,
             choices,
@@ -679,6 +679,7 @@ impl DreamService {
         owner: &str,
         skip_when_locked: bool,
     ) -> Result<DreamRunRecord, DreamError> {
+        self.comparator.borrow_mut().begin_run();
         self.run_locked(owner, true, skip_when_locked)
     }
 
@@ -722,6 +723,7 @@ impl DreamService {
         skip_when_locked: bool,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<DrainRecord, DreamError> {
+        self.comparator.borrow_mut().begin_run();
         let mut batches = 0_usize;
         let mut input_total = 0_i64;
         let mut created_total = 0_i64;
@@ -939,8 +941,14 @@ impl DreamService {
         if !ignore_minimum && pending_count < self.dream_config.min_pending_short_term_memories {
             // Deterministic phases run on every cycle with pending work, even
             // below the provider crystallization threshold.
-            let deterministic =
-                self.run_deterministic_phases(run_id, cycle_id, trigger_type, &threshold_state, 0)?;
+            let deterministic = self.run_deterministic_phases(
+                run_id,
+                cycle_id,
+                trigger_type,
+                &threshold_state,
+                0,
+                None,
+            )?;
             return self.complete_run(
                 run_id,
                 cycle_id,
@@ -956,8 +964,14 @@ impl DreamService {
             self.dream_config.max_short_term_memories_per_run as usize,
         )?;
         if groups.is_empty() {
-            let deterministic =
-                self.run_deterministic_phases(run_id, cycle_id, trigger_type, &threshold_state, 0)?;
+            let deterministic = self.run_deterministic_phases(
+                run_id,
+                cycle_id,
+                trigger_type,
+                &threshold_state,
+                0,
+                None,
+            )?;
             return self.complete_run(
                 run_id,
                 cycle_id,
@@ -995,12 +1009,40 @@ impl DreamService {
             }
             selected_memories.truncate(count);
         }
+        // Reserve some space for activated context without ever excluding the
+        // first complete fresh observation. All providers fit the final request.
+        let candidates = self.select_activated_context(&groups[0], &selected_memories)?;
+        let fresh_count = if candidates.is_empty() {
+            selected_memories.len()
+        } else {
+            (selected_memories.len() * 3 / 4).max(1)
+        };
+        selected_memories.truncate(fresh_count);
         let mut remaining = selected_memories.len();
         for group in &mut groups {
             group.memories.truncate(remaining);
             remaining -= group.memories.len();
         }
         groups.retain(|group| !group.memories.is_empty());
+        let context_copies = candidates;
+        let fresh_count = selected_memories.len();
+        for copy in context_copies {
+            let mut candidate = selected_memories.clone();
+            candidate.push(copy);
+            let mut fits = true;
+            for (choice, provider) in selected.iter().zip(&providers) {
+                if provider.fitting_memory_count(&choice.name, &selection_context, &candidate)?
+                    != candidate.len()
+                {
+                    fits = false;
+                    break;
+                }
+            }
+            if fits {
+                selected_memories = candidate;
+            }
+        }
+        let context_copies = selected_memories[fresh_count..].to_vec();
         let selected_memory_ids: Vec<i64> = groups
             .iter()
             .flat_map(|group| group.memories.iter().map(|memory| memory.id))
@@ -1011,7 +1053,14 @@ impl DreamService {
         // affected-memory context BEFORE any store call): the crystals scoped
         // to the selection's series contexts, and the active rules no dream
         // action may touch (ADR 0011 — dream has no approval authority).
-        let allowed_crystal_ids = self.context_crystal_ids(&groups)?;
+        let mut allowed_crystal_ids = self.context_crystal_ids(&groups)?;
+        // Activation alone is not fresh evidence. Deterministic reconsolidation
+        // owns its strength effect; model output cannot reinforce it twice.
+        for copy in &context_copies {
+            if let Some(id) = copy.source_crystal_id {
+                allowed_crystal_ids.remove(&id);
+            }
+        }
         let active_rule_ids = self.active_rule_crystal_ids()?;
 
         let mut covered_memory_ids: HashSet<i64> = HashSet::new();
@@ -1049,7 +1098,12 @@ impl DreamService {
                 &identity,
             )?;
 
-            let raw = provider.run_pass(&choice.name, &selection_context, &selected_memories)?;
+            let model_input = if provider.is_deterministic() {
+                &selected_memories[..fresh_count]
+            } else {
+                &selected_memories[..]
+            };
+            let raw = provider.run_pass(&choice.name, &selection_context, model_input)?;
             if !raw.is_object() {
                 return Err(DreamError::InvalidOutput(format!(
                     "{} output must be an object",
@@ -1166,6 +1220,23 @@ impl DreamService {
         phase_run_ids.push(persistence_phase_run_id);
         let mut connection = open_migrated(&self.config.database_path())?;
         let committed = commit_audited(&mut connection, |transaction| {
+            for copy in &context_copies {
+                if crate::workspace::hydrate_memory(transaction, copy.id).map_err(tx_error)?
+                    != *copy
+                {
+                    return Err(tx_error(DreamError::StaleAuthority));
+                }
+            }
+            DreamAuditStore::append_in_transaction(
+                transaction,
+                run_id,
+                Some(persistence_phase_run_id),
+                "activated_context",
+                "info",
+                "bounded recalled context; not independent evidence",
+                &json!({"memories":context_copies.iter().map(|m|json!({"id":m.id,"source_crystal_id":m.source_crystal_id,"text_hash":prompt_sha256(&m.text),"claims":m.claim_annotation,"source_snapshot":m.source_crystal_snapshot})).collect::<Vec<_>>()}),
+            )
+            .map_err(tx_error)?;
             let summary = self
                 .apply_outputs_in_transaction(
                     transaction,
@@ -1233,6 +1304,7 @@ impl DreamService {
             trigger_type,
             &threshold_state,
             summary.created_crystal_ids.len(),
+            Some(&context_copies.iter().map(|m| m.id).collect()),
         )?;
 
         let proposal_count = 0_usize as i64;
@@ -1341,6 +1413,67 @@ impl DreamService {
             });
         }
         Ok(groups)
+    }
+
+    /// Rank only this session's activated working copies against its fresh
+    /// observations, with useful activation evidence as a secondary signal.
+    fn select_activated_context(
+        &self,
+        group: &SelectionGroup,
+        fresh: &[ShortTermMemoryRecord],
+    ) -> Result<Vec<ShortTermMemoryRecord>, DreamError> {
+        let db = open_migrated(&self.config.database_path())?;
+        let query =
+            crate::story_applicability::StoryApplicability::resolve_context(&db, &group.context)
+                .map_err(|e| DreamError::Json(e.to_string()))?;
+        let mut stmt=db.prepare("select m.id, (select count(*) from crystal_activations a where a.session_id=m.session_id and a.crystal_id=m.source_crystal_id and a.outcome='useful') from short_term_memories m join crystals c on c.id=m.source_crystal_id where m.session_id=? and m.archived_at is null and c.status='active' order by m.id desc limit 512")?;
+        let rows = stmt
+            .query_map([group.session_id], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut candidates = Vec::new();
+        for (id, useful) in rows {
+            let copy = crate::workspace::hydrate_memory(&db, id)?;
+            let annotation = crate::claim_reads::read_annotation(
+                &db,
+                crate::claim_reads::ClaimTarget::ShortTerm(id),
+                &query,
+            )
+            .map_err(|e| DreamError::Json(e.to_string()))?;
+            if !matches!(
+                annotation.disposition,
+                crate::claim_reads::ClaimDisposition::Current
+            ) {
+                continue;
+            }
+            let Some(source) = copy.source_crystal_id else {
+                continue;
+            };
+            let original = crate::claim_reads::read_annotation(
+                &db,
+                crate::claim_reads::ClaimTarget::Crystal(source),
+                &query,
+            )
+            .map_err(|e| DreamError::Json(e.to_string()))?;
+            if !matches!(
+                original.disposition,
+                crate::claim_reads::ClaimDisposition::Current
+            ) {
+                continue;
+            }
+            // Keep the hydrated snapshot unchanged for later byte-for-byte validation.
+            let score = fresh
+                .iter()
+                .map(|m| token_similarity(&m.text, &copy.text))
+                .fold(0.0_f64, f64::max)
+                + (useful.min(4) as f64) * 0.1;
+            if score > 0.0 {
+                candidates.push((score, copy));
+            }
+        }
+        candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.id.cmp(&b.1.id)));
+        Ok(candidates.into_iter().take(8).map(|(_, m)| m).collect())
     }
 
     fn valid_concept_ids(&self, context: &TranslationContext) -> Result<HashSet<i64>, DreamError> {
@@ -1894,6 +2027,7 @@ impl DreamService {
         trigger_type: &str,
         threshold_state: &Value,
         provider_created_crystals: usize,
+        selected_copies: Option<&HashSet<i64>>,
     ) -> Result<DeterministicSummary, DreamError> {
         let mut total = DeterministicSummary::default();
 
@@ -1908,6 +2042,7 @@ impl DreamService {
             trigger_type,
             threshold_state,
             crystal_budget,
+            selected_copies,
         )?;
         total.merge(reconsolidation);
 
@@ -1934,14 +2069,9 @@ impl DreamService {
         Ok(pending != 0)
     }
 
-    /// The reconsolidator (July design §Dream-Time Integration): for every
-    /// non-archived working copy, a token-level diff ratio against the source
-    /// crystal's current text decides reinforce-in-place versus supersede.
-    /// Either way the processed working copy is archived. Active rule crystals
-    /// are never superseded or reinforced here (ADR 0011: dreaming cannot
-    /// transition deterministic authority), and a source that is no longer
-    /// active at all (combined away or superseded) only retires the copy —
-    /// dreaming never mutates or succeeds a non-active row.
+    /// Reconsolidate only verified equivalent copies. Changed or unresolved
+    /// copies remain pending; copying never increases factual confidence.
+    /// Active rules and retired sources cannot be revised by this phase.
     fn run_reconsolidation(
         &self,
         run_id: i64,
@@ -1949,6 +2079,7 @@ impl DreamService {
         trigger_type: &str,
         threshold_state: &Value,
         crystal_budget: usize,
+        selected_copies: Option<&HashSet<i64>>,
     ) -> Result<DeterministicSummary, DreamError> {
         if crystal_budget == 0 || !self.reconsolidation_pending()? {
             return Ok(DeterministicSummary::default());
@@ -1958,15 +2089,20 @@ impl DreamService {
         // evaluated before persistence.
         let connection = open_migrated(&self.config.database_path())?;
         let copies: Vec<(i64, i64, i64, String)> = {
+            let selected = serde_json::to_string(
+                &selected_copies.map(|ids| ids.iter().copied().collect::<Vec<_>>()),
+            )
+            .map_err(|e| DreamError::Json(e.to_string()))?;
             let mut statement = connection.prepare(
                 "select id, session_id, source_crystal_id, text
                  from short_term_memories
                  where archived_at is null and source_crystal_id is not null
+                 and (?2='null' or id in (select value from json_each(?2)))
                  order by id
                  limit ?1",
             )?;
             let rows = statement.query_map(
-                [self.dream_config.max_short_term_memories_per_run],
+                rusqlite::params![self.dream_config.max_short_term_memories_per_run, selected],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
@@ -1989,7 +2125,22 @@ impl DreamService {
             copies.len() as i64,
         )?;
 
-        let threshold = self.dream_config.reconsolidation_diff_threshold;
+        use crate::{
+            claim_reads::ClaimTarget,
+            memory_comparison::{Decision, snapshot},
+        };
+        let db = open_migrated(&self.config.database_path())?;
+        let mut assessments = HashMap::new();
+        for (memory, _, crystal, _) in &copies {
+            if let (Some(a), Some(b)) = (
+                snapshot(&db, ClaimTarget::Crystal(*crystal))?,
+                snapshot(&db, ClaimTarget::ShortTerm(*memory))?,
+            ) {
+                let decision = self.comparator.borrow_mut().compare(&a, &b)?;
+                assessments.insert(*memory, (a, b, decision));
+            }
+        }
+        drop(db);
         // One immediate write transaction: the phase's crystal and memory
         // mutations (each source revalidated inside it), the
         // phase-completed status, and the redacted audit entry commit
@@ -2000,50 +2151,49 @@ impl DreamService {
             let mut budget = crystal_budget;
             for (memory_id, session_id, crystal_id, working_text) in copies {
                 // The crystal-mutation cost is charged against the remaining
-                // run budget before any work happens (caps are enforced before
-                // persistence): superseding creates one crystal and changes one,
-                // reinforcing changes one; protected and retired copies are free.
+                // run budget before persistence. Reinforcement changes one
+                // crystal; protected copies are free and unresolved ones wait.
                 let Some(original) =
                     load_reconsolidation_source(transaction, crystal_id).map_err(tx_error)?
                 else {
-                    // The source crystal is gone; the working copy has nothing to
-                    // consolidate against, so it is retired.
-                    archive_working_copy(transaction, memory_id).map_err(tx_error)?;
-                    summary.actions.push(json!({
-                        "memory_id": memory_id,
-                        "crystal_id": crystal_id,
-                        "action": "source_missing",
-                    }));
-                    summary.archived_memory_ids.push(memory_id);
+                    // Preserve the copy when its source cannot be verified.
+                    summary.actions.push(
+                        json!({"memory_id":memory_id,"action":"pending","reason":"source_missing"}),
+                    );
                     continue;
                 };
                 if original.status != "active" {
-                    // The source was combined away or superseded after the
-                    // working copy was created: like a missing source, it offers
-                    // nothing live to consolidate against. Reinforcing would
-                    // mutate a retired row and superseding would crystallize a
-                    // fresh active successor of an absorbed crystal, resurfacing
-                    // combined-away knowledge — so the copy just retires.
-                    archive_working_copy(transaction, memory_id).map_err(tx_error)?;
-                    summary.actions.push(json!({
-                        "memory_id": memory_id,
-                        "crystal_id": crystal_id,
-                        "source_status": original.status,
-                        "action": "source_inactive",
-                    }));
-                    summary.archived_memory_ids.push(memory_id);
+                    // Keep changed evidence even when its original is retired.
+                    summary.actions.push(json!({"memory_id":memory_id,"action":"pending","reason":"source_inactive"}));
                     continue;
                 }
-                let ratio = token_diff_ratio(&original.text, &working_text);
+                let Some((before_source, before_copy, assessment)) = assessments.get(&memory_id)
+                else {
+                    summary.actions.push(json!({"memory_id":memory_id,"action":"pending","reason":"comparison snapshot unavailable"}));
+                    continue;
+                };
+                let unchanged = snapshot(transaction, ClaimTarget::Crystal(crystal_id))
+                    .map_err(tx_error)?
+                    .as_ref()
+                    == Some(before_source)
+                    && snapshot(transaction, ClaimTarget::ShortTerm(memory_id))
+                        .map_err(tx_error)?
+                        .as_ref()
+                        == Some(before_copy);
+                let same_lineage = before_source.scope == before_copy.scope
+                    && before_source.version["claims"] == before_copy.version["claims"];
+                if !unchanged
+                    || (assessment.decision != Decision::Equivalent
+                        && !(original.text == working_text && same_lineage))
+                {
+                    summary.actions.push(json!({"memory_id":memory_id,"action":"pending","comparison":assessment,"snapshot_current":unchanged,"snapshots":[before_source.audit_identity(),before_copy.audit_identity()]}));
+                    continue;
+                }
                 let (action, cost) =
                     if crate::crystals::is_active_rule(&original.crystal_type, &original.status) {
-                        // ADR 0011: dreaming never transitions active deterministic
-                        // rule authority, however far the working copy diverged.
                         ("rule_protected", 0)
-                    } else if ratio < threshold {
-                        ("reinforced", 1)
                     } else {
-                        ("superseded", 2)
+                        ("reinforced", 1)
                     };
                 if cost > budget {
                     break;
@@ -2065,39 +2215,17 @@ impl DreamService {
                         archive_working_copy(transaction, memory_id).map_err(tx_error)?;
                         summary.changed_crystal_ids.push(crystal_id);
                     }
-                    "superseded" => {
-                        let successor_id = insert_reconsolidated_crystal(
-                            transaction,
-                            crystal_id,
-                            &original,
-                            &working_text,
-                            cycle_id,
-                        )
-                        .map_err(tx_error)?;
-                        crate::claim_capture::copy_bindings_tx(
-                            transaction,
-                            crate::claim_reads::ClaimTarget::ShortTerm(memory_id),
-                            crate::claim_reads::ClaimTarget::Crystal(successor_id),
-                        )
-                        .map_err(tx_error)?;
-                        transaction.execute(
-                        "update crystals set status = 'superseded', updated_at = ?1 where id = ?2",
-                        rusqlite::params![now(), crystal_id],
-                    )?;
-                        archive_working_copy(transaction, memory_id).map_err(tx_error)?;
-                        summary.created_crystal_ids.push(successor_id);
-                        summary.changed_crystal_ids.push(crystal_id);
-                        summary.dreamed_session_ids.push(session_id);
-                    }
                     _ => {
                         archive_working_copy(transaction, memory_id).map_err(tx_error)?;
                     }
                 }
                 summary.archived_memory_ids.push(memory_id);
+                summary.dreamed_session_ids.push(session_id);
                 summary.actions.push(json!({
                     "memory_id": memory_id,
                     "crystal_id": crystal_id,
-                    "diff_ratio": ratio,
+                    "comparison": assessment,
+                    "snapshots": [before_source.audit_identity(),before_copy.audit_identity()],
                     "action": action,
                 }));
                 budget -= cost;
@@ -2298,6 +2426,7 @@ impl DreamService {
         // config field) bounds the pairs terminalized in this cycle.
         let pair_budget = self.dream_config.max_relation_records_per_pass.max(0) as usize;
         let mut progress = LinkProgress::open(&self.config)?;
+        progress.set_comparator(std::rc::Rc::clone(&self.comparator));
         progress.set_run_context(run_id, Some(phase_run_id));
         let summary = match progress.process(cycle_id, pair_budget) {
             Ok(_) => progress.take_summary(),
@@ -4136,7 +4265,7 @@ fn redact_endpoint(url: &str) -> String {
 }
 
 // ----------------------------------------------------------------------
-// Reconsolidation mechanics (deterministic, no provider)
+// Diagnostic text-distance helpers; never authorize a memory mutation
 // ----------------------------------------------------------------------
 
 fn tokenize(text: &str) -> Vec<String> {
@@ -4163,8 +4292,7 @@ pub fn token_diff_ratio(source: &str, working: &str) -> f64 {
     levenshtein_distance(&source, &working) as f64 / denominator as f64
 }
 
-/// Token-set Jaccard similarity, case-insensitive: the named combination
-/// similarity mechanism for co-activated near-duplicate crystals.
+/// Case-insensitive Jaccard overlap for candidate relevance only.
 pub fn token_similarity(left: &str, right: &str) -> f64 {
     let left_text = left.to_lowercase();
     let right_text = right.to_lowercase();
@@ -4196,149 +4324,31 @@ fn levenshtein_distance(left: &[String], right: &[String]) -> usize {
     previous[right.len()]
 }
 
-/// The `crystals` columns the reconsolidator needs from the source crystal.
+/// Source state revalidated inside the mutation transaction.
 struct ReconsolidationSource {
     text: String,
     status: String,
     crystal_type: String,
-    title: String,
-    scope_type: String,
-    scope_key: String,
-    series_slug: String,
-    source_language: String,
-    target_language: String,
-    tags_json: String,
-    strength: f64,
-    confidence: f64,
-    source_credibility: String,
-    rule_intent: String,
-    soft_origin: String,
-    is_inferred: bool,
-    malformed_penalty: f64,
 }
 
 fn load_reconsolidation_source(
     transaction: &rusqlite::Transaction<'_>,
     crystal_id: i64,
 ) -> Result<Option<ReconsolidationSource>, DreamError> {
-    let row = transaction
+    use rusqlite::OptionalExtension;
+    Ok(transaction
         .query_row(
-            "select text, status, crystal_type, title, scope_type, scope_key,
-                    series_slug, source_language, target_language, tags_json,
-                    strength, confidence, source_credibility, rule_intent,
-                    soft_origin, is_inferred, malformed_penalty
-             from crystals where id = ?1",
+            "select text,status,crystal_type from crystals where id=?",
             [crystal_id],
             |row| {
                 Ok(ReconsolidationSource {
                     text: row.get(0)?,
                     status: row.get(1)?,
                     crystal_type: row.get(2)?,
-                    title: row.get(3)?,
-                    scope_type: row.get(4)?,
-                    scope_key: row.get(5)?,
-                    series_slug: row.get(6)?,
-                    source_language: row.get(7)?,
-                    target_language: row.get(8)?,
-                    tags_json: row.get(9)?,
-                    strength: row.get(10)?,
-                    confidence: row.get(11)?,
-                    source_credibility: row.get(12)?,
-                    rule_intent: row.get(13)?,
-                    soft_origin: row.get(14)?,
-                    is_inferred: row.get::<_, i64>(15)? != 0,
-                    malformed_penalty: row.get(16)?,
                 })
             },
         )
-        .map(Some)
-        .or_else(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })?;
-    Ok(row)
-}
-
-/// Crystallize the successor crystal from a diverged working copy: the
-/// original's identity and metadata, the working copy's text, the original's
-/// concept rows copied (not moved), `supersedes_crystal_id` pointing back.
-fn insert_reconsolidated_crystal(
-    transaction: &rusqlite::Transaction<'_>,
-    original_crystal_id: i64,
-    original: &ReconsolidationSource,
-    working_text: &str,
-    cycle_id: i64,
-) -> Result<i64, DreamError> {
-    let timestamp = now();
-    transaction.execute(
-        "insert into crystals(
-           crystal_type, text, title, scope_type, scope_key, series_slug,
-           source_language, target_language, tags_json, strength, confidence,
-           source_credibility, rule_intent, soft_origin, is_inferred,
-           malformed_penalty, supersedes_crystal_id, status, created_cycle,
-           created_at, updated_at
-         )
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, 'active', ?18, ?19, ?19)",
-        rusqlite::params![
-            original.crystal_type,
-            working_text,
-            original.title,
-            original.scope_type,
-            original.scope_key,
-            original.series_slug,
-            original.source_language,
-            original.target_language,
-            original.tags_json,
-            original.strength,
-            original.confidence,
-            original.source_credibility,
-            original.rule_intent,
-            original.soft_origin,
-            original.is_inferred as i64,
-            original.malformed_penalty,
-            original_crystal_id,
-            cycle_id,
-            timestamp,
-        ],
-    )?;
-    let successor_id = transaction.last_insert_rowid();
-    transaction.execute(
-        "insert into crystals_fts(rowid, title, text) values (?1, ?2, ?3)",
-        rusqlite::params![successor_id, original.title, working_text],
-    )?;
-    // Typed side tables and concept rows are copied, not moved: the
-    // superseded original keeps its rows as inert audit history.
-    transaction.execute(
-        "insert into crystal_story_scopes(crystal_id, scope, confidence, created_at)
-         select ?1, scope, confidence, created_at
-         from crystal_story_scopes where crystal_id = ?2",
-        rusqlite::params![successor_id, original_crystal_id],
-    )?;
-    transaction.execute(
-        "insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
-         select ?1, tag, confidence, created_at
-         from crystal_semantic_tags where crystal_id = ?2",
-        rusqlite::params![successor_id, original_crystal_id],
-    )?;
-    transaction.execute(
-        "insert into crystal_language_tags(crystal_id, language_tag)
-         select ?1, language_tag
-         from crystal_language_tags where crystal_id = ?2",
-        rusqlite::params![successor_id, original_crystal_id],
-    )?;
-    transaction.execute(
-        "insert into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
-         select ?1, concept_id, link_type, confidence, created_at
-         from crystal_concepts where crystal_id = ?2",
-        rusqlite::params![successor_id, original_crystal_id],
-    )?;
-    crate::claim_capture::copy_bindings_tx(
-        transaction,
-        crate::claim_reads::ClaimTarget::Crystal(original_crystal_id),
-        crate::claim_reads::ClaimTarget::Crystal(successor_id),
-    )?;
-    Ok(successor_id)
+        .optional()?)
 }
 
 fn archive_working_copy(

@@ -228,6 +228,41 @@ impl SemanticLane {
         }
     }
 
+    /// Advance one durable batch of memory embeddings before a coherent read.
+    pub(crate) fn prepare_memories(
+        &self,
+        config: &HieronymusConfig,
+        series: &str,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let LaneInner {
+            provider,
+            tokenizer,
+        } = &mut *inner;
+        crate::memory_semantics::prepare(config, series, provider.as_mut(), tokenizer.as_mut())
+    }
+    pub(crate) fn memory_candidates(
+        &self,
+        db: &rusqlite::Connection,
+        context: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<crate::memory_semantics::Candidates, String> {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let LaneInner {
+            provider,
+            tokenizer,
+        } = &mut *inner;
+        crate::memory_semantics::search(
+            db,
+            context,
+            query,
+            provider.as_mut(),
+            tokenizer.as_mut(),
+            limit,
+        )
+    }
+
     /// Runs the lane. Never fails: every failure degrades to an empty lane
     /// with a structured `semantic_lane_unavailable` warning, leaving the FTS
     /// results untouched on the response.

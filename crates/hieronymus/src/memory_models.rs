@@ -195,6 +195,8 @@ pub type MetadataMap = BTreeMap<String, serde_json::Value>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShortTermMemoryRecord {
+    pub source_crystal_id: Option<i64>,
+    pub source_crystal_snapshot: Option<serde_json::Value>,
     pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub session_id: i64,

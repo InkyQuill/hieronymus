@@ -333,7 +333,7 @@ fn unavailable_warning_audit_keeps_committed_counts_and_phase_history() {
 }
 
 #[test]
-fn unavailable_warning_audit_keeps_committed_reconsolidation_count() {
+fn unavailable_warning_audit_keeps_committed_reconsolidation_history() {
     let f = Fixture::new();
     let original = f.crystal(
         "book",
@@ -345,19 +345,21 @@ fn unavailable_warning_audit_keeps_committed_reconsolidation_count() {
     // observation still exercises provider persistence before reconsolidation.
     db.execute(
         "update short_term_memories set source_crystal_id=?1,
-         text='Completely different content about quantum tea ceremony protocols.'
+         text='The binding ritual needs chalk.'
          where id=(select min(id) from short_term_memories where session_id=?2)",
         params![original, session],
     )
     .unwrap();
+    db.execute("delete from claim_bindings where short_term_id=(select min(id) from short_term_memories where session_id=?)",[session]).unwrap();
+    db.execute("insert into claim_bindings(claim_id,short_term_id) select claim_id,(select min(id) from short_term_memories where session_id=?2) from claim_bindings where crystal_id=?1",params![original,session]).unwrap();
     db.execute_batch("create trigger reject_all_decay_audits before insert on dream_audit_entries when json_extract(new.payload_json,'$.phase_name')='salience_decay' begin select raise(abort,'fixture diagnostic storage failure'); end;").unwrap();
     let result = DreamService::open(&f.config, WorkflowResolver::deterministic())
         .unwrap()
         .run_all("manual", true, false);
-    assert!(result.is_err());
-    assert_eq!(f.count("select count(*) from dream_runs where status='failed' and input_count=1 and created_crystal_count=2"), 1);
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(f.count("select count(*) from dream_runs where status='failed' and input_count=1 and created_crystal_count=1"), 1);
     assert_eq!(
-        f.count("select count(*) from crystals where supersedes_crystal_id is not null"),
+        f.count("select count(*) from crystals where last_reinforced_cycle is not null"),
         1
     );
     assert_eq!(f.count("select count(*) from dream_phase_runs where phase in ('persistence','reconsolidation') and status='completed'"), 2);

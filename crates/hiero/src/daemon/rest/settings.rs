@@ -28,12 +28,20 @@ pub(crate) enum Kind {
     Ingest,
     Release,
     Relevance,
+    Comparison,
 }
 
 /// `GET /api/settings/{kind}`.
 pub(super) fn get(_request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Response {
     let config = &runtime.config;
     match kind {
+        Kind::Comparison => match hieronymus::comparison_config::load(config) {
+            Ok(value) => Response::json(
+                200,
+                &json!({"comparison":hieronymus::comparison_config::public_payload(config,&value),"providers":providers_payload(&load_provider_catalog(config).unwrap_or_default()),"error":""}),
+            ),
+            Err(error) => envelope_400(error),
+        },
         Kind::Relevance => match hieronymus::relevance_config::load(config) {
             Ok(value) => Response::json(
                 200,
@@ -77,12 +85,28 @@ pub(super) fn save(request: &Request, runtime: &DaemonRuntime, kind: Kind) -> Re
     let Some(body) = request_body(request) else {
         return envelope_400(match kind {
             Kind::Relevance => "relevance must be an object",
+            Kind::Comparison => "comparison must be an object",
             Kind::Dream => "dream must be an object",
             Kind::Ingest => "ingest must be an object",
             Kind::Release => "release must be an object",
         });
     };
     match kind {
+        Kind::Comparison => {
+            let value = serde_json::from_value::<hieronymus::comparison_config::ComparisonConfig>(
+                body["comparison"].clone(),
+            );
+            match value {
+                Ok(value) => match hieronymus::comparison_config::save(&runtime.config, &value) {
+                    Ok(()) => Response::json(
+                        200,
+                        &json!({"comparison":hieronymus::comparison_config::public_payload(&runtime.config,&value),"error":""}),
+                    ),
+                    Err(error) => envelope_400(error),
+                },
+                Err(_) => envelope_400("invalid comparison settings"),
+            }
+        }
         Kind::Relevance => {
             let result = hieronymus::relevance_config::load(&runtime.config)
                 .and_then(|base| {

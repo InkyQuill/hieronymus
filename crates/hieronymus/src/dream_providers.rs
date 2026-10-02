@@ -166,6 +166,7 @@ fn is_retryable_status(status: u16) -> bool {
 pub(crate) struct HttpClientCore {
     transport: Arc<dyn ProviderTransport>,
     retry_backoff: Duration,
+    max_attempts: u32,
     max_response_bytes: usize,
 }
 
@@ -185,6 +186,7 @@ impl HttpClientCore {
         Self {
             transport,
             retry_backoff: DEFAULT_RETRY_BACKOFF,
+            max_attempts: MAX_ATTEMPTS,
             max_response_bytes: MAX_PROVIDER_RESPONSE_BYTES,
         }
     }
@@ -220,7 +222,7 @@ impl HttpClientCore {
         let mut headers = headers.to_vec();
         headers.push((REQUEST_ID_HEADER.to_string(), request_id.clone()));
         let mut last_error: Option<HttpError> = None;
-        for attempt in 1..=MAX_ATTEMPTS {
+        for attempt in 1..=self.max_attempts {
             if attempt > 1 && !self.retry_backoff.is_zero() {
                 std::thread::sleep(self.retry_backoff * (attempt - 1));
             }
@@ -239,7 +241,7 @@ impl HttpClientCore {
                     // A retryable status that survives the whole budget is the
                     // outcome: hand it back so the caller reports the HTTP
                     // status verbatim.
-                    if attempt == MAX_ATTEMPTS {
+                    if attempt == self.max_attempts {
                         return self
                             .limit_body(response)
                             .map_err(|error| RequestFailure { request_id, error });
@@ -347,6 +349,12 @@ impl LlmDreamProvider {
         })
     }
 
+    /// Pair comparison has one attempt per explicitly assigned provider.
+    pub(crate) fn without_retries(mut self) -> Self {
+        self.core.max_attempts = 1;
+        self
+    }
+
     /// Configure authored instructions; protocol and evidence guards remain fixed.
     pub fn with_prompts(mut self, general: &str, workflow: &str) -> Self {
         self.general_prompt = general.to_string();
@@ -390,7 +398,7 @@ impl LlmDreamProvider {
         )
     }
 
-    fn run_json_prompt(
+    pub(crate) fn run_json_prompt(
         &self,
         pass_name: &str,
         prompt: &str,
@@ -1052,7 +1060,8 @@ fn dream_prompt_payload(context: &TranslationContext, memories: &[ShortTermMemor
             "story_viewpoint": context.story_viewpoint,
             "story_query_mode": context.story_query_mode,
         },
-        "memories": memories.iter().map(|memory| json!({
+        "activated_memories": memories.iter().filter(|m|m.source_crystal_id.is_some()).map(|m|json!({"id":m.id,"source_crystal_id":m.source_crystal_id,"original":m.source_crystal_snapshot,"source_ref":m.source_ref,"source_role":m.source_role,"text":m.text,"claim_annotation":m.claim_annotation,"role":"recalled context only; not fresh evidence; do not emit coverage, discard, or reinforcement for this copy"})).collect::<Vec<_>>(),
+        "memories": memories.iter().filter(|m|m.source_crystal_id.is_none()).map(|memory| json!({
             "id": memory.id,
             "session_id": memory.session_id,
             "context": {"series_slug":context.series_slug, "source_language":context.source_language, "target_language":context.target_language, "volume":context.volume, "chapter":context.chapter},

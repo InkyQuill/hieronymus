@@ -706,114 +706,61 @@ fn reinforcement_consumes_recalled_again_once_and_never_reapplies_feedback() {
 }
 
 #[test]
-fn reconsolidation_supersedes_diverged_working_copy() {
-    let root = tempfile::tempdir().unwrap();
-    let (config, session_id) = active_session(&root, "demo");
-    let crystal_context = context("demo");
-    let concept = ConceptStore::open(&config)
-        .unwrap()
-        .create_concept("chalk ritual", &NewConcept::default())
-        .unwrap();
-    let crystal_id = add_crystal(&config, &crystal_context, "The binding ritual needs chalk.");
-    let control = add_crystal(
-        &config,
-        &crystal_context,
-        "Control crystal stays untouched.",
-    );
-    link_crystal_to_concept(&config, crystal_id, concept.id);
-
-    recall(&config, session_id, "demo", "binding ritual chalk");
-    let working_copy = working_copy_id(&config, crystal_id);
-    // Diverge far beyond the default threshold (0.20 of token count).
-    set_working_copy_text(
-        &config,
-        working_copy,
-        "Completely different content about quantum tea ceremony protocols.",
-    );
-
-    let _run = dream(&config);
-
-    // The original is superseded, a new crystal carries the working copy's
-    // text with the original's concepts copied, and the working copy is
-    // archived. No unrelated crystal is touched (affected-set containment).
-    let original = query(
-        &config,
-        "select status, text from crystals where id = ?1",
-        &[&crystal_id],
-    )
-    .remove(0);
-    assert_eq!(original[0], json!("superseded"));
-    let successor = query(
-        &config,
-        "select id, supersedes_crystal_id, text, status from crystals
-         where supersedes_crystal_id = ?1",
-        &[&crystal_id],
-    )
-    .remove(0);
-    assert_ne!(successor[0].as_i64().unwrap(), crystal_id);
-    assert_eq!(successor[1], json!(crystal_id));
-    assert_eq!(
-        successor[2],
-        json!("Completely different content about quantum tea ceremony protocols.")
-    );
-    assert_eq!(successor[3], json!("active"));
-    let successor_id = successor[0].as_i64().unwrap();
-    assert_eq!(
-        query(
-            &config,
-            "select crystal_id from crystal_concepts where concept_id = ?1 order by crystal_id",
-            &[&concept.id]
-        ),
-        vec![vec![json!(crystal_id)], vec![json!(successor_id)]]
-    );
-    assert_eq!(
-        scalar(&config, "select count(*) from crystals"),
-        json!(3),
-        "exactly one new crystal: affected-set containment"
-    );
-    assert_eq!(
-        scalar_params(
-            &config,
-            "select archived_at is not null from short_term_memories where id = ?1",
-            &[&working_copy]
-        ),
-        json!(1)
-    );
-    assert_eq!(crystal_score(&config, "strength", control), 0.5);
+fn changed_working_copies_preserve_negation_number_name_and_time() {
+    for changed in [
+        "Mira never trusts Ren and owns 3 horses at the old farm.",
+        "Mira trusts Ren and owns 4 horses at the old farm.",
+        "Mira trusts Ben and owns 3 horses at the old farm.",
+        "Mira trusts Ren and owns 3 horses at the old farm now.",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let (config, session) = active_session(&root, "demo");
+        let original = "Mira trusts Ren and owns 3 horses at the old farm.";
+        let id = add_crystal(&config, &context("demo"), original);
+        recall(&config, session, "demo", "Mira trusts horses");
+        let copy = working_copy_id(&config, id);
+        set_working_copy_text(&config, copy, changed);
+        for _ in 0..2 {
+            dream(&config);
+        }
+        assert_eq!(
+            scalar_params(
+                &config,
+                "select text from short_term_memories where id=? and archived_at is null",
+                &[&copy]
+            ),
+            json!(changed)
+        );
+        assert_eq!(
+            scalar_params(
+                &config,
+                "select text from crystals where id=? and status='active'",
+                &[&id]
+            ),
+            json!(original)
+        );
+        assert_eq!(crystal_score(&config, "strength", id), 0.5);
+        assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
+    }
 }
 
 #[test]
-fn reconsolidation_reinforces_trivial_edit() {
+fn unchanged_working_copy_reinforces_strength_once_without_confidence() {
     let root = tempfile::tempdir().unwrap();
-    let (config, session_id) = active_session(&root, "demo");
-    let crystal_context = context("demo");
-    let crystal_id = add_crystal(&config, &crystal_context, "The binding ritual needs chalk.");
-
-    recall(&config, session_id, "demo", "binding ritual chalk");
-    let working_copy = working_copy_id(&config, crystal_id);
-    // A one-word addition stays far below the 0.20 token diff threshold.
-    set_working_copy_text(&config, working_copy, "The binding ritual needs chalk now.");
-
-    let run = dream(&config);
-
-    // Reinforce the original in place: no new crystal, working copy archived.
-    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
-    assert!((crystal_score(&config, "strength", crystal_id) - 0.52).abs() < 1e-9);
-    let original = query(
-        &config,
-        "select status, last_reinforced_cycle from crystals where id = ?1",
-        &[&crystal_id],
-    )
-    .remove(0);
-    assert_eq!(original[0], json!("active"));
-    assert_eq!(original[1], json!(run.cycle_id));
+    let (config, session) = active_session(&root, "demo");
+    let id = add_crystal(&config, &context("demo"), "The binding ritual needs chalk.");
+    recall(&config, session, "demo", "binding ritual chalk");
+    let confidence = crystal_score(&config, "confidence", id);
+    dream(&config);
+    dream(&config);
+    assert!((crystal_score(&config, "strength", id) - 0.52).abs() < 1e-9);
+    assert_eq!(crystal_score(&config, "confidence", id), confidence);
     assert_eq!(
-        scalar_params(
+        scalar(
             &config,
-            "select archived_at is not null from short_term_memories where id = ?1",
-            &[&working_copy]
+            "select count(*) from short_term_memories where archived_at is null"
         ),
-        json!(1)
+        json!(0)
     );
 }
 
@@ -860,7 +807,7 @@ fn reconsolidation_diff_threshold_config_round_trip() {
 }
 
 #[test]
-fn combination_merges_near_duplicate_useful_pair() {
+fn combination_merges_exact_compatible_useful_pair() {
     let root = tempfile::tempdir().unwrap();
     let (config, session_id) = active_session(&root, "demo");
     let crystal_context = context("demo");
@@ -874,7 +821,7 @@ fn combination_merges_near_duplicate_useful_pair() {
         &config,
         &crystal_context,
         "lesson",
-        "The binding ritual needs chalk and candles today.",
+        "The binding ritual needs chalk and candles tonight.",
         |new| new.source_credibility("expert"),
     );
     let bystander = add_crystal(
@@ -1092,8 +1039,8 @@ fn dream_protects_active_rule_crystals_from_supersession_and_combination() {
             "select archived_at is not null from short_term_memories where id = ?1",
             &[&working_copy]
         ),
-        json!(1),
-        "the processed working copy is still archived"
+        json!(0),
+        "changed rule content remains pending for authorized correction"
     );
 }
 
@@ -1153,8 +1100,8 @@ fn reconsolidation_never_acts_on_a_non_active_source_crystal() {
             "select archived_at is not null from short_term_memories where id = ?1",
             &[&working_copy]
         ),
-        json!(1),
-        "the pending copy retires instead of acting on an absorbed source"
+        json!(0),
+        "the changed copy remains pending when its source is retired"
     );
 
     // The reconsolidation audit records why the copy was retired.
@@ -1172,9 +1119,8 @@ fn reconsolidation_never_acts_on_a_non_active_source_crystal() {
         .collect();
     assert!(
         actions.iter().any(|action| {
-            action["action"] == json!("source_inactive")
+            action["reason"] == json!("source_inactive")
                 && action["memory_id"] == json!(working_copy)
-                && action["crystal_id"] == json!(crystal_id)
         }),
         "the retirement must be audited with its reason, saw {actions:?}"
     );
@@ -1185,12 +1131,12 @@ fn reconsolidation_respects_bounded_mutation_caps() {
     let root = tempfile::tempdir().unwrap();
     let (config, session_id) = active_session(&root, "demo");
     let crystal_context = context("demo");
-    let first = add_crystal(
+    let _first = add_crystal(
         &config,
         &crystal_context,
         "First capped crystal about chalk rituals.",
     );
-    let second = add_crystal(
+    let _second = add_crystal(
         &config,
         &crystal_context,
         "Second capped crystal about candle storage.",
@@ -1198,34 +1144,16 @@ fn reconsolidation_respects_bounded_mutation_caps() {
 
     recall(&config, session_id, "demo", "chalk rituals");
     recall(&config, session_id, "demo", "candle storage");
-    for crystal_id in [first, second] {
-        set_working_copy_text(
-            &config,
-            working_copy_id(&config, crystal_id),
-            "Diverged far beyond the threshold for cap testing purposes indeed.",
-        );
-    }
-
     let mut dream_config = default_dream_config();
     dream_config.max_short_term_memories_per_run = 1;
     save_dream_config(&config, &dream_config).unwrap();
     let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     service.run_cycle("admin", false).unwrap();
 
-    // The absolute cap bounds each cycle to one working copy.
     assert_eq!(
         scalar(
             &config,
-            "select count(*) from crystals where status = 'superseded'"
-        ),
-        json!(1)
-    );
-    assert_eq!(
-        scalar_params(
-            &config,
-            "select count(*) from crystals
-             where supersedes_crystal_id in (?1, ?2)",
-            &[&first, &second]
+            "select count(*) from crystals where last_reinforced_cycle is not null"
         ),
         json!(1)
     );
@@ -1254,7 +1182,7 @@ fn reconsolidation_respects_bounded_mutation_caps() {
     assert_eq!(
         scalar(
             &config,
-            "select count(*) from crystals where status='superseded'"
+            "select count(*) from crystals where last_reinforced_cycle is not null"
         ),
         json!(2)
     );
@@ -1285,4 +1213,147 @@ fn token_diff_ratio_and_similarity_are_bounded_and_meaningful() {
         0.0
     );
     assert!(token_similarity("needs chalk and candles", "needs chalk and candles today") > 0.7);
+}
+
+/// Models see a bounded context lane; only fresh records can supply coverage.
+struct ContextProvider {
+    seen: std::sync::Arc<
+        std::sync::Mutex<Vec<Vec<hieronymus::memory_models::ShortTermMemoryRecord>>>,
+    >,
+    mutate: Option<HieronymusConfig>,
+}
+impl hieronymus::dreaming::DreamProvider for ContextProvider {
+    fn name(&self) -> &str {
+        "context-test"
+    }
+    fn fitting_memory_count(
+        &self,
+        _: &str,
+        _: &TranslationContext,
+        memories: &[hieronymus::memory_models::ShortTermMemoryRecord],
+    ) -> Result<usize, hieronymus::dreaming::DreamError> {
+        Ok(memories.len().min(3))
+    }
+    fn run_pass(
+        &self,
+        pass: &str,
+        context: &TranslationContext,
+        memories: &[hieronymus::memory_models::ShortTermMemoryRecord],
+    ) -> Result<Value, hieronymus::dreaming::DreamError> {
+        self.seen.lock().unwrap().push(memories.to_vec());
+        if let Some(config) = &self.mutate
+            && let Some(id) = memories.iter().find_map(|m| m.source_crystal_id)
+        {
+            hieronymus::db::open_migrated(&config.database_path())?.execute(
+                "update crystals set text='source changed during inference' where id=?",
+                [id],
+            )?;
+        }
+        let fresh = memories
+            .iter()
+            .filter(|m| m.source_crystal_id.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        hieronymus::dreaming::DreamProvider::run_pass(
+            &hieronymus::dreaming::DeterministicDreamProvider,
+            pass,
+            context,
+            &fresh,
+        )
+    }
+}
+
+#[test]
+fn activated_context_is_bounded_and_omitted_copies_remain_pending() {
+    for mutate_source in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let (config, session) = active_session(&root, "book");
+        for n in 0..10 {
+            add_crystal(
+                &config,
+                &context("book"),
+                &format!("tea brewing observation number {n}"),
+            );
+        }
+        recall(&config, session, "book", "tea brewing");
+        let workspace = WorkspaceStore::open(&config).unwrap();
+        for _ in 0..4 {
+            let mut input = hieronymus::workspace::ShortTermMemoryInput::new(
+                "note",
+                "tea brewing uses fresh water",
+            );
+            input.claims = vec![current_story::claim(&config, "book", &input.text)];
+            workspace.add_short_term_memory(session, &input).unwrap();
+        }
+        workspace.complete_session(session).unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+        let records = seen.clone();
+        let mutation = mutate_source.then(|| config.clone());
+        let resolver = WorkflowResolver::serving(move || {
+            Box::new(ContextProvider {
+                seen: records.clone(),
+                mutate: mutation.clone(),
+            })
+        });
+        let result = DreamService::open(&config, resolver)
+            .unwrap()
+            .run_cycle("context-test", false);
+        if mutate_source {
+            assert!(
+                result.is_err(),
+                "source changed during inference must invalidate persistence"
+            );
+            assert_eq!(
+                scalar(
+                    &config,
+                    "select count(*) from short_term_memories where archived_at is not null"
+                ),
+                json!(0)
+            );
+            continue;
+        }
+        result.unwrap();
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        for input in seen.iter() {
+            assert_eq!(input.len(), 3);
+            assert_eq!(
+                input
+                    .iter()
+                    .filter(|m| m.source_crystal_id.is_none())
+                    .count(),
+                2
+            );
+            let copy = input
+                .iter()
+                .find(|m| m.source_crystal_id.is_some())
+                .unwrap();
+            assert_eq!(
+                copy.source_crystal_snapshot.as_ref().unwrap()["id"],
+                copy.source_crystal_id.unwrap()
+            );
+            assert!(!copy.claim_annotation.claims.is_empty());
+        }
+        assert_eq!(
+            scalar(
+                &config,
+                "select count(*) from short_term_memories where source_crystal_id is not null and archived_at is null"
+            ),
+            json!(9)
+        );
+        assert_eq!(
+            scalar(
+                &config,
+                "select count(*) from short_term_memories where source_crystal_id is null and archived_at is null"
+            ),
+            json!(2)
+        );
+        assert_eq!(
+            scalar(
+                &config,
+                "select count(*) from dream_audit_entries where event_type='activated_context'"
+            ),
+            json!(1)
+        );
+    }
 }

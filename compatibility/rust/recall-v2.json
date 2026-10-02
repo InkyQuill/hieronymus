@@ -17,6 +17,7 @@
         "results": [],
         "deterministic_contract": [],
         "warning_kinds": [
+          "memory_semantic_unavailable",
           "semantic_lane_unavailable"
         ],
         "warning_kinds_note": "a bare Application has no semantic service attached, so required semantics did not run; the reason text is the service's own and is not pinned here"
@@ -43,6 +44,7 @@
           }
         ],
         "warning_kinds": [
+          "memory_semantic_unavailable",
           "semantic_lane_unavailable"
         ],
         "warning_kinds_note": "a bare Application has no semantic service attached, so required semantics did not run; the reason text is the service's own and is not pinned here"
