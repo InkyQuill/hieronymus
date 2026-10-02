@@ -125,8 +125,13 @@ export async function loadAdminSnapshot(
   view: string,
   selectedId?: string | number,
   series?: string,
+  paging?: { limit: number; offset: number },
 ): Promise<AdminSnapshot> {
   const query = new URLSearchParams({ view });
+  if (paging) {
+    query.set("limit", String(paging.limit));
+    query.set("offset", String(paging.offset));
+  }
   if (series) query.set("series", series);
   if (selectedId !== undefined) query.set("selected_id", String(selectedId));
   return request(`/api/admin/snapshot?${query}`);

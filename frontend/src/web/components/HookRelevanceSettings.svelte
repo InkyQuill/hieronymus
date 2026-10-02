@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TechnicalDetails from "./TechnicalDetails.svelte";
   import { onMount } from "svelte";
   import { loadRelevanceSettings, saveRelevanceSettings } from "../lib/api";
   import type { RelevanceSettings } from "../lib/types";
@@ -32,26 +33,30 @@
   <p class="mt-2 max-w-2xl text-body text-secondary">With a TypeSafe API key, Jev checks whether a message belongs to your writing project before it enters memory. The current message is sent to TypeSafe for this check. Without a key, or if the service fails, a local word filter is used.</p>
   {#if settings}
     <p class="mt-3 text-body-sm text-secondary">{settings.key_configured ? "Jev API key is saved." : "Local filter is active. No Jev API key is saved."}</p>
+    <p class="mt-2 text-body-sm text-secondary">This section has its own Save relevance button.</p>
     <form class="mt-4 grid gap-4 sm:grid-cols-2" oninput={() => { saved = false; }} onsubmit={event => { event.preventDefault(); void save(); }}>
       <label class="grid gap-1.5 text-caption text-secondary">TypeSafe API key
         <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" type="password" autocomplete="new-password" bind:value={apiKey} disabled={busy || clearKey} aria-describedby="jev-key-help" />
       </label>
       <p id="jev-key-help" class="self-center text-body-sm text-secondary">Leave blank to keep the saved key. Removing it restores the local filter.</p>
+      <details class="sm:col-span-2 border-t border-default pt-2"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Advanced relevance filter</summary><p class="mb-4 max-w-[70ch] text-body-sm text-secondary">Scores run from 0 to 1. A higher minimum relevance or lower maximum technical probability makes the filter stricter and may exclude mixed writing and technical messages.</p><div class="grid gap-4 sm:grid-cols-2">
       <label class="grid gap-1.5 text-caption text-secondary">Jev model
         <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" required bind:value={settings.model} disabled={busy} />
       </label>
       <label class="grid gap-1.5 text-caption text-secondary">Timeout (seconds)
-        <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" type="number" required min="1" max="10" bind:value={settings.timeout_seconds} disabled={busy} />
+        <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" max="10" bind:value={settings.timeout_seconds} disabled={busy} />
       </label>
       <label class="grid gap-1.5 text-caption text-secondary">Minimum writing relevance
-        <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" type="number" required min="0.5" max="1" step="0.01" bind:value={settings.minimum_relevance} disabled={busy} />
+        <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="0.5" max="1" step="0.01" bind:value={settings.minimum_relevance} disabled={busy} />
       </label>
       <label class="grid gap-1.5 text-caption text-secondary">Maximum technical probability
-        <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" type="number" required min="0" max="0.5" step="0.01" bind:value={settings.maximum_technical} disabled={busy} />
+        <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="0" max="0.5" step="0.01" bind:value={settings.maximum_technical} disabled={busy} />
       </label>
+      </div></details>
       <label class="flex min-h-11 items-center gap-2 text-body-sm text-secondary"><input type="checkbox" bind:checked={clearKey} disabled={busy || !settings.key_configured} />Remove saved Jev key</label>
       <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm text-accent-text disabled:opacity-60" disabled={busy}>Save relevance</button>
     </form>
+    <TechnicalDetails data={settings} label="Technical relevance configuration" />
   {:else if !error}<p class="mt-4 text-body-sm text-secondary">Loading relevance settings…</p>{/if}
   {#if error}<p role="alert" class="mt-4 text-body-sm text-danger">{error}</p>{/if}
   {#if saved}<p role="status" class="mt-4 text-body-sm text-secondary">Relevance settings saved.</p>{/if}

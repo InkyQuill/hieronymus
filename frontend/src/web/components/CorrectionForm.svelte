@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TechnicalDetails from "./TechnicalDetails.svelte";
   import { onMount, untrack } from "svelte";
   import { correctionOptions, correctionSelection, submitCorrection, type ClaimTarget, type CorrectionOptions, type Selection } from "../lib/authority";
   let { target, onclose }: { target?: ClaimTarget; onclose: () => void } = $props();
@@ -57,7 +58,7 @@
 </script>
 <section class="m-5 grid gap-4 rounded-md border border-default bg-surface p-5" aria-label="Correct a memory">
   <div class="flex items-center justify-between"><h3 class="text-h3">{target ? "Correct this memory" : "Correct a rendering"}</h3><button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50" onclick={onclose} disabled={busy}>Close correction</button></div>
-  <p class="text-body-sm text-secondary">Choose the statement you want to correct or add context to. Your change takes effect as soon as it is applied.</p>
+  <p class="text-body-sm text-secondary">{target ? "Choose the statement you want to correct or add context to." : "Choose the book and source passage, then enter the translation your agent should use."} Your change takes effect as soon as it is applied.</p>
   <label>Book<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={series} disabled={busy || applied} onchange={() => { source = 0; rule = 0; void inspect(); }}><option value={0}>Choose a book</option>{#each options.series as book (book.id)}<option value={book.id}>{book.title}</option>{/each}</select></label>
   {#if target}<label>Correction<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={mode} disabled={busy || applied} onchange={edited}><option value="invalidate">This is wrong or outdated</option><option value="qualify">Add a pointer or context</option></select></label>{/if}
   {#if mode === "rendering"}
@@ -73,5 +74,6 @@
   {#if !busy && options.series.length === 0}<p>No bound book context is available for this record.</p>{/if}
   {#if error}<p role="alert" class="text-danger">{error}</p><button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50" onclick={() => void (options.series.length ? inspect() : initialize())} disabled={busy}>Refresh selection</button>{/if}
   {#if notice}<p role="status" class="text-body-sm">{notice}</p>{/if}
-  <button class="min-h-11 rounded-sm border border-accent bg-accent px-4 py-2 font-medium text-primary disabled:opacity-50" disabled={!ready} onclick={apply}>{busy ? "Working…" : "Apply correction"}</button>
+  <TechnicalDetails data={{ selection, target }} label="Technical correction selection" />
+  <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 font-medium text-accent-text disabled:opacity-50" disabled={!ready} onclick={apply}>{busy ? "Working…" : "Apply correction"}</button>
 </section>

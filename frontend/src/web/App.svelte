@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SettingsNavigation from "./components/SettingsNavigation.svelte";
   import { onMount } from "svelte";
   import { connectAdminEvents } from "./lib/admin-events.svelte";
   import ConnectAgent from "./components/ConnectAgent.svelte";
@@ -50,6 +51,7 @@
       : path.endsWith("/release")
         ? "release"
         : "providers";
+  let bookHeader = $state<HTMLDivElement>();
   let providers = $state.raw<ProviderProfile[]>([]);
   let selected = $state.raw<ProviderProfile | null>(null);
   let createOpen = $state(false);
@@ -123,7 +125,7 @@
   }
 
   async function remove() {
-    if (!selected || !confirm(`Delete ${selected.name}?`)) return;
+    if (!selected) return;
     busy = true; error = "";
     try { await deleteProvider(selected.id); selected = null; models = []; await loadProviders(); showNotice("Provider deleted."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
@@ -211,18 +213,20 @@
   });
 </script>
 
+<a href="#page-content" class="skip-link">Skip to page content</a>
 <main class="min-h-dvh bg-root font-sans text-primary">
-  <header class="sticky top-0 z-20 border-b border-default bg-surface">
-    <div class="mx-auto flex w-full max-w-[90rem] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
+  <header class="z-20 sm:sticky sm:top-0 border-b border-default bg-surface">
+    <div class="mx-auto flex w-full flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
     <div><a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
       <VersionInfo />
     </div>
-    <nav class="order-last flex w-full min-w-0 items-center gap-1 sm:order-none sm:w-auto sm:flex-1" aria-label="Primary navigation">
-      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/admin/connect" aria-current={section === "connect" ? "page" : undefined}>Connect your agent</a>
-      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'admin' ? 'bg-raised text-primary' : ''}" href="/admin">Overview</a>
-      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'memory' ? 'bg-raised text-primary' : ''}" href="/admin/memory">Memory</a>
-      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory' || section === 'connect') ? 'bg-raised text-primary' : ''}" href="/config">Settings</a>
+    <nav class="order-last flex w-full min-w-0 flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:flex-1" aria-label="Primary navigation">
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'connect' ? 'bg-raised text-primary' : ''}" href="/admin/connect" aria-current={section === "connect" ? "page" : undefined}>Connect your agent</a>
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'admin' ? 'bg-raised text-primary' : ''}" href="/admin" aria-current={section === "admin" ? "page" : undefined}>Overview</a>
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'memory' ? 'bg-raised text-primary' : ''}" href="/admin/memory" aria-current={section === "memory" ? "page" : undefined}>Memory</a>
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory' || section === 'connect') ? 'bg-raised text-primary' : ''}" href="/config" aria-current={!["admin", "memory", "connect"].includes(section) ? "page" : undefined}>Settings</a>
     </nav>
+    <div bind:this={bookHeader}></div>
     <button class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-sm border border-default px-3 py-2 text-body-sm text-secondary hover:border-accent hover:text-primary" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
         {#if themeToggle.theme === "dark"}
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 10a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm-6.36-1.05a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.42 1.41l-.7-.7a1 1 0 0 1 0-1.42Zm10.61 0a1 1 0 0 1 1.42 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71ZM3 9h1a1 1 0 1 1 0 2H3a1 1 0 1 1 0-2Zm13 0h1a1 1 0 1 1 0 2h-1a1 1 0 1 1 0-2ZM4.34 3.64a1 1 0 0 1 1.41 0l.71.7a1 1 0 1 1-1.42 1.42l-.7-.71a1 1 0 0 1 0-1.41Zm10.61 0a1 1 0 0 1 0 1.41l-.7.71a1 1 0 1 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Z" /></svg>
@@ -233,54 +237,43 @@
     </button>
     </div>
   </header>
-  <section class="mx-auto w-full max-w-[90rem] px-4 py-6 sm:px-8 lg:px-12">
+  <section id="page-content" tabindex="-1" class="mx-auto w-full px-4 py-6 sm:px-8 lg:px-12">
+    {#if ["providers", "dreaming", "ingest", "release"].includes(section)}<SettingsNavigation {section} />{/if}
+    {#if error && ["providers", "admin", "memory"].includes(section)}<div role="alert" class="mb-4 border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
     {#if section === "connect"}
       <ConnectAgent />
     {:else if section === "admin" && adminDashboard}
-      <AdminDashboard dashboard={adminDashboard} {error} onDream={runDreaming} />
+      <AdminDashboard dashboard={adminDashboard} {busy} {error} onDream={runDreaming} />
     {:else if section === "memory" && adminDashboard}
-      <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />
+      <MemoryViews dashboard={adminDashboard} {bookHeader} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}
-      <div class="grid gap-8 md:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]">
-        <aside class="border-b border-default pb-4 md:border-r md:border-b-0 md:pr-8">
-          <p class="mb-4 text-eyebrow uppercase tracking-[0.16em] text-tertiary">Configuration</p>
-          <nav class="grid gap-1" aria-label="Configuration sections"><a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config">Providers</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>
-        </aside>
+      <div class="w-full">
         <div class="min-w-0">
         <header class="mb-8 flex flex-col gap-4 border-b border-default pb-6 sm:flex-row sm:items-end sm:justify-between">
-          <div><p class="mb-2 text-eyebrow uppercase tracking-[0.16em] text-tertiary">Model access</p><h2 class="text-display">Providers</h2><p class="mt-2 max-w-2xl text-body text-secondary">Manage model-provider profiles for hosted and local models.</p></div>
+          <div><h1 class="text-display">AI providers</h1><p class="mt-2 max-w-2xl text-body text-secondary">Connect the AI services used to process your memories. Your writing agent is connected separately.</p></div>
           <button class="min-h-11 rounded-sm bg-accent px-4 py-2 text-body-sm font-medium text-root hover:opacity-90" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button>
         </header>
-        {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+
         {#if busy && providers.length === 0}
           <p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading profiles…</p>
         {:else if providers.length === 0}
-          <div class="overflow-auto border border-default bg-surface"><table class="w-full border-collapse"><tbody><tr><td class="px-4 py-12 text-center text-body text-secondary">No provider profiles yet. Create one to connect an LLM.</td></tr></tbody></table></div>
+          <div class="overflow-auto border border-default bg-surface"><table class="w-full border-collapse"><tbody><tr><td class="px-4 py-12 text-center text-body text-secondary">No AI providers yet. Add a hosted service or local Ollama server to use Dreaming.</td></tr></tbody></table></div>
         {:else}
-          <div class="overflow-auto border border-default"><table class="w-full min-w-[42rem] border-collapse text-left"><thead class="bg-surface"><tr><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Display name</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Type</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Endpoint</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class="cursor-pointer border-b border-default last:border-b-0 hover:bg-raised {selected?.id === provider.id ? 'bg-raised' : ''}" role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td class="px-4 py-3 text-body">{provider.name}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.type}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.url}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table></div>
+          <div class="overflow-auto border border-default"><table class="w-full min-w-[42rem] border-collapse text-left"><thead class="bg-surface"><tr><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Display name</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Type</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Endpoint</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class="cursor-pointer border-b border-default last:border-b-0 hover:bg-raised {selected?.id === provider.id ? 'bg-raised' : ''}" role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td class="px-4 py-3 text-body">{provider.name}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.type}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.url}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.key_configured ? "Configured" : provider.type === "ollama" ? "Not configured (optional)" : "Not configured"}</td></tr>{/each}</tbody></table></div>
         {/if}
+        <p class="mt-4 text-body-sm text-secondary">Open a provider to edit its connection or check it. Then assign its models in <a href="/config/dreaming" class="text-accent-text underline">Dreaming settings</a>.</p>
         </div>
       </div>
     {:else if section === "dreaming" && dreamSettings}
-      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections"><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a><a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/dreaming">Dreaming</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>{#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {defaultPrompts} {modelCache} {busy} {error} onSave={saveDream} />{/key}
+      {#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {defaultPrompts} {modelCache} {busy} {error} onSave={saveDream} />{/key}
     {:else if section === "ingest" && ingestSettings}
-      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections">
-        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>
-        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a>
-        <a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/ingest">Ingest</a>
-        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a>
-      </nav>
+
       {#key "ingest"}<IngestEditor initial={ingestSettings} {busy} {error} onSave={saveIngest} />{/key}
     {:else if section === "release" && releaseSettings}
-      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections">
-        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>
-        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a>
-        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a>
-        <a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/release">Release</a>
-      </nav>
+
       {#key "release"}<ReleaseEditor initial={releaseSettings} {busy} {error} onSave={saveRelease} />{/key}
-    {:else if error}<p class="border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>
-    {:else}<p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading settings…</p>{/if}
+    {:else if error}<div role="alert" class="border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-3 min-h-11 rounded-sm border border-danger px-4 py-2" onclick={() => { void refreshSection(); }}>Try again</button></div>
+    {:else}<p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading {section === "admin" ? "overview" : section === "memory" ? "memory" : "settings"}…</p>{/if}
   </section>
   {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
   {#if notice}<Toast message={notice.message} tone={notice.tone} onDismiss={() => { notice = null; }} />{/if}

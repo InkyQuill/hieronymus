@@ -27,11 +27,10 @@
   }
 </script>
 
-<section class="mx-auto grid max-w-4xl gap-8" aria-labelledby="connect-heading">
+<section class="grid w-full gap-8" aria-labelledby="connect-heading">
   <header>
-    <p class="mb-3 text-eyebrow uppercase tracking-[0.16em] text-accent-text">Your writing companion</p>
     <h1 id="connect-heading" class="text-display">Connect your agent</h1>
-    <p class="mt-4 max-w-2xl text-body text-secondary">Add the Hieronymus MCP connection and skills to Codex, Cowork, or pi. The connection gives your agent access to memory; the skills teach it when and how to use that memory for your writing project.</p>
+    <p class="mt-4 max-w-2xl text-body text-secondary">Give Codex, Cowork, or pi access to your project memory. Setup adds a memory connection (MCP) and Hieronymus skills: the connection lets your agent read and update memory; the skills teach it how to use that memory while you write.</p>
   </header>
   <ol class="grid gap-4">
     <li class="rounded-md border border-default bg-surface p-6">
@@ -45,7 +44,7 @@
       {#if !connections.length}<button class="mt-5 min-h-11 rounded-sm border border-accent bg-raised px-5 py-2 text-body-sm font-medium text-accent-text disabled:opacity-60" onclick={prepare} disabled={busy}>{busy ? "Preparing…" : "Prepare connection"}</button>{/if}
     </li>
     <li class="rounded-md border border-default bg-surface p-6">
-      <h2 class="text-h3">2. Add the MCP connection and skills</h2>
+      <h2 class="text-h3">2. Give your agent the setup request</h2>
       <p class="mt-3 text-body text-secondary">Open your writing project in your agent. Copy and paste the setup request to install both the memory connection and the Hieronymus skills. Follow the permission prompts your agent shows.</p>
       <button class="mt-5 min-h-11 rounded-sm border border-accent bg-raised px-5 py-2 text-body-sm font-medium text-accent-text disabled:opacity-60" onclick={copy} disabled={!selected}>Copy setup request</button>
       {#if selected}<details class="mt-4 text-body-sm text-secondary"><summary class="cursor-pointer py-2">Read the setup request</summary><textarea class="mt-2 min-h-52 w-full rounded-sm border border-default bg-raised p-3 text-body-sm text-primary" aria-label="Setup request" readonly value={selected.instructions}></textarea></details>{/if}
