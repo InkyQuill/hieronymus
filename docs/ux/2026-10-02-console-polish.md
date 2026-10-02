@@ -22,3 +22,7 @@ Fixtures establish presentation behavior, not live provider availability or acce
 The author found the unbounded run list, bottom-aligned actions and unexplained selection controls difficult to use. Lists now render 20 records per page. Record actions sit above content in a separate, naturally sized panel; long content scrolls within that panel. Checkboxes appear only where combining records is supported, with an explicit explanation and selection count. Processing history uses its own heading and omits unrelated rendering correction.
 
 The product owner explicitly excludes mobile qualification for this project. This follow-up was verified on desktop at 1440px dark and 1280px light with 100 synthetic runs and a long selected body: actions in the first viewport, page navigation functional, no irrelevant checkboxes, overflow or JavaScript errors. 101 frontend tests passed. These screenshots use synthetic content, not the user's project records.
+
+## Distill
+
+Removed the explanatory sidebar and duplicate record count. Processing history no longer shows a book filter or rendering correction. Dream Runs show record and status; repetitive kind/scope columns are omitted only for that uniform view and remain in other views. One short description replaces overlapping introductions. On desktop, the selected run's actions now sit around 479px from the top (previously 605px in the same fixture). The existing theme and record operations are retained.

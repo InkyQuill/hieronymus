@@ -216,10 +216,10 @@
 </script>
 
 <section
-  class="grid gap-8 lg:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]"
+  class="grid gap-5"
   aria-label="Memory views"
 >
-  <div class="col-span-full rounded-md border border-default bg-surface p-4">
+  {#if !globalView}<div class="col-span-full">
     <label for="memory-series" class="block text-caption text-secondary">Book</label>
     <select id="memory-series" class="mt-2 min-h-11 w-full rounded-sm border border-default bg-surface px-3 text-body text-primary sm:max-w-sm" value={selectedSeries} onchange={(event) => chooseSeries(event.currentTarget.value)} disabled={runningAction !== null}>
       <option value="">All books</option>
@@ -227,19 +227,14 @@
     </select>
     <p class="mt-2 text-caption text-secondary">{globalView ? "This activity log covers all books." : selectedSeries ? "Showing memories for this book. Shared concepts may also appear." : "Choose a book to focus on its memories."}</p>
   </div>
+  {/if}
   {#if correction}<div class="col-span-full">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}
   {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">A stored memory can still be wrong or outdated. Its status describes storage, not accuracy. Use “Correct this memory” to correct a specific statement.</p>{/if}
   {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">These older translation choices are historical records. Use “Correct a rendering” to inspect and change the current approved translation.</p>{/if}
-  <div class="self-start lg:sticky lg:top-24">
-    <h2 class="text-display">{globalView ? "Processing history" : "Your project memory"}</h2>
-    {#if !globalView}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = {}}>Correct a rendering</button>{/if}
-    <p class="mt-3 max-w-prose text-body text-secondary">
-      {globalView ? "Open a processing run to review its output and understand what Hieronymus did." : "Choose a book, open a memory and read its source. If it is wrong or outdated, use “Correct this memory”."}
-    </p>
-    <div class="mt-6 border-t border-default pt-4 text-caption text-secondary">
-      {snapshot?.rows.length ?? 0} records
-    </div>
-  </div>
+  <header class="flex flex-wrap items-center justify-between gap-3">
+    <h2 class="text-h2">{globalView ? "Processing history" : "Your project memory"}</h2>
+    {#if !globalView}<button class="min-h-11 rounded-sm border border-default px-4 py-2 text-body-sm hover:bg-raised" onclick={() => correction = {}}>Correct a rendering</button>{/if}
+  </header>
   <div class="min-w-0">
     <nav
       class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3"
@@ -255,7 +250,7 @@
         >
       {/each}
     </nav>
-    <p class="mb-4 max-w-[70ch] text-body-sm text-secondary">{selectedView === "Crystals" ? "Long-term memories are concise pieces of knowledge your agent has learned. Hieronymus calls these crystals." : selectedView === "Short-Term Memory" ? "Recent memories retain source material before Dreaming processes it into lasting knowledge." : selectedView === "Lessons" ? "Writing lessons capture reusable guidance backed by source memories." : selectedView === "Concepts" ? "Concepts connect recurring ideas, characters and subjects across your memories." : globalView ? "Processing and activity records help explain what Hieronymus did. They are not additional project knowledge." : "Open a record to inspect its context and source."}</p>
+    <p class="mb-4 max-w-[70ch] text-body-sm text-secondary">{selectedView === "Crystals" ? "Long-term memories are concise pieces of knowledge your agent has learned. Hieronymus calls these crystals." : selectedView === "Short-Term Memory" ? "Recent memories retain source material before Dreaming processes it into lasting knowledge." : selectedView === "Lessons" ? "Writing lessons capture reusable guidance backed by source memories." : selectedView === "Concepts" ? "Concepts connect recurring ideas, characters and subjects across your memories." : globalView ? "Open a run to review what Hieronymus processed." : "Open a record to inspect its context and source."}</p>
     {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
     {#if loading}
       <p class="text-body text-secondary">Loading {selectedView}…</p>
@@ -274,16 +269,14 @@
                   >{#if canCombine}<th class="border-b border-default px-4 py-3 text-eyebrow">Combine</th>{/if}<th
                     class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary"
                     >Record</th
-                  ><th
+                  >{#if selectedView !== "Dream Runs"}<th
                     class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary"
-                    >Kind</th
-                  ><th
+                    >Kind</th>{/if}<th
                     class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary"
                     >Status</th
-                  ><th
+                  >{#if selectedView !== "Dream Runs"}<th
                     class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary"
-                    >Scope</th
-                  ></tr
+                    >Scope</th>{/if}</tr
                 ></thead
               ><tbody>
                 {#each visibleRows as row (row.id)}
@@ -302,13 +295,11 @@
                       ><small class="mt-1 block text-caption text-secondary"
                         >{row.language_pair}</small
                       ></button></td
-                    ><td class="px-4 py-3 text-body-sm text-secondary"
-                      >{row.kind}</td
-                    ><td class="px-4 py-3 text-body-sm text-secondary"
+                    >{#if selectedView !== "Dream Runs"}<td class="px-4 py-3 text-body-sm text-secondary"
+                      >{row.kind}</td>{/if}<td class="px-4 py-3 text-body-sm text-secondary"
                       >{row.status}</td
-                    ><td class="px-4 py-3 text-body-sm text-secondary"
-                      >{row.scope}</td
-                    ></tr
+                    >{#if selectedView !== "Dream Runs"}<td class="px-4 py-3 text-body-sm text-secondary"
+                      >{row.scope}</td>{/if}</tr
                   >
                 {/each}
               </tbody></table
