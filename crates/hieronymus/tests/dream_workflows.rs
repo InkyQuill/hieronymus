@@ -392,7 +392,9 @@ fn enabled_workflows_run_on_their_own_provider_and_model() {
         let instruction = prompt["instruction"].as_str().unwrap();
         assert!(instruction.contains("Prefer concise bilingual memory."));
         assert!(!instruction.contains("Use English memory prose by default"));
-        assert!(instruction.contains("Use only provided source memory ids"));
+        assert!(
+            instruction.contains("Every crystal must include a non-empty source_memory_ids array")
+        );
         assert!(instruction.contains("Return one JSON object without markdown"));
         if index == 0 {
             assert!(instruction.contains("Extract character motivations with evidence."));

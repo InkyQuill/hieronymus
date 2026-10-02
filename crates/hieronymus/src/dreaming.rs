@@ -3575,15 +3575,11 @@ fn clean_int_tuple(values: &[Option<&Value>]) -> Vec<i64> {
     integers
 }
 
-/// Port of `_source_memory_ids`: explicit ids must intersect the allowed set
-/// (otherwise the candidate is skipped); without a source field every allowed
-/// id is a source.
+/// Missing or unsupported source IDs reject a candidate; evidence is never inferred.
 fn source_memory_ids(
     payload: &serde_json::Map<String, Value>,
     allowed_memory_ids: &HashSet<i64>,
 ) -> Option<Vec<i64>> {
-    let has_source_field =
-        payload.contains_key("source_memory_ids") || payload.contains_key("source_memory_id");
     let clean_ids: Vec<i64> = clean_int_tuple(&[
         payload.get("source_memory_ids"),
         payload.get("source_memory_id"),
@@ -3591,15 +3587,34 @@ fn source_memory_ids(
     .into_iter()
     .filter(|memory_id| allowed_memory_ids.contains(memory_id))
     .collect();
-    if !clean_ids.is_empty() {
-        return Some(clean_ids);
+    (!clean_ids.is_empty()).then_some(clean_ids)
+}
+
+#[cfg(test)]
+mod source_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn missing_sources_never_inherit_the_selected_batch() {
+        let allowed = HashSet::from([1, 2]);
+        for payload in [
+            json!({}),
+            json!({"source_memory_ids": []}),
+            json!({"source_memory_ids": [999]}),
+        ] {
+            assert_eq!(
+                source_memory_ids(payload.as_object().unwrap(), &allowed),
+                None
+            );
+        }
+        assert_eq!(
+            source_memory_ids(
+                json!({"source_memory_ids": [2]}).as_object().unwrap(),
+                &allowed
+            ),
+            Some(vec![2])
+        );
     }
-    if has_source_field {
-        return None;
-    }
-    let mut all: Vec<i64> = allowed_memory_ids.iter().copied().collect();
-    all.sort_unstable();
-    Some(all)
 }
 
 pub(crate) fn string_field(value: Option<&Value>) -> String {
