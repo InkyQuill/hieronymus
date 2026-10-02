@@ -111,3 +111,22 @@ Windows helper execution resolves `selected-version.json` before finding the ver
 During an installation transaction, the lifecycle guard pins the current verified CLI as native broker executable for its exact root, registration directory and stable endpoint. The binding is passed explicitly through guarded calls and expires with the operation. This permits native preflight before the first selection exists and rollback after selection is restored or cleared; restoring an older CLI cannot change the package-journal protocol midway. Ordinary helper calls continue to resolve the selected CLI. Broker execution binding changes neither the registration identity nor the bounded READY/COMMIT protocol and continuation gates. Already-stopped daemons skip unnecessary native suppression; authenticated state checks and actual root ownership still gate replacement.
 
 After native package rollback restores and validates registration, the outer transaction does not run a generic manager reload: on macOS that could bootstrap a correctly restored, originally unloaded Desktop agent. File-only Linux restoration still reloads the manager. Previous-active restart, durable Quit checks, and final journal commit remain separate steps.
+
+## Status and diagnostics
+
+The tray uses green for ready, blue for work in progress (including semantic
+index rebuilding and memory consolidation), amber for warnings, and red for
+failures. The first menu row shows the current reason; **Open console** shows
+readiness details on the dashboard. `hiero status --json` provides the same server
+diagnostics from the command line. Background activity does not disable desktop
+actions; only a pending desktop command does.
+
+The helper writes stdout, startup and native desktop errors to
+`<data-root>/desktop-helper.log` (owner-only, append-only). On Linux, server and supervisor errors are also available with
+`journalctl --user -u hieronymus`. The supervisor checks session ownership before
+launching a companion; all launch paths still acquire the same OS singleton.
+
+Set `HIERONYMUS_HEADLESS=1` to suppress the automatic companion for headless
+servers. Cargo runs default to this setting so disposable contract-test servers
+do not create icons in the real desktop session. Explicit native qualification
+uses `HIERONYMUS_HEADLESS=0` with an isolated display and D-Bus session.

@@ -12,6 +12,7 @@ The server serves the main web interface. Authors use it to inspect what their a
 
 - Use `Pavel Obruchnikov <me@inkyquill.net>` for formal author metadata unless local git config overrides it.
 - Prefer small, testable Rust modules with explicit domain boundaries.
+- During v0, preserve process logs and stdout/stderr in readable diagnostics by default; do not silently discard background errors. Log files must retain private-file ownership checks and redact credentials and browser grants. Ollama needs bounded context; cloud models should use their advertised capacities rather than arbitrary local caps, with thinking disabled for structured extraction when supported.
 - Keep strict terminology logic deterministic. Fuzzy memory and semantic recall must never silently override approved termbase entries.
 - Do not write tool source code into `/home/inky/Yandex.Disk/Translation`.
 

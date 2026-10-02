@@ -443,17 +443,7 @@ impl<R: AutostartRegistration> DesktopBackend for LifecycleBackend<R> {
     fn probe(&mut self) -> Event {
         match lifecycle::probe_with_deadline(&self.config, Instant::now() + Duration::from_secs(2))
         {
-            DiscoveryHealth::Live { status, .. } => status
-                .get("readiness")
-                .cloned()
-                .and_then(|value| serde_json::from_value(value).ok())
-                .map_or(Event::ProbeTimeout, |summary| Event::VersionedSnapshot {
-                    summary,
-                    version: status
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_owned),
-                }),
+            DiscoveryHealth::Live { status, .. } => snapshot_event(&status),
             DiscoveryHealth::NoRecord { .. } => {
                 if lifecycle::root_is_released(&self.config).unwrap_or(false) {
                     Event::Stopped
@@ -499,6 +489,32 @@ impl<R: AutostartRegistration> DesktopBackend for LifecycleBackend<R> {
     }
 }
 
+fn snapshot_event(status: &serde_json::Value) -> Event {
+    let Some(mut summary) = status
+        .get("readiness")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<crate::readiness::ReadinessSummary>(value).ok())
+    else {
+        return Event::ProbeTimeout;
+    };
+    if summary.level == crate::readiness::ReadinessLevel::Ready
+        && status
+            .pointer("/dreaming/cycle_active")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    {
+        summary.level = crate::readiness::ReadinessLevel::Starting;
+        summary.reasons.push("Consolidating memories".into());
+    }
+    Event::VersionedSnapshot {
+        summary,
+        version: status
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,6 +528,26 @@ mod tests {
             reasons: vec![],
             providers: vec![],
         })
+    }
+    #[test]
+    fn consolidation_is_work_and_preserves_real_warnings() {
+        for (level, active, accent) in [
+            (ReadinessLevel::Ready, true, Accent::Blue),
+            (ReadinessLevel::Ready, false, Accent::Green),
+            (ReadinessLevel::Degraded, true, Accent::Amber),
+        ] {
+            let event = snapshot_event(&serde_json::json!({
+                "readiness": {"level": level, "reasons": [], "providers": []},
+                "dreaming": {"cycle_active": active}, "version": "0.10.1"
+            }));
+            let mut state = DesktopState::new();
+            let view = state.apply(event);
+            assert_eq!(view.accent, accent);
+            assert!(
+                !view.busy,
+                "background work must not block desktop commands"
+            );
+        }
     }
     #[test]
     fn delayed_consumer_retains_failure_confidence_and_operation_fences() {

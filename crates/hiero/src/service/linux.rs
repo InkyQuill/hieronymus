@@ -44,11 +44,12 @@ fn systemctl_on_path() -> bool {
         .unwrap_or(false)
 }
 
-fn run_systemctl(arguments: &[&str]) -> Result<(), ServiceError> {
+fn run_systemctl(options: &ServiceOptions, arguments: &[&str]) -> Result<(), ServiceError> {
     run_manager(
         Path::new("systemctl"),
         arguments,
         std::time::Duration::from_secs(30),
+        &options.data_root,
     )
 }
 
@@ -58,19 +59,15 @@ fn run_manager(
     executable: &Path,
     arguments: &[&str],
     timeout: std::time::Duration,
+    root: &Path,
 ) -> Result<(), ServiceError> {
-    use std::process::Stdio;
     use std::time::{Duration, Instant};
-    let mut child = Command::new(executable)
-        .arg("--user")
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| {
-            ServiceError::Manager("could not run systemctl; check the user service manager".into())
-        })?;
+    let mut command = Command::new(executable);
+    command.arg("--user").args(arguments);
+    crate::diagnostics::redirect(&mut command, root, "service-manager.log")?;
+    let mut child = command.spawn().map_err(|_| {
+        ServiceError::Manager("could not run systemctl; check the user service manager".into())
+    })?;
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
@@ -284,9 +281,9 @@ pub(crate) fn install_guarded(
         options.unit_path().display()
     ));
     if manager_enabled(options) {
-        run_systemctl(&["daemon-reload"])?;
+        run_systemctl(options, &["daemon-reload"])?;
         if !desktop_mode {
-            run_systemctl(&["enable", SERVICE_UNIT_NAME])?;
+            run_systemctl(options, &["enable", SERVICE_UNIT_NAME])?;
             lines.push(format!(
                 "service enabled (not started): {SERVICE_UNIT_NAME}"
             ));
@@ -318,7 +315,7 @@ pub(crate) fn uninstall_guarded(
         lines.push("service unit already absent".to_string());
     }
     if manager_enabled(options) {
-        run_systemctl(&["daemon-reload"])?;
+        run_systemctl(options, &["daemon-reload"])?;
         lines.push("manager reloaded".to_string());
     }
     Ok(lines)
@@ -364,7 +361,7 @@ pub(crate) fn disable_login_guarded(
     validate_unit_root(options)?;
     let link = owned_login_link(options)?;
     if manager_enabled(options) {
-        run_systemctl(&["disable", SERVICE_UNIT_NAME])?;
+        run_systemctl(options, &["disable", SERVICE_UNIT_NAME])?;
     }
     if link.is_some() {
         let path = options
@@ -456,7 +453,7 @@ impl ServiceManager for SystemdManager<'_> {
         if !manager_enabled(&self.options) {
             return Ok(());
         }
-        run_systemctl(&["daemon-reload"])
+        run_systemctl(&self.options, &["daemon-reload"])
     }
 
     fn start(&self) -> Result<(), ServiceError> {
@@ -467,7 +464,7 @@ impl ServiceManager for SystemdManager<'_> {
         }
         crate::lifecycle::checked_probe(&HieronymusConfig::new(&self.options.data_root))
             .map_err(|error| ServiceError::Manager(error.to_string()))?;
-        run_systemctl(&["start", SERVICE_UNIT_NAME])
+        run_systemctl(&self.options, &["start", SERVICE_UNIT_NAME])
     }
 }
 
@@ -492,7 +489,7 @@ fn lifecycle(
             options.data_root.display()
         )));
     }
-    run_systemctl(arguments)?;
+    run_systemctl(options, arguments)?;
     Ok(vec![format!("service {action}ed: {SERVICE_UNIT_NAME}")])
 }
 
@@ -530,6 +527,7 @@ mod tests {
             &executable,
             &["start", SERVICE_UNIT_NAME],
             std::time::Duration::from_millis(100),
+            root.path(),
         )
         .unwrap_err();
         assert!(began.elapsed() < std::time::Duration::from_secs(1));

@@ -148,7 +148,7 @@ fn asset_builder_writes_status_app_ico_and_iconset_images() {
 
     for size in STATUS_SIZES {
         for appearance in ["light", "dark"] {
-            for status in ["ready", "warning", "error"] {
+            for status in ["ready", "working", "warning", "error"] {
                 assert!(
                     output
                         .path()

@@ -52,6 +52,8 @@ pub fn launch_with_options(
 ) -> Result<(), String> {
     let helper = selected_helper(&options.binary)?;
     let mut command = Command::new(helper);
+    crate::diagnostics::redirect(&mut command, config.data_root(), "desktop-helper.log")
+        .map_err(|error| format!("Could not record helper diagnostics: {error}"))?;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -90,6 +92,8 @@ fn launch_impl(
     let root = std::path::absolute(config.data_root())
         .map_err(|_| "Could not resolve the desktop data root")?;
     let mut command = Command::new(helper);
+    crate::diagnostics::redirect(&mut command, config.data_root(), "desktop-helper.log")
+        .map_err(|error| format!("Could not record helper diagnostics: {error}"))?;
     command.arg("--data-root").arg(root);
     if let Some(options) = options {
         command

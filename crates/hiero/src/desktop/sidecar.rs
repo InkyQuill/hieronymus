@@ -30,6 +30,9 @@ pub(crate) fn supervise(
     service: Option<crate::service::ServiceOptions>,
     stop: Arc<AtomicBool>,
 ) -> Option<JoinHandle<()>> {
+    if std::env::var_os("HIERONYMUS_HEADLESS").is_some_and(|value| value == "1") {
+        return None;
+    }
     Some(thread::spawn(move || {
         let mut child: Option<Child> = None;
         let mut next_start = Instant::now();
@@ -68,7 +71,7 @@ pub(crate) fn supervise(
                         child = Some(started);
                         reported_failure = false;
                     }
-                    Ok(None) => break,
+                    Ok(None) => next_start = Instant::now() + Duration::from_secs(5),
                     Err(error) => {
                         if !reported_failure {
                             eprintln!("Tray companion unavailable: {error}");
@@ -91,6 +94,14 @@ fn spawn(
     service: Option<&crate::service::ServiceOptions>,
     stop: &AtomicBool,
 ) -> Result<Option<Child>, String> {
+    // Avoid repeatedly launching short-lived duplicates when login startup or
+    // a previous server already owns the helper. The helper still arbitrates races.
+    match super::TraySingleton::acquire_or_existing(config, "supervisor")
+        .map_err(|error| error.to_string())?
+    {
+        super::SingletonOutcome::AlreadyRunning => return Ok(None),
+        super::SingletonOutcome::Acquired(guard) => drop(guard),
+    }
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let helper = super::launch::sibling_binary(&executable, "hiero-desktop")?;
     let binary = match service {
@@ -112,6 +123,8 @@ fn spawn(
         .arg("--binary")
         .arg(binary);
     detach_stdio(&mut command);
+    crate::diagnostics::redirect(&mut command, config.data_root(), "desktop-helper.log")
+        .map_err(|error| format!("Could not record helper diagnostics: {error}"))?;
     if let Some(options) = service {
         command.arg("--unit-dir").arg(&options.unit_dir);
     }

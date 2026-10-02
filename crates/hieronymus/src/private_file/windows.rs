@@ -299,3 +299,24 @@ pub(super) fn open_coordination(path: &Path) -> io::Result<File> {
     }
     Ok(file)
 }
+
+pub(super) fn open_append(path: &Path) -> io::Result<File> {
+    let path = wide(path.as_os_str())?;
+    // SAFETY: live NUL-terminated path; append-only access and RAII-owned handle.
+    let file = unsafe {
+        file_from_handle(CreateFileW(
+            path.as_ptr(),
+            FILE_APPEND_DATA | READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        ))
+    }?;
+    let (file, private) = validate_owned(file)?;
+    if !private {
+        return Err(unsafe_credential());
+    }
+    Ok(file)
+}

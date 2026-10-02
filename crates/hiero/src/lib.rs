@@ -13,6 +13,7 @@ pub mod console;
 pub mod daemon;
 pub mod daemon_client;
 pub mod desktop;
+mod diagnostics;
 pub mod doctor;
 pub mod export;
 mod host_cleanup;
