@@ -12,8 +12,8 @@ fn snapshot(level: ReadinessLevel, reasons: &[&str]) -> ReadinessSummary {
 #[test]
 fn three_timeouts_confirm_failure() {
     let mut state = DesktopState::new();
-    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
-    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Blue);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Blue);
     assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Red);
     assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Red);
 }
@@ -40,7 +40,7 @@ fn status_rows_project_to_expected_views() {
         (
             ReadinessLevel::Starting,
             &["Loading multilingual model"][..],
-            Accent::Amber,
+            Accent::Blue,
             "Loading multilingual model",
         ),
         (
@@ -72,12 +72,12 @@ fn pending_restart_takes_precedence_over_snapshots_and_timeouts() {
         ReadinessLevel::Degraded,
         &["Provider failed"],
     )));
-    assert_eq!(view.accent, Accent::Amber);
+    assert_eq!(view.accent, Accent::Blue);
     assert_eq!(view.reason, "Restarting");
     assert!(view.busy);
 
     let view = state.apply(Event::ProbeTimeout);
-    assert_eq!(view.accent, Accent::Amber);
+    assert_eq!(view.accent, Accent::Blue);
     assert_eq!(view.reason, "Restarting");
     assert!(view.busy);
 }
@@ -121,7 +121,7 @@ fn probe_failures_during_quit_update_status_without_clearing_busy_state() {
     state.apply(Event::ProbeTimeout);
     state.apply(Event::ProbeTimeout);
     let pending = state.apply(Event::ProbeTimeout);
-    assert_eq!(pending.accent, Accent::Amber);
+    assert_eq!(pending.accent, Accent::Blue);
     assert_eq!(pending.reason, "Stopping");
     assert!(pending.busy);
 
@@ -154,7 +154,7 @@ fn missing_record_during_explicit_start_remains_transitional() {
 
     let view = state.apply(Event::Stopped);
 
-    assert_eq!(view.accent, Accent::Amber);
+    assert_eq!(view.accent, Accent::Blue);
     assert_eq!(view.reason, "Starting");
     assert!(view.busy);
     assert!(!view.can_start);
@@ -169,11 +169,11 @@ fn successful_start_keeps_missing_record_transitional_until_deadline_expires() {
         error: None,
     });
 
-    assert_eq!(state.apply(Event::Stopped).accent, Accent::Amber);
-    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
-    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
-    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
-    assert_eq!(state.apply(Event::Stopped).accent, Accent::Amber);
+    assert_eq!(state.apply(Event::Stopped).accent, Accent::Blue);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Blue);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Blue);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Blue);
+    assert_eq!(state.apply(Event::Stopped).accent, Accent::Blue);
 
     let view = state.apply(Event::StartupDeadlineExpired);
     assert_eq!(view.accent, Accent::Red);
@@ -303,7 +303,7 @@ fn browser_error_reason_tracks_changing_health_accent() {
         action: Action::OpenConsole,
         error: Some("Browser failed".into()),
     });
-    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Amber);
+    assert_eq!(state.apply(Event::ProbeTimeout).accent, Accent::Blue);
     state.apply(Event::ProbeTimeout);
     let view = state.apply(Event::ProbeTimeout);
     assert_eq!(view.accent, Accent::Red);
@@ -354,7 +354,7 @@ fn failed_desktop_action_retains_reason_through_startup_timeout_and_absence() {
         });
         for event in [Event::ProbeTimeout, Event::Stopped] {
             let view = state.apply(event);
-            assert_eq!(view.accent, Accent::Amber);
+            assert_eq!(view.accent, Accent::Blue);
             assert_eq!(view.reason, "Desktop action failed");
             assert!(!view.can_start);
         }

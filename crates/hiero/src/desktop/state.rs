@@ -5,6 +5,7 @@ const MAX_CONSECUTIVE_FAILURES: u8 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Accent {
     Green,
+    Blue,
     Amber,
     Red,
 }
@@ -73,7 +74,7 @@ impl DesktopState {
     pub fn new() -> Self {
         let view = View {
             server_version: None,
-            accent: Accent::Amber,
+            accent: Accent::Blue,
             reason: "Checking".to_owned(),
             busy: false,
             can_start: false,
@@ -146,7 +147,7 @@ impl DesktopState {
         if self.consecutive_failures < MAX_CONSECUTIVE_FAILURES {
             self.status_view = View {
                 server_version: None,
-                accent: Accent::Amber,
+                accent: Accent::Blue,
                 reason: "Checking".to_owned(),
                 busy: false,
                 can_start: false,
@@ -251,7 +252,7 @@ impl DesktopState {
             server_version: None,
             accent: match action {
                 Action::OpenConsole | Action::SetAutostart(_) => self.status_view.accent.clone(),
-                Action::Start | Action::Restart | Action::Quit => Accent::Amber,
+                Action::Start | Action::Restart | Action::Quit => Accent::Blue,
             },
             reason: action_progress_reason(&action).to_owned(),
             busy: true,
@@ -338,7 +339,7 @@ impl DesktopState {
 fn starting_view() -> View {
     View {
         server_version: None,
-        accent: Accent::Amber,
+        accent: Accent::Blue,
         reason: "Starting".to_owned(),
         busy: false,
         can_start: false,
@@ -350,7 +351,7 @@ fn view_from_summary(summary: ReadinessSummary) -> View {
     let (accent, fallback) = match summary.level {
         ReadinessLevel::Ready => (Accent::Green, "Ready"),
         ReadinessLevel::Degraded => (Accent::Amber, "Limited functionality"),
-        ReadinessLevel::Starting => (Accent::Amber, "Starting"),
+        ReadinessLevel::Starting => (Accent::Blue, "Starting"),
     };
     View {
         server_version: None,

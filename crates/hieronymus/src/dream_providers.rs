@@ -286,6 +286,8 @@ pub struct LlmDreamProvider {
     core: HttpClientCore,
     observation: Option<Observation>,
     ollama_context: OnceCell<PromptBudget>,
+    cloud_output_limit: OnceCell<usize>,
+    cloud_context: OnceCell<PromptBudget>,
     general_prompt: String,
     workflow_prompt: String,
 }
@@ -294,11 +296,13 @@ pub struct LlmDreamProvider {
 struct PromptBudget {
     limit: usize,
     template_budget: usize,
+    advertised_output: Option<usize>,
 }
 
 impl PromptBudget {
     fn output_budget(self) -> usize {
-        (self.limit / 4).min(4096)
+        self.advertised_output
+            .unwrap_or_else(|| (self.limit / 4).min(4096))
     }
 
     fn required_context(self, prompt: &str) -> usize {
@@ -333,6 +337,8 @@ impl LlmDreamProvider {
             profile_id,
             observation: None,
             ollama_context: OnceCell::new(),
+            cloud_output_limit: OnceCell::new(),
+            cloud_context: OnceCell::new(),
             general_prompt: ENGLISH_MEMORY_PROSE.to_string(),
             workflow_prompt: String::new(),
             profile,
@@ -392,6 +398,12 @@ impl LlmDreamProvider {
     ) -> Result<Value, DreamError> {
         let wire = self.wire()?;
         let mut plan = pass_request(&self.profile, wire, &self.model, prompt)?;
+        if wire == Wire::Anthropic
+            || (wire == Wire::OpenAi && deepseek_json_profile(&self.profile, &self.model))
+        {
+            // Use the provider's actual maximum, avoiding its smaller implicit default.
+            plan.payload["max_tokens"] = json!(self.cloud_output_limit(wire)?);
+        }
         if let Some(context) = self.prompt_budget()? {
             let required = context.required_context(prompt);
             if required > context.limit {
@@ -458,7 +470,10 @@ impl LlmDreamProvider {
         }
         let parsed = (|| {
             let text = envelope_text(wire, &response.body).map_err(DreamError::Provider)?;
-            let payload: Value = serde_json::from_str(strip_code_fences(&text)).map_err(|_| {
+            let payload: Value = serde_json::from_str(strip_code_fences(strip_thinking_prefix(
+                strip_code_fences(&text),
+            )))
+            .map_err(|_| {
                 DreamError::Provider(format!(
                     "{} returned invalid JSON for {pass_name}",
                     wire.name()
@@ -515,10 +530,104 @@ impl LlmDreamProvider {
         if self.wire()? == Wire::Ollama {
             return self.ollama_context().map(Some);
         }
-        Ok(self.profile.context_window().map(|limit| PromptBudget {
-            limit: limit as usize,
-            template_budget: 512,
-        }))
+        let wire = self.wire()?;
+        if wire == Wire::Anthropic
+            || (wire == Wire::OpenAi && deepseek_json_profile(&self.profile, &self.model))
+        {
+            self.cloud_output_limit(wire)?;
+            return Ok(self.cloud_context.get().copied());
+        }
+        Ok(None)
+    }
+
+    fn cloud_output_limit(&self, wire: Wire) -> Result<usize, DreamError> {
+        if let Some(limit) = self.cloud_output_limit.get() {
+            return Ok(*limit);
+        }
+        let sequence = self.observation.as_ref().map(Observation::start);
+        let finish = |outcome| {
+            if let (Some(observer), Some(sequence)) = (&self.observation, sequence) {
+                observer.finish(sequence, outcome);
+            }
+        };
+        let response = self
+            .core
+            .get_json(
+                &if wire == Wire::Anthropic {
+                    format!("{}/v1/models/{}", base_url(&self.profile), self.model)
+                } else {
+                    format!("{}/models", base_url(&self.profile))
+                },
+                &auth_headers(wire, &self.profile),
+                self.timeout().min(Duration::from_secs(5)),
+            )
+            .map_err(|failure| {
+                finish(match failure.error {
+                    HttpError::TooLarge { .. } => ProviderOutcome::InvalidResponse,
+                    _ => ProviderOutcome::Unavailable,
+                });
+                DreamError::Provider("Cannot discover Cloud model output limit".into())
+            })?;
+        if !(200..300).contains(&response.status) {
+            finish(match response.status {
+                401 | 403 => ProviderOutcome::Authentication,
+                429 => ProviderOutcome::RateLimited,
+                _ => ProviderOutcome::Unavailable,
+            });
+            return Err(DreamError::Provider(format!(
+                "Cloud model discovery returned HTTP {}",
+                response.status
+            )));
+        }
+        let metadata: Value = serde_json::from_str(&response.body).map_err(|_| {
+            finish(ProviderOutcome::InvalidResponse);
+            DreamError::Provider("Invalid Cloud model metadata".into())
+        })?;
+        let model_id = if self.model == "deepseek-v4-flash" {
+            "deepseek-flash"
+        } else {
+            self.model.as_str()
+        };
+        let matched_model = metadata["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|model| model["id"].as_str() == Some(model_id));
+        let advertised = if wire == Wire::Anthropic {
+            metadata["max_tokens"].as_u64()
+        } else {
+            matched_model.and_then(|model| model["max_output_tokens"].as_u64())
+        };
+        let limit = advertised
+            .and_then(|limit| usize::try_from(limit).ok())
+            .filter(|limit| *limit > 0)
+            .ok_or_else(|| {
+                finish(ProviderOutcome::InvalidResponse);
+                DreamError::Provider("Cloud model metadata has no output limit".into())
+            })?;
+        let input = if wire == Wire::Anthropic {
+            metadata["max_input_tokens"].as_u64()
+        } else {
+            matched_model.and_then(|model| model["context_window"].as_u64())
+        };
+        if let Some(input) = input
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n > 0)
+        {
+            let total = if wire == Wire::Anthropic {
+                input.saturating_add(limit)
+            } else {
+                input
+            };
+            let _ = self.cloud_context.set(PromptBudget {
+                limit: total,
+                template_budget: 512,
+                advertised_output: Some(limit),
+            });
+        }
+        finish(ProviderOutcome::Success);
+        let _ = self.cloud_output_limit.set(limit);
+        Ok(limit)
     }
 
     fn ollama_context(&self) -> Result<PromptBudget, DreamError> {
@@ -572,6 +681,7 @@ impl LlmDreamProvider {
                     .context_window()
                     .map_or(limit, |value| value as usize),
             ),
+            advertised_output: None,
             template_budget: payload["template"]
                 .as_str()
                 .unwrap_or_default()
@@ -737,7 +847,7 @@ fn pass_request(
     model: &str,
     prompt: &str,
 ) -> Result<PassRequest, DreamError> {
-    let (url, payload) = match wire {
+    let (url, mut payload) = match wire {
         Wire::OpenAi => (
             format!("{}/chat/completions", base_url(profile)),
             json!({
@@ -761,7 +871,6 @@ fn pass_request(
             format!("{}/v1/messages", base_url(profile)),
             json!({
                 "model": model,
-                "max_tokens": 2000,
                 "temperature": 0.1,
                 "messages": [{"role": "user", "content": prompt}],
             }),
@@ -777,11 +886,28 @@ fn pass_request(
             }),
         ),
     };
+    if wire == Wire::OpenAi && deepseek_json_profile(profile, model) {
+        // V4 thinking defaults to enabled and shares max_tokens with JSON output.
+        // These extraction passes need the JSON, not a separate reasoning trace.
+        payload["thinking"] = json!({"type": "disabled"});
+    }
     Ok(PassRequest {
         url,
         headers: auth_headers(wire, profile),
         payload,
     })
+}
+
+fn deepseek_json_profile(profile: &ProviderProfile, model: &str) -> bool {
+    matches!(
+        base_url(profile).as_str(),
+        "https://api.deepseek.com"
+            | "https://api.deepseek.com/v1"
+            | "https://api.deepseek.com/beta"
+    ) && matches!(
+        model,
+        "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4-pro"
+    )
 }
 
 /// Extract the model text from one provider envelope (ports of
@@ -797,6 +923,38 @@ fn envelope_text(wire: Wire, body: &str) -> Result<String, String> {
             "Ollama generation did not complete; check model context and output limits".into(),
         );
     }
+    if wire == Wire::OpenAi {
+        match payload
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+        {
+            Some("length") => {
+                let used = payload
+                    .pointer("/usage/completion_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let reasoning = payload
+                    .pointer("/usage/completion_tokens_details/reasoning_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                return Err(format!(
+                    "openai response was truncated (finish_reason=length; completion_tokens={used}; reasoning_tokens={reasoning}); increase the output budget or reduce the Dream batch"
+                ));
+            }
+            Some("content_filter") => {
+                return Err("openai response was blocked by the provider content filter".into());
+            }
+            Some("stop") | None => {}
+            Some(_) => return Err("openai generation did not complete with a text response".into()),
+        }
+        if payload
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.trim().is_empty())
+        {
+            return Err("openai returned empty content; no JSON object was generated".into());
+        }
+    }
     let pointer = match wire {
         Wire::OpenAi => "/choices/0/message/content",
         Wire::Gemini => "/candidates/0/content/parts/0/text",
@@ -808,6 +966,18 @@ fn envelope_text(wire: Wire, body: &str) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(mismatch)
+}
+
+fn strip_thinking_prefix(text: &str) -> &str {
+    let trimmed = text.trim();
+    for (open, close) in [("<think>", "</think>"), ("<thinking>", "</thinking>")] {
+        if let Some(thinking) = trimmed.strip_prefix(open)
+            && let Some((_, answer)) = thinking.split_once(close)
+        {
+            return answer.trim();
+        }
+    }
+    text
 }
 
 /// Strip one complete wrapping markdown code fence (` ``` `, with an optional

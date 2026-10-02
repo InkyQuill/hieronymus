@@ -708,3 +708,24 @@ test("a removed final server page is refetched at its valid offset", async () =>
   );
   await screen.findByRole("button", { name: /Crystal Alpha/ });
 });
+
+test("a failed server page restores the last successful page", async () => {
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: { ...listSnapshot.snapshot, total_count: 40 },
+    })
+    .mockRejectedValue(new Error("Page unavailable"));
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await screen.findByText("Page 1 of 2 · 40 records");
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("button", { name: "Next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Page unavailable");
+  expect(screen.getByRole("button", { name: /Crystal Alpha/ })).toBeTruthy();
+  expect(screen.getByText("Page 1 of 2 · 40 records")).toBeTruthy();
+});

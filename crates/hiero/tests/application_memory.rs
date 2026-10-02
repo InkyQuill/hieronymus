@@ -371,7 +371,7 @@ fn short_term_add_batch_rejects_atomically() {
     assert_eq!(ids.len(), 2);
     assert_eq!(batch["count"], json!(2));
 
-    // Empty and oversize batches are domain rejections with no writes.
+    // Empty batches remain invalid; record counts have no storage ceiling.
     let error = app
         .call(
             "hieronymus_short_term_add_batch",
@@ -383,14 +383,18 @@ fn short_term_add_batch_rejects_atomically() {
     let flood: Vec<Value> = (0..501)
         .map(|index| json!({"kind": "note", "text": format!("flood note {index}")}))
         .collect();
-    let error = app
+    let result = app
         .call(
             "hieronymus_short_term_add_batch",
             &json!({"session_id": session_id, "items": flood}),
             ACTOR,
         )
-        .unwrap_err();
-    expect_domain(error, "a batch may contain at most 500");
+        .unwrap();
+    assert_eq!(result["count"], 501);
+    assert_eq!(
+        store.list_short_term_memories(session_id).unwrap().len(),
+        503
+    );
 }
 
 #[test]

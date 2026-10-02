@@ -68,3 +68,11 @@ pub(super) fn open_coordination(path: &Path) -> io::Result<File> {
     }
     Ok(file)
 }
+
+/// Append flags are applied to the validated descriptor, never a reopened path.
+pub(super) fn open_append(path: &Path) -> io::Result<File> {
+    let file = open_coordination(path)?;
+    let flags = rustix::fs::fcntl_getfl(&file)?;
+    rustix::fs::fcntl_setfl(&file, flags | OFlags::APPEND)?;
+    Ok(file)
+}

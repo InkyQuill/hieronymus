@@ -1,3 +1,8 @@
 [build]
 # Avoid simultaneous retrieval-stack linkers exhausting local memory.
 jobs = 2
+
+[env]
+# Contract-test daemons must never register tray icons in the author's session.
+# Native desktop qualification opts in with HIERONYMUS_HEADLESS=0 and an isolated bus/display.
+HIERONYMUS_HEADLESS = { value = "1", force = false }

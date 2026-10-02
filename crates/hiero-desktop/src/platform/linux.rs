@@ -144,6 +144,7 @@ impl Presentation {
         let ink = theme::foreground(self.settings.foreground, panel);
         let accent = match self.view.accent {
             Accent::Green => [46, 173, 104],
+            Accent::Blue => [67, 143, 230],
             Accent::Amber => [229, 167, 43],
             Accent::Red => [217, 74, 72],
         };
@@ -202,7 +203,7 @@ pub fn run_with_service_options(
     let icon_directory = config.data_root().join("tray-icons");
     std::fs::create_dir_all(&icon_directory)
         .map_err(|_| "Could not create the tray icon directory")?;
-    let tray = TrayIconBuilder::new().with_id(format!("hieronymus-{}", std::process::id())).with_menu(Box::new(native.menu.clone())).with_temp_dir_path(&icon_directory).with_icon(icon([245,245,245], [229,167,43])?).build().map_err(|error| format!("Could not create AppIndicator: {error}; install GTK 3 and Ayatana AppIndicator runtime libraries (Debian/Ubuntu: sudo apt install libgtk-3-0 libayatana-appindicator3-1); see docs/desktop-linux.md"))?;
+    let tray = TrayIconBuilder::new().with_id(singleton.indicator_id()).with_menu(Box::new(native.menu.clone())).with_temp_dir_path(&icon_directory).with_icon(icon([245,245,245], [67,143,230])?).build().map_err(|error| format!("Could not create AppIndicator: {error}; install GTK 3 and Ayatana AppIndicator runtime libraries (Debian/Ubuntu: sudo apt install libgtk-3-0 libayatana-appindicator3-1); see docs/desktop-linux.md"))?;
     let settings = SettingsStore::new(&config).load().unwrap_or_default();
     let host_error = Arc::new(Mutex::new(Some(host::MISSING.into())));
     let appearance = Arc::new(Mutex::new(theme::Appearance::default()));

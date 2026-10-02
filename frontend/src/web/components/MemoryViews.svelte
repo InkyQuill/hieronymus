@@ -56,7 +56,7 @@
   function chooseSeries(value: string) {
     selectedSeries = value;
     page = 0;
-    selectedIds = []; snapshot = null; correction = null; dialogCommand = null;
+    selectedIds = []; snapshot = null; loadedSnapshot = null; correction = null; dialogCommand = null;
     try { localStorage.setItem("hieronymus.memory.series", value); } catch { /* Storage may be disabled. */ }
     const url = new URL(window.location.href);
     if (value) url.searchParams.set("series", value); else url.searchParams.delete("series");
@@ -67,6 +67,8 @@
   let selectedView = $state("");
   let selectedIds = $state<Array<string | number>>([]);
   let page = $state(0);
+  let loadedPage = 0;
+  let loadedSnapshot: AdminSnapshot["snapshot"] | null = null;
   const pageSize = 20;
   const recordCount = $derived(snapshot?.total_count ?? snapshot?.rows.length ?? 0);
   const pageCount = $derived(Math.max(1, Math.ceil(recordCount / pageSize)));
@@ -104,6 +106,8 @@
 
   function applySnapshot(next: AdminSnapshot["snapshot"]) {
     snapshot = next;
+    loadedSnapshot = next;
+    loadedPage = page;
     page = Math.min(page, Math.max(0, Math.ceil((next.total_count ?? next.rows.length) / pageSize) - 1));
     selectedIds = selectedIds.filter((id) => next.rows.some((row) => row.id === id));
   }
@@ -115,7 +119,7 @@
 
   async function load(view: string, selectedId?: string | number) {
     const sequence = ++loadSequence;
-    if (selectedView !== view) { selectedIds = []; page = 0; correction = null; }
+    if (selectedView !== view) { selectedIds = []; page = 0; loadedSnapshot = null; correction = null; }
     selectedView = view;
     loading = true;
     error = "";
@@ -136,6 +140,7 @@
       applySnapshot(next);
     } catch (reason) {
       if (sequence !== loadSequence) return;
+      if (loadedSnapshot?.view === view) { snapshot = loadedSnapshot; page = loadedPage; }
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
       if (sequence === loadSequence) loading = false;

@@ -44,11 +44,12 @@ fn systemctl_on_path() -> bool {
         .unwrap_or(false)
 }
 
-fn run_systemctl(arguments: &[&str]) -> Result<(), ServiceError> {
+fn run_systemctl(options: &ServiceOptions, arguments: &[&str]) -> Result<(), ServiceError> {
     run_manager(
         Path::new("systemctl"),
         arguments,
         std::time::Duration::from_secs(30),
+        &options.data_root,
     )
 }
 
@@ -58,19 +59,26 @@ fn run_manager(
     executable: &Path,
     arguments: &[&str],
     timeout: std::time::Duration,
+    root: &Path,
 ) -> Result<(), ServiceError> {
-    use std::process::Stdio;
     use std::time::{Duration, Instant};
-    let mut child = Command::new(executable)
-        .arg("--user")
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| {
-            ServiceError::Manager("could not run systemctl; check the user service manager".into())
-        })?;
+    let mut command = Command::new(executable);
+    command.arg("--user").args(arguments);
+    if let Err(error) = crate::diagnostics::redirect(&mut command, root, "service-manager.log") {
+        if arguments == ["daemon-reload"] {
+            eprintln!(
+                "Service diagnostics unavailable: {error}; running daemon-reload with inherited output"
+            );
+            command
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit());
+        } else {
+            return Err(error.into());
+        }
+    }
+    let mut child = command.spawn().map_err(|_| {
+        ServiceError::Manager("could not run systemctl; check the user service manager".into())
+    })?;
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
@@ -284,9 +292,9 @@ pub(crate) fn install_guarded(
         options.unit_path().display()
     ));
     if manager_enabled(options) {
-        run_systemctl(&["daemon-reload"])?;
+        run_systemctl(options, &["daemon-reload"])?;
         if !desktop_mode {
-            run_systemctl(&["enable", SERVICE_UNIT_NAME])?;
+            run_systemctl(options, &["enable", SERVICE_UNIT_NAME])?;
             lines.push(format!(
                 "service enabled (not started): {SERVICE_UNIT_NAME}"
             ));
@@ -318,7 +326,7 @@ pub(crate) fn uninstall_guarded(
         lines.push("service unit already absent".to_string());
     }
     if manager_enabled(options) {
-        run_systemctl(&["daemon-reload"])?;
+        run_systemctl(options, &["daemon-reload"])?;
         lines.push("manager reloaded".to_string());
     }
     Ok(lines)
@@ -364,7 +372,7 @@ pub(crate) fn disable_login_guarded(
     validate_unit_root(options)?;
     let link = owned_login_link(options)?;
     if manager_enabled(options) {
-        run_systemctl(&["disable", SERVICE_UNIT_NAME])?;
+        run_systemctl(options, &["disable", SERVICE_UNIT_NAME])?;
     }
     if link.is_some() {
         let path = options
@@ -456,7 +464,7 @@ impl ServiceManager for SystemdManager<'_> {
         if !manager_enabled(&self.options) {
             return Ok(());
         }
-        run_systemctl(&["daemon-reload"])
+        run_systemctl(&self.options, &["daemon-reload"])
     }
 
     fn start(&self) -> Result<(), ServiceError> {
@@ -467,7 +475,7 @@ impl ServiceManager for SystemdManager<'_> {
         }
         crate::lifecycle::checked_probe(&HieronymusConfig::new(&self.options.data_root))
             .map_err(|error| ServiceError::Manager(error.to_string()))?;
-        run_systemctl(&["start", SERVICE_UNIT_NAME])
+        run_systemctl(&self.options, &["start", SERVICE_UNIT_NAME])
     }
 }
 
@@ -492,7 +500,7 @@ fn lifecycle(
             options.data_root.display()
         )));
     }
-    run_systemctl(arguments)?;
+    run_systemctl(options, arguments)?;
     Ok(vec![format!("service {action}ed: {SERVICE_UNIT_NAME}")])
 }
 
@@ -530,12 +538,47 @@ mod tests {
             &executable,
             &["start", SERVICE_UNIT_NAME],
             std::time::Duration::from_millis(100),
+            root.path(),
         )
         .unwrap_err();
         assert!(began.elapsed() < std::time::Duration::from_secs(1));
         assert!(!error.to_string().contains("SECRET"));
         let pid = std::fs::read_to_string(pid_file).unwrap();
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn teardown_reload_runs_even_when_log_root_is_invalid() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let manager = root.path().join("manager");
+        let marker = root.path().join("reloaded");
+        std::fs::write(
+            &manager,
+            format!("#!/bin/sh\nprintf reloaded > '{}'\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&manager, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let invalid_root = root.path().join("not-a-directory");
+        std::fs::write(&invalid_root, "preserve").unwrap();
+        run_manager(
+            &manager,
+            &["daemon-reload"],
+            std::time::Duration::from_secs(1),
+            &invalid_root,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "reloaded");
+        assert!(
+            run_manager(
+                &manager,
+                &["start", SERVICE_UNIT_NAME],
+                std::time::Duration::from_secs(1),
+                &invalid_root
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -1,0 +1,6 @@
+{
+  "scope": "admin snapshots for Short-Term Memory, Crystals and Lessons",
+  "rationale": "The author-facing counter must report all matching stored records, independently of the bounded page. Historical Python fixtures remain unchanged.",
+  "additions": ["snapshot.total_count is the full count matching the view and series filters"],
+  "runtime": "limit and offset bound transport pages only. Storage and batch insertion have no record-count ceiling. Dreaming run bounds remain configurable separately."
+}

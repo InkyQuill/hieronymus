@@ -12,7 +12,6 @@ use crate::memory_models::{
 use crate::registry::Registry;
 use crate::short_memory::{search_expression, validate_short_memory_text};
 
-const MAX_SHORT_TERM_MEMORIES_PER_BATCH: usize = 500;
 const MAX_SEARCH_LIMIT: usize = 50;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,8 +34,6 @@ pub enum WorkspaceError {
     EmptyContent,
     #[error("items must not be empty")]
     EmptyBatch,
-    #[error("a batch may contain at most {MAX_SHORT_TERM_MEMORIES_PER_BATCH} short-term memories")]
-    BatchTooLarge,
     #[error("limit must be at least 1")]
     LimitTooSmall,
     #[error("{0}")]
@@ -500,9 +497,6 @@ impl WorkspaceStore {
         let items: Vec<&ShortTermMemoryInput> = items.into_iter().collect();
         if items.is_empty() {
             return Err(WorkspaceError::EmptyBatch);
-        }
-        if items.len() > MAX_SHORT_TERM_MEMORIES_PER_BATCH {
-            return Err(WorkspaceError::BatchTooLarge);
         }
 
         let short_memory_limits = load_ingest_config(&self.config)?.short_memory;

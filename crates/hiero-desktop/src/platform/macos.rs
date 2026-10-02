@@ -249,6 +249,7 @@ impl Runtime {
         let pixels = super::macos_pixels::raster_size(scale);
         let accent = match self.view.accent {
             Accent::Green => [46, 173, 104],
+            Accent::Blue => [67, 143, 230],
             Accent::Amber => [229, 167, 43],
             Accent::Red => [217, 74, 72],
         };

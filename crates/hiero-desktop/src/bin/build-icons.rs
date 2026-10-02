@@ -14,7 +14,8 @@ const LIGHT_FOREGROUND: [u8; 3] = [16, 33, 52];
 const DARK_FOREGROUND: [u8; 3] = [240, 240, 240];
 const BRAND_ACCENT: [u8; 3] = [164, 87, 52];
 
-const STATUSES: [(&str, [u8; 3]); 3] = [
+const STATUSES: [(&str, [u8; 3]); 4] = [
+    ("working", [67, 143, 230]),
     ("ready", [46, 173, 104]),
     ("warning", [229, 167, 43]),
     ("error", [217, 74, 72]),

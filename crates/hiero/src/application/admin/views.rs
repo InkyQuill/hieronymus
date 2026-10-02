@@ -133,13 +133,38 @@ pub fn snapshot(config: &HieronymusConfig, view: &str, query: &Value) -> Result<
     let detail = detail_for_view(&connection, view, selected.as_ref())
         .map_err(|_| AppError::Domain(format!("failed to load the {view} detail")))?;
 
-    Ok(json!({
+    let mut snapshot = json!({
         "view": view,
         "rows": rows,
         "selected": selected.unwrap_or(Value::Null),
         "detail": detail,
         "filters": [],
-    }))
+    });
+    if let Some(total) = memory_count(&connection, view, &params)
+        .map_err(|_| AppError::Domain("failed to count memories".into()))?
+    {
+        snapshot["total_count"] = json!(total);
+    }
+    Ok(snapshot)
+}
+
+fn memory_count(
+    connection: &Connection,
+    view: &str,
+    params: &AdminQuery,
+) -> rusqlite::Result<Option<i64>> {
+    let count = match view {
+        "Short-Term Memory" => connection.query_row(
+            "select count(*) from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and (?1 is null or s.series_slug=?1)",
+            [&params.series], |row| row.get(0),
+        )?,
+        "Crystals" | "Lessons" => connection.query_row(
+            "select count(*) from crystals where (?1 is null or crystal_type=?1) and (?2 is null or series_slug=?2)",
+            rusqlite::params![if view == "Lessons" { Some("lesson") } else { None }, params.series], |row| row.get(0),
+        )?,
+        _ => return Ok(None),
+    };
+    Ok(Some(count))
 }
 
 /// Pick the selected row: the matching id, else the first row, else `None`

@@ -28,6 +28,14 @@ pub enum SingletonOutcome {
     AlreadyRunning,
 }
 impl TraySingleton {
+    /// Stable native registration identity for this root and graphical session.
+    pub fn indicator_id(&self) -> String {
+        format!(
+            "hieronymus-{}",
+            self.path.file_stem().unwrap_or_default().to_string_lossy()
+        )
+    }
+
     /// `session` is a diagnostic hint only; it cannot choose the authority
     /// namespace. The session identity comes from the current OS process.
     pub fn acquire(config: &HieronymusConfig, session: &str) -> io::Result<Self> {
@@ -143,7 +151,7 @@ fn session_output(mut command: std::process::Command, limit: u64) -> io::Result<
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .spawn()?;
     let result = (|| {
         let mut stdout = child
@@ -398,7 +406,7 @@ mod tests {
         let mut held =
             TraySingleton::acquire_from_lookup(&config, "invented-one", || Ok("trusted".into()))
                 .unwrap();
-        held.startup_gate.take();
+        drop(held.startup_gate.take());
         assert_eq!(
             TraySingleton::acquire_from_lookup(&config, "invented-two", || Ok("trusted".into()))
                 .unwrap_err()
@@ -417,19 +425,17 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let config = HieronymusConfig::new(directory.path());
         let mut held = TraySingleton::acquire_trusted(&config, "trusted-session").unwrap();
-        held.startup_gate.take();
+        let indicator_id = held.indicator_id();
+        drop(held.startup_gate.take());
         let alias = HieronymusConfig::new(directory.path().join("."));
-        assert_eq!(
-            TraySingleton::acquire_trusted(&alias, "trusted-session")
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::WouldBlock
-        );
+        let error = TraySingleton::acquire_trusted(&alias, "trusted-session").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock, "{error}");
         let other = TraySingleton::acquire_trusted(&config, "other-session").unwrap();
         drop(other);
         drop(held);
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 3);
-        TraySingleton::acquire_trusted(&alias, "trusted-session").unwrap();
+        let replacement = TraySingleton::acquire_trusted(&alias, "trusted-session").unwrap();
+        assert_eq!(replacement.indicator_id(), indicator_id);
     }
     #[cfg(target_os = "linux")]
     #[test]

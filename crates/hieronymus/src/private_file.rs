@@ -30,6 +30,12 @@ pub fn open_coordination(path: &Path) -> io::Result<File> {
     native::open_coordination(path)
 }
 
+/// Open a current-user-owned, owner-only regular log for atomic append writes.
+/// Alias and reparse paths are refused using the same validated handle.
+pub fn open_append(path: &Path) -> io::Result<File> {
+    native::open_append(path)
+}
+
 /// Read one regular, current-user-owned, non-alias file and report whether
 /// that same handle has owner-only mode/DACL protection. Nonprivate snapshots
 /// are for callers that prove the exact returned bytes contain no credentials;

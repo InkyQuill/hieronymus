@@ -456,6 +456,7 @@ pub fn run_with_service_options(
         let (ink, size, ambiguous) = appearance(settings.foreground);
         let accent = match view.accent {
             Accent::Green => [46, 173, 104],
+            Accent::Blue => [67, 143, 230],
             Accent::Amber => [229, 167, 43],
             Accent::Red => [217, 74, 72],
         };

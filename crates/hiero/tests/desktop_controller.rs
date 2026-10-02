@@ -461,7 +461,7 @@ fn restart_then_followup(action: Action, error: bool) {
             Event::Finished { .. }
         ))
         .accent,
-        Accent::Amber
+        Accent::Blue
     );
     controller.submit(action).unwrap();
     let pending = apply_until(&controller, &mut state, |event| {
@@ -469,14 +469,14 @@ fn restart_then_followup(action: Action, error: bool) {
     });
     assert_eq!(
         pending.accent,
-        Accent::Amber,
+        Accent::Blue,
         "follow-up action must not reuse pre-restart readiness"
     );
     assert!(pending.busy);
     let completed = apply_until(&controller, &mut state, |event| {
         matches!(event, Event::Finished { .. })
     });
-    assert_eq!(completed.accent, Accent::Amber);
+    assert_eq!(completed.accent, Accent::Blue);
     assert!(!completed.busy);
     assert!(!completed.can_start);
     assert_eq!(
@@ -490,7 +490,7 @@ fn restart_then_followup(action: Action, error: bool) {
     let checking = apply_until(&controller, &mut state, |event| {
         *event == Event::ProbeTimeout
     });
-    assert_eq!(checking.accent, Accent::Amber);
+    assert_eq!(checking.accent, Accent::Blue);
     assert_eq!(checking.reason, completed.reason);
     let expired = apply_until(&controller, &mut state, |event| {
         *event == Event::StartupDeadlineExpired

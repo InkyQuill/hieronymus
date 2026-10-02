@@ -343,6 +343,7 @@ pub fn restart(config: &HieronymusConfig, cli: &Path, unit_dir: &Path) -> io::Re
     }
     let helper = super::launch::selected_helper(cli).map_err(error)?;
     let mut command = std::process::Command::new(&helper);
+    crate::diagnostics::redirect(&mut command, config.data_root(), "desktop-helper.log")?;
     command
         .arg("--data-root")
         .arg(config.data_root())
