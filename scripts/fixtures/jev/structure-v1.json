@@ -1,0 +1,108 @@
+{
+  "version": "structure-v1",
+  "instructions": "Choose a reversible annotation for the boundary marked |. Preserve every original byte. Do not rewrite, normalize spelling, or remove punctuation. Poetry/code/list layout must be preserved; abstain if a prose line break is ambiguous.",
+  "criteria": {
+    "soft_wrap": "Clearly an accidental line wrap inside one prose sentence.",
+    "paragraph_break": "Clear intentional boundary between prose paragraphs or speakers.",
+    "preserve_layout": "Intentional poetry, code, heading or list layout.",
+    "insufficient_context": "Ambiguous boundary; retain unchanged."
+  },
+  "cases": [
+    {
+      "id": "en-wrap",
+      "language": "en",
+      "state": {
+        "text": "Mira walked through the|open doorway."
+      },
+      "expected": "soft_wrap"
+    },
+    {
+      "id": "ru-wrap",
+      "language": "ru",
+      "state": {
+        "text": "Мира прошла через|открытую дверь."
+      },
+      "expected": "soft_wrap"
+    },
+    {
+      "id": "ja-wrap",
+      "language": "ja",
+      "state": {
+        "text": "ミラは開いた扉を|通り抜けた。"
+      },
+      "expected": "soft_wrap"
+    },
+    {
+      "id": "en-dialogue",
+      "language": "en",
+      "state": {
+        "text": "“Leave,” said Mira.|“No,” replied Kai."
+      },
+      "expected": "paragraph_break"
+    },
+    {
+      "id": "ru-dialogue",
+      "language": "ru",
+      "state": {
+        "text": "— Уходи, — сказала Мира.|— Нет, — ответил Кай."
+      },
+      "expected": "paragraph_break"
+    },
+    {
+      "id": "ja-dialogue",
+      "language": "ja",
+      "state": {
+        "text": "「帰れ」とミラは言った。|「嫌だ」とカイは答えた。"
+      },
+      "expected": "paragraph_break"
+    },
+    {
+      "id": "en-poetry",
+      "language": "en",
+      "state": {
+        "text": "Poem:\nThe moon is pale|The sea is still"
+      },
+      "expected": "preserve_layout"
+    },
+    {
+      "id": "ru-list",
+      "language": "ru",
+      "state": {
+        "text": "Снаряжение:\n- меч|- щит"
+      },
+      "expected": "preserve_layout"
+    },
+    {
+      "id": "ja-heading",
+      "language": "ja",
+      "state": {
+        "text": "第三章|ミラは目を覚ました。"
+      },
+      "expected": "preserve_layout"
+    },
+    {
+      "id": "en-code",
+      "language": "en",
+      "state": {
+        "text": "Code:\nif (ready) {|  return;\n}"
+      },
+      "expected": "preserve_layout"
+    },
+    {
+      "id": "en-ambiguous",
+      "language": "en",
+      "state": {
+        "text": "Mira waited.|Kai watched."
+      },
+      "expected": "insufficient_context"
+    },
+    {
+      "id": "en-page",
+      "language": "en",
+      "state": {
+        "text": "Mira turned away.\n[page 12]|The rain stopped."
+      },
+      "expected": "insufficient_context"
+    }
+  ]
+}
