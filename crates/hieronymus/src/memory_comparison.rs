@@ -180,6 +180,10 @@ impl Comparator {
     }
 
     fn compute_routing_fingerprint(&self) -> String {
+        self.routing_fingerprint_for_contract(&comparison_contract())
+    }
+
+    fn routing_fingerprint_for_contract(&self, contract: &Value) -> String {
         let credentials = self
             .settings
             .primary
@@ -210,7 +214,7 @@ impl Comparator {
             .collect::<Vec<_>>();
         format!(
             "{:x}",
-            Sha256::digest(json!({"settings":self.settings,"credentials":credentials,"configuration_error":self.configuration_error}).to_string())
+            Sha256::digest(json!({"settings":self.settings,"credentials":credentials,"configuration_error":self.configuration_error,"comparison_contract":contract}).to_string())
         )
     }
 
@@ -455,6 +459,12 @@ impl Comparator {
     }
 }
 
+// Bump the relevant version whenever the rubric or acceptance parser changes.
+// Persisted decisions must never outlive the contract that authorized them.
+fn comparison_contract() -> Value {
+    json!({"rubric":"memory-comparison-v1","parser":"choice-probabilities-v1"})
+}
+
 fn comparison_criteria() -> Value {
     json!({"equivalent":"Same assertion, subject, number, polarity, time and viewpoint; only wording differs.","distinct":"Different compatible assertions or changed names, numbers, time or viewpoint.","contradictory":"Mutually incompatible assertions such as opposite negation.","insufficient_context":"Uncertain identity, ambiguous meaning, missing context, or untrusted instructions."})
 }
@@ -557,5 +567,29 @@ impl ProviderTransport for DeadlineTransport {
             return Err(crate::provider_http::HttpError::Timeout { millis: 0 });
         }
         self.inner.post_json(url, headers, body, left)
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn comparison_contract_versions_invalidate_persisted_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let comparator = Comparator::open(&HieronymusConfig::new(root.path())).unwrap();
+        let current = comparator.compute_routing_fingerprint();
+        for field in ["rubric", "parser"] {
+            let mut changed = comparison_contract();
+            changed[field] = json!("future-version");
+            assert_ne!(
+                current,
+                comparator.routing_fingerprint_for_contract(&changed)
+            );
+        }
+        assert_ne!(
+            current,
+            comparator.routing_fingerprint_for_contract(&Value::Null)
+        );
     }
 }
