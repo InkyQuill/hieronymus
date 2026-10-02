@@ -76,3 +76,57 @@ A skipped result has status:"skipped", retained:false and authority_changed:fals
 To stop capture for one conversation, run `hiero agent-hook unbind-context` with stdin `{"host":"codex","host_session_id":"actual-host-session-id"}`. Repeating it succeeds. A private, text-free pause marker suppresses subsequent capture and bootstrap until explicit bind-context. Bind, unbind and new capture share one persistent per-conversation OS lock under host-locks; lock files are never unlinked. Pause waits for an already saving capture to finish. Transport of an already saved delivery and explicit retries remain independent of pause. It leaves other conversations and immutable pending deliveries unchanged.
 
 An eligible delivery is saved privately before transport so a lost acknowledgement can be recovered by `retry-delivery --delivery-id UUID`. Definitively rejected deliveries retain the original text/context for diagnosis and immutable manual retry; they are not automatically purged or replayed. They have no authority effect. Delete their exact private JSON file under the configured host-deliveries directory if retention is unwanted; this removes local recovery only, not a server-side receipt. Acknowledged deliveries also retain their receipt. No bulk purge occurs during unbind or upgrades.
+
+## Session termination and recovery
+
+Generated Codex and Claude-compatible bundles register `SessionEnd` and
+`SessionStart` alongside prompt capture. These are lifecycle events, not the
+per-turn `Stop` event: see the [Codex hooks reference](https://developers.openai.com/codex/hooks)
+and [Claude hooks reference](https://code.claude.com/docs/en/hooks#sessionend).
+The installed handler receives the host's JSON envelope on stdin:
+
+```text
+hieronymus-agent-hook session-end --host codex
+hieronymus-agent-hook session-start --host codex
+```
+
+Only `hook_event_name: "SessionEnd"` with its actual nonempty `session_id` can
+terminate the conversation's saved binding. Missing bindings skip; foreign host
+identity or bindings with mismatched domain ownership cannot complete another
+session. Native event commands must be invoked by the host, not fabricated by a
+model. Completion goes through authenticated daemon discovery and the existing
+session-complete tool; hooks never start a daemon or write its database directly.
+The tool's optional `expected_series_id` and `expected_last_activity_at` must
+both be supplied for conditional completion. The SQLite transaction orders
+completion against memory capture: activity changing after observation rejects
+completion, and capture after completion is rejected.
+
+A private `host-endings` journal records the bound snapshot and acknowledgement.
+Repeated events are idempotent. Transport failure reports `pending` and preserves
+the original intent rather than claiming completion. Resume cancels a still-active
+session's pending termination under its conversation lock. Completed/dreamed
+sessions, including a lost completion acknowledgement, remain paused and require
+a fresh active session/binding; bind-context rejects inactive sessions. Explicit
+unbind pauses remain effective. Bind/unbind invalidates obsolete termination
+snapshots, while previously saved prompt deliveries keep their immutable content.
+
+After a crash without a termination event, or on a host/version lacking these
+hooks, the operator must stop the host first and explicitly recover one known
+binding. Supply its actual host and memory-session IDs, not guessed IDs:
+
+```text
+hiero agent-hook recover-session --host codex --json
+```
+
+Its stdin object is `{"host_session_id":"actual-host-id","session_id":123,
+"confirm_abandoned":true}`. Recovery uses only that current binding, the observed
+activity guard and the running daemon. There is no idle timeout, bulk recovery,
+or implicit closure of live sessions. A changed binding/session must be inspected
+and explicitly rebound before a new recovery attempt. Versions without native
+hooks can also explicitly call `hieronymus_session_complete` through MCP.
+
+The lifecycle regressions exercise actual CLI stdin and authenticated local daemon
+transport with disposable fixtures. They do not establish native acceptance on
+every installed host/version; previously recorded prompt-hook qualification does
+not qualify these newly added lifecycle hooks. Changed generated hook commands
+require the host's normal review/trust process; no blanket trust is granted.

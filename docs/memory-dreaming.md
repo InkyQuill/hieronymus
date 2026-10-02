@@ -187,7 +187,9 @@ uses the stored context rather than inferring a research flag.
 An unused advisory crystal loses 0.02 strength, with a floor of 0.20. Confidence,
 text and status never change through passive decay, and no record is deleted.
 Rules, explicit user authority or confirmation, recall/working copies, and
-records created or changed since the session began are protected. Records with
+records created or edited since the session began are protected. Passive decay
+changes strength without changing the content-edit timestamp, so independent
+overlapping sessions retain their own opportunities. Records with
 unknown, qualified or invalid claims are also protected. Recent concurrent use
 protects a record even if it happened in another session.
 
@@ -195,7 +197,12 @@ The phase scans at most `max_total_affected_crystals` candidates per opportunity
 and consumes only the remaining minimum of the three existing crystal-change
 caps after preceding phases. A capped opportunity is terminal; later batches or
 restarts cannot apply additional decay for it. There is no catch-up decay owed
-for failed sessions. Successful completion, opportunity markers, exact affected
+for failed sessions or a rolled-back advisory opportunity. If decay fails after
+persistence, the run completes with its actual input/creation counts and a
+visible `salience_decay` warning plus a failed-phase audit; the drain can continue.
+If even the warning audit cannot be stored, the run fails honestly while retaining
+committed counts and completed persistence phases. Successful decay completion,
+opportunity markers, exact affected
 IDs and strength deltas commit in one transaction. The `salience_decay` audit
 records the policy, limits and before/after scores; `cycle_decay` memory events
 also appear in the existing Dream review. Strength remains above the floor and

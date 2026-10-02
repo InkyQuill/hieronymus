@@ -1197,6 +1197,16 @@ impl DreamService {
                 &primary_provider,
             )
             .map_err(tx_error)?;
+            // Keep the durable prefix visible even if a later phase or its
+            // warning audit cannot be persisted.
+            transaction.execute(
+                "update dream_runs set input_count=?1,created_crystal_count=?2 where id=?3",
+                rusqlite::params![
+                    selected_memory_ids.len() as i64,
+                    summary.created_crystal_ids.len() as i64,
+                    run_id
+                ],
+            )?;
             Ok(summary)
         });
         let summary = match committed {
@@ -2415,6 +2425,11 @@ impl DreamService {
             &format!("completed {phase} phase"),
             &Value::Object(payload),
         )?;
+        // Keep the durable prefix accurate even if a later phase cannot finish.
+        transaction.execute(
+            "update dream_runs set created_crystal_count = created_crystal_count + ?1 where id = ?2",
+            rusqlite::params![summary.created_crystal_ids.len() as i64, run_id],
+        )?;
         Ok(())
     }
 
@@ -2431,7 +2446,7 @@ impl DreamService {
         proposal_count: i64,
     ) -> Result<DreamRunRecord, DreamError> {
         let mut connection = open_migrated(&self.config.database_path())?;
-        commit_audited(&mut connection, |transaction| {
+        let completed = commit_audited(&mut connection, |transaction| {
             transaction.execute(
                 "update dream_runs
                  set status = 'completed', input_count = ?1, created_crystal_count = ?2,
@@ -2454,7 +2469,36 @@ impl DreamService {
             )
             .map_err(tx_error)?;
             Ok(())
-        })?;
+        });
+        let warning = if let Err(error) = completed {
+            let error = match error {
+                rusqlite::Error::ToSqlConversionFailure(source) => {
+                    match source.downcast::<DreamError>() {
+                        Ok(error) => *error,
+                        Err(source) => {
+                            DreamError::Database(rusqlite::Error::ToSqlConversionFailure(source))
+                        }
+                    }
+                }
+                other => other.into(),
+            };
+            let warning = format!(
+                "salience_decay skipped: {}",
+                self.redacted_error_message(&error)
+            );
+            // Advisory failure cannot undo earlier durable persistence. Record
+            // its rollback and successful run counts together, never hide it.
+            commit_audited(&mut connection, |tx| {
+                tx.execute("insert into dream_phase_runs(dream_run_id,phase,provider_profile,provider_type,model,status,error,created_at,completed_at) values(?1,'salience_decay','deterministic','deterministic','deterministic','failed',?2,?3,?3)", rusqlite::params![run_id,warning,now()])?;
+                let phase_id = tx.last_insert_rowid();
+                DreamAuditStore::append_in_transaction(tx, run_id, Some(phase_id), "phase_failed", "warning", "advisory salience decay rolled back; persisted work retained", &json!({"phase_name":"salience_decay","error":warning,"committed_domain_effects":"none: decay transaction rolled back","retry":"no catch-up; future sessions have independent opportunities"})).map_err(tx_error)?;
+                tx.execute("update dream_runs set status='completed',input_count=?1,created_crystal_count=?2,proposal_count=?3,error=?4,completed_at=?5 where id=?6",rusqlite::params![input_count,created_crystal_count,proposal_count,warning,now(),run_id])?;
+                Ok(())
+            })?;
+            warning
+        } else {
+            String::new()
+        };
         Ok(DreamRunRecord {
             id: run_id,
             cycle_id,
@@ -2463,7 +2507,7 @@ impl DreamService {
             input_count,
             created_crystal_count,
             proposal_count,
-            error: String::new(),
+            error: warning,
         })
     }
 
@@ -2471,8 +2515,7 @@ impl DreamService {
         let connection = open_migrated(&self.config.database_path())?;
         connection.execute(
             "update dream_runs
-             set status = 'failed', input_count = 0, created_crystal_count = 0,
-                 proposal_count = 0, error = ?1, completed_at = ?2
+             set status = 'failed', error = ?1, completed_at = ?2
              where id = ?3",
             rusqlite::params![self.redacted_error_message(error), now(), run_id],
         )?;
@@ -2584,7 +2627,7 @@ impl DreamService {
         connection.execute(
             "update dream_phase_runs
              set status = 'failed', error = ?1, completed_at = ?2
-             where id = ?3",
+             where id = ?3 and status = 'running'",
             rusqlite::params![self.redacted_error_message(error), now(), phase_run_id],
         )?;
         Ok(())

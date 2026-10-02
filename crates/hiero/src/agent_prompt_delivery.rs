@@ -17,6 +17,8 @@ use sha2::{Digest, Sha256};
 use std::{io::Read, path::PathBuf};
 
 mod relevance;
+mod session_lifecycle;
+pub use session_lifecycle::{handle_session_end, handle_session_start, recover_session};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeliveryError {
@@ -214,7 +216,7 @@ pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, D
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let tx = db.transaction()?;
-    let valid:bool=tx.query_row("select exists(select 1 from task_sessions t join series s on s.slug=t.series_slug left join authority_state a on a.series_id=s.id where t.id=?1 and s.id=?2 and coalesce(a.revision,0)=?3 and (?4 is null or t.source_language=?4) and (?5 is null or t.target_language=?5))",params![c.session_id,c.series_id,c.expected_revision as i64,c.source_language,c.target_language],|r|r.get(0))?;
+    let valid:bool=tx.query_row("select exists(select 1 from task_sessions t join series s on s.slug=t.series_slug left join authority_state a on a.series_id=s.id where t.id=?1 and t.status='active' and s.id=?2 and coalesce(a.revision,0)=?3 and (?4 is null or t.source_language=?4) and (?5 is null or t.target_language=?5))",params![c.session_id,c.series_id,c.expected_revision as i64,c.source_language,c.target_language],|r|r.get(0))?;
     if !valid {
         return Err(invalid(
             "session, language, series or observed revision mismatch",
@@ -256,6 +258,7 @@ pub fn bind_context(config: &HieronymusConfig, input: &Value) -> Result<Value, D
     }
     tx.commit()?;
     save(&context_path(config, &c.host, &c.host_session_id), &c)?;
+    session_lifecycle::clear_ending(config, &c.host, &c.host_session_id)?;
     match std::fs::remove_file(pause_path(config, &c.host, &c.host_session_id)) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -285,6 +288,7 @@ pub fn unbind_context(config: &HieronymusConfig, input: &Value) -> Result<Value,
         &pause_path(config, &identity.host, &identity.host_session_id),
         &json!({"paused":true}),
     )?;
+    session_lifecycle::clear_ending(config, &identity.host, &identity.host_session_id)?;
     match std::fs::remove_file(context_path(
         config,
         &identity.host,

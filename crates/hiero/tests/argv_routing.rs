@@ -111,7 +111,10 @@ fn canonical_hiero_mcp_matches_the_routed_behavior() {
 fn hieronymus_agent_hook_arg0_routes_to_session_end() {
     let (stdout, stderr, status) = run_as("hieronymus-agent-hook", &["session-end"], "");
     assert!(status.success(), "{stdout}{stderr}");
-    assert_eq!(stdout, "Hieronymus session hook complete\n");
+    assert_eq!(
+        stdout,
+        "Host identity missing; Hieronymus memory session not completed\n"
+    );
 }
 
 #[test]
@@ -195,7 +198,7 @@ fn hieronymus_agent_hook_session_end_json_includes_the_service() {
     assert!(status.success(), "{stdout}");
     let payload: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(payload["event"], "session-end");
-    assert_eq!(payload["handled"], true);
+    assert_eq!(payload["handled"], false);
     assert_eq!(payload["service"]["available"], false);
 }
 
@@ -211,7 +214,10 @@ fn agent_hook_without_a_known_subcommand_is_a_usage_error() {
 fn canonical_hiero_agent_hook_works_too() {
     let (stdout, _, status) = run_as("hiero", &["agent-hook", "session-end"], "");
     assert!(status.success());
-    assert_eq!(stdout, "Hieronymus session hook complete\n");
+    assert_eq!(
+        stdout,
+        "Host identity missing; Hieronymus memory session not completed\n"
+    );
 }
 
 #[test]
@@ -254,12 +260,12 @@ fn session_start_json_byte_matches_the_frozen_fixture() {
 }
 
 #[test]
-fn session_end_json_byte_matches_the_frozen_fixture() {
+fn unbound_session_end_reports_no_completion() {
     let (stdout, _, status) = run_as("hieronymus-agent-hook", &["session-end", "--json"], "");
     assert!(status.success(), "{stdout}");
     assert_eq!(
         stdout,
-        "{\"event\": \"session-end\", \"handled\": true, \"service\": \
+        "{\"event\": \"session-end\", \"handled\": false, \"reason\": \"host identity missing; memory session not completed\", \"service\": \
          {\"available\": false, \"mode\": \"direct-local\", \
          \"reason\": \"no running local service discovered\"}}\n"
     );

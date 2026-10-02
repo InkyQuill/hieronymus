@@ -31,7 +31,7 @@ const RECOVER_USAGE: &str = "usage: hiero recover [--json] [--data-root <path>]"
 const DOCTOR_USAGE: &str =
     "usage: hiero doctor [--json] [--data-root <path>] [--unit-dir <path>] [--skip-registration]";
 const SEMANTIC_USAGE: &str = "usage: hiero semantic <status|enable|configure> [--json] [--data-root <path>] (configure: --provider ollama --base-url <origin> --model <installed-model>) (enable: [--url <u>] [--sha256 <hex>] [--bytes <n>] [--runtime <lib>])";
-const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|unbind-context|user-prompt-submit|retry-delivery> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>] [--help]";
+const AGENT_HOOK_USAGE: &str = "usage: hiero agent-hook <session-start|session-end|bind-context|unbind-context|user-prompt-submit|retry-delivery|recover-session> [--host <claude|codex|zcode>] [--delivery-id <uuid>] [--cwd <dir>] [--json] [--data-root <path>] [--help]";
 const PROJECT_CONTEXT_USAGE: &str = "usage: hiero project-context [--cwd <path>] [--args '{\"direction_id\":null}'] [--json] [--data-root <path>]";
 
 const SERVICE_USAGE: &str = "usage: hiero service <install|uninstall|status|start|stop> [--json] [--data-root <path>] [--unit-dir <dir>] [--binary <path>] (install: [--no-activate]; status exits 0 when the unit is installed and consistent, 1 otherwise)";
@@ -1078,8 +1078,19 @@ fn run_agent_hook(
     let config = load_config(data_root);
     if matches!(
         parsed.subcommand.as_deref(),
-        Some("bind-context" | "unbind-context" | "user-prompt-submit" | "retry-delivery")
-    ) {
+        Some(
+            "bind-context"
+                | "unbind-context"
+                | "user-prompt-submit"
+                | "retry-delivery"
+                | "recover-session"
+        )
+    ) || (parsed.hook_host.is_some()
+        && matches!(
+            parsed.subcommand.as_deref(),
+            Some("session-start" | "session-end")
+        ))
+    {
         use hiero::agent_prompt_delivery as delivery;
         if parsed.cwd.is_some() {
             return Err("trusted prompt commands read host context from stdin, not --cwd".into());
@@ -1105,6 +1116,15 @@ fn run_agent_hook(
                 let input =
                     delivery::read_json(std::io::stdin().lock()).map_err(|e| e.to_string())?;
                 delivery::handle_prompt(&config, host, &input)
+            }
+            Some("session-start" | "session-end" | "recover-session") if parsed.delivery_id.is_none() => {
+                let host = parsed.hook_host.as_deref().ok_or("session lifecycle command requires --host")?;
+                let input = delivery::read_json(std::io::stdin().lock()).map_err(|e| e.to_string())?;
+                match parsed.subcommand.as_deref() {
+                    Some("session-start") => delivery::handle_session_start(&config,host,&input),
+                    Some("session-end") => delivery::handle_session_end(&config,host,&input),
+                    _ => delivery::recover_session(&config,host,&input),
+                }
             }
             Some("retry-delivery") if parsed.hook_host.is_none() => {
                 let id = parsed

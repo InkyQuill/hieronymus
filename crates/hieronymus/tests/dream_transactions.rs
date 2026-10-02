@@ -562,8 +562,8 @@ fn persistence_audit_failure_rolls_back_crystallization_and_retry_applies_exactl
 
     // The whole application transaction rolled back: no crystal, no archived
     // memory, no dreamed session, no completed persistence phase. The provider
-    // pass phases of this failed run are marked failed in bulk (pre-existing
-    // run-failure bookkeeping: no phase may look like applied work).
+    // passes retain their successful model-execution history; only the rolled
+    // back persistence phase failed, and no applied domain work is claimed.
     assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
     assert_eq!(
         scalar(
@@ -576,7 +576,10 @@ fn persistence_audit_failure_rolls_back_crystallization_and_retry_applies_exactl
     assert_eq!(session_row[0], json!("completed"));
     assert_eq!(session_row[1], Value::Null);
     assert_eq!(phase_status(&config, "persistence"), vec!["failed"]);
-    assert_eq!(phase_status(&config, "knowledge_crystals"), vec!["failed"]);
+    assert_eq!(
+        phase_status(&config, "knowledge_crystals"),
+        vec!["completed"]
+    );
     let failure = query(
         &config,
         "select summary, payload_json from dream_audit_entries

@@ -161,8 +161,8 @@ pub(crate) fn complete_in_transaction(
             let after = (before - STRENGTH_STEP).max(STRENGTH_FLOOR);
             // Passive non-use cannot write confidence, status, text or authority.
             tx.execute(
-                "update crystals set strength=?1,updated_at=?2 where id=?3",
-                params![after, timestamp, id],
+                "update crystals set strength=?1 where id=?2",
+                params![after, id],
             )?;
             tx.execute(
                 "insert into memory_events(crystal_id,session_id,event_type,source_role,evidence,
