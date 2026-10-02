@@ -1,8 +1,9 @@
 # Hieronymus Roadmap
 
-Hieronymus is an alpha local-first translation memory system. The Python alpha
-baseline below is closed and frozen as the behavioral reference for the Rust
-rewrite; new feature work happens in Rust after the cutover.
+Hieronymus is an alpha local-first memory system for writing and literary
+translation. The main mechanics are implemented in Rust. Current work focuses on
+optimization and fixes to runtime behavior, not a pending language rewrite.
+The Python baseline below is retained only as historical reference.
 
 ## Product Direction
 
@@ -10,10 +11,9 @@ rewrite; new feature work happens in Rust after the cutover.
 ADR 0005 and the human-only terminology lifecycle in ADR 0011. The target is
 autonomous story memory, with user corrections instead of required review,
 and agent plugins with shared workflow skills; Pi has a native package using the installed MCP adapter, while zCode's shared-Claude evidence is paused/unqualified
-bundle. Its implementation-gap list and acceptance scenarios govern
-follow-up planning. The frozen baseline below does not require preserving
-human approval gates; this documentation change does not implement their
-replacement or alter cutover requirements.
+bundle. Its product principles and acceptance scenarios guide behavior fixes; older
+implementation-gap lists must be checked against current Rust code. The historical
+baseline below does not require preserving human approval gates.
 
 ## Release backlog — 1.0
 
@@ -28,63 +28,43 @@ replacement or alter cutover requirements.
   behavior; retiring compatibility must not silently delete user data or bring
   back LanceDB dependencies. Historical research evidence may remain archived.
 
-## Rust Rewrite (active program)
+## Current Rust implementation
 
-Normative sources: the 2026-08-31 ADRs (0008–0015) and
-`docs/superpowers/specs/2026-08-31-rust-*.md` (certification trimmed
-2026-09-03). Process per owner direction: port tests from the current Python
-behavior, adapt them as Rust tests against the frozen fixtures, implement until
-green; commit per slice, plain diff review — no evidence records, gates, or
-recorded attestations. Qualification stage (ADR 0013 spike, four measured
-records, gate `qualified` / `semantic-enabled`) is complete and merged.
+The core Rust implementation covers configuration and storage, series and memory
+lifecycle, deterministic terminology, recall and RAG, Dreaming, daemon and MCP
+transports, the Svelte console, migration tooling and distribution. Implemented
+mechanics still need behavioral fixes and optimization; implementation does not
+imply complete real-model or cross-platform qualification.
 
-Planned slices, in order:
+Semantic retrieval uses the existing bundled SQLite dependency with exact cosine
+ranking in Rust, series prefiltering and generation switching. ONNX Runtime and
+the pinned tokenizer still compute embeddings. LanceDB is no longer a runtime
+dependency; its historical qualification records do not qualify the replacement.
+See [ADR 0013](adr/0013-semantic-index-and-platform-support.md) and the
+[SQLite decision and validation](research/2026-10-02-sqlite-vector-decision.md).
 
-1. Workspace skeleton: virtual Cargo workspace, domain library + `hiero`
-   binary, config files (`provider.conf`/`dream.conf`/`ingest.conf`/
-   `release.conf`) with typed round-trip and `Secret<T>`, data-root handling,
-   SQLite open/classify boundary.
-2. Series/memory storage: schema creation at the current Rust schema,
-   concepts/facets/crystals reads, short-term ingestion thresholds.
-3. Terminology: `term_rules`/`term_rule_forms`, deterministic validation,
-   recall contract section.
-4. Memory/recall: ranked recall lanes, RRF fusion, feedback, working copies,
-   reconsolidation.
-5. RAG/semantic: FTS5 lane, import pipeline, LanceDB/ort semantic lane behind
-   the qualified pins (LanceDB 0.37.1, ort 2.0.0-rc.13), generation lifecycle.
-6. Dreaming: phase pipeline, bounded mutation, audit, provider workflows.
-7. Daemon/transports: daemon lifecycle + discovery, MCP 2026-07-28 stdio +
-   Streamable HTTP, REST/WebSocket routes, light local auth (ADR 0012
-   amendment), embedded Svelte console.
-8. Upgrade tooling before any destructive cutover: `hiero migrate` preflight,
-   dry-run, typed conversion, backup/journal/promotion protocol.
-9. Distribution: one binary + command links, installer, update flow, manual
-   release rehearsal checklist, managed cutover.
+## Active work — optimization and behavior fixes
 
-Done so far: slices 1–2 (skeleton, config, series, sessions, short-term
-memories, concepts/facets, crystals), slice 3 core (term_rules authority,
-contract, context disambiguation), slice 4 (FTS recall lane, RAG store with
-DOCX/PDF ingestion hardened against malformed documents, rag recall lane
-with active-rule-protected merge), `hiero` version/classify skeleton, CI
-workflows.
+- Fix memory, recall and Dreaming behavior against current product principles,
+  with focused regression tests and preservation of authoritative user data.
+- Reduce build dependencies and repeated compilation while preserving retrieval
+  accuracy and import quality. Measure actual build and artifact deltas rather
+  than treating overlapping dependency subtrees as removable package counts.
+- Use SVG icons from an existing icon package. Retire the custom icon generator;
+  choose assets and platform delivery that preserve tray states, themes and sizes
+  without introducing another heavy runtime rendering stack.
+- Investigate unnecessary PDF-import features with extraction-quality fixtures.
+- Keep TypeSafe SDK as a dependency; SDK replacement or reduction is not part of
+  the current optimization scope.
+- Investigate model, ONNX and tokenizer footprint separately after storage/build
+  simplification; keep the inference stack unchanged for this phase.
 
-Deferred capability gaps to close before cutover:
-
-- strict_terms → term_rules migration belongs to `hiero migrate` (slice 8).
-- concept recall boosts (`recall_boosts_for_crystals`) port with the
-  dreaming slice.
-- Dreaming provider fail-closed gate (workflow enabled/provider resolution)
-  ports with the provider-client slice.
-- Daemon/MCP wiring: the ported domain tools are advertised in the frozen
-  registry but not wired into the daemon's MCP `tools/call` dispatch (only
-  `hieronymus_status` is implemented), and the semantic recall lane is not
-  armed in the daemon (`arm_recall_service` has no non-test caller). A
-  wiring slice for both is required before cutover.
+The earlier Rust-port slice plan is historical. Follow current amended ADRs and
+verified runtime behavior instead of its obsolete pre-cutover gap list.
 
 ## Python Alpha Baseline (closed, behavioral reference)
 
-Hieronymus is still an alpha local-first translation memory system. The current
-codebase already contains the core memory graph, primitive MCP tools, local
+At the frozen Python alpha baseline, the codebase contained the core memory graph, primitive MCP tools, local
 service, React/OpenTUI management app, install/update flow, and dreaming
 pipeline. The alpha baseline roadmap is closed; future work should start from a
 new plan or ADR-backed decision when scope is approved.

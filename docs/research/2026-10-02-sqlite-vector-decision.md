@@ -28,14 +28,14 @@ not the additional IVF-PQ benchmark. Low IVF-PQ recall is not evidence that the
 ordinary installed runtime was losing neighbors. Dependency reduction and simple
 exact semantics are the reasons for replacing the production backend.
 
-Verification on2026-10-02: cargo fmt, Clippy(all targets/features, locked, warnings
-as errors),1696 Rust tests passed with20 explicitly ignored, rustdoc(warnings as
-errors),158 script tests, frontend typecheck,113 frontend tests and production
+Verification on 2026-10-02: cargo fmt, Clippy (all targets/features, locked, warnings
+as errors), 1696 Rust tests passed with 20 explicitly ignored, rustdoc (warnings as
+errors), 158 script tests, frontend typecheck, 113 frontend tests and production
 frontend build passed. Real-model and native installed-artifact/platform checks
 were not run. Static review found no remaining blockers; full-generation scanning
 on serving reads remains the documented performance tradeoff.
 
-The workspace lockfile fell from676 to384 packages:292 removed, zero added. The
+The workspace lockfile fell from 676 to 384 packages: 292 removed, zero added. The
 normal application dependency tree contains no Lance, Arrow, DataFusion or
 Protobuf packages. Application CI no longer installs protoc. Source changes and
 tests are local to codex/sqlite-semantic-index; no installation or release was
@@ -52,13 +52,11 @@ exclude build/dev edges. The 384-entry lockfile also covers other targets.
 - [ ] Measure PDF import feature reduction first. A current debug lopdf rlib is
   about 19 MiB. Inspect enabled features and compare extraction against existing
   PDF fixtures before considering a replacement or optional import component.
-- [ ] Compare pre-rendered tray icons with runtime resvg rendering. resvg is used
-  in desktop icons.rs; ico is used by build-icons only. Separate asset-generation
-  dependencies from the shipped desktop target where useful. Preserve supported
-  sizes, themes and platform behavior.
-- [ ] Audit typesafe-sdk-rust's enabled dependency graph and actual Jev API usage;
-  it already disables default features. Prefer feature reduction over duplicating
-  SDK validation, retry and transport contracts in handwritten code.
+- [ ] Use SVG assets from an existing icon package and remove the custom icon
+  generator. Validate tray states, themes, sizes and native platform delivery;
+  avoid replacing resvg with another heavy runtime renderer.
+- TypeSafe SDK remains an accepted dependency, outside current optimization scope
+  (owner decision, 2026-10-02).
 - [ ] Measure duplicate test executables and compilation units separately from
   third-party packages. This verification target/debug occupies about 4.1 GiB;
   individual rlibs and accumulated targets do not establish installed binary size.

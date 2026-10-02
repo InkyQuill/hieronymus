@@ -18,7 +18,8 @@ behavioral reference being ported, then retired at cutover.
   in earlier specifications and workflow documents.
 - `superpowers/specs/2026-08-31-rust-*.md` — the nine normative migration
   specifications (certification trimmed 2026-09-03; see amendment notes).
-- `roadmap.md` — active program: Rust rewrite slices.
+- `roadmap.md` — current Rust implementation, optimization and behavior fixes,
+  and deferred 1.0 release work.
 - `adr/0008`, `adr/0013`, `qualification/records/` — cutover authority,
   semantic decision, accepted qualification evidence (archived, nothing
   further builds on the records).
