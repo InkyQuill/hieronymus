@@ -1776,6 +1776,10 @@ fn concept_pass_requests_concepts_facets_and_linked_assertions() {
             ),
         )
     }));
+    let (_root, config) = temp_config();
+    create_series(&config, "book");
+    let memories = completed_session(&config, "book", &["Mira reads old maps."]);
+    assert_eq!(memories[0].id, 1);
     let provider = LlmDreamProvider::new(
         "local-llm",
         openai_profile(&server.url("/v1")),
@@ -1783,7 +1787,7 @@ fn concept_pass_requests_concepts_facets_and_linked_assertions() {
     )
     .unwrap();
     let payload = provider
-        .run_pass("concepts", &context("book"), &[])
+        .run_pass("concepts", &context("book"), &memories)
         .unwrap();
     let output = hieronymus::dreaming::normalize_dict_output(
         &payload,

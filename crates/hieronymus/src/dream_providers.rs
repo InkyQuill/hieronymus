@@ -43,7 +43,7 @@ pub fn phase_instruction(pass_name: &str) -> Option<&'static str> {
     match pass_name {
         "concepts" => Some(
             "Extract every supported concept and its advisory facets. Do not create \
-             translation rules. Every item must list source_memory_ids. Return JSON.",
+             translation rules. Every facet and crystal must list source_memory_ids. Return JSON.",
         ),
         "terminology_candidates" => Some(
             "Extract advisory terminology candidates and source evidence. They must \
@@ -1033,7 +1033,7 @@ fn phase_prompt(
     ));
     if pass_name == "concepts" {
         payload["schema"] = json!({
-            "concepts": [{"canonical_name":"supported character, term or recurring subject", "description":"brief supported description", "tags":[], "source_memory_ids":[1], "confidence":0.8}],
+            "concepts": [{"canonical_name":"supported character, term or recurring subject", "description":"brief supported description", "tags":[], "confidence":0.8}],
             "facets": [{"concept_name":"same canonical name", "kind":"note", "value":"supported detail", "source_memory_ids":[1], "confidence":0.8}],
             "crystals": [{"crystal_type":"concept", "title":"brief title", "text":"supported assertion", "concept_names":["same canonical name"], "source_memory_ids":[1], "confidence":0.8}]
         });
