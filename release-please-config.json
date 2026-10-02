@@ -5,6 +5,33 @@
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
   "packages": {
-    ".": {"release-type": "simple", "version-file": "version.txt", "changelog-path": "CHANGELOG.md"}
-  }
+    ".": {
+      "release-type": "simple",
+      "version-file": "version.txt",
+      "changelog-path": "CHANGELOG.md"
+    }
+  },
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Features"
+    },
+    {
+      "type": "fix",
+      "section": "Bug Fixes"
+    },
+    {
+      "type": "perf",
+      "section": "Performance Improvements"
+    },
+    {
+      "type": "refactor",
+      "section": "Refactoring and Build Simplification",
+      "hidden": false
+    },
+    {
+      "type": "deps",
+      "section": "Dependencies"
+    }
+  ]
 }

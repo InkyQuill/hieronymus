@@ -9,3 +9,14 @@ The workflow uses GITHUB_TOKEN. GitHub suppresses ordinary workflow triggers fro
 If a candidate fails, inspect its run and rerun the affected job rather than rebuilding unchanged successful native targets. After a retained candidate is green, recovery can dispatch release-rust manually against the same tag with `release_tag` and `candidate_run` inputs. A missing/failed candidate is never silently published.
 
 Reference: https://github.com/googleapis/release-please-action (manifest mode and GITHUB_TOKEN workflow-trigger behavior).
+
+Non-breaking `refactor:` commits are release-worthy patch changes, like `fix:`.
+They appear under “Refactoring and Build Simplification”; `feat:` still requests
+minor, and explicit breaking changes retain the configured pre-1.0 behavior.
+Docs/chore-only work does not request a release. Configuration changes prepare
+future release PRs; publication still requires merging the version PR.
+
+The next release must highlight the storage milestone: heavyweight LanceDB was
+replaced with bundled SQLite and exact cosine search, removing 292 lockfile
+packages without adding dependencies. Model/tokenizer/ONNX assets are unchanged;
+old derived indexes rebuild on first use and authoritative memories are preserved.
