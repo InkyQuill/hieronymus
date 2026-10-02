@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## [0.12.0](https://github.com/InkyQuill/hieronymus/compare/v0.11.0...v0.12.0) (2026-10-03)
+
+### Milestone: SQLite semantic retrieval
+
+Hieronymus now uses exact vector search in SQLite instead of LanceDB. This removes the LanceDB/Arrow/DataFusion build dependency stack and keeps storage simpler while preserving local semantic retrieval and book-scoped search. The ONNX embedding model remains unchanged. Existing domain memory stays in SQLite; the derived semantic index can be rebuilt. Legacy LanceDB cleanup compatibility remains during v0, with removal planned for 1.0.
+
+### Memory and Dreaming
+
+- Long-term memories expose their inherited source locations, including file references and volume/chapter labels. Compatible merges retain that lineage; different books and language directions stay isolated. [#139](https://github.com/InkyQuill/hieronymus/pull/139)
+- Dreaming's concepts pass now requests the output needed to create Ideas and subjects and link them to generated memories. [#138](https://github.com/InkyQuill/hieronymus/pull/138)
+- Memory comparison caches include rubric and response-contract versions, so a judgment from an older contract is not silently reused. [#135](https://github.com/InkyQuill/hieronymus/pull/135)
+
+### Console
+
+- Adopt the paired Thoth light/dark palette and Lucide controls while retaining Hieronymus branding.
+- Keep the memory table, expanded technical details and keyboard focus stable during background Dreaming updates. [#136](https://github.com/InkyQuill/hieronymus/pull/136)
+- Show memory sources beside the text, recover failed settings loads locally, prevent edits during saves, and simplify duplicated status/error messages. Verified across all console pages at desktop and mobile widths. [#147](https://github.com/InkyQuill/hieronymus/pull/147)
+
+### Smaller builds and safer updates
+
+- Replace runtime SVG icon rendering and its generator with committed native assets; remove 23 Cargo package-version nodes from the icon dependency graph. [#140](https://github.com/InkyQuill/hieronymus/pull/140)
+- Treat expected offline agent-bundle warnings as advisory and refresh bundles using the newly installed candidate after activation. [#133](https://github.com/InkyQuill/hieronymus/pull/133)
+- Preserve actionable startup diagnostics and safe helper-recovery instructions. The historical 0.10.1 restart failure's root cause was not reproduced. [#134](https://github.com/InkyQuill/hieronymus/pull/134)
+- Keep README installer links synchronized with the release version. [#127](https://github.com/InkyQuill/hieronymus/pull/127)
+
+### Research decisions
+
+Bounded Jev evaluations cover literary comparison, source support, multilingual alignment, passage classification, reversible structure recovery and exact UTF-8 source selection. Synthetic results and reproducible offline tools are committed under `docs/research` and `scripts`. These pilots do not add automatic cloud filtering or destructive consolidation: uncertain judgments retain the existing evidence. PDF extraction dependencies and the TypeSafe SDK are retained.
+
 ## [0.11.0](https://github.com/InkyQuill/hieronymus/compare/v0.10.1...v0.11.0) (2026-10-02)
 
 
