@@ -17,6 +17,7 @@
 <form class="w-full" aria-label="Incoming memory settings" onsubmit={(event) => { event.preventDefault(); onSave($state.snapshot(settings)); }}>
   <header class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6"><div><h1 class="text-display">Incoming memory</h1><p class="mt-2 max-w-2xl text-body text-secondary">Control which messages can enter memory and how long an individual memory can be. These limits do not edit your manuscript.</p></div><button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} type="submit">Save memory settings</button></header>
   <SettingsSaveState current={settings} saved={initial} {busy} />
+  <fieldset disabled={busy} class="min-w-0" aria-label="Editable settings">
   <div class="mt-6 grid gap-4 sm:grid-cols-2">
     <label class="grid gap-1.5 text-caption text-secondary">Warn above this many sentences<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.short_memory.warning_sentence_count} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Reject above this many sentences<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.short_memory.rejection_sentence_count} /></label>
@@ -27,5 +28,6 @@
   {#if error}<p role="alert" class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
   <p class="mt-3 text-body-sm text-secondary">A character limit of 0 disables that limit. Warnings flag a long memory; rejection prevents it from being stored.</p>
   <TechnicalDetails data={settings} label="Technical memory limits" />
+  </fieldset>
 </form>
 <HookRelevanceSettings />

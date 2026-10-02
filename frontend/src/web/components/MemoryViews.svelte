@@ -289,7 +289,7 @@
   {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full text-body-sm text-secondary" role="note">A stored memory can still be wrong or outdated. Its status describes storage, not accuracy. Use “Correct this memory” to correct a specific statement.</p>{/if}
     {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
     {#if loading}
-      <p class="text-body text-secondary">Loading {selectedView}…</p>
+      <p class="text-body text-secondary">Loading {memoryLabel(selectedView).toLowerCase()}…</p>
     {:else if snapshot}
       {#if canCombine}<p class="mb-3 text-body-sm text-secondary">Open a record by its title. Checkboxes select memories to combine. {selectedIds.length} selected for combining.</p>{/if}
       {#if recordCount > pageSize}<nav class="mb-4 flex flex-wrap items-center gap-3" aria-label="Record pages"><span class="text-body-sm text-secondary">Page {Math.min(page + 1, pageCount)} of {pageCount} · {recordCount} records</span><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page === 0 || loading} onclick={() => changePage(page - 1)}>Previous</button><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page >= pageCount - 1 || loading} onclick={() => changePage(page + 1)}>Next</button></nav>{/if}
@@ -365,6 +365,7 @@
                 {snapshot.detail.subtitle}
               </p>
             </div>
+            {#if snapshot.detail.fields.some(([name]) => name === "Source locations")}<section class="mx-5 mb-4" aria-label="Memory sources"><h4 class="text-body-sm font-medium">Sources</h4>{#each snapshot.detail.fields.filter(([name]) => name === "Source locations") as [name, value] (name)}<p class="mt-1 break-words text-body-sm text-secondary">{value}</p>{/each}</section>{/if}
             {#if snapshot.detail.body && selectedView !== "Dream Audits"}<pre
                 class="mx-5 min-h-30 max-h-[50vh] overflow-auto border border-default bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap"
                 >{snapshot.detail.body}</pre
@@ -403,8 +404,8 @@
                     >{/each}
 </div></details>{/if}
               </div>{/if}
-            {#if snapshot.detail.fields.length}<details class="p-5"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Source and record details</summary><dl class="grid gap-2">
-                {#each snapshot.detail.fields as [name, value] (name)}<div
+            {#if snapshot.detail.fields.some(([name]) => name !== "Source locations")}<details class="p-5"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Source and record details</summary><dl class="grid gap-2">
+                {#each snapshot.detail.fields.filter(([name]) => name !== "Source locations") as [name, value] (name)}<div
                     class="border-t border-default pt-2"
                   >
                     <dt class="text-caption text-secondary">{name}</dt>

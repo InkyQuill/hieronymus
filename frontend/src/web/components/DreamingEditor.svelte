@@ -79,6 +79,7 @@
     <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} type="submit">Save dreaming</button>
   </header>
   <SettingsSaveState current={settings} saved={initial} {busy} />
+  <fieldset disabled={busy} class="min-w-0" aria-label="Editable settings">
 
   <h2 class="mt-6 text-h3">When to process memories</h2><p class="mt-2 max-w-[70ch] text-body-sm text-secondary">Enable a schedule for automatic processing. You can also start a run from Overview.</p><div class="mt-4 grid gap-4 sm:grid-cols-2">
     <label class="flex min-h-11 cursor-pointer items-center gap-3 text-body text-primary"><input class="peer sr-only" type="checkbox" bind:checked={settings.dreaming.enabled} /><span class="relative h-[22px] w-10 shrink-0 rounded-full border border-strong bg-raised transition peer-checked:border-accent peer-checked:[&>span]:translate-x-[18px] peer-checked:[&>span]:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40"><span class="absolute top-0.5 left-0.5 size-4 rounded-full bg-secondary transition-transform"></span></span>Enable scheduled dreaming</label>
@@ -139,6 +140,7 @@
   </footer>
   <TechnicalDetails data={settings} label="Technical Dreaming configuration" />
   {#if error}<p role="alert" class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+  </fieldset>
 </form>
 
 <MemoryComparisonSettings />

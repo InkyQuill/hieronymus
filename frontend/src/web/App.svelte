@@ -241,11 +241,11 @@
   </header>
   <section id="page-content" tabindex="-1" class="mx-auto w-full px-4 py-6 sm:px-8 lg:px-12">
     {#if ["providers", "dreaming", "ingest", "release"].includes(section)}<SettingsNavigation {section} />{/if}
-    {#if error && ["providers", "admin", "memory"].includes(section)}<div role="alert" class="mb-4 border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
+    {#if error && (section === "providers" || (["admin", "memory"].includes(section) && adminDashboard))}<div role="alert" class="mb-4 border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
     {#if section === "connect"}
       <ConnectAgent />
     {:else if section === "admin" && adminDashboard}
-      <AdminDashboard dashboard={adminDashboard} {busy} {error} onDream={runDreaming} />
+      <AdminDashboard dashboard={adminDashboard} {busy} onDream={runDreaming} />
     {:else if section === "memory" && adminDashboard}
       <MemoryViews dashboard={adminDashboard} {bookHeader} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}
@@ -258,10 +258,10 @@
 
         {#if busy && providers.length === 0}
           <p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading profiles…</p>
-        {:else if providers.length === 0}
+        {:else if providers.length === 0 && !error}
           <div class="overflow-auto border border-default bg-surface"><table class="w-full border-collapse"><tbody><tr><td class="px-4 py-12 text-center text-body text-secondary">No AI providers yet. Add a hosted service or local Ollama server to use Dreaming.</td></tr></tbody></table></div>
-        {:else}
-          <div class="overflow-auto border border-default"><table class="w-full min-w-[42rem] border-collapse text-left"><thead class="bg-surface"><tr><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Display name</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Type</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Endpoint</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class="cursor-pointer border-b border-default last:border-b-0 hover:bg-raised {selected?.id === provider.id ? 'bg-raised' : ''}" role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td class="px-4 py-3 text-body">{provider.name}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.type}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.url}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.key_configured ? "Configured" : provider.type === "ollama" ? "Not configured (optional)" : "Not configured"}</td></tr>{/each}</tbody></table></div>
+        {:else if providers.length > 0}
+          <div class="overflow-auto border border-default"><table class="w-full min-w-[42rem] border-collapse text-left"><thead class="bg-surface"><tr><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Display name</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Type</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Endpoint</th><th class="border-b border-default px-4 py-3 text-eyebrow uppercase tracking-[0.12em] text-secondary">Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class="cursor-pointer border-b border-default last:border-b-0 hover:bg-raised {selected?.id === provider.id ? 'bg-raised' : ''}" ><td class="px-4 py-3 text-body"><button class="min-h-11 w-full text-left text-accent-text underline" onclick={() => { selected = provider; createOpen = false; models = []; }} aria-label={`Edit ${provider.name}`}>{provider.name}</button></td><td class="px-4 py-3 text-body-sm text-secondary">{provider.type}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.url}</td><td class="px-4 py-3 text-body-sm text-secondary">{provider.key_configured ? "Configured" : provider.type === "ollama" ? "Not configured (optional)" : "Not configured"}</td></tr>{/each}</tbody></table></div>
         {/if}
         <p class="mt-4 text-body-sm text-secondary">Open a provider to edit its connection or check it. Then assign its models in <a href="/config/dreaming" class="text-accent-text underline">Dreaming settings</a>.</p>
         </div>

@@ -12,16 +12,18 @@
   let error = $state("");
   let saved = $state(false);
   const inputClass = "min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary";
-  onMount(() => {
-    let active = true;
+  let active = true;
+  function load() {
+    busy = true; error = "";
     void loadComparisonSettings().then(result => {
       if (!active) return;
+      busy = false;
       state = result.comparison; providers = result.providers;
       primary = state.settings.primary?.provider ?? ""; primaryModel = state.settings.primary?.model ?? "";
       fallback = state.settings.fallback?.provider ?? ""; fallbackModel = state.settings.fallback?.model ?? "";
-    }).catch(reason => { if (active) error = reason instanceof Error ? reason.message : "Could not load memory comparison settings."; });
-    return () => { active = false; };
-  });
+    }).catch(reason => { if (active) error = reason instanceof Error ? reason.message : "Could not load memory comparison settings."; }).finally(() => { if (active) busy = false; });
+  }
+  onMount(() => { load(); return () => { active = false; }; });
   async function save() {
     if (!state) return;
     busy = true; error = ""; saved = false;
@@ -36,7 +38,7 @@
 <section class="mt-10 border-t border-default pt-6" aria-labelledby="memory-comparison-title">
   <h3 id="memory-comparison-title" class="text-heading">Memory comparison</h3>
   <p class="mt-2 max-w-2xl text-body text-secondary">Compare two related memories before combining them. Uncertain or conflicting memories are kept. Only the selected pair and its context are sent to the providers you choose. A backup is used only if the main provider fails.</p>
-  <p class="mt-2 max-w-2xl text-body-sm text-secondary">Jev uses the saved TypeSafe key from Prompt relevance. Other choices use your saved provider credentials. These assignments are independent of Dream extraction.</p>
+  <p class="mt-2 max-w-2xl text-body-sm text-secondary">Jev uses the saved TypeSafe key from <a href="/config/ingest" class="text-accent-text underline">Prompt relevance</a>. Other choices use your saved provider credentials. These assignments are independent of Dream extraction.</p>
   {#if state}
     <form class="mt-4 grid gap-4 sm:grid-cols-2" oninput={() => { saved = false; }} onsubmit={event => { event.preventDefault(); void save(); }}>
       <label class="grid gap-1.5 text-caption text-secondary">Primary comparison provider
@@ -59,6 +61,6 @@
       <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm text-accent-text disabled:opacity-60" disabled={busy}>Save memory comparison</button>
     </form>
   {:else if !error}<p class="mt-4 text-body-sm text-secondary">Loading memory comparison settings…</p>{/if}
-  {#if error}<p role="alert" class="mt-4 text-body-sm text-danger">{error}</p>{/if}
+  {#if error}<p role="alert" class="mt-4 text-body-sm text-danger">{error}</p>{#if !state}<button class="mt-2 min-h-11 rounded-sm border border-default px-4 py-2 text-body-sm" onclick={load} disabled={busy}>Retry comparison settings</button>{/if}{/if}
   {#if saved}<p role="status" class="mt-4 text-body-sm text-secondary">Memory comparison settings saved.</p>{/if}
 </section>

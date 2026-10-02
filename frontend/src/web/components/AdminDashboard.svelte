@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AdminDashboard } from "../lib/types";
   import { formatReadiness, parseSummary } from "../lib/readiness";
+  import { workflowGuide } from "../lib/presentation";
   import TechnicalDetails from "./TechnicalDetails.svelte";
 
   type Props = { dashboard: AdminDashboard; error?: string; onDream: () => void; busy?: boolean };
@@ -14,7 +15,7 @@
     crystals: "/admin/memory?view=Crystals",
     dream_runs: "/admin/memory?view=Dream%20Runs",
     lessons: "/admin/memory?view=Lessons",
-    series: "/admin/memory?view=Concepts",
+    series: "/admin/memory",
     sessions: "/admin/memory?view=Short-Term%20Sessions",
     short_term_memories: "/admin/memory?view=Short-Term%20Memory",
   };
@@ -70,7 +71,7 @@
           {/each}
         </ol></details>
         {#if currentPhase}
-          <p class="mt-3 text-caption capitalize text-secondary">{currentPhase.replaceAll("_", " ")} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</p>
+          <p class="mt-3 text-caption capitalize text-secondary">{workflowGuide[currentPhase]?.label ?? currentPhase.replaceAll("_", " ")} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</p>
         {:else}
           <p class="mt-3 text-caption text-secondary">{dreamState === "DISABLED" ? "Scheduled processing is off. You can run it manually or enable a schedule in Dreaming settings." : dreamState === "IDLE" ? "Dreaming turns recent memories into lasting knowledge. It runs on the configured schedule." : "Processing status is unavailable."}</p>
         {/if}
@@ -81,8 +82,6 @@
       <p class="mb-4 max-w-[70ch] text-body-sm text-secondary">{readiness.level === "Ready" ? "The service reports that it is ready." : readiness.level === "Degraded" ? "Some memory features need attention. Review the reported problems below and check the AI connection or processing history." : readiness.level === "Starting" ? "The service is starting. Check this page again when startup finishes." : "The service has not reported its readiness. Open technical details to inspect the available status."}</p>
       <dl class="flex flex-wrap gap-x-12 gap-y-4">
         <div><dt class="text-caption text-secondary">Readiness</dt><dd class="mt-1 text-body">{readiness.level}</dd></div>
-        <div><dt class="text-caption text-secondary">Dreaming</dt><dd class="mt-1 text-body">{dreamingLabel}</dd></div>
-        {#if dashboard.dream_status.current_phase}<div><dt class="text-caption text-secondary">Phase</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.current_phase)} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</dd></div>{/if}
         <div><dt class="text-caption text-secondary">Recent memories</dt><dd class="mt-1 text-body">{dashboard.short_term_status.pending_count == null ? "Pending count unavailable" : `${Number(dashboard.short_term_status.pending_count)} awaiting processing`}</dd></div>
       </dl>
       {#if readiness.reasons.length > 0}
