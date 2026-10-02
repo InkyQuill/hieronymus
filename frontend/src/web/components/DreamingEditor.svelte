@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { refreshModels } from "../lib/api";
   import { onMount } from "svelte";
   import type { DreamSettings, ModelCache, ProviderProfile } from "../lib/types";
 
@@ -33,12 +34,31 @@
   });
   let settings = $state<DreamSettings>(emptySettings());
 
+  let availableModels = $state<Record<string, string[]>>({});
+  let loadingModels = $state<Record<string, boolean>>({});
+  let modelErrors = $state<Record<string, string>>({});
+  let customModels = $state<Record<string, boolean>>({});
+
+  async function loadModels(providerId: string) {
+    if (!providerId || loadingModels[providerId]) return;
+    loadingModels[providerId] = true;
+    modelErrors[providerId] = "";
+    try {
+      availableModels[providerId] = await refreshModels(providerId);
+    } catch {
+      modelErrors[providerId] = "Could not load models. You can enter a custom model or retry.";
+    } finally {
+      loadingModels[providerId] = false;
+    }
+  }
+
   onMount(() => {
     settings = structuredClone(initial);
+    for (const id of new Set(Object.values(initial.workflows).map((workflow) => workflow.provider))) void loadModels(id);
   });
 
   function modelsFor(providerId: string): string[] {
-    return modelCache.providers[providerId]?.models ?? [];
+    return availableModels[providerId] ?? modelCache.providers[providerId]?.models ?? [];
   }
 
   function updateWorkflow(name: string, changes: Partial<DreamSettings["workflows"][string]>) {
@@ -67,14 +87,22 @@
       <article class="mt-3 rounded-md border border-default bg-surface p-4"><div>
         <header class="flex items-center justify-between gap-4"><h4 class="text-body font-medium capitalize">{name.replaceAll("_", " ")}</h4><label class="flex min-h-11 cursor-pointer items-center"><input class="peer sr-only" type="checkbox" checked={workflow.enabled} onchange={(event) => updateWorkflow(name, { enabled: event.currentTarget.checked })} /><span class="relative h-[22px] w-10 shrink-0 rounded-full border border-strong bg-raised transition peer-checked:border-accent peer-checked:[&>span]:translate-x-[18px] peer-checked:[&>span]:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40"><span class="absolute top-0.5 left-0.5 size-4 rounded-full bg-secondary transition-transform"></span></span><span class="sr-only">Enable {name.replaceAll("_", " ")}</span></label></header>
         <div class="mt-4 grid gap-4 sm:grid-cols-3">
-          <label class="grid gap-1.5 text-caption text-secondary">Provider<select class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={workflow.provider} onchange={(event) => updateWorkflow(name, { provider: event.currentTarget.value, model: "" })}><option value="">Choose profile</option>{#each providers as provider (provider.id)}<option value={provider.id}>{provider.name} · {provider.type}</option>{/each}</select></label>
-          <label class="grid gap-1.5 text-caption text-secondary">Model
-            {#if modelsFor(workflow.provider).length}
-              <select class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={workflow.model} onchange={(event) => updateWorkflow(name, { model: event.currentTarget.value })}><option value="">Choose model</option>{#each modelsFor(workflow.provider) as model (model)}<option value={model}>{model}</option>{/each}</select>
-            {:else}
-              <input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={workflow.model} placeholder="Model ID" oninput={(event) => updateWorkflow(name, { model: event.currentTarget.value })} />
+          <label class="grid gap-1.5 text-caption text-secondary">Provider<select class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={workflow.provider} onchange={(event) => { const id = event.currentTarget.value; updateWorkflow(name, { provider: id, model: "" }); customModels[name] = false; void loadModels(id); }}><option value="">Choose profile</option>{#each providers as provider (provider.id)}<option value={provider.id}>{provider.name} · {provider.type}</option>{/each}</select></label>
+          <div class="grid gap-1.5 text-caption text-secondary">
+            <label class="grid gap-1.5">Model
+              <select class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={customModels[name] || (workflow.model && !modelsFor(workflow.provider).includes(workflow.model)) ? "__custom__" : workflow.model} onchange={(event) => { customModels[name] = event.currentTarget.value === "__custom__"; if (!customModels[name]) updateWorkflow(name, { model: event.currentTarget.value }); }}>
+                <option value="">Choose model</option>
+                {#each modelsFor(workflow.provider) as model (model)}<option value={model}>{model}</option>{/each}
+                <option value="__custom__">Custom model…</option>
+              </select>
+            </label>
+            {#if customModels[name] || (workflow.model && !modelsFor(workflow.provider).includes(workflow.model))}
+              <label class="grid gap-1.5">Custom model<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" value={workflow.model} placeholder="Model ID" oninput={(event) => updateWorkflow(name, { model: event.currentTarget.value })} /></label>
             {/if}
-          </label>
+            {#if loadingModels[workflow.provider]}<p role="status">Loading models…</p>{/if}
+            {#if modelErrors[workflow.provider]}<p role="status">{modelErrors[workflow.provider]}</p>{/if}
+            <button type="button" class="min-h-11 text-left text-accent-text disabled:opacity-60" disabled={!workflow.provider || loadingModels[workflow.provider]} onclick={() => loadModels(workflow.provider)}>Refresh models</button>
+          </div>
           <label class="grid gap-1.5 text-caption text-secondary">Maximum records<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" type="number" min="1" bind:value={workflow.max_records_per_pass} /></label>
         </div>
       </div></article>

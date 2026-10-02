@@ -7,6 +7,10 @@ import type {
   ProviderDraft,
   ProviderProfile,
 } from "../lib/types";
+import { refreshModels } from "../lib/api";
+vi.mock("../lib/api", () => ({
+  refreshModels: vi.fn(async () => ["gpt-5", "gpt-5-mini"]),
+}));
 import DreamingEditor from "./DreamingEditor.svelte";
 import ProviderEditor from "./ProviderEditor.svelte";
 
@@ -108,4 +112,51 @@ test("dreaming editor submits the toggled schedule state", async () => {
       dreaming: expect.objectContaining({ enabled: true }),
     }),
   );
+});
+
+test("dreaming loads API models and saves a custom model", async () => {
+  const user = userEvent.setup();
+  const onSave = vi.fn();
+  render(DreamingEditor, {
+    props: {
+      initial: dream,
+      providers: [provider],
+      modelCache: { providers: {} },
+      onSave,
+    },
+  });
+  expect(
+    await screen.findByRole("option", { name: "gpt-5-mini" }),
+  ).toBeTruthy();
+  expect(refreshModels).toHaveBeenCalledWith(provider.id);
+  await user.selectOptions(screen.getByLabelText("Model"), "gpt-5-mini");
+  await user.click(screen.getByRole("button", { name: "Save dreaming" }));
+  expect(onSave.mock.calls.at(-1)?.[0].workflows.concepts.model).toBe(
+    "gpt-5-mini",
+  );
+  await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
+  await user.clear(screen.getByLabelText("Custom model"));
+  await user.type(screen.getByLabelText("Custom model"), "private-model");
+  await user.click(screen.getByRole("button", { name: "Save dreaming" }));
+  expect(onSave.mock.calls.at(-1)?.[0].workflows.concepts.model).toBe(
+    "private-model",
+  );
+});
+
+test("dreaming preserves a saved custom model when discovery fails", async () => {
+  vi.mocked(refreshModels).mockRejectedValueOnce(new Error("offline"));
+  const initial = structuredClone(dream);
+  initial.workflows.concepts.model = "private-model";
+  render(DreamingEditor, {
+    props: {
+      initial,
+      providers: [provider],
+      modelCache: { providers: {} },
+      onSave: vi.fn(),
+    },
+  });
+  expect(await screen.findByText(/Could not load models/)).toBeTruthy();
+  expect(
+    (screen.getByLabelText("Custom model") as HTMLInputElement).value,
+  ).toBe("private-model");
 });
