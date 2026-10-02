@@ -849,7 +849,7 @@ fn phase_prompt(
     let mut payload = dream_prompt_payload(context, memories);
     payload["instruction"] = json!(format!(
         "Dream pass: {pass_name}. {general_prompt} {instruction} \
-         Every crystal must include a non-empty source_memory_ids array containing only the provided source memory ids that support that crystal. Return one JSON object without markdown."
+         Use only provided source memory ids. Every crystal must include a non-empty source_memory_ids array containing only the provided source memory ids that support that crystal. Return one JSON object without markdown."
     ));
     if pass_name == "coverage_audit" {
         payload["schema"] = json!({"covered_memory_ids": [1]});
