@@ -2,6 +2,56 @@
 
 <!-- version list -->
 
+## [0.11.0](https://github.com/InkyQuill/hieronymus/compare/v0.10.1...v0.11.0) (2026-10-02)
+
+
+### Features
+
+* **dreaming:** decay advisory salience after meaningful sessions ([ee64098](https://github.com/InkyQuill/hieronymus/commit/ee6409894dfea0f2a5119f73889c1a4e2aa1c93b))
+* **dreaming:** decay unused advisory salience after meaningful sessions ([2cb7b17](https://github.com/InkyQuill/hieronymus/commit/2cb7b1771e7443d5122444f145af306d7e72a21f))
+
+
+### Bug Fixes
+
+* address memory review and batch Jev through Rust SDK ([d8433c1](https://github.com/InkyQuill/hieronymus/commit/d8433c1f9a41d712d5be0378a4de7c6b06a131f8))
+* **agents:** complete task sessions and refresh workflow integrations ([98bdd25](https://github.com/InkyQuill/hieronymus/commit/98bdd25611409abc9731158ec8f03a58a93f8a39))
+* **agents:** refresh generated bundles and synchronize Codex cache ([c2a88ba](https://github.com/InkyQuill/hieronymus/commit/c2a88ba2218e3e20391e84bdf009be55d6495b19))
+* **agents:** tolerate partial cache inventory and isolate doctor tests ([4a29a8e](https://github.com/InkyQuill/hieronymus/commit/4a29a8e7726c16f75e4106a057da6a012f04310b))
+* **console:** clarify all author views and expose technical details ([1e9740d](https://github.com/InkyQuill/hieronymus/commit/1e9740df29b41d51d5ea5a4b4a5a56b5641f179a))
+* **console:** clarify all author workflows and expose technical details ([845f5e7](https://github.com/InkyQuill/hieronymus/commit/845f5e7f9716e16e7fa23fb5c797e9eaba126121))
+* **console:** clarify author workflows and settings navigation ([d7d1c7f](https://github.com/InkyQuill/hieronymus/commit/d7d1c7ff45aa6b0f2e28999a374be52ae8636108))
+* **console:** distill memory and dreaming history layout ([4d9ecc4](https://github.com/InkyQuill/hieronymus/commit/4d9ecc4b9d42b77e150bd812ad3dca74ed3bf96d))
+* **console:** handle retry validation and pagination edge cases ([1f07363](https://github.com/InkyQuill/hieronymus/commit/1f07363de5ce8e406fcf2736519fe13f9b5cad67))
+* **console:** keep parallel provider work out of this PR ([8a5a27b](https://github.com/InkyQuill/hieronymus/commit/8a5a27beba376aeefeb21f6932589def99d5f7d1))
+* **console:** paginate dreaming history and keep record actions visible ([4d58503](https://github.com/InkyQuill/hieronymus/commit/4d585031d1dc3b2a892c416c6ba045952c301e67))
+* **console:** reveal invalid context window before saving ([83ae212](https://github.com/InkyQuill/hieronymus/commit/83ae21235792f4810123e8d8bda1dd38ac919db1))
+* **console:** use full workspace width and put book filter in header ([63ed259](https://github.com/InkyQuill/hieronymus/commit/63ed259cc58d4a7d7468c75b49d2cd1fc7728473))
+* **desktop:** isolate tray tests and preserve helper diagnostics ([c20a39a](https://github.com/InkyQuill/hieronymus/commit/c20a39a50b175efb990bf59f2875b82424d8011f))
+* **dreaming:** apply shared and editable per-pass prompts ([c75f2b3](https://github.com/InkyQuill/hieronymus/commit/c75f2b3fa6d1d24188c87581b4682b75b07e8c8f))
+* **dreaming:** isolate provider context and preserve unrepresented inputs ([eb166f0](https://github.com/InkyQuill/hieronymus/commit/eb166f074d95138ef821fbf9ab33f9dfe5f4e2d4))
+* **dreaming:** isolate story context and preserve uncovered memories ([a9a3674](https://github.com/InkyQuill/hieronymus/commit/a9a36745b5e5615f42f8ddb91beff7bb0c317570))
+* **dreaming:** model discovery and editable effective prompts ([1b84e05](https://github.com/InkyQuill/hieronymus/commit/1b84e05cb100e54b1d2d2fc353575921270696d6))
+* **dreaming:** preserve explicit source guard wording ([e65bd4f](https://github.com/InkyQuill/hieronymus/commit/e65bd4f3fc25f4c12f2f27cc5a99e950c9f7115f))
+* **dreaming:** reject candidates without explicit source evidence ([21fa7ac](https://github.com/InkyQuill/hieronymus/commit/21fa7ac267e817149fd3842139afe0e473e6aff8))
+* **dreaming:** use cloud model capacity and disable DeepSeek thinking ([4164a44](https://github.com/InkyQuill/hieronymus/commit/4164a44dcc6de6d31e1f8cc9b186971363a6d68d))
+* **hooks:** pause capture when resuming a completed session ([d2022c5](https://github.com/InkyQuill/hieronymus/commit/d2022c57a98378511e45aa24e9a74a37d39037f0))
+* **memory:** add semantic recall and bounded safe consolidation ([e2dcb50](https://github.com/InkyQuill/hieronymus/commit/e2dcb50bc15f9c6cd4b84c3c0e8f9e08849a1eba))
+* **memory:** complete bound sessions and preserve Dream history ([af68cb8](https://github.com/InkyQuill/hieronymus/commit/af68cb84f59392c598ffd787a001bfe8cb7afb8d))
+* **memory:** complete bound sessions and preserve Dream history ([636ef7d](https://github.com/InkyQuill/hieronymus/commit/636ef7da27fcb635b9fa8aa585ac3a67cee573f5))
+* **memory:** report full counts and paginate without storage ceilings ([1db6207](https://github.com/InkyQuill/hieronymus/commit/1db62075a80adad1fcd945d00f2cd15f0ca8fa5f))
+* **memory:** semantic recall and safe bounded Dream consolidation ([9bae566](https://github.com/InkyQuill/hieronymus/commit/9bae566eca96cf41fad2f55ff365a27450ee2a3c))
+* preserve Dream availability and bound reconsolidation checks ([65367be](https://github.com/InkyQuill/hieronymus/commit/65367bed305e39624563c501be104593784b807a))
+* reconcile main and address provider service and pagination reviews ([7f2b8eb](https://github.com/InkyQuill/hieronymus/commit/7f2b8eb44cbf0fa9bf8bb1a8ddb83ce3986029ae))
+* **release:** allow slow native candidates to finish ([43cddb2](https://github.com/InkyQuill/hieronymus/commit/43cddb2b44ee53a018745b2e139657b37991d860))
+* **release:** allow slow native candidates to finish ([5e15bf0](https://github.com/InkyQuill/hieronymus/commit/5e15bf052976c46257f7d1fb6d239a1b6247b753))
+* **release:** publish the matching version changelog ([890b80b](https://github.com/InkyQuill/hieronymus/commit/890b80bb149720910b4670c233a59b69202f8e3d))
+* **release:** publish the matching version changelog ([3fc378e](https://github.com/InkyQuill/hieronymus/commit/3fc378e1f79adfea086fc51fb64951a971ec589d))
+* **release:** retain installer platform warnings ([ca0fc0e](https://github.com/InkyQuill/hieronymus/commit/ca0fc0ed2d1c20c5c7a0be2c30ad6a2ac36563f1))
+* restore DeepSeek dreaming and accurate memory/tray status ([c8f794b](https://github.com/InkyQuill/hieronymus/commit/c8f794b0edd1e6487f3970cc1ca811f01c7b5b7b))
+* **skills:** clarify correction grammar and Jev disclosure ([1e94043](https://github.com/InkyQuill/hieronymus/commit/1e94043cbb241e3bd1f5f4084ebed88cbce103eb))
+* **skills:** own task sessions and add project doctor workflow ([01b2cb4](https://github.com/InkyQuill/hieronymus/commit/01b2cb481c3bc46babfa9f65eba64f0cb7de012a))
+* **web:** discover dreaming models and allow custom values ([d360249](https://github.com/InkyQuill/hieronymus/commit/d36024950854099227c74e40a14083ec290f6186))
+
 ## [0.10.1](https://github.com/InkyQuill/hieronymus/compare/v0.10.0...v0.10.1) (2026-10-01)
 
 
