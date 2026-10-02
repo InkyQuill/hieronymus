@@ -80,13 +80,21 @@ test("failed save preserves the draft and reports the error", async () => {
 test("changing either provider clears its previous model", async () => {
   const configured = structuredClone(state);
   configured.settings.fallback = { provider: "jev", model: "old-backup" };
-  vi.mocked(loadComparisonSettings).mockResolvedValue({ comparison: configured, providers: [] });
+  vi.mocked(loadComparisonSettings).mockResolvedValue({
+    comparison: configured,
+    providers: [],
+  });
   const user = userEvent.setup();
   render(MemoryComparisonSettings);
   for (const role of ["Primary", "Backup"]) {
-    const provider = await screen.findByLabelText(`${role} comparison provider`);
+    const provider = await screen.findByLabelText(
+      `${role} comparison provider`,
+    );
     await user.selectOptions(provider, "");
     await user.selectOptions(provider, "jev");
-    expect((screen.getByLabelText(`${role} comparison model`) as HTMLInputElement).value).toBe("");
+    expect(
+      (screen.getByLabelText(`${role} comparison model`) as HTMLInputElement)
+        .value,
+    ).toBe("");
   }
 });
