@@ -221,18 +221,13 @@
     <p class="mt-2 text-caption text-secondary">{globalView ? "This activity log covers all books." : selectedSeries ? "Showing memories for this book. Shared concepts may also appear." : "Choose a book to focus on its memories."}</p>
   </div>
   {#if correction}<div class="col-span-full">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}
-  {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">Retained source records: status describes the record lifecycle, not whether its claims remain correct. Use “Correct this memory” to inspect and correct an exact claim.</p>{/if}
-  {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">Legacy rendering records are historical source inspection. Use “Correct a rendering” to view and change current authority.</p>{/if}
+  {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">A stored memory can still be wrong or outdated. Its status describes storage, not accuracy. Use “Correct this memory” to correct a specific statement.</p>{/if}
+  {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">These older translation choices are historical records. Use “Correct a rendering” to inspect and change the current approved translation.</p>{/if}
   <div class="self-start lg:sticky lg:top-24">
-    <p
-      class="mb-4 inline-block rounded-full border border-accent bg-[var(--hiero-accent-bg)] px-2.5 py-0.5 text-eyebrow uppercase tracking-[0.12em] text-accent-text"
-    >
-      Memory administration
-    </p>
-    <h2 class="text-display">Memory views</h2>
+    <h2 class="text-display">Your project memory</h2>
     <button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = {}}>Correct a rendering</button>
     <p class="mt-3 max-w-prose text-body text-secondary">
-      Find a record, read its context, and correct a rendering or claim when needed.
+      Choose a book, open a memory and read its source. If it is wrong or outdated, use “Correct this memory”.
     </p>
     <div class="mt-6 border-t border-default pt-4 text-caption text-secondary">
       {snapshot?.rows.length ?? 0} records
@@ -253,6 +248,7 @@
         >
       {/each}
     </nav>
+    <p class="mb-4 max-w-[70ch] text-body-sm text-secondary">{selectedView === "Crystals" ? "Long-term memories are concise pieces of knowledge your agent has learned. Hieronymus calls these crystals." : selectedView === "Short-Term Memory" ? "Recent memories retain source material before Dreaming processes it into lasting knowledge." : selectedView === "Lessons" ? "Writing lessons capture reusable guidance backed by source memories." : selectedView === "Concepts" ? "Concepts connect recurring ideas, characters and subjects across your memories." : globalView ? "Processing and activity records help explain what Hieronymus did. They are not additional project knowledge." : "Open a record to inspect its context and source."}</p>
     {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
     {#if loading}
       <p class="text-body text-secondary">Loading {selectedView}…</p>
@@ -313,8 +309,7 @@
               ><tbody
                 ><tr
                   ><td class="px-4 py-12 text-center text-body text-secondary"
-                    >No {selectedView.toLowerCase()} yet. {snapshot.detail
-                      .subtitle}</td
+                    >No {selectedView.toLowerCase()} match this view. Memories appear here as your agent works with Hieronymus.</td
                   ></tr
                 ></tbody
               ></table
@@ -337,17 +332,17 @@
               </p>
             </div>
             {#if snapshot.detail.body}<pre
-                class="mx-5 min-h-30 overflow-auto border-l-[3px] border-accent bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap"
+                class="mx-5 min-h-30 overflow-auto border border-default bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap"
                 >{snapshot.detail.body}</pre
               >{/if}
-            {#if snapshot.detail.fields.length}<dl class="grid gap-2 p-5">
+            {#if snapshot.detail.fields.length}<details class="p-5"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Source and record details</summary><dl class="grid gap-2">
                 {#each snapshot.detail.fields as [name, value] (name)}<div
                     class="border-t border-default pt-2"
                   >
                     <dt class="text-caption text-secondary">{name}</dt>
                     <dd class="mt-1 break-words text-mono">{value}</dd>
                   </div>{/each}
-              </dl>{/if}
+              </dl></details>{/if}
             {#if commandsFor(selectedView).length}<div
                 class="mt-auto border-t border-default p-5"
               >

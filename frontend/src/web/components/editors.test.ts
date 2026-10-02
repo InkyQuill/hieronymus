@@ -79,6 +79,7 @@ test("provider editor opens, submits edited fields, and closes", async () => {
   const name = screen.getByLabelText("Display name");
   await user.clear(name);
   await user.type(name, "Primary OpenAI");
+  await user.click(screen.getByText("Advanced model limits"));
   await user.type(screen.getByLabelText("Context window (tokens)"), "16384");
   await user.click(screen.getByRole("button", { name: "Save profile" }));
   expect(onSave).toHaveBeenCalledWith({
@@ -195,4 +196,26 @@ test("dreaming task prompts can be edited and restored without changing shared i
   );
   await user.click(screen.getByRole("button", { name: "Save dreaming" }));
   expect(onSave.mock.calls.at(-1)?.[0].workflows.concepts.prompt).toBe("");
+});
+
+test("provider deletion requires a separate confirmation and can be cancelled", async () => {
+  const user = userEvent.setup();
+  const onDelete = vi.fn();
+  render(ProviderEditor, {
+    props: {
+      provider,
+      onSave: vi.fn(),
+      onDelete,
+      onRefreshModels: vi.fn(),
+      onCheck: vi.fn(),
+      onClose: vi.fn(),
+    },
+  });
+  await user.click(screen.getByRole("button", { name: "Delete provider" }));
+  expect(onDelete).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Keep provider" }));
+  expect(screen.queryByRole("button", { name: "Confirm deletion" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Delete provider" }));
+  await user.click(screen.getByRole("button", { name: "Confirm deletion" }));
+  expect(onDelete).toHaveBeenCalledOnce();
 });
