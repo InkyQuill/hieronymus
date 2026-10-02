@@ -684,16 +684,39 @@ fn crystal_detail(connection: &Connection, crystal_id: i64) -> rusqlite::Result<
     } else {
         title
     };
-    Ok(detail(
-        label,
-        format!("{kind} / {status}"),
-        text,
-        vec![
-            ("Series", series_slug),
-            ("Language", language_pair(&source, &target)),
-            ("Quality", quality_label(confidence, strength)),
-        ],
-    ))
+    let sources = hieronymus::crystals::source_locations(connection, crystal_id)?;
+    let locations = sources
+        .iter()
+        .map(|source| {
+            [
+                source.source_ref.clone(),
+                if source.volume.is_empty() {
+                    String::new()
+                } else {
+                    format!("Volume {}", source.volume)
+                },
+                if source.chapter.is_empty() {
+                    String::new()
+                } else {
+                    format!("Chapter {}", source.chapter)
+                },
+            ]
+            .into_iter()
+            .filter(|label| !label.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ")
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut fields = vec![
+        ("Series", series_slug),
+        ("Language", language_pair(&source, &target)),
+        ("Quality", quality_label(confidence, strength)),
+    ];
+    if !locations.is_empty() {
+        fields.push(("Source locations", locations));
+    }
+    Ok(detail(label, format!("{kind} / {status}"), text, fields))
 }
 
 fn concept_detail(connection: &Connection, concept_id: i64) -> rusqlite::Result<Value> {

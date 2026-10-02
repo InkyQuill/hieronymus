@@ -370,8 +370,8 @@ pub fn copy_crystal_lineage_tx(
     source: i64,
     target: i64,
 ) -> Result<usize, DecisionErrorV1> {
-    let same_series: bool = tx.query_row("select exists(select 1 from crystals a join crystals b on b.series_slug=a.series_slug where a.id=?1 and b.id=?2 and a.series_slug != '')",params![source,target],|r|r.get(0))?;
-    if !same_series {
+    let same_context: bool = tx.query_row("select exists(select 1 from crystals a join crystals b on b.series_slug=a.series_slug and b.source_language=a.source_language and b.target_language=a.target_language where a.id=?1 and b.id=?2 and a.series_slug != '')",params![source,target],|r|r.get(0))?;
+    if !same_context {
         return Err(DecisionErrorV1::InvalidRequest);
     }
     tx.execute_batch("SAVEPOINT crystal_lineage")?;
@@ -379,7 +379,10 @@ pub fn copy_crystal_lineage_tx(
         tx,
         ClaimTarget::Crystal(source),
         ClaimTarget::Crystal(target),
-    );
+    ).and_then(|count| {
+        tx.execute("insert or ignore into crystal_sources(crystal_id, short_term_memory_id) select ?1, short_term_memory_id from crystal_sources where crystal_id=?2", params![target, source])?;
+        Ok(count)
+    });
     if result.is_err() {
         tx.execute_batch("ROLLBACK TO crystal_lineage")?;
     }

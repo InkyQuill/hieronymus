@@ -1376,6 +1376,7 @@ fn rehydrate_hits(
                     annotate(tag);
                 }
                 if redacted {
+                    crystal.sources.clear();
                     crystal.rule_intent.clear();
                     crystal.soft_origin.clear();
                     crystal.semantic_tags.clear();

@@ -410,3 +410,111 @@ impl WithTypeAndStatus for NewCrystal {
         self
     }
 }
+
+#[test]
+fn crystal_search_retains_optional_source_locations_across_volumes() {
+    use hieronymus::{
+        registry::Registry,
+        workspace::{ShortTermMemoryInput, WorkspaceStore},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    Registry::open(&config)
+        .unwrap()
+        .create_series("book", "Book", "ja", "en", None)
+        .unwrap();
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let crystals = CrystalStore::open(&config).unwrap();
+    for (volume, level, source_ref) in [("1", 4, "chapter-02.txt"), ("3", 9, "Vol 3, chapter 2")] {
+        let context = context("book").volume(volume).chapter("2");
+        let session = workspace.start_session(&context).unwrap();
+        let mut input = ShortTermMemoryInput::new("note", format!("Mira level {level}"));
+        input.source_ref = source_ref.into();
+        let memory = workspace.add_short_term_memory(session.id, &input).unwrap();
+        let mut new = NewCrystal::new("observation", format!("Mira level {level}"));
+        new.source_memory_ids = vec![memory.id];
+        let id = crystals.add_crystal(&context, "observation", &new).unwrap();
+        let crystal = crystals.get(id).unwrap();
+        assert_eq!(crystal.sources.len(), 1);
+        assert_eq!(crystal.sources[0].source_ref, source_ref);
+        assert_eq!(crystal.sources[0].volume, volume);
+        assert_eq!(crystal.sources[0].chapter, "2");
+    }
+    let hits = crystals.search(&context("book"), "Mira", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!(hits.iter().any(|hit| hit.sources[0].volume == "1"));
+    assert!(hits.iter().any(|hit| hit.sources[0].volume == "3"));
+    let id = crystals
+        .add_crystal(
+            &context("book"),
+            "observation",
+            &NewCrystal::new("observation", "No locator supplied"),
+        )
+        .unwrap();
+    assert!(crystals.get(id).unwrap().sources.is_empty());
+}
+
+#[test]
+fn copied_crystal_lineage_keeps_source_locations_without_cross_series_leaks() {
+    use hieronymus::{
+        db::open_migrated,
+        registry::Registry,
+        workspace::{ShortTermMemoryInput, WorkspaceStore},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    let registry = Registry::open(&config).unwrap();
+    for slug in ["book", "other"] {
+        registry
+            .create_series(slug, slug, "ja", "en", None)
+            .unwrap();
+    }
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let session = workspace.start_session(&context("book")).unwrap();
+    let mut input = ShortTermMemoryInput::new("note", "Mira reads maps.");
+    input.source_ref = "Volume 3, chapter 2".into();
+    let memory = workspace.add_short_term_memory(session.id, &input).unwrap();
+    let crystals = CrystalStore::open(&config).unwrap();
+    let mut new = NewCrystal::new("observation", "Mira reads maps.");
+    new.source_memory_ids = vec![memory.id];
+    let source = crystals
+        .add_crystal(&context("book"), "observation", &new)
+        .unwrap();
+    let target = crystals
+        .add_crystal(
+            &context("book"),
+            "observation",
+            &NewCrystal::new("observation", "Mira can read maps."),
+        )
+        .unwrap();
+    let foreign = crystals
+        .add_crystal(
+            &context("other"),
+            "observation",
+            &NewCrystal::new("observation", "Other world."),
+        )
+        .unwrap();
+    let mut other_language = context("book");
+    other_language.target_language = "ru".into();
+    let foreign_language = crystals
+        .add_crystal(
+            &other_language,
+            "observation",
+            &NewCrystal::new("observation", "Other language."),
+        )
+        .unwrap();
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    let tx = db.transaction().unwrap();
+    hieronymus::claim_capture::copy_crystal_lineage_tx(&tx, source, target).unwrap();
+    assert!(hieronymus::claim_capture::copy_crystal_lineage_tx(&tx, source, foreign).is_err());
+    assert!(
+        hieronymus::claim_capture::copy_crystal_lineage_tx(&tx, source, foreign_language).is_err()
+    );
+    tx.commit().unwrap();
+    assert!(crystals.get(foreign_language).unwrap().sources.is_empty());
+    assert_eq!(
+        crystals.get(source).unwrap().sources,
+        crystals.get(target).unwrap().sources
+    );
+    assert!(crystals.get(foreign).unwrap().sources.is_empty());
+}

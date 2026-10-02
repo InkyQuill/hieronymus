@@ -589,3 +589,37 @@ fn memory_counts_and_later_pages_are_not_capped_at_five_hundred() {
         );
     }
 }
+
+#[test]
+fn long_term_detail_displays_the_inherited_source_locator() {
+    use hieronymus::{
+        crystals::{CrystalStore, NewCrystal},
+        memory_models::TranslationContext,
+        registry::Registry,
+        workspace::{ShortTermMemoryInput, WorkspaceStore},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    Registry::open(&config)
+        .unwrap()
+        .create_series("book", "Book", "ja", "en", None)
+        .unwrap();
+    let context = TranslationContext::new("book", "ja", "en", "translation")
+        .volume("3")
+        .chapter("2");
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let session = workspace.start_session(&context).unwrap();
+    let mut input = ShortTermMemoryInput::new("note", "Mira is level 9.");
+    input.source_ref = "Vol 3, chapter 2".into();
+    let memory = workspace.add_short_term_memory(session.id, &input).unwrap();
+    let mut new = NewCrystal::new("observation", "Mira is level 9.");
+    new.source_memory_ids = vec![memory.id];
+    let id = CrystalStore::open(&config)
+        .unwrap()
+        .add_crystal(&context, "observation", &new)
+        .unwrap();
+    let result = snapshot(&config, "Crystals", &json!({"selected_id":id})).unwrap();
+    let fields = result["detail"]["fields"].to_string();
+    assert!(fields.contains("Source locations"));
+    assert!(fields.contains("Vol 3, chapter 2"));
+}

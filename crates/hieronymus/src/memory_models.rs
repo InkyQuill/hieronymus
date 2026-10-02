@@ -213,10 +213,20 @@ pub struct ShortTermMemoryRecord {
     pub soft_origin: String,
 }
 
-/// Long-term crystal: the advisory memory projection (ADR 0011). A rule
-/// crystal's deterministic authority lives in `term_rules`, not here.
+/// An optional source locator inherited from a cited working memory.
+/// Labels locate information; they are not verified file reads or timeline ordering.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MemorySource {
+    pub memory_id: i64,
+    pub source_ref: String,
+    pub volume: String,
+    pub chapter: String,
+}
+
+/// Long-term advisory memory; deterministic rule authority lives in `term_rules`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrystalRecord {
+    pub sources: Vec<MemorySource>,
     pub claim_annotation: crate::claim_reads::ClaimReadAnnotation,
     pub id: i64,
     pub crystal_type: String,

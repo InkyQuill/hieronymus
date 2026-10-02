@@ -1033,6 +1033,7 @@ fn hydrate_crystal(
             [crystal_id],
             |row| {
                 Ok(CrystalRecord {
+                    sources: Vec::new(),
                     claim_annotation: Default::default(),
                     id: row.get(0)?,
                     crystal_type: row.get(1)?,
@@ -1088,6 +1089,7 @@ fn hydrate_side_tables(
     )?;
     let rows = statement.query_map([record.id], |row| row.get::<_, i64>(0))?;
     record.concept_ids = rows.collect::<Result<Vec<_>, _>>()?;
+    record.sources = source_locations(connection, record.id)?;
     Ok(record)
 }
 
@@ -1102,4 +1104,30 @@ fn text_map(
     ))?;
     let rows = statement.query_map([crystal_id], |row| row.get::<_, String>(0))?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Read source locators without creating claims or treating a label as verified evidence.
+pub fn source_locations(
+    connection: &Connection,
+    crystal_id: i64,
+) -> rusqlite::Result<Vec<crate::memory_models::MemorySource>> {
+    let mut statement = connection.prepare(
+        "select distinct m.id, m.source_ref, s.volume, s.chapter
+         from crystal_sources cs join crystals c on c.id=cs.crystal_id
+         join short_term_memories m on m.id=cs.short_term_memory_id
+         join task_sessions s on s.id=m.session_id
+         where c.id=?1 and s.series_slug=c.series_slug
+         and s.source_language=c.source_language and s.target_language=c.target_language
+         and (m.source_ref != '' or s.volume != '' or s.chapter != '') order by m.id",
+    )?;
+    statement
+        .query_map([crystal_id], |row| {
+            Ok(crate::memory_models::MemorySource {
+                memory_id: row.get(0)?,
+                source_ref: row.get(1)?,
+                volume: row.get(2)?,
+                chapter: row.get(3)?,
+            })
+        })?
+        .collect()
 }

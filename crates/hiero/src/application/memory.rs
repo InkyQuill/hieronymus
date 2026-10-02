@@ -192,6 +192,7 @@ struct LegacyEntry {
     importance: i64,
     source_ref: String,
     long_term: bool,
+    sources: Vec<hieronymus::memory_models::MemorySource>,
     claim_annotation: hieronymus::claim_reads::ClaimReadAnnotation,
 }
 
@@ -257,6 +258,7 @@ fn finish_legacy_entries(mut entries: Vec<LegacyEntry>, limit: usize) -> Value {
                     "text": entry.text,
                     "importance": entry.importance,
                     "source_ref": entry.source_ref,
+                    "sources": entry.sources,
                 })
             })
             .collect(),
@@ -311,7 +313,13 @@ fn memory_search(application: &Application, arguments: &Value) -> Result<Value, 
                 },
                 crystal.text.clone(),
                 (crystal.strength * 5.0).round() as i64,
-                String::new(),
+                crystal
+                    .sources
+                    .iter()
+                    .map(|source| source.source_ref.as_str())
+                    .filter(|source| !source.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("; "),
                 true,
             ),
             RecallHit::ShortTerm { memory, .. } => (
@@ -331,6 +339,10 @@ fn memory_search(application: &Application, arguments: &Value) -> Result<Value, 
             importance,
             source_ref,
             long_term,
+            sources: match hit {
+                RecallHit::LongTerm { crystal, .. } => crystal.sources.clone(),
+                _ => Vec::new(),
+            },
             claim_annotation: hit.claim_annotation().clone(),
         });
     }
@@ -679,6 +691,7 @@ fn recall_result_row(hit: &RecallHit, rank: usize) -> Value {
             row["story_scopes"] = json!(crystal.story_scopes);
             row["semantic_tags"] = json!(crystal.semantic_tags);
             row["concept_ids"] = json!(crystal.concept_ids);
+            row["sources"] = json!(crystal.sources);
             row["source_credibility"] = json!(crystal.source_credibility);
             row["rule_intent"] = json!(crystal.rule_intent);
             row["is_rule"] = json!(crystal.crystal_type == "rule" && crystal.status == "active");
