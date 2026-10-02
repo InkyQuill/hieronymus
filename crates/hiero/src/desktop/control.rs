@@ -259,9 +259,15 @@ impl Retirement {
             match lock(&entry.path()) {
                 Ok(f) => {
                     if entry.path().with_extension("json").try_exists()? {
-                        return Err(error(
-                            "Stale helper control record; launch and cleanly quit the selected helper before retrying",
-                        ));
+                        let selected = expected_cli
+                            .and_then(|cli| super::launch::selected_helper(cli).ok())
+                            .map(|path| format!("{:?}", path))
+                            .unwrap_or_else(|| "the installed hiero-desktop executable".into());
+                        return Err(error(format!(
+                            "Stale helper control record; launch {selected} --resume --data-root {:?}, then cleanly quit it before retrying. Inspect {}. The record is retained because cleanup or Quit intent may be incomplete.",
+                            config.data_root(),
+                            config.data_root().join("desktop-helper.log").display()
+                        )));
                     }
                     sessions.push(f);
                 }
@@ -592,7 +598,16 @@ mod tests {
             b"malformed",
         )
         .unwrap();
-        assert!(Retirement::begin(&config).is_err());
+        let failure = Retirement::begin(&config).err().unwrap().to_string();
+        assert!(failure.contains("--resume --data-root"));
+        assert!(failure.contains("desktop-helper.log"));
+        assert!(failure.contains("Quit intent"));
+        assert!(!failure.contains("malformed"));
+        assert!(
+            root.path()
+                .join(".tray-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json")
+                .exists()
+        );
     }
     #[test]
     fn late_quit_flush_failure_keeps_record_and_refuses_replacement_after_exit() {
