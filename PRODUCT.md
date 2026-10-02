@@ -21,7 +21,7 @@ A local Rust server serves the Svelte web console and authenticated MCP connecti
 ## Capabilities and Constraints
 
 - Strict terminology stays deterministic; semantic recall cannot override approved termbase entries.
-- SQLite stores domain data; semantic retrieval uses LanceDB/ONNX and the pinned multilingual model.
+- SQLite stores domain data; semantic retrieval uses exact SQLite vector search, ONNX and the pinned multilingual model.
 - Provider profiles and dreaming settings support hosted and local models. Dreaming derives evidence-linked memory through seven passes.
 - The official GitHub repository and explicit local artifacts are the only release sources.
 - Configuration uses platform-standard user directories. Updates and removal must preserve data ownership and explicit keep-data choices.

@@ -1,0 +1,27 @@
+/* Thoth Palette, MIT, Pavel Obruchnikov. Source revision: 04bdc30dadf1ee11832fdefa190429caeeb07203.
+ * Values copied from thoth-palette.json; selectors adapted for the existing theme toggle. */
+:root,
+[data-theme="light"] {
+  --thoth-background: #f7f3ed;
+  --thoth-surface: #fffdf9;
+  --thoth-surfaceRaised: #f1eae0;
+  --thoth-foreground: #29231d;
+  --thoth-muted: #65594c;
+  --thoth-border: #e5d9ca;
+  --thoth-accent: #9b4c13;
+  --thoth-keyword: #78567d;
+  --thoth-string: #547241;
+  --thoth-number: #8b620d;
+}
+[data-theme="dark"] {
+  --thoth-background: #211d19;
+  --thoth-surface: #29231e;
+  --thoth-surfaceRaised: #352d25;
+  --thoth-foreground: #f7f0e7;
+  --thoth-muted: #c9b9a7;
+  --thoth-border: #4a3d31;
+  --thoth-accent: #e2a46f;
+  --thoth-keyword: #d2a3d2;
+  --thoth-string: #b8c990;
+  --thoth-number: #e8c97a;
+}

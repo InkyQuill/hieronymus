@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./theme/thoth.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -99,20 +100,32 @@
 
 :root,
 [data-theme="light"] {
-  --hiero-bg-root: #fdfaf2;
-  --hiero-bg-surface: #f5f0e5;
-  --hiero-bg-raised: #ede7d8;
-  --hiero-bg-overlay: rgb(253 250 242 / 90%);
-  --hiero-border-default: #e0d9c5;
-  --hiero-border-strong: #c4b998;
-  --hiero-border-accent: #b88820;
-  --hiero-text-primary: #2d2618;
-  --hiero-text-secondary: #6b6040;
-  --hiero-text-tertiary: #6b6040;
-  --hiero-accent: #b88820;
-  --hiero-accent-text: #7f5f10;
-  --hiero-accent-soft: #d4a84b;
-  --hiero-accent-bg: rgb(184 136 32 / 8%);
+  --hiero-bg-root: var(--thoth-background);
+  --hiero-bg-surface: var(--thoth-surface);
+  --hiero-bg-raised: var(--thoth-surfaceRaised);
+  --hiero-bg-overlay: color-mix(
+    in srgb,
+    var(--thoth-background) 90%,
+    transparent
+  );
+  --hiero-border-default: var(--thoth-border);
+  --hiero-border-strong: color-mix(
+    in srgb,
+    var(--thoth-border) 65%,
+    var(--thoth-muted)
+  );
+  --hiero-border-accent: var(--thoth-accent);
+  --hiero-text-primary: var(--thoth-foreground);
+  --hiero-text-secondary: var(--thoth-muted);
+  --hiero-text-tertiary: var(--thoth-muted);
+  --hiero-accent: var(--thoth-accent);
+  --hiero-accent-text: var(--thoth-accent);
+  --hiero-accent-soft: color-mix(
+    in srgb,
+    var(--thoth-accent) 75%,
+    var(--thoth-surface)
+  );
+  --hiero-accent-bg: color-mix(in srgb, var(--thoth-accent) 8%, transparent);
   --hiero-danger: #b83030;
   --hiero-danger-text: #b83030;
   --hiero-danger-bg: rgb(184 48 48 / 6%);
@@ -123,20 +136,32 @@
 }
 
 [data-theme="dark"] {
-  --hiero-bg-root: #0e0d0a;
-  --hiero-bg-surface: #141310;
-  --hiero-bg-raised: #1a1814;
-  --hiero-bg-overlay: rgb(14 13 10 / 85%);
-  --hiero-border-default: #252218;
-  --hiero-border-strong: #3a3628;
-  --hiero-border-accent: #d4a84b;
-  --hiero-text-primary: #e8dec4;
-  --hiero-text-secondary: #9e9678;
-  --hiero-text-tertiary: #9e9678;
-  --hiero-accent: #d4a84b;
-  --hiero-accent-text: #d4a84b;
-  --hiero-accent-soft: #f0d78c;
-  --hiero-accent-bg: rgb(212 168 75 / 10%);
+  --hiero-bg-root: var(--thoth-background);
+  --hiero-bg-surface: var(--thoth-surface);
+  --hiero-bg-raised: var(--thoth-surfaceRaised);
+  --hiero-bg-overlay: color-mix(
+    in srgb,
+    var(--thoth-background) 90%,
+    transparent
+  );
+  --hiero-border-default: var(--thoth-border);
+  --hiero-border-strong: color-mix(
+    in srgb,
+    var(--thoth-border) 65%,
+    var(--thoth-muted)
+  );
+  --hiero-border-accent: var(--thoth-accent);
+  --hiero-text-primary: var(--thoth-foreground);
+  --hiero-text-secondary: var(--thoth-muted);
+  --hiero-text-tertiary: var(--thoth-muted);
+  --hiero-accent: var(--thoth-accent);
+  --hiero-accent-text: var(--thoth-accent);
+  --hiero-accent-soft: color-mix(
+    in srgb,
+    var(--thoth-accent) 75%,
+    var(--thoth-surface)
+  );
+  --hiero-accent-bg: color-mix(in srgb, var(--thoth-accent) 8%, transparent);
   --hiero-danger: #ff8a8a;
   --hiero-danger-text: #ff8a8a;
   --hiero-danger-bg: rgb(200 64 64 / 10%);
