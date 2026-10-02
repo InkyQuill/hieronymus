@@ -583,22 +583,20 @@ impl LlmDreamProvider {
             finish(ProviderOutcome::InvalidResponse);
             DreamError::Provider("Invalid Cloud model metadata".into())
         })?;
+        let model_id = if self.model == "deepseek-v4-flash" {
+            "deepseek-flash"
+        } else {
+            self.model.as_str()
+        };
+        let matched_model = metadata["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|model| model["id"].as_str() == Some(model_id));
         let advertised = if wire == Wire::Anthropic {
             metadata["max_tokens"].as_u64()
         } else {
-            metadata["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|model| {
-                    model["id"].as_str()
-                        == Some(if self.model == "deepseek-v4-flash" {
-                            "deepseek-flash"
-                        } else {
-                            self.model.as_str()
-                        })
-                })
-                .and_then(|model| model["max_output_tokens"].as_u64())
+            matched_model.and_then(|model| model["max_output_tokens"].as_u64())
         };
         let limit = advertised
             .and_then(|limit| usize::try_from(limit).ok())
@@ -610,19 +608,7 @@ impl LlmDreamProvider {
         let input = if wire == Wire::Anthropic {
             metadata["max_input_tokens"].as_u64()
         } else {
-            metadata["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|model| {
-                    model["id"].as_str()
-                        == Some(if self.model == "deepseek-v4-flash" {
-                            "deepseek-flash"
-                        } else {
-                            &self.model
-                        })
-                })
-                .and_then(|model| model["context_window"].as_u64())
+            matched_model.and_then(|model| model["context_window"].as_u64())
         };
         if let Some(input) = input
             .and_then(|n| usize::try_from(n).ok())
