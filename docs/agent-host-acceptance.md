@@ -130,7 +130,7 @@ claiming completion. No storage-only correction test substitutes for them.
 
 ## September 10 practical scope
 
-[Practical release acceptance](practical-release-acceptance-2026-09-10.md) records the
+[Practical release acceptance](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/practical-release-acceptance-2026-09-10.md) records the
 owner-selected ordinary MCP checks, including installed Pi save/RAG/Dream and actual
 Claude/Codex marketplace skill calls. Full native correction/event-order qualification
 remains [deferred](deferred/2026-09-10-native-host-qualification.md). Local marketplace

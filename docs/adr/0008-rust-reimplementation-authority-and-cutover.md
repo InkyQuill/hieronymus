@@ -3,7 +3,7 @@
 ## Status
 
 Accepted on 2026-08-31. This ADR supersedes the Python-authority paragraph in
-[ADR 0005 §Decision](0005-product-vision.md#decision), specifically the decision
+[ADR 0005 §Decision](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/adr/0005-product-vision.md#decision), specifically the decision
 that Python remains authoritative for backend behavior. ADR 0005's product
 model and non-language-specific boundaries remain current.
 

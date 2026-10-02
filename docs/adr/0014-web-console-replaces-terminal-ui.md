@@ -11,7 +11,7 @@ retired implementations.
 
 Hieronymus is multi-type agent memory for writing projects. The web interface lets an author inspect agent memory, add pointers, and flag stale or wrong memories; it is not a comprehensive human-managed project KB. Primary onboarding adds the MCP connection and installs Hieronymus skills in the chosen agent host. Authors continue writing in Codex, Cowork, or pi. Browser authentication is optional as amended in ADR 0012.
 
-See [the release product direction](../maintenance/v0.9.0/product-direction.md).
+See [the release product direction](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/maintenance/v0.9.0/product-direction.md).
 
 ## Context
 

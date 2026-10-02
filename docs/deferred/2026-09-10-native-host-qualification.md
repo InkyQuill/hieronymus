@@ -57,6 +57,6 @@ under `task-7-native-acceptance/claude-extension-1`, Codex reports under
 stay paused under zCode and cannot qualify Pi. Earlier provider-schema, stale-turn, binding,
 and qualification failures remain recorded.
 
-See the [implementation plan](../superpowers/plans/2026-09-06-autonomous-authority-implementation.md),
+See the [implementation plan](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/superpowers/plans/2026-09-06-autonomous-authority-implementation.md),
 [design specification](../superpowers/specs/2026-09-06-autonomous-authority-and-corrections.md),
 and [host acceptance](../agent-host-acceptance.md).

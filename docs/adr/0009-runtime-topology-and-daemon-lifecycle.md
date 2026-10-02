@@ -8,7 +8,7 @@ Accepted on 2026-08-31.
 
 The server owns the running application and its web interface. `hiero` remains a convenience CLI. The tray is a companion of the running server and follows its lifetime, including when the server is started from the CLI; it should be visible whenever the desktop environment supports a tray. Earlier tray-first startup wording does not make the helper the application owner.
 
-See [the release product direction](../maintenance/v0.9.0/product-direction.md).
+See [the release product direction](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/maintenance/v0.9.0/product-direction.md).
 
 ## Context
 
