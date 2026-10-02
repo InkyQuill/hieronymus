@@ -59,3 +59,16 @@ test("a candidate finishing after two hours is promoted without redispatch", asy
  expect(await buildAndPromote('InkyQuill/hieronymus', 'v0.10.0', sha, invoke, async () => {})).toBe(456);
  expect(builds).toBe(1);
 });
+
+test("release synchronization updates all installer links without touching unrelated versions", async () => {
+ const {synchronizeReadme}=await import('./automatic-release');
+ const original=await Bun.file(new URL('../README.md',import.meta.url)).text();
+ const next=synchronizeReadme('0.42.3',original);
+ expect(next).toContain('/v0.42.3/Hieronymus-0.42.3-Setup.exe');
+ expect(next).toContain('/v0.42.3/Hieronymus-0.42.3.pkg');
+ expect(next).toContain('/v0.42.3/install-hieronymus.sh');
+ expect(next.split('## Develop and verify')[1]).toBe(original.split('## Develop and verify')[1]);
+ expect(synchronizeReadme('0.42.3',next)).toBe(next);
+ expect(()=>synchronizeReadme('../bad',original)).toThrow();
+ expect(()=>synchronizeReadme('0.42.3',original.replace('install-hieronymus.sh','missing.sh'))).toThrow();
+});

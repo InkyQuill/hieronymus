@@ -55,7 +55,7 @@ jobs:
           git fetch origin "$head"
           git switch -c "$head" "origin/$head"
           bun scripts/automatic-release.ts sync
-          git add Cargo.toml Cargo.lock
+          git add Cargo.toml Cargo.lock README.md
           if ! git diff --cached --quiet; then
             git config user.name 'Pavel Obruchnikov'
             git config user.email 'me@inkyquill.net'
