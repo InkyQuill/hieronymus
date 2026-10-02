@@ -549,3 +549,82 @@ fn jev_question_batches_respect_shared_pair_budget() {
     assert_eq!(calls[0].1["questions"].as_object().unwrap().len(), 8);
     assert_eq!(calls[1].1["questions"].as_object().unwrap().len(), 2);
 }
+
+#[test]
+fn invalid_optional_configuration_preserves_comparisons_and_recovers_next_run() {
+    let (_root, config) = fixture("jev", None, true);
+    std::fs::write(config.config_root().join("comparison.conf"), "invalid = [").unwrap();
+    let transport = wire(vec![Ok(jev("equivalent"))]);
+    let mut comparator = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone());
+    let (a, b) = pair();
+    let result = comparator.compare(&a, &b).unwrap();
+    assert_eq!(result.decision, Decision::InsufficientContext);
+    assert!(result.reason.contains("invalid comparison.conf"));
+    assert!(transport.calls.lock().unwrap().is_empty());
+    comparison_config::save(
+        &config,
+        &ComparisonConfig {
+            primary: Some(assignment("jev")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    comparator.begin_run();
+    assert_eq!(
+        comparator.compare(&a, &b).unwrap().decision,
+        Decision::Equivalent
+    );
+}
+
+#[test]
+fn japanese_negation_changes_are_vetoed_without_provider_calls() {
+    let (_root, config) = fixture("jev", None, true);
+    let transport = wire(vec![]);
+    let mut comparator = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone());
+    for (left, right) in [
+        ("彼は行く。", "彼は行かない。"),
+        ("彼は行きます。", "彼は行きません。"),
+        ("彼は行かない。", "彼は行かない。彼女も行かない。"),
+    ] {
+        let (mut a, mut b) = pair();
+        a.text = left.into();
+        b.text = right.into();
+        assert_eq!(
+            comparator.compare(&a, &b).unwrap().decision,
+            Decision::Distinct
+        );
+    }
+    assert!(transport.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn routing_identity_is_stable_within_run_and_refreshed_at_next_run() {
+    let (_root, config) = fixture("jev", None, true);
+    let transport = wire(vec![Ok(jev("equivalent")), Ok(jev("distinct"))]);
+    let mut comparator = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone());
+    let (a, b) = pair();
+    assert_eq!(
+        comparator.compare(&a, &b).unwrap().decision,
+        Decision::Equivalent
+    );
+    let mut relevance = hieronymus::relevance_config::load(&config).unwrap();
+    relevance.key = hieronymus::secret::Secret::new("rotated-test-key".into());
+    hieronymus::relevance_config::save(&config, &relevance).unwrap();
+    assert_eq!(
+        comparator.compare(&a, &b).unwrap().decision,
+        Decision::Equivalent
+    );
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    comparator.begin_run();
+    assert_eq!(
+        comparator.compare(&a, &b).unwrap().decision,
+        Decision::Distinct
+    );
+    assert_eq!(transport.calls.lock().unwrap().len(), 2);
+}

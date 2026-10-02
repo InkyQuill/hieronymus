@@ -1478,3 +1478,121 @@ fn parked_copy_marker_rolls_back_with_phase_and_expired_cooldown_reopens() {
         before
     );
 }
+
+#[test]
+fn broken_optional_comparison_settings_do_not_stop_deterministic_dream() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session) = active_session(&root, "demo");
+    let source = add_crystal(&config, &context("demo"), "tea stays warm");
+    recall(&config, session, "demo", "tea stays warm");
+    let copy = working_copy_id(&config, source);
+    std::fs::write(config.config_root().join("comparison.conf"), "invalid = [").unwrap();
+    dream(&config);
+    assert_eq!(
+        scalar_params(
+            &config,
+            "select archived_at is not null from short_term_memories where id=?",
+            &[&copy]
+        ),
+        json!(1)
+    );
+}
+
+#[test]
+fn parked_markers_invalidate_transactionally_for_source_claims_and_applicability() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session) = active_session(&root, "demo");
+    let source = add_crystal(&config, &context("demo"), "tea stays warm");
+    recall(&config, session, "demo", "tea stays warm");
+    let copy = working_copy_id(&config, source);
+    set_working_copy_text(&config, copy, "tea turns cold");
+    dream(&config);
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    db.execute(
+        "update crystals set strength=strength+0.01 where id=?",
+        [source],
+    )
+    .unwrap();
+    assert_eq!(
+        db.query_row("select count(*) from reconsolidation_checked", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1,
+        "bookkeeping must not reopen parked work"
+    );
+    let claim: i64 = db
+        .query_row(
+            "select claim_id from claim_bindings where crystal_id=? limit 1",
+            [source],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let app: i64 = db
+        .query_row(
+            "select applicability_id from memory_claims where id=?",
+            [claim],
+            |r| r.get(0),
+        )
+        .unwrap();
+    for sql in [
+        format!("update crystals set text='tea becomes cold' where id={source}"),
+        format!("update memory_claims set revision=revision+1 where id={claim}"),
+        format!("update applicabilities set scope_predicates_json='[\"test\"]' where id={app}"),
+        format!(
+            "insert into evidence_records(series_id,kind,source_identity,source_hash,span_start,span_end,content,binding_json,created_at) select series_id,kind,source_identity,'new-test-hash',span_start,span_end,content,binding_json,created_at from evidence_records where source_identity='claim:{claim}' limit 1"
+        ),
+        format!("delete from claim_bindings where claim_id={claim} and crystal_id={source}"),
+        format!("insert into knowledge_gates(applicability_id,viewpoint_kind) values({app},'all')"),
+    ] {
+        db.execute_batch("begin").unwrap();
+        db.execute_batch(&sql).unwrap();
+        assert_eq!(
+            db.query_row("select count(*) from reconsolidation_checked", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "{sql}"
+        );
+        db.execute_batch("rollback").unwrap();
+        assert_eq!(
+            db.query_row("select count(*) from reconsolidation_checked", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
+fn legacy_parked_markers_upgrade_without_discarding_working_copies() {
+    let root = tempfile::tempdir().unwrap();
+    let (config, session) = active_session(&root, "demo");
+    let source = add_crystal(&config, &context("demo"), "tea stays warm");
+    recall(&config, session, "demo", "tea stays warm");
+    let copy = working_copy_id(&config, source);
+    set_working_copy_text(&config, copy, "tea turns cold");
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    db.execute_batch("create table reconsolidation_checked(memory_id integer primary key, fingerprint text not null, dream_run_id integer not null, retry_after text);").unwrap();
+    db.execute(
+        "insert into reconsolidation_checked values(?,'old',1,null)",
+        [copy],
+    )
+    .unwrap();
+    dream(&config);
+    assert_eq!(
+        scalar_params(
+            &config,
+            "select archived_at is null from short_term_memories where id=?",
+            &[&copy]
+        ),
+        json!(1)
+    );
+    let routing: String = db
+        .query_row(
+            "select routing from reconsolidation_checked where memory_id=?",
+            [copy],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(!routing.is_empty());
+}

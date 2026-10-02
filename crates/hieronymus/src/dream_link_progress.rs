@@ -153,26 +153,29 @@ pub struct LinkProgress {
 
 impl LinkProgress {
     pub fn open(config: &HieronymusConfig) -> Result<Self, DreamError> {
+        Self::with_comparator(
+            config,
+            std::rc::Rc::new(std::cell::RefCell::new(
+                crate::memory_comparison::Comparator::open(config)?,
+            )),
+        )
+    }
+
+    pub(crate) fn with_comparator(
+        config: &HieronymusConfig,
+        comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
+    ) -> Result<Self, DreamError> {
         open_migrated(&config.database_path())?;
         let dream_config = load_dream_config(config)?;
         Ok(Self {
             config: config.clone(),
-            comparator: std::rc::Rc::new(std::cell::RefCell::new(
-                crate::memory_comparison::Comparator::open(config)?,
-            )),
+            comparator,
             dream_config,
             run: None,
             combination_budget: 0,
             terminalized_in_call: 0,
             summary: LinkProgressSummary::default(),
         })
-    }
-
-    pub(crate) fn set_comparator(
-        &mut self,
-        comparator: std::rc::Rc<std::cell::RefCell<crate::memory_comparison::Comparator>>,
-    ) {
-        self.comparator = comparator;
     }
 
     /// Attach the audit context (dream run and link phase run) whose records

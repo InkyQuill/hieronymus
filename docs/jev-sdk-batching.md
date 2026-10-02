@@ -67,12 +67,12 @@ separate opt-in synthetic provider test; ordinary unit tests do not qualify it.
 
 ## Live synthetic check
 
-On 2026-10-02, the SDK adapter sent the six existing synthetic calibration
+In the **batched run** on 2026-10-02, the SDK adapter sent the six existing synthetic calibration
 pairs in one batch. All six returned validated assessments: purchased/bought was
 equivalent, locked/unlocked contradictory, and closed/shut, before/after,
 safe/poisonous and borrowed/lent were insufficient-context. No negative pair was
 accepted as equivalent. This is more conservative than the earlier single-pair
-run; batching is qualified for bounded transport and safe abstention, not equal
+run documented in [memory dreaming](memory-dreaming.md); batching is qualified for bounded transport and safe abstention, not equal
 semantic recall or general accuracy. The test used a disposable database and
 only synthetic text.
 

@@ -393,10 +393,17 @@ still requires transaction-time snapshot validation before mutation.
 Unresolved working copies retain their source records, but an unchanged checked
 snapshot no longer blocks later copies or repeatedly schedules Dream. Durable
 markers include copy/source content, claim/evidence revisions and routing identity.
-Changes reopen the work; transient provider outages reopen after five minutes.
+Transactional invalidation reopens affected copies when source, claim,
+evidence or applicability inputs change; strength/access bookkeeping does not.
+SQL excludes parked copies before full snapshot hydration. Routing settings and
+credentials are held consistently for one run and refreshed for the next;
+transient provider outages reopen after five minutes.
 Markers commit with the phase audit. Budget exhaustion never parks unassessed work.
 A completed drain therefore means no eligible work remains, not that unresolved
-copies were accepted or archived.
+copies were accepted or archived. Invalid or unreadable optional `comparison.conf`
+disables model comparison with an explicit configuration diagnostic; independent
+Dream phases and deterministic exact-content checks remain available. Fixing the
+configuration takes effect on the next run.
 
 Readiness means the assignment and credentials exist, not that the selected
 model has been calibrated. Controlled provider and multilingual embedding tests
@@ -405,10 +412,15 @@ verify routing, budgets and safety, not native model accuracy. The optional
 disposable database and requires an explicit
 `HIERO_TEST_COMPARISON_CREDENTIAL_ROOT` containing a private `relevance.conf`.
 
+The current SDK **batched run** on 2026-10-02 sent all six synthetic pairs in
+one request: purchased/bought was equivalent, locked/unlocked contradictory,
+and closed/shut, before/after, safe/poisonous and borrowed/lent were
+insufficient-context. See [the batching report](jev-sdk-batching.md#live-synthetic-check).
 
-On 2026-10-02 the optional live Jev fixture accepted both synonym pairs
-(closed/shut, purchased/bought), rejected before/after and safe/poisonous as
-contradictory, and abstained on locked/unlocked and borrowed/lent. All six calls
-returned validated assessments with no unsafe equivalence. This is a small
-synthetic calibration, not a general accuracy guarantee or real Ollama/cloud
+An earlier **single-pair run** on the same date accepted both synonym pairs
+(closed/shut, purchased/bought), classified before/after and safe/poisonous as
+contradictory, and abstained on locked/unlocked and borrowed/lent. These are
+separate observations, not interchangeable calibration results. Neither run
+accepted a negative pair as equivalent. The six synthetic examples do not
+establish general accuracy, equal single/batch quality, or real Ollama/cloud
 qualification. The default remains unassigned.

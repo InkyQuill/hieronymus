@@ -2446,8 +2446,8 @@ impl DreamService {
         // The link budget (ruling: the existing max_relation_records_per_pass
         // config field) bounds the pairs terminalized in this cycle.
         let pair_budget = self.dream_config.max_relation_records_per_pass.max(0) as usize;
-        let mut progress = LinkProgress::open(&self.config)?;
-        progress.set_comparator(std::rc::Rc::clone(&self.comparator));
+        let mut progress =
+            LinkProgress::with_comparator(&self.config, std::rc::Rc::clone(&self.comparator))?;
         progress.set_run_context(run_id, Some(phase_run_id));
         let summary = match progress.process(cycle_id, pair_budget) {
             Ok(_) => progress.take_summary(),

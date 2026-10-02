@@ -134,23 +134,39 @@ pub struct Comparator {
     remaining: usize,
     deadline: Instant,
     transport: Arc<dyn ProviderTransport>,
+    routing: String,
+    configuration_error: Option<&'static str>,
+    catalog: Option<crate::provider_config::ProviderCatalog>,
+    relevance: Option<crate::relevance_config::RelevanceConfig>,
 }
 impl Comparator {
     pub fn open(config: &HieronymusConfig) -> Result<Self, DreamError> {
-        let settings =
-            crate::comparison_config::load(config).map_err(|e| DreamError::Provider(e.into()))?;
         let db = open_migrated(&config.database_path())?;
         db.execute_batch("create table if not exists memory_comparison_cache(cache_key text primary key,result_json text not null,created_at text not null default (datetime('now')))")?;
-        Ok(Self {
+        let mut comparator = Self {
             config: config.clone(),
-            remaining: settings.max_pairs_per_run,
-            settings,
+            remaining: 0,
+            settings: ComparisonConfig::default(),
             deadline: Instant::now() + Duration::from_secs(60),
             transport: Arc::new(BlockingHttpTransport::new(65_536)),
-        })
+            routing: String::new(),
+            configuration_error: None,
+            catalog: None,
+            relevance: None,
+        };
+        comparator.begin_run();
+        Ok(comparator)
     }
     /// One user/controller drain shares this budget across all its batches.
     pub fn begin_run(&mut self) {
+        (self.settings, self.configuration_error) =
+            match crate::comparison_config::load(&self.config) {
+                Ok(settings) => (settings, None),
+                Err(reason) => (ComparisonConfig::default(), Some(reason)),
+            };
+        self.catalog = crate::provider_config::load_provider_catalog(&self.config).ok();
+        self.relevance = crate::relevance_config::load(&self.config).ok();
+        self.routing = self.compute_routing_fingerprint();
         self.remaining = self.settings.max_pairs_per_run;
         self.deadline = Instant::now() + Duration::from_secs(60);
     }
@@ -160,8 +176,10 @@ impl Comparator {
     }
     /// Opaque identity for assignments and credentials; safe to persist.
     pub(crate) fn routing_fingerprint(&self) -> String {
-        let catalog =
-            crate::provider_config::load_provider_catalog(&self.config).unwrap_or_default();
+        self.routing.clone()
+    }
+
+    fn compute_routing_fingerprint(&self) -> String {
         let credentials = self
             .settings
             .primary
@@ -169,13 +187,14 @@ impl Comparator {
             .chain(self.settings.fallback.iter())
             .map(|a| {
                 let key = if a.provider == "jev" {
-                    crate::relevance_config::load(&self.config)
+                    self.relevance
+                        .as_ref()
                         .map(|s| s.key.expose_secret().clone())
                         .unwrap_or_default()
                 } else {
-                    catalog
-                        .providers
-                        .get(&a.provider)
+                    self.catalog
+                        .as_ref()
+                        .and_then(|catalog| catalog.providers.get(&a.provider))
                         .map(|p| {
                             format!(
                                 "{}:{}:{:?}",
@@ -191,7 +210,7 @@ impl Comparator {
             .collect::<Vec<_>>();
         format!(
             "{:x}",
-            Sha256::digest(json!({"settings":self.settings,"credentials":credentials}).to_string())
+            Sha256::digest(json!({"settings":self.settings,"credentials":credentials,"configuration_error":self.configuration_error}).to_string())
         )
     }
 
@@ -223,13 +242,18 @@ impl Comparator {
                 fallback_reason: None,
             }));
         }
+        if let Some(reason) = self.configuration_error {
+            return Ok(Ok(Assessment::unresolved(&format!(
+                "comparison configuration unavailable: {reason}"
+            ))));
+        }
         let pair = json!({"left":left,"right":right});
         if pair.to_string().len() > 16_384 {
             return Ok(Ok(Assessment::unresolved(
                 "pair exceeds bounded comparison context",
             )));
         }
-        let fingerprint = json!({"pair":pair,"routing_identity":self.routing_fingerprint()});
+        let fingerprint = json!({"pair":pair,"routing_identity":self.routing});
         let key = format!("{:x}", Sha256::digest(fingerprint.to_string()));
         let db = open_migrated(&self.config.database_path())?;
         if let Some(value) = db
@@ -351,8 +375,10 @@ impl Comparator {
             if timeout.is_zero() {
                 return Err("comparison deadline exhausted");
             }
-            let settings = crate::relevance_config::load(&self.config)
-                .map_err(|_| "Jev credentials unavailable")?;
+            let settings = self
+                .relevance
+                .as_ref()
+                .ok_or("Jev credentials unavailable")?;
             if settings.key.is_blank() {
                 return Err("Jev credentials unavailable");
             }
@@ -397,8 +423,10 @@ impl Comparator {
         }
         let criteria = comparison_criteria();
         let value = {
-            let catalog = crate::provider_config::load_provider_catalog(&self.config)
-                .map_err(|_| "comparison catalog unavailable")?;
+            let catalog = self
+                .catalog
+                .as_ref()
+                .ok_or("comparison catalog unavailable")?;
             let profile = catalog
                 .providers
                 .get(&a.provider)
@@ -477,26 +505,26 @@ fn validate_jev_answer(answer: &Value) -> Result<Decision, &'static str> {
 
 /// A conservative veto, never evidence authorizing equivalence.
 fn semantic_anchors(text: &str) -> std::collections::BTreeSet<String> {
-    text.split(|c: char| !c.is_alphanumeric())
+    let mut anchors: std::collections::BTreeSet<String> = text
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .filter(|w| {
             w.chars().any(char::is_numeric)
                 || w.chars().next().is_some_and(char::is_uppercase)
-                || [
-                    "not",
-                    "no",
-                    "never",
-                    "without",
-                    "не",
-                    "нет",
-                    "никогда",
-                    "ない",
-                    "ません",
-                ]
-                .contains(&w.to_lowercase().as_str())
+                || ["not", "no", "never", "without", "не", "нет", "никогда"]
+                    .contains(&w.to_lowercase().as_str())
         })
         .map(str::to_owned)
-        .collect()
+        .collect();
+    // Japanese sentences need not contain word separators. These markers are
+    // conservative vetoes, not a morphological parser or proof of negation.
+    for marker in ["ない", "ません"] {
+        let count = text.matches(marker).count();
+        if count > 0 {
+            anchors.insert(format!("japanese-marker:{marker}:{count}"));
+        }
+    }
+    anchors
 }
 
 /// Metadata discovery and inference consume the same request deadline.
