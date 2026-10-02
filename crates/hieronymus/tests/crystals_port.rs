@@ -494,11 +494,24 @@ fn copied_crystal_lineage_keeps_source_locations_without_cross_series_leaks() {
             &NewCrystal::new("observation", "Other world."),
         )
         .unwrap();
+    let mut other_language = context("book");
+    other_language.target_language = "ru".into();
+    let foreign_language = crystals
+        .add_crystal(
+            &other_language,
+            "observation",
+            &NewCrystal::new("observation", "Other language."),
+        )
+        .unwrap();
     let mut db = open_migrated(&config.database_path()).unwrap();
     let tx = db.transaction().unwrap();
     hieronymus::claim_capture::copy_crystal_lineage_tx(&tx, source, target).unwrap();
     assert!(hieronymus::claim_capture::copy_crystal_lineage_tx(&tx, source, foreign).is_err());
+    assert!(
+        hieronymus::claim_capture::copy_crystal_lineage_tx(&tx, source, foreign_language).is_err()
+    );
     tx.commit().unwrap();
+    assert!(crystals.get(foreign_language).unwrap().sources.is_empty());
     assert_eq!(
         crystals.get(source).unwrap().sources,
         crystals.get(target).unwrap().sources
