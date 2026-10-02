@@ -418,9 +418,30 @@ pub fn render(config: &HieronymusConfig) -> Result<Vec<(PathBuf, String)>, Strin
 /// rewritten automatically).
 pub fn generate(config: &HieronymusConfig) -> Result<Vec<PathBuf>, String> {
     let rendered = render(config)?;
+    // Reject redirected installation-owned subdirectories before any replacement.
+    // The configuration root itself may be an explicitly chosen platform alias.
     let retired_pi_extension = config
         .agent_plugins_root()
         .join("pi/extensions/hieronymus.ts");
+    for path in rendered
+        .iter()
+        .map(|(path, _)| path)
+        .chain(std::iter::once(&retired_pi_extension))
+    {
+        for ancestor in path.ancestors().take_while(|p| *p != config.config_root()) {
+            match std::fs::symlink_metadata(ancestor) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(format!(
+                        "refusing symlinked plugin path: {}",
+                        ancestor.display()
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
     if retired_pi_extension.exists() {
         std::fs::remove_file(&retired_pi_extension).map_err(|error| {
             format!(

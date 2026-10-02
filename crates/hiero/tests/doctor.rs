@@ -290,12 +290,33 @@ fn reachable_daemon_is_healthy() {
     // listener on the recorded port is no longer evidence of anything.
     let root = tempfile::tempdir().unwrap();
     let config = HieronymusConfig::new(root.path());
+    hiero::agent_plugins::generate(&config).unwrap();
+    let hook = config
+        .agent_plugins_root()
+        .join("codex/hooks/hooks.codex.json");
+    std::fs::write(&hook, "{}").unwrap();
+    assert!(
+        run_doctor(&config)
+            .findings
+            .iter()
+            .any(|finding| finding.code == "agent-bundles" && finding.level == Level::Warning)
+    );
     let daemon = hiero::daemon::Daemon::start(&hiero::daemon::DaemonOptions {
         data_root: Some(root.path().to_path_buf()),
         port: 0,
         ..Default::default()
     })
     .unwrap();
+    assert_eq!(
+        hiero::agent_sync::bundle_status(
+            &config,
+            "codex",
+            &config.agent_plugins_root().join("codex")
+        )
+        .unwrap()
+        .state,
+        "current"
+    );
     let report = run_doctor(&config);
     assert!(
         report

@@ -206,3 +206,31 @@ into a book folder, or claims a pending consolidation completed.
 
 
 Prompt capture now filters unrelated/uncertain messages before retention. Only a relevant prompt in a recognized CWS project requests initial binding; existing bindings still require relevance. See [the exact version:1 binding contract, help and unbind command](agent-hook-context.md).
+
+
+### Keeping installed bundles current
+
+The daemon compares generated assets with its embedded templates at startup and
+atomically replaces individual stale files, including same-version content drift.
+This lazy refresh touches only the installation-owned bundle, never host settings.
+A refresh failure is a diagnostic warning; the application can still start.
+
+Run `hiero plugins status --json` for executable and authenticated daemon versions,
+generated bundle content status, and registered Codex disk-cache inventory.
+`hiero doctor` also reports stale bundles. Cache inventory is not proof of which
+catalog an already running conversation loaded.
+
+Run `hiero plugins sync --json` after upgrading to regenerate assets and refresh
+an already installed, enabled Codex plugin through `codex plugin add`, followed
+by a native list check. A missing CLI, disabled plugin, unsupported response, or
+foreign marketplace source produces an actionable warning without enrolling a
+new host or replacing its registration. Native command diagnostics are retained
+in the private `logs/agent-sync.log` with credential redaction.
+`--dry-run` lists generated paths without starting a host command.
+
+Claude/zCode users must use their native plugin update/reload interface for the
+local Claude bundle; Pi users reload the installed local package. These host
+caches are not automatically refreshed or reported as verified by this command.
+Reopen existing conversations after refresh. Unchanged hook commands retain their
+hashes; changed commands require the host's normal trust review. Sync never
+writes trusted hashes or bypasses hook trust.

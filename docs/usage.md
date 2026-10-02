@@ -565,3 +565,10 @@ pass instruction, project context and source memories. JSON schemas, source-ID
 requirements and runtime evidence/authority validation remain enforced by the
 application. Editing prompts does not grant dreaming authority to approve terms
 or explicit user rules.
+
+
+Agent bundles refresh lazily on daemon startup. After upgrading, use
+`hiero plugins sync --json` to also refresh an existing enabled Codex installation,
+then reopen conversations. `hiero plugins status --json` and `hiero doctor` expose
+bundle drift. Other hosts use their native plugin reload/update flow; see
+[agent workflows](agent-workflows.md#keeping-installed-bundles-current).
