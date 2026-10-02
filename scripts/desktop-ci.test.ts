@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { checkSource } from "./check-rust-release";
 import {
+  releaseChangelog,
   numericRun,
   selectEvidenceRun,
   validateRun,
@@ -436,8 +437,41 @@ test("failed qualification can supply retained candidates but not running or for
 
 test("evidence selection ignores stale configured runs and preserves exact-source identity", () => {
   const source = "b".repeat(40);
-  const run = (id: number, head_sha: string) => ({ ...good, id, path: ".github/workflows/desktop-evidence.yml", head_sha });
-  expect(selectEvidenceRun([run(1, "a".repeat(40)), run(2, source)], "owner/repo", source, "1")).toBe("2");
-  expect(selectEvidenceRun([run(1, "a".repeat(40))], "owner/repo", source, "1")).toBeNull();
-  expect(selectEvidenceRun([{ ...run(3, source), conclusion: "failure" }], "owner/repo", source)).toBeNull();
+  const run = (id: number, head_sha: string) => ({
+    ...good,
+    id,
+    path: ".github/workflows/desktop-evidence.yml",
+    head_sha,
+  });
+  expect(
+    selectEvidenceRun(
+      [run(1, "a".repeat(40)), run(2, source)],
+      "owner/repo",
+      source,
+      "1",
+    ),
+  ).toBe("2");
+  expect(
+    selectEvidenceRun([run(1, "a".repeat(40))], "owner/repo", source, "1"),
+  ).toBeNull();
+  expect(
+    selectEvidenceRun(
+      [{ ...run(3, source), conclusion: "failure" }],
+      "owner/repo",
+      source,
+    ),
+  ).toBeNull();
+});
+
+test("release notes select exactly the requested changelog version", () => {
+  const changelog =
+    "# CHANGELOG\n## [0.10.10](link) (date)\nNewer\n\n## [0.10.1](link) (date)\n### Fixes\n* Current fix\n\n## [0.10.0](link) (date)\nOlder\n";
+  expect(releaseChangelog(changelog, "0.10.1")).toBe(
+    "## [0.10.1](link) (date)\n### Fixes\n* Current fix\n",
+  );
+  expect(releaseChangelog(changelog, "0.10.0")).toContain("Older");
+  expect(() => releaseChangelog(changelog, "0.9.3")).toThrow("expected one");
+  expect(() =>
+    releaseChangelog(changelog + "## [0.10.1]\nDuplicate", "0.10.1"),
+  ).toThrow("expected one");
 });

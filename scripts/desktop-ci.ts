@@ -19,6 +19,18 @@ import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
 import { localFile, verifyFile } from "./check-desktop-evidence";
 
+/** Select the exact release-please section; never substitute another version. */
+export function releaseChangelog(changelog: string, version: string): string {
+  const sections = changelog.split(/(?=^## )/m);
+  const matches = sections.filter((section) => {
+    const heading = section.split("\n", 1)[0];
+    return heading.startsWith(`## [${version}]`) || heading === `## ${version}`;
+  });
+  if (matches.length !== 1)
+    throw new Error(`expected one changelog section for ${version}`);
+  return matches[0].trim() + "\n";
+}
+
 /** Do not advertise downloads omitted from a partial release. */
 export function availableInstallerNotes(
   template: string,
@@ -117,13 +129,24 @@ export function validateRun(
   return run.head_sha as string;
 }
 /** Select only evidence produced for the retained binary source, never a stale variable. */
-export function selectEvidenceRun(runs: any[], repository: string, commit: string, preferred = ""): string | null {
-  if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("candidate commit required");
-  const matching = runs.filter(run => {
-    try { validateRun(run, repository, "desktop-evidence", commit); return true; }
-    catch { return false; }
+export function selectEvidenceRun(
+  runs: any[],
+  repository: string,
+  commit: string,
+  preferred = "",
+): string | null {
+  if (!/^[a-f0-9]{40}$/.test(commit))
+    throw new Error("candidate commit required");
+  const matching = runs.filter((run) => {
+    try {
+      validateRun(run, repository, "desktop-evidence", commit);
+      return true;
+    } catch {
+      return false;
+    }
   });
-  const selected = matching.find(run => String(run.id) === preferred) ?? matching[0];
+  const selected =
+    matching.find((run) => String(run.id) === preferred) ?? matching[0];
   return selected ? numericRun(String(selected.id)) : null;
 }
 export function githubFailureDetail(
@@ -336,13 +359,30 @@ if (import.meta.main) {
   const [mode, ...args] = Bun.argv.slice(2);
   if (mode === "select-evidence") {
     const [commit, preferred = ""] = args;
-    if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("candidate commit required");
+    if (!/^[a-f0-9]{40}$/.test(commit))
+      throw new Error("candidate commit required");
     const repo = process.env.GITHUB_REPOSITORY!;
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repository required");
-    const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/actions/workflows/desktop-evidence.yml/runs?head_sha=${commit}&status=success&per_page=100`]));
-    const selected = selectEvidenceRun(pages.flatMap((page: any) => page.workflow_runs), repo, commit, preferred);
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))
+      throw new Error("repository required");
+    const pages = JSON.parse(
+      gh([
+        "api",
+        "--paginate",
+        "--slurp",
+        `repos/${repo}/actions/workflows/desktop-evidence.yml/runs?head_sha=${commit}&status=success&per_page=100`,
+      ]),
+    );
+    const selected = selectEvidenceRun(
+      pages.flatMap((page: any) => page.workflow_runs),
+      repo,
+      commit,
+      preferred,
+    );
     if (selected) console.log(selected);
-    else console.warn("::warning::No completed desktop evidence for the retained candidate source");
+    else
+      console.warn(
+        "::warning::No completed desktop evidence for the retained candidate source",
+      );
   } else if (mode === "inventory") await inventory(args[0], args[1], args[2]);
   else if (mode === "verify")
     console.log(JSON.stringify(await verifyCandidate(args[0], args[1])));
@@ -477,14 +517,15 @@ if (import.meta.main) {
     const evidenceUrl = `https://github.com/InkyQuill/hieronymus/actions/runs/${candidateRun}`;
     writeFileSync(
       notes,
-      availableInstallerNotes(
-        readFileSync("docs/desktop-release-notes.md", "utf8"),
-        availableSetup,
-        releases.map((r) => r.target),
-      ).replaceAll("@@EVIDENCE_URL@@", evidenceUrl) +
+      releaseChangelog(
+        readFileSync("CHANGELOG.md", "utf8"),
+        releases[0].version,
+      ) +
+        `\n[Build and qualification results](${evidenceUrl}).\n` +
         `\n\nAvailable binary targets: ${releases.map((r) => r.target).join(", ")}.\n` +
         `Missing targets: ${TARGETS.filter((t) => !releases.some((r) => r.target === t)).join(", ") || "none"}.\n` +
         `Missing installers: ${setupNames.filter((n) => !availableSetup.includes(n)).join(", ") || "none"}.\n` +
+        "The Windows and macOS installers are unsigned. macOS may require **Open Anyway** in Privacy & Security. Intel macOS is included, but native desktop qualification remains incomplete.\n" +
         "Native installation checks and evidence are advisory; see the linked workflow and open release-warning issues for failures or untested behavior.\n",
     );
     try {
