@@ -891,6 +891,14 @@ fn run_update_core(
         let doctor_report: serde_json::Value = serde_json::from_slice(&doctor_output.stdout)
             .map_err(|error| format!("candidate doctor report is invalid: {error}"))?;
         require_independent_doctor_scope(&doctor_report)?;
+        if let Some(findings) = doctor_report["findings"].as_array() {
+            let count = findings.iter().filter(|f| f["level"] != "ok").count();
+            if count > 0 {
+                lines.push(format!(
+                    "candidate doctor: {count} non-ok findings; run hiero doctor for details"
+                ));
+            }
+        }
 
         // Doctor exit 0/1 is necessary but never sufficient. A started
         // candidate must publish a live, authenticated endpoint that reports
@@ -970,6 +978,29 @@ fn run_update_core(
             degraded,
         }) => (daemon_started, degraded),
     };
+
+    // Activation is complete; advisory host work must not retain root ownership.
+    drop(ownership.take());
+    // Use the candidate generator, never the updater's older embedded bundles.
+    // Host cache refresh is advisory; it cannot invalidate verified app assets.
+    match crate::agent_sync::sync_candidate(
+        &config,
+        &version_dir.join(crate::platform::install::executable_name("hiero")),
+    ) {
+        Ok(report) => {
+            if report["generated"] == true {
+                lines.push(
+                    "candidate generated current agent bundles; reopen agent conversations".into(),
+                );
+            }
+            if report["codex"]["state"] != "refreshed" {
+                lines.push("host cache refresh is advisory and not confirmed; inspect hiero plugins status and private logs/agent-sync.log".into());
+            }
+        }
+        Err(error) => lines.push(format!(
+            "agent bundle refresh warning: {error}; run hiero plugins sync after update"
+        )),
+    }
 
     lines.push(if degraded && !daemon_started { "offline installation verified; configuration initialization and daemon readiness are deferred until explicit Start".into() } else if degraded {
         "health check: degraded (doctor warnings) but the candidate confirmed ready; \
@@ -1491,14 +1522,15 @@ fn require_offline_doctor(version: &Path, report: &serde_json::Value) -> Result<
             Some("ok") => false,
             Some("warning") => !matches!(
                 f.get("code").and_then(|v| v.as_str()),
-                Some("config-root-missing")
+                Some("config-root-missing" | "agent-bundles")
             ),
             _ => true,
         })
     {
-        return Err(
-            "offline doctor reported warnings beyond an uninitialized configuration root".into(),
-        );
+        return Err(format!(
+            "offline doctor reported warnings beyond an uninitialized configuration root or stale agent bundles: {}",
+            serde_json::Value::Array(findings.clone())
+        ));
     }
     Ok(())
 }
@@ -1812,6 +1844,24 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn offline_upgrade_accepts_only_advisory_agent_warnings() {
+        let version = tempfile::tempdir().unwrap();
+        std::fs::write(version.path().join("assets.json"), b"verified separately").unwrap();
+        let report = serde_json::json!({"findings":[{"level":"warning","code":"agent-bundles","message":"stale cache"}]});
+        assert!(require_offline_doctor(version.path(), &report).is_ok());
+        let error = serde_json::json!({"findings":[{"level":"error","code":"agent-bundles"}]});
+        assert!(require_offline_doctor(version.path(), &error).is_err());
+        let mixed = serde_json::json!({"findings":[{"level":"warning","code":"agent-bundles"},{"level":"warning","code":"semantic-model-invalid"}]});
+        assert!(
+            require_offline_doctor(version.path(), &mixed)
+                .unwrap_err()
+                .contains("semantic-model-invalid")
+        );
+        std::fs::remove_file(version.path().join("assets.json")).unwrap();
+        assert!(require_offline_doctor(version.path(), &report).is_err());
     }
 
     #[test]

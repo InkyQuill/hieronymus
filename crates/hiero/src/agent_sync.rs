@@ -264,6 +264,25 @@ fn sync_codex(
     result.unwrap_or_else(|error|json!({"state":"warning","detail":error,"action":"Check the native CLI and private logs/agent-sync.log; application remains usable."}))
 }
 
+/// Candidate bundle refresh shares bounded capture and redacted private diagnostics.
+pub(crate) fn sync_candidate(config: &HieronymusConfig, binary: &Path) -> Result<Value, String> {
+    native_json(
+        config,
+        binary.to_str().ok_or("candidate path is not UTF-8")?,
+        &[
+            "plugins",
+            "sync",
+            "--json",
+            "--data-root",
+            config
+                .data_root()
+                .to_str()
+                .ok_or("data root is not UTF-8")?,
+        ],
+        Duration::from_secs(90),
+    )
+}
+
 fn native_json(
     config: &HieronymusConfig,
     program: &str,
