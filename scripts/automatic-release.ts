@@ -16,6 +16,26 @@ export function synchronizeVersion(version: string, manifest: string, lock: stri
   return {cargo, cargoLock};
 }
 
+export function synchronizeReadme(version: string, readme: string): string {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Expected stable SemVer");
+  const start = readme.indexOf("## Install\n");
+  const end = readme.indexOf("\n## ", start + 1);
+  if (start < 0 || end < 0) throw new Error("README install section missing");
+  const platforms = new Set<string>();
+  let count = 0;
+  const install = readme.slice(start, end).replace(
+    /https:\/\/github\.com\/InkyQuill\/hieronymus\/releases\/download\/v\d+\.\d+\.\d+\/(?:Hieronymus-\d+\.\d+\.\d+-(Setup\.exe)|Hieronymus-\d+\.\d+\.\d+(\.pkg)|(install-hieronymus\.sh))(?=[)\s>\"]|$)/g,
+    (_, exe, pkg, shell) => {
+      count++;
+      platforms.add(exe ? "windows" : pkg ? "macos" : "linux");
+      const asset = shell ?? (exe ? `Hieronymus-${version}-Setup.exe` : `Hieronymus-${version}.pkg`);
+      return `https://github.com/InkyQuill/hieronymus/releases/download/v${version}/${asset}`;
+    },
+  );
+  if (count !== 3 || platforms.size !== 3) throw new Error("Expected three versioned installer links");
+  return readme.slice(0, start) + install + readme.slice(end);
+}
+
 export function selectedRun(runs: any[], sha: string, request: string): any | undefined {
   return runs.find(run => run.head_sha === sha && run.event === "workflow_dispatch" && run.display_title === `desktop-candidate / ${request}` && run.path === ".github/workflows/desktop-candidate.yml");
 }
@@ -42,7 +62,10 @@ export async function buildAndPromote(repo: string, tag: string, sha: string, in
 }
 if (import.meta.main) {
   if (Bun.argv[2] === "sync") {
-    const next = synchronizeVersion(readFileSync("version.txt","utf8").trim(),readFileSync("Cargo.toml","utf8"),readFileSync("Cargo.lock","utf8"));
+    const version = readFileSync("version.txt","utf8").trim();
+    const readme = synchronizeReadme(version, readFileSync("README.md","utf8"));
+    const next = synchronizeVersion(version,readFileSync("Cargo.toml","utf8"),readFileSync("Cargo.lock","utf8"));
+    writeFileSync("README.md",readme);
     writeFileSync("Cargo.toml",next.cargo);writeFileSync("Cargo.lock",next.cargoLock);
   } else if (Bun.argv[2] === "promote") await buildAndPromote(process.env.GITHUB_REPOSITORY!,Bun.argv[3],Bun.argv[4]);
   else throw new Error("Expected sync|promote");
