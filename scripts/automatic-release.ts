@@ -21,16 +21,18 @@ export function synchronizeReadme(version: string, readme: string): string {
   const start = readme.indexOf("## Install\n");
   const end = readme.indexOf("\n## ", start + 1);
   if (start < 0 || end < 0) throw new Error("README install section missing");
+  const platforms = new Set<string>();
   let count = 0;
   const install = readme.slice(start, end).replace(
-    /https:\/\/github\.com\/InkyQuill\/hieronymus\/releases\/download\/v\d+\.\d+\.\d+\/(?:Hieronymus-\d+\.\d+\.\d+-(Setup\.exe)|Hieronymus-\d+\.\d+\.\d+(\.pkg)|(install-hieronymus\.sh))/g,
+    /https:\/\/github\.com\/InkyQuill\/hieronymus\/releases\/download\/v\d+\.\d+\.\d+\/(?:Hieronymus-\d+\.\d+\.\d+-(Setup\.exe)|Hieronymus-\d+\.\d+\.\d+(\.pkg)|(install-hieronymus\.sh))(?=[)\s>\"]|$)/g,
     (_, exe, pkg, shell) => {
       count++;
+      platforms.add(exe ? "windows" : pkg ? "macos" : "linux");
       const asset = shell ?? (exe ? `Hieronymus-${version}-Setup.exe` : `Hieronymus-${version}.pkg`);
       return `https://github.com/InkyQuill/hieronymus/releases/download/v${version}/${asset}`;
     },
   );
-  if (count !== 3) throw new Error("Expected three versioned installer links");
+  if (count !== 3 || platforms.size !== 3) throw new Error("Expected three versioned installer links");
   return readme.slice(0, start) + install + readme.slice(end);
 }
 

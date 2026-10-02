@@ -72,3 +72,10 @@ test("release synchronization updates all installer links without touching unrel
  expect(()=>synchronizeReadme('../bad',original)).toThrow();
  expect(()=>synchronizeReadme('0.42.3',original.replace('install-hieronymus.sh','missing.sh'))).toThrow();
 });
+
+test("installer synchronization rejects suffixes and duplicate platforms", async () => {
+ const {synchronizeReadme}=await import('./automatic-release');
+ const original=await Bun.file(new URL('../README.md',import.meta.url)).text();
+ expect(()=>synchronizeReadme('0.42.3',original.replace(/\.pkg\)/,'.pkg.bak)'))).toThrow();
+ expect(()=>synchronizeReadme('0.42.3',original.replace(/Hieronymus-([\d.]+)\.pkg/,'Hieronymus-$1-Setup.exe'))).toThrow();
+});
