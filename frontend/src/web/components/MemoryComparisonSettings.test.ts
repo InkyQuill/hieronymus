@@ -118,7 +118,10 @@ test("failed initial comparison load can be retried locally", async () => {
 });
 
 test("comparison accepts and saves a timeout longer than thirty seconds", async () => {
-  vi.mocked(loadComparisonSettings).mockResolvedValue({ comparison: structuredClone(state), providers: [] });
+  vi.mocked(loadComparisonSettings).mockResolvedValue({
+    comparison: structuredClone(state),
+    providers: [],
+  });
   vi.mocked(saveComparisonSettings).mockResolvedValue(structuredClone(state));
   const user = userEvent.setup();
   render(MemoryComparisonSettings);
@@ -126,6 +129,10 @@ test("comparison accepts and saves a timeout longer than thirty seconds", async 
   expect(input.hasAttribute("max")).toBe(false);
   await user.clear(input);
   await user.type(input, "600");
-  await user.click(screen.getByRole("button", { name: "Save memory comparison" }));
-  expect(saveComparisonSettings).toHaveBeenLastCalledWith(expect.objectContaining({ timeout_seconds: 600 }));
+  await user.click(
+    screen.getByRole("button", { name: "Save memory comparison" }),
+  );
+  expect(saveComparisonSettings).toHaveBeenLastCalledWith(
+    expect.objectContaining({ timeout_seconds: 600 }),
+  );
 });
