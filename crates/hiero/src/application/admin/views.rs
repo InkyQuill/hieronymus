@@ -898,58 +898,66 @@ fn rendering_detail(connection: &Connection, selected: &Value) -> rusqlite::Resu
         .strip_prefix("facet:")
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return connection.query_row(
-            "select f.value, f.language, f.confidence, f.is_canonical, f.source_crystal_id,
+        return connection
+            .query_row(
+                "select f.value, f.language, f.confidence, f.is_canonical, f.source_crystal_id,
                     c.canonical_name, c.description from concept_facets f
              join concepts c on c.id=f.concept_id where f.id=?1",
-            [id],
-            |row| {
-                let source: Option<i64> = row.get(4)?;
-                Ok(detail(
-                    row.get(0)?,
-                    "Remembered translation variant".into(),
-                    row.get(6)?,
-                    vec![
-                        ("Subject", row.get(5)?),
-                        ("Language", row.get(1)?),
-                        ("Confidence", percent(row.get(2)?)),
-                        (
-                            "Preferred variant",
-                            if row.get::<_, bool>(3)? { "Yes" } else { "No" }.into(),
-                        ),
-                        (
-                            "Source memory",
-                            source.map_or_else(|| "Not linked".into(), |id| id.to_string()),
-                        ),
-                    ],
-                ))
-            },
-        );
+                [id],
+                |row| {
+                    let source: Option<i64> = row.get(4)?;
+                    Ok(detail(
+                        row.get(0)?,
+                        "Remembered translation variant".into(),
+                        row.get(6)?,
+                        vec![
+                            ("Subject", row.get(5)?),
+                            ("Language", row.get(1)?),
+                            ("Confidence", percent(row.get(2)?)),
+                            (
+                                "Preferred variant",
+                                if row.get::<_, bool>(3)? { "Yes" } else { "No" }.into(),
+                            ),
+                            (
+                                "Source memory",
+                                source.map_or_else(|| "Not linked".into(), |id| id.to_string()),
+                            ),
+                        ],
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(no_rows)
+            .map(|value| value.unwrap_or_else(|| missing_detail("translation choice")));
     }
     if let Some(id) = id
         .strip_prefix("rule:")
         .and_then(|id| id.parse::<i64>().ok())
     {
-        return connection.query_row(
-            "select source_text, canonical_translation, status, notes, provenance,
+        return connection
+            .query_row(
+                "select source_text, canonical_translation, status, notes, provenance,
                     source_language, target_language from term_rules where id=?1",
-            [id],
-            |row| {
-                Ok(detail(
-                    row.get(0)?,
-                    format!("Translation rule / {}", row.get::<_, String>(2)?),
-                    row.get(3)?,
-                    vec![
-                        ("Rendering", row.get(1)?),
-                        ("Provenance", row.get(4)?),
-                        (
-                            "Language",
-                            language_pair(&row.get::<_, String>(5)?, &row.get::<_, String>(6)?),
-                        ),
-                    ],
-                ))
-            },
-        );
+                [id],
+                |row| {
+                    Ok(detail(
+                        row.get(0)?,
+                        format!("Translation rule / {}", row.get::<_, String>(2)?),
+                        row.get(3)?,
+                        vec![
+                            ("Rendering", row.get(1)?),
+                            ("Provenance", row.get(4)?),
+                            (
+                                "Language",
+                                language_pair(&row.get::<_, String>(5)?, &row.get::<_, String>(6)?),
+                            ),
+                        ],
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(no_rows)
+            .map(|value| value.unwrap_or_else(|| missing_detail("translation choice")));
     }
     Ok(missing_detail("translation choice"))
 }
@@ -1245,4 +1253,20 @@ pub(super) fn excerpt(text: &str) -> String {
     }
     let cut: String = normalized.chars().take(LIMIT - 1).collect();
     format!("{cut}...")
+}
+
+#[cfg(test)]
+mod missing_choice_tests {
+    use super::*;
+
+    #[test]
+    fn deleted_facets_and_rules_have_missing_details() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let db = open_migrated(&config.database_path()).unwrap();
+        for id in ["facet:999", "rule:999"] {
+            let result = rendering_detail(&db, &json!({"id":id})).unwrap();
+            assert_eq!(result, missing_detail("translation choice"));
+        }
+    }
 }

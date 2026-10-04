@@ -144,5 +144,5 @@
   </fieldset>
 </form>
 
-<DreamProviderTimeouts {providers} providerIds={Object.values(settings.workflows).map(workflow => workflow.provider)} />
+<DreamProviderTimeouts {providers} providerIds={providers.map(provider => provider.id)} />
 <MemoryComparisonSettings />

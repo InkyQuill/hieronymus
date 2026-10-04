@@ -315,16 +315,21 @@ regular bootstrap binary into a temporary directory, then invokes its typed
 release verifier and the existing ownership-checked updater. Required assets
 and real native inference are verified before stable links change.
 
-Post-start update readiness waits up to 90 seconds and accepts only actual
-`ready`, never an acquiring or rebuilding response. Timeouts fail and route
-through the existing rollback. Cold installed timings are measured by the
-explicit installed test, not inferred from the historical debug run.
+Post-start updates verify the authenticated candidate version and its doctor
+report. An acquiring or rebuilding semantic lane keeps the verified candidate
+installed and supervised, returning `index-rebuilding` with a warning that
+semantic recall remains unavailable until reconstruction finishes. This is not
+reported as healthy. A failed lane still triggers rollback; package checksums,
+model verification and source database integrity remain mandatory. Offline
+updates may defer a missing derived generation only after a read-only database
+integrity check. Failure diagnostics include a copyable agent recovery prompt.
+Bootstrap readiness retains its strict ready-only check.
 
 For a 0.11 LanceDB-to-SQLite transition (#148), the updater recognizes the
 active legacy generation only when its matching real LanceDB directory exists
 and no SQLite generation file or sidecar exists. It starts the candidate even
 when the previous daemon was stopped, then requires authenticated version and
-semantic readiness. Explicit startup restrictions refuse this transition before
+checks its semantic state; an active rebuild may continue in the background. Explicit startup restrictions refuse this transition before
 installation changes. Missing unrelated indexes, existing corrupt SQLite files,
 and symlinked legacy directories are not migration exceptions. Focused tests
 cover orchestration and rollback with a simulated daemon; real legacy rebuild

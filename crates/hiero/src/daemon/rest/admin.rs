@@ -301,7 +301,7 @@ pub(super) fn dashboard_status_payload(config: &HieronymusConfig) -> Vec<(&'stat
         Err(error) => (default_dream_config(), error.to_string()),
     };
     let pending = pending_admin_count(config);
-    let drain = drain_progress(config, pending);
+    let drain = drain_progress(config, pending, None);
     let mut dream_status = dream_status_payload(config, &dream_config);
     if !dream_config_error.is_empty() {
         dream_status["reason"] = json!(dream_config_error);
@@ -357,7 +357,11 @@ struct DrainProgress {
 
 /// Port of `_dream_drain_progress`: a running dream consumes the pending
 /// memories phase by phase.
-fn drain_progress(config: &HieronymusConfig, pending: i64) -> DrainProgress {
+fn drain_progress(
+    config: &HieronymusConfig,
+    pending: i64,
+    selected_run: Option<i64>,
+) -> DrainProgress {
     let idle = DrainProgress {
         in_progress: false,
         completed: 0,
@@ -368,22 +372,9 @@ fn drain_progress(config: &HieronymusConfig, pending: i64) -> DrainProgress {
     let Ok(connection) = open_migrated(&config.database_path()) else {
         return idle;
     };
-    let running_phase: Option<i64> = connection
-        .query_row(
-            "select dream_run_id from dream_phase_runs
-             where status = 'running' order by id desc limit 1",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
-    let running_run_id = running_phase.or_else(|| {
-        connection
-            .query_row(
-                "select id from dream_runs where status = 'running' order by id desc limit 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok()
+    let running_run_id = selected_run.or_else(|| {
+        let cycle = hieronymus::dream_locks::read_dream_cycle_state(config)?;
+        connection.query_row("select id from dream_runs where status='running' and created_at>=?1 order by id desc limit 1", [&cycle.started_at], |row| row.get(0)).ok()
     });
     let Some(run_id) = running_run_id else {
         if hieronymus::dream_locks::read_dream_cycle_state(config).is_some() {
@@ -476,7 +467,7 @@ fn dream_status_payload(config: &HieronymusConfig, dream_config: &DreamConfig) -
     json!({
         "state": "WORKING",
         "current_phase": current_phase,
-        "progress": phase_progress(config, &current_phase),
+        "progress": phase_progress(config, &current_phase, run_id),
         "run_id": run_id,
         "cycle_id": cycle_id,
         "owner": active_cycle.owner,
@@ -496,14 +487,14 @@ fn idle_dream_status(dream_config: &DreamConfig) -> Value {
     })
 }
 
-fn phase_progress(config: &HieronymusConfig, current_phase: &str) -> f64 {
+fn phase_progress(config: &HieronymusConfig, current_phase: &str, run_id: Option<i64>) -> f64 {
     if current_phase == "starting" {
         return 0.0;
     }
     if current_phase == "maintenance" {
         return 0.9;
     }
-    let drain = drain_progress(config, pending_admin_count(config));
+    let drain = drain_progress(config, pending_admin_count(config), run_id);
     if drain.total > 0 {
         return drain.progress;
     }
@@ -719,6 +710,27 @@ fn view_label(view: &str) -> String {
 #[cfg(test)]
 mod dream_status_tests {
     use super::*;
+
+    #[test]
+    fn selected_run_progress_ignores_interrupted_history() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let db = open_migrated(&config.database_path()).unwrap();
+        for id in [1, 2] {
+            db.execute("insert into dream_runs(id,cycle_id,status,provider,created_at) values(?1,?1,'running','fixture','2026-01-01')", [id]).unwrap();
+        }
+        for (id, count, status) in [
+            (1, 90, "completed"),
+            (1, 0, "running"),
+            (2, 10, "completed"),
+        ] {
+            db.execute("insert into dream_phase_runs(dream_run_id,phase,provider_profile,provider_type,model,status,input_count,created_at) values(?1,'extract','fixture','fixture','fixture',?2,?3,'2026-01-01')", rusqlite::params![id, status, count]).unwrap();
+        }
+        let progress = drain_progress(&config, 10, Some(2));
+        assert_eq!(progress.completed, 10);
+        assert_eq!(progress.progress, 0.5);
+        assert!(!drain_progress(&config, 10, None).in_progress);
+    }
 
     #[test]
     fn interrupted_history_does_not_report_live_processing_or_replace_the_current_cycle() {
