@@ -8,6 +8,8 @@ import type {
   AdminSnapshot,
 } from "../lib/types";
 import MemoryViews from "./MemoryViews.svelte";
+import { correctionOptions } from "../lib/authority";
+vi.mock("../lib/authority", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/authority")>()), correctionOptions: vi.fn(async () => ({ series: [], sources: [] })) }));
 
 vi.mock("../lib/api", () => ({
   loadAdminSnapshot: vi.fn(),
@@ -190,9 +192,7 @@ test("every advertised view is selectable and renders its returned rows", async 
         view,
         undefined,
         undefined,
-        ["Crystals", "Lessons", "Short-Term Memory"].includes(view)
-          ? { limit: 20, offset: 0 }
-          : undefined,
+        { limit: 20, offset: 0 },
       ),
     );
     await screen.findByText(`${view} record one`);
@@ -488,7 +488,7 @@ test("book selection scopes requests, survives view changes and remembers the ch
       "Concepts",
       undefined,
       "book-b",
-      undefined,
+      { limit: 20, offset: 0 },
     ),
   );
   expect(localStorage.getItem("hieronymus.memory.series")).toBe("book-b");
@@ -498,7 +498,7 @@ test("book selection scopes requests, survives view changes and remembers the ch
       "Concepts",
       undefined,
       undefined,
-      undefined,
+      { limit: 20, offset: 0 },
     ),
   );
   localStorage.clear();
@@ -785,4 +785,62 @@ test("memory source locations are readable without opening technical details", a
   const sources = await screen.findByRole("region", { name: "Memory sources" });
   expect(sources.textContent).toContain("Vol 3, chapter 2");
   expect(sources.closest("details")).toBeNull();
+});
+
+
+test.each([
+  ["memory:7", "short_term", 7], ["crystal:8", "crystal", 8], ["facet:9", "facet", 9],
+] as const)("translation choice %s opens the correction for its actual memory", async (id, source, targetId) => {
+  const current = snapshotFor("Renderings");
+  current.snapshot.rows[0].id = id;
+  current.snapshot.selected = current.snapshot.rows[0];
+  loadSnapshotMock.mockReset();
+  loadSnapshotMock.mockResolvedValue(current);
+  const user = userEvent.setup();
+  render(MemoryViews, { props: { dashboard: { ...dashboard, views: ["Renderings"], command_options: [command("edit_memory", "Legacy edit", ["Renderings"], true)] }, onNotice: vi.fn() } });
+  await user.click(await screen.findByRole("button", { name: "Correct this memory" }));
+  await waitFor(() => expect(correctionOptions).toHaveBeenCalledWith({ source, id: targetId }));
+  expect(screen.queryByRole("button", { name: "Legacy edit" })).toBeNull();
+});
+
+for (const view of ALL_VIEWS) {
+  test(`${view}: paging, page size and selection keep the table mounted`, async () => {
+    const user = userEvent.setup();
+    let resolveSelection: ((value: AdminSnapshot) => void) | undefined;
+    loadSnapshotMock.mockReset().mockImplementation(async (_view, selected, _series, paging) => {
+      const offset = paging?.offset ?? 0;
+      const next = { snapshot: { ...listSnapshot.snapshot, view, total_count: 75,
+        rows: [{ ...row, id: offset + 1, label: `Entry ${offset + 1}` }], selected: null } };
+      if (selected !== undefined) return new Promise<AdminSnapshot>(resolve => { resolveSelection = resolve; });
+      return next;
+    });
+    render(MemoryViews, { dashboard: { ...dashboard, views: [view] }, onNotice: vi.fn() });
+    await screen.findByRole("button", { name: /Entry 1/ });
+    const table = screen.getByRole("table");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("button", { name: /Entry 21/ });
+    expect(screen.queryByRole("button", { name: /^Entry 1/ })).toBeNull();
+    expect(screen.getByRole("table")).toBe(table);
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    await screen.findByRole("button", { name: /Entry 1/ });
+    await user.selectOptions(screen.getByLabelText("Rows per page"), "50");
+    await waitFor(() => expect(loadSnapshotMock).toHaveBeenLastCalledWith(view, undefined, undefined, { limit: 50, offset: 0 }));
+    await user.click(screen.getByRole("button", { name: /Entry 1/ }));
+    await waitFor(() => expect(resolveSelection).toBeDefined());
+    expect(screen.getByRole("table")).toBe(table);
+    expect(screen.queryByText(`Loading ${view}…`)).toBeNull();
+    resolveSelection!({ snapshot: { ...listSnapshot.snapshot, view, total_count: 75, rows: [{ ...row, id: 1, label: "Entry 1" }], selected: { ...row, id: 1 } } });
+    await waitFor(() => expect(screen.getByRole("table")).toBe(table));
+  });
+}
+
+test("switching view clears old rows and actions while the new table loads", async () => {
+  loadSnapshotMock.mockReset().mockResolvedValueOnce(selectedSnapshot).mockImplementationOnce(() => new Promise(() => {}));
+  render(MemoryViews, { dashboard: { ...dashboard, views: ["Crystals", "Renderings"] }, onNotice: vi.fn() });
+  await screen.findByRole("button", { name: /Crystal Alpha/ });
+  await userEvent.click(screen.getByTitle("Renderings"));
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Correct this memory" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reinforce Crystal" })).toBeNull();
+  expect(screen.getByText("Loading translation choices…", { exact: false })).toBeTruthy();
 });

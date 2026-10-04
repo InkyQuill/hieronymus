@@ -154,6 +154,10 @@ fn memory_count(
     params: &AdminQuery,
 ) -> rusqlite::Result<Option<i64>> {
     let count = match view {
+        "Renderings" => connection.query_row(
+            &format!("{RENDERINGS} select count(*) from renderings where (?1 is null or scope=?1 or scope='global')"),
+            [&params.series], |row| row.get(0),
+        )?,
         "Short-Term Memory" => connection.query_row(
             "select count(*) from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and (?1 is null or s.series_slug=?1)",
             [&params.series], |row| row.get(0),
@@ -162,6 +166,18 @@ fn memory_count(
             "select count(*) from crystals where (?1 is null or crystal_type=?1) and (?2 is null or series_slug=?2)",
             rusqlite::params![if view == "Lessons" { Some("lesson") } else { None }, params.series], |row| row.get(0),
         )?,
+        "Concepts" => connection.query_row(
+            "select count(*) from concepts where (?1 is null or scope_key=?1 or scope_type='global')",
+            [params.series.as_ref().map(|series| format!("series:{series}"))], |row| row.get(0),
+        )?,
+        "Short-Term Sessions" => connection.query_row(
+            "select count(*) from task_sessions where (?1 is null or series_slug=?1)",
+            [&params.series], |row| row.get(0),
+        )?,
+        "Dream Runs" | "Dream Audits" | "Audit Log" => {
+            let table = match view { "Dream Runs" => "dream_runs", "Dream Audits" => "dream_audit_entries", _ => "audit_log" };
+            connection.query_row(&format!("select count(*) from {table}"), [], |row| row.get(0))?
+        }
         _ => return Ok(None),
     };
     Ok(Some(count))
@@ -297,45 +313,93 @@ fn load_concept_tags(connection: &Connection, concept_id: i64) -> rusqlite::Resu
         .collect()
 }
 
-/// `_list_strict_terms(label_column="canonical_translation")` — the Renderings
-/// view is the strict-term table.
+// Keep legacy ids numeric; modern records use typed ids so selections cannot collide.
+const RENDERINGS: &str = "with renderings as (
+    select cast(id as text) as row_id, id as sort_id, 0 as source_order,
+           category as kind, canonical_translation as label, status, series_slug as scope,
+           source_language, target_language, '' as quality
+    from strict_terms
+    union all
+    select 'facet:' || f.id, f.id, 1, 'translation variant', f.value,
+           case when f.superseded_at is not null then 'superseded' else c.status end,
+           coalesce(nullif(cr.series_slug, ''),
+             case when c.scope_type = 'series' and c.scope_key like 'series:%' then substr(c.scope_key, 8)
+                  when c.scope_type = 'global' then 'global' else 'unresolved' end),
+           '', f.language, printf('%.0f%% conf', f.confidence * 100)
+    from concept_facets f join concepts c on c.id = f.concept_id
+    left join crystals cr on cr.id = f.source_crystal_id
+    where f.facet_type = 'rendering'
+    union all
+    select 'rule:' || r.id, r.id, 2, 'translation rule', r.canonical_translation, r.status,
+           case when a.metadata_state='legacy_global' then 'global' else coalesce(s.slug, 'unresolved') end,
+           r.source_language, r.target_language, ''
+    from term_rules r left join rule_authority ra on ra.rule_id=r.id
+    left join applicabilities a on a.id=ra.applicability_id
+    left join series s on s.id=a.series_id
+    union all
+    select 'memory:' || m.id, -m.id, 3, m.kind, substr(m.text, 1, 240),
+           'recent observation', s.series_slug, s.source_language, s.target_language, m.source_role
+    from short_term_memories m join task_sessions s on s.id=m.session_id
+    where m.archived_at is null and m.kind in ('terminology', 'translation_rule')
+    union all
+    select 'crystal:' || c.id, c.id, 4,
+           case when c.crystal_type='rule' then 'remembered rule' else 'remembered terminology' end, c.title,
+           c.status, c.series_slug, c.source_language, c.target_language,
+           printf('%.0f%% conf', c.confidence * 100)
+    from crystals c where (c.crystal_type='rule' or exists (
+      select 1 from crystal_sources cs join short_term_memories m on m.id=cs.short_term_memory_id
+      where cs.crystal_id=c.id and m.kind in ('terminology', 'translation_rule')))
+      and not exists (select 1 from term_rules r where r.rule_crystal_id=c.id)
+)";
+
+/// Agent-extracted renderings and deterministic rules, with historical imports retained.
 fn rendering_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Result<Vec<Value>> {
-    let mut statement = connection.prepare(
-        "select id, category, canonical_translation, status, series_slug,
-                source_language, target_language
-         from strict_terms
-         where (?1 is null or series_slug = ?1)
-         order by id
-         limit ?2 offset ?3",
-    )?;
+    let mut statement = connection.prepare(&format!(
+        "{RENDERINGS} select * from renderings
+         where (?1 is null or scope = ?1 or scope = 'global')
+         order by source_order, sort_id limit ?2 offset ?3"
+    ))?;
     let rows = statement
         .query_map(
             rusqlite::params![params.series, params.limit, params.offset],
             |row| {
-                let id: i64 = row.get("id")?;
-                let category: String = row.get("category")?;
-                let label: String = row.get("canonical_translation")?;
+                let id: String = row.get("row_id")?;
+                let category: String = row.get("kind")?;
+                let label: String = row.get("label")?;
                 let status: String = row.get("status")?;
-                let series_slug: String = row.get("series_slug")?;
+                let series_slug: String = row.get("scope")?;
+                let quality: String = row.get("quality")?;
                 let language_pair = language_pair(
                     &row.get::<_, String>("source_language")?,
                     &row.get::<_, String>("target_language")?,
                 );
-                Ok((id, category, label, status, series_slug, language_pair))
+                Ok((
+                    id,
+                    category,
+                    label,
+                    status,
+                    series_slug,
+                    language_pair,
+                    quality,
+                ))
             },
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, category, label, status, series_slug, language_pair) in rows {
+    for (id, category, label, status, series_slug, language_pair, quality) in rows {
+        let tags = match id.parse::<i64>() {
+            Ok(id) => load_strict_term_tags(connection, id)?,
+            Err(_) => Vec::new(),
+        };
         out.push(admin_row(
-            json!(id),
+            id.parse::<i64>().map_or_else(|_| json!(id), |id| json!(id)),
             &category,
             label,
             &status,
             series_slug,
             language_pair,
-            String::new(),
-            load_strict_term_tags(connection, id)?,
+            quality,
+            tags,
         ));
     }
     Ok(out)
@@ -625,10 +689,7 @@ fn detail_for_view(
             Some(id) => concept_detail(connection, id),
             None => Ok(missing_detail("concept")),
         },
-        "Renderings" => match id {
-            Some(id) => strict_term_detail(connection, id),
-            None => Ok(missing_detail("term")),
-        },
+        "Renderings" => rendering_detail(connection, selected),
         "Short-Term Memory" => match id {
             Some(id) => short_term_detail(connection, id),
             None => Ok(missing_detail("short-term memory")),
@@ -792,6 +853,85 @@ fn concept_detail(connection: &Connection, concept_id: i64) -> rusqlite::Result<
             ("Facets", facets.len().to_string()),
         ],
     ))
+}
+
+fn rendering_detail(connection: &Connection, selected: &Value) -> rusqlite::Result<Value> {
+    let Some(id) = row_id_string(selected) else {
+        return Ok(missing_detail("translation choice"));
+    };
+    if let Ok(id) = id.parse::<i64>() {
+        return strict_term_detail(connection, id);
+    }
+    if let Some(id) = id
+        .strip_prefix("memory:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return short_term_detail(connection, id);
+    }
+    if let Some(id) = id
+        .strip_prefix("crystal:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return crystal_detail(connection, id);
+    }
+    if let Some(id) = id
+        .strip_prefix("facet:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return connection.query_row(
+            "select f.value, f.language, f.confidence, f.is_canonical, f.source_crystal_id,
+                    c.canonical_name, c.description from concept_facets f
+             join concepts c on c.id=f.concept_id where f.id=?1",
+            [id],
+            |row| {
+                let source: Option<i64> = row.get(4)?;
+                Ok(detail(
+                    row.get(0)?,
+                    "Remembered translation variant".into(),
+                    row.get(6)?,
+                    vec![
+                        ("Subject", row.get(5)?),
+                        ("Language", row.get(1)?),
+                        ("Confidence", percent(row.get(2)?)),
+                        (
+                            "Preferred variant",
+                            if row.get::<_, bool>(3)? { "Yes" } else { "No" }.into(),
+                        ),
+                        (
+                            "Source memory",
+                            source.map_or_else(|| "Not linked".into(), |id| id.to_string()),
+                        ),
+                    ],
+                ))
+            },
+        );
+    }
+    if let Some(id) = id
+        .strip_prefix("rule:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return connection.query_row(
+            "select source_text, canonical_translation, status, notes, provenance,
+                    source_language, target_language from term_rules where id=?1",
+            [id],
+            |row| {
+                Ok(detail(
+                    row.get(0)?,
+                    format!("Translation rule / {}", row.get::<_, String>(2)?),
+                    row.get(3)?,
+                    vec![
+                        ("Rendering", row.get(1)?),
+                        ("Provenance", row.get(4)?),
+                        (
+                            "Language",
+                            language_pair(&row.get::<_, String>(5)?, &row.get::<_, String>(6)?),
+                        ),
+                    ],
+                ))
+            },
+        );
+    }
+    Ok(missing_detail("translation choice"))
 }
 
 fn strict_term_detail(connection: &Connection, term_id: i64) -> rusqlite::Result<Value> {

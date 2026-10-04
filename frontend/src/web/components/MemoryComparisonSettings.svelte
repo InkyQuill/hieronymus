@@ -56,7 +56,8 @@
       </label>
       <label class="grid gap-1.5 text-caption text-secondary">Backup comparison model<input class={inputClass} bind:value={fallbackModel} required={!!primary && !!fallback} disabled={busy || !primary || !fallback} /></label>
       <label class="grid gap-1.5 text-caption text-secondary">Pairs per run<input class={inputClass} type="number" min="1" max="32" required bind:value={state.settings.max_pairs_per_run} disabled={busy} /></label>
-      <label class="grid gap-1.5 text-caption text-secondary">Request timeout (seconds)<input class={inputClass} type="number" min="1" max="30" required bind:value={state.settings.timeout_seconds} disabled={busy} /></label>
+      <label class="grid gap-1.5 text-caption text-secondary">Request timeout (seconds)<input class={inputClass} type="number" min="1" required bind:value={state.settings.timeout_seconds} disabled={busy} /></label>
+      <p class="sm:col-span-2 text-body-sm text-secondary">Allow enough time for slower models. For DeepSeek, start with 300 seconds; longer timeouts are supported. This timeout applies separately to the primary and backup requests.</p>
       <p class="sm:col-span-2 text-body-sm text-secondary">Saved primary: {state.primary_ready ? "configured" : "unavailable or disabled"}. Saved backup: {state.fallback_ready ? "configured" : "unavailable or disabled"}. Configuration status does not verify model accuracy.</p>
       <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm text-accent-text disabled:opacity-60" disabled={busy}>Save memory comparison</button>
     </form>
