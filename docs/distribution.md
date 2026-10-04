@@ -318,7 +318,17 @@ and real native inference are verified before stable links change.
 Post-start update readiness waits up to 90 seconds and accepts only actual
 `ready`, never an acquiring or rebuilding response. Timeouts fail and route
 through the existing rollback. Cold installed timings are measured by the
-explicit installed test, not inferred from the historical debug run:
+explicit installed test, not inferred from the historical debug run.
+
+For a 0.11 LanceDB-to-SQLite transition (#148), the updater recognizes the
+active legacy generation only when its matching real LanceDB directory exists
+and no SQLite generation file or sidecar exists. It starts the candidate even
+when the previous daemon was stopped, then requires authenticated version and
+semantic readiness. Explicit startup restrictions refuse this transition before
+installation changes. Missing unrelated indexes, existing corrupt SQLite files,
+and symlinked legacy directories are not migration exceptions. Focused tests
+cover orchestration and rollback with a simulated daemon; real legacy rebuild
+and rollback qualification still requires the disposable installed fixture.
 
 ```sh
 HIERO_TEST_RELEASE_DIR="$PWD/target/release-dist" CARGO_BUILD_JOBS=4 \
