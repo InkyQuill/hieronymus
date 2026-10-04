@@ -292,6 +292,7 @@ pub struct LlmDreamProvider {
     cloud_context: OnceCell<PromptBudget>,
     general_prompt: String,
     workflow_prompt: String,
+    output_record_target: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -343,6 +344,7 @@ impl LlmDreamProvider {
             cloud_context: OnceCell::new(),
             general_prompt: ENGLISH_MEMORY_PROSE.to_string(),
             workflow_prompt: String::new(),
+            output_record_target: None,
             profile,
             model,
             core: HttpClientCore::new(Arc::new(BlockingHttpTransport::default())),
@@ -359,6 +361,12 @@ impl LlmDreamProvider {
     pub fn with_prompts(mut self, general: &str, workflow: &str) -> Self {
         self.general_prompt = general.to_string();
         self.workflow_prompt = workflow.to_string();
+        self
+    }
+
+    /// An organization guide, never an output rejection or truncation boundary.
+    pub(crate) fn with_output_record_target(mut self, target: i64) -> Self {
+        self.output_record_target = Some(target);
         self
     }
 
@@ -822,11 +830,15 @@ impl DreamProvider for LlmDreamProvider {
         context: &TranslationContext,
         memories: &[ShortTermMemoryRecord],
     ) -> Result<String, DreamError> {
+        let mut general = self.general_prompt.clone();
+        if let Some(target) = self.output_record_target {
+            general.push_str(&format!("\nOrganization guide: aim for around {target} records when coherent. Preserve distinct supported facts even when more records are needed; never omit evidence to meet this guide."));
+        }
         phase_prompt(
             pass_name,
             context,
             memories,
-            &self.general_prompt,
+            &general,
             &self.workflow_prompt,
         )
     }

@@ -2,6 +2,7 @@
 use crate::{data_root::HieronymusConfig, provider_config::load_provider_catalog};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -31,9 +32,15 @@ impl Default for ComparisonConfig {
 }
 impl ComparisonConfig {
     pub fn validate(&self) -> Result<(), &'static str> {
-        if !(1..=32).contains(&self.max_pairs_per_run) || !(1..=30).contains(&self.timeout_seconds)
+        if !(1..=32).contains(&self.max_pairs_per_run) {
+            return Err("comparison requires 1–32 pairs");
+        }
+        if self.timeout_seconds == 0
+            || Instant::now()
+                .checked_add(Duration::from_secs(self.timeout_seconds))
+                .is_none()
         {
-            return Err("comparison requires 1–32 pairs and a 1–30 second timeout");
+            return Err("comparison timeout must be positive and representable");
         }
         if self.primary.is_none() && self.fallback.is_some() {
             return Err("fallback requires a primary assignment");

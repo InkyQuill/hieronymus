@@ -288,6 +288,10 @@ fn load_provider_catalog_rejects_missing_required_provider_fields() {
             "[deepseek]\ntype = \"openai\"\n",
             "deepseek.url is required",
         ),
+        (
+            "[deepseek]\ntype = \"openai\"\nurl = \"https://api.deepseek.com\"\ntimeout_seconds = 1e100\n",
+            "providers.deepseek.timeout_seconds must be representable as a request deadline",
+        ),
     ] {
         let root = tempfile::tempdir().unwrap();
         let config = config(&root);

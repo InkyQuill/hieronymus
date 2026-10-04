@@ -516,7 +516,7 @@ impl RecallService {
                     query,
                     &response.recall_id,
                     observed.resulting_revision,
-                    &mut response.hits,
+                    (&mut response.hits, &mut response.non_current),
                 ) {
                     Ok(()) => Ok(true),
                     Err(RecallError::Coherent(
@@ -639,7 +639,7 @@ impl RecallService {
 
         // Long-term lane: weighted FTS score plus context boosts.
         let crystals = CrystalStore::for_read(&self.config);
-        let candidate_limit = limit * 2;
+        let candidate_limit = limit.saturating_mul(2);
         let context_story_scopes: std::collections::HashSet<&str> = context
             .story_scopes
             .iter()
@@ -1214,8 +1214,9 @@ fn record_recall_ledger(
     query: &str,
     recall_id: &str,
     expected_revision: u64,
-    hits: &mut [RecallHit],
+    hit_sections: (&mut [RecallHit], &mut [RecallHit]),
 ) -> Result<(), RecallError> {
+    let (hits, research_hits) = hit_sections;
     let mut connection = open_migrated(Path::new(&config.database_path()))?;
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -1223,7 +1224,16 @@ fn record_recall_ledger(
         return Err(crate::coherent_reads::CoherentReadError::StaleContext.into());
     }
     let now = chrono::Utc::now().to_rfc3339();
-    for (position, hit) in hits.iter_mut().enumerate() {
+    let current_count = hits.len();
+    // Research can activate a memory without making its claims current. Copies
+    // keep the original claim bindings; RAG passages remain source reads only.
+    let research_hits =
+        if context.story_query_mode == crate::story_applicability::QueryMode::OmniscientResearch {
+            research_hits
+        } else {
+            &mut []
+        };
+    for (position, hit) in hits.iter_mut().chain(research_hits).enumerate() {
         let RecallHit::LongTerm {
             crystal,
             score,
@@ -1234,6 +1244,23 @@ fn record_recall_ledger(
             continue;
         };
         let (crystal_id, hit_score, hit_reason) = (crystal.id, *score, reason.clone());
+        if position >= current_count {
+            let annotation = &crystal.claim_annotation;
+            let invalid: bool = transaction.query_row(
+                "select exists(select 1 from claim_bindings b join memory_claims m on m.id=b.claim_id
+                 where b.crystal_id=?1 and m.status='invalid')",
+                [crystal_id], |row| row.get(0),
+            )?;
+            if !annotation.source_inspection
+                || matches!(
+                    annotation.disposition,
+                    crate::claim_reads::ClaimDisposition::Invalid
+                )
+                || invalid
+            {
+                continue;
+            }
+        }
         let stored =
             CrystalStore::for_read(config).get_with_connection(&transaction, crystal_id)?;
         let existing_working_copy: Option<i64> = transaction

@@ -47,7 +47,7 @@ fn application_preserves_context_and_unknown_annotations() {
     let result = app
         .call(
             "hieronymus_recall",
-            &json!({"session_id":session,"series_slug":"book","query":"secret"}),
+            &json!({"session_id":session,"series_slug":"book","query":"secret","story_query_mode":"Current"}),
             "agent",
         )
         .unwrap();
@@ -321,7 +321,7 @@ fn supplied_claims_recall_current_and_future_research_stay_separate_after_restar
         .unwrap();
     }
     let reopened = Application::open(app.config()).unwrap();
-    let args = json!({"session_id":session,"series_slug":"book","query":"bridge"});
+    let args = json!({"session_id":session,"series_slug":"book","query":"bridge","story_query_mode":"Current"});
     let current = reopened.call("hieronymus_recall", &args, "agent").unwrap();
     assert_eq!(current["results"].as_array().unwrap().len(), 1);
     assert_eq!(
@@ -492,7 +492,7 @@ fn withheld_application_rows_do_not_leak_prose_through_kind_or_credibility() {
     let result = app
         .call(
             "hieronymus_recall",
-            &json!({"series_slug":"book","session_id":session,"query":"secret"}),
+            &json!({"series_slug":"book","session_id":session,"query":"secret","story_query_mode":"Current"}),
             "agent",
         )
         .unwrap();
@@ -581,7 +581,7 @@ fn actual_recall_hides_outside_scoped_qualification_in_entire_response() {
         (sessions[0], json!("Narrator")),
         (sessions[1], json!({"Character":1})),
     ] {
-        let args = json!({"session_id":session,"series_slug":"book","query":"secret","story_viewpoint":viewpoint});
+        let args = json!({"session_id":session,"series_slug":"book","query":"secret","story_viewpoint":viewpoint,"story_query_mode":"Current"});
         let response = app.call("hieronymus_recall", &args, "agent").unwrap();
         assert!(!response.to_string().contains(hidden), "{response}");
         assert!(!response["results"].as_array().unwrap().is_empty());

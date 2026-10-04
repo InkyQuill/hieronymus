@@ -173,6 +173,112 @@ fn recall_records_activations_for_long_term_hits() {
 }
 
 #[test]
+fn research_recall_activates_unknown_memory_without_promoting_its_claims() {
+    use hieronymus::story_applicability::QueryMode;
+    let fixture = fixture("demo");
+    let mut context = current_story::context("demo", "ja", "en", "translation");
+    let id = CrystalStore::open(&fixture.config)
+        .unwrap()
+        .add_crystal(
+            &context,
+            "lesson",
+            &NewCrystal::new("lesson", "Unknown sapphire rendering"),
+        )
+        .unwrap();
+    let service = RecallService::open(&fixture.config).unwrap();
+    let current = service
+        .recall(fixture.session_id, &context, "sapphire", 10)
+        .unwrap();
+    assert!(current.hits.is_empty());
+    assert!(current.non_current.iter().any(|hit| hit.item_id() == id));
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select count(*) from short_term_memories", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    context.story_query_mode = QueryMode::OmniscientResearch;
+    for _ in 0..2 {
+        let research = service
+            .recall(fixture.session_id, &context, "sapphire", 10)
+            .unwrap();
+        assert!(research.hits.is_empty());
+        assert!(research.non_current.iter().any(|hit| matches!(hit, RecallHit::LongTerm { crystal, activation_id, .. } if crystal.id == id && *activation_id > 0)));
+    }
+    assert_eq!(
+        db.query_row(
+            "select count(*) from short_term_memories where source_crystal_id=?1",
+            [id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row(
+            "select count(*) from crystal_activations where crystal_id=?1",
+            [id],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row(
+            "select count(distinct claim_id) from claim_bindings",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    context.story_query_mode = QueryMode::Current;
+    let after = service
+        .recall(fixture.session_id, &context, "sapphire", 10)
+        .unwrap();
+    assert!(after.hits.is_empty());
+    assert!(after.non_current.iter().all(|hit| match hit {
+        RecallHit::LongTerm { crystal, .. } => crystal.text.is_empty(),
+        RecallHit::ShortTerm { memory, .. } => memory.text.is_empty(),
+        _ => false,
+    }));
+}
+
+#[test]
+fn research_recall_does_not_activate_invalid_memories() {
+    let fixture = fixture("demo");
+    let mut context = current_story::context("demo", "ja", "en", "translation");
+    let id = CrystalStore::open(&fixture.config)
+        .unwrap()
+        .add_crystal(
+            &context,
+            "lesson",
+            &current_story::crystal(&fixture.config, "lesson", "Invalid sapphire rendering"),
+        )
+        .unwrap();
+    invalidate_crystal(&fixture, id);
+    context.story_query_mode = hieronymus::story_applicability::QueryMode::OmniscientResearch;
+    RecallService::open(&fixture.config)
+        .unwrap()
+        .recall(fixture.session_id, &context, "sapphire", 10)
+        .unwrap();
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select count(*) from short_term_memories", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.query_row("select count(*) from crystal_activations", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn concept_match_boosts_linked_crystal_in_ranking() {
     let fixture = fixture("demo");
     let concepts = ConceptStore::open(&fixture.config).unwrap();

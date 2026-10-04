@@ -429,6 +429,11 @@ fn round4(value: f64) -> f64 {
 /// Port of `AdminStore._dream_status`: DISABLED/IDLE/WORKING from the run
 /// rows and the OS dream-cycle state.
 fn dream_status_payload(config: &HieronymusConfig, dream_config: &DreamConfig) -> Value {
+    // Historical running rows may survive a process interruption. Only a
+    // currently held kernel cycle lock establishes that processing is live.
+    let Some(active_cycle) = hieronymus::dream_locks::read_dream_cycle_state(config) else {
+        return idle_dream_status(dream_config);
+    };
     let Ok(connection) = open_migrated(&config.database_path()) else {
         return idle_dream_status(dream_config);
     };
@@ -439,9 +444,9 @@ fn dream_status_payload(config: &HieronymusConfig, dream_config: &DreamConfig) -
         "select p.dream_run_id, r.cycle_id, p.phase
          from dream_phase_runs as p
          join dream_runs as r on r.id = p.dream_run_id
-         where p.status = 'running'
+         where p.status = 'running' and r.status='running' and r.created_at >= ?1
          order by p.id desc limit 1",
-        [],
+        [&active_cycle.started_at],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ) {
         run_id = Some(dream_run_id);
@@ -450,9 +455,9 @@ fn dream_status_payload(config: &HieronymusConfig, dream_config: &DreamConfig) -
     }
     if run_id.is_none()
         && let Ok((dream_run_id, dream_cycle_id)) = connection.query_row(
-            "select id, cycle_id from dream_runs where status = 'running'
+            "select id, cycle_id from dream_runs where status = 'running' and created_at >= ?1
              order by id desc limit 1",
-            [],
+            [&active_cycle.started_at],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
     {
@@ -467,10 +472,6 @@ fn dream_status_payload(config: &HieronymusConfig, dream_config: &DreamConfig) -
             )
             .ok();
     }
-    let active_cycle = hieronymus::dream_locks::read_dream_cycle_state(config);
-    if active_cycle.is_none() && run_id.is_none() {
-        return idle_dream_status(dream_config);
-    }
     let current_phase = phase.unwrap_or_else(|| "starting".to_string());
     json!({
         "state": "WORKING",
@@ -478,14 +479,8 @@ fn dream_status_payload(config: &HieronymusConfig, dream_config: &DreamConfig) -
         "progress": phase_progress(config, &current_phase),
         "run_id": run_id,
         "cycle_id": cycle_id,
-        "owner": active_cycle
-            .as_ref()
-            .map(|state| state.owner.clone())
-            .unwrap_or_default(),
-        "started_at": active_cycle
-            .as_ref()
-            .map(|state| state.started_at.clone())
-            .unwrap_or_default(),
+        "owner": active_cycle.owner,
+        "started_at": active_cycle.started_at,
     })
 }
 
@@ -711,4 +706,39 @@ fn view_label(view: &str) -> String {
         .position(|key| *key == view)
         .map(|position| ADMIN_VIEWS[position].to_string())
         .unwrap_or_else(|| view.to_string())
+}
+
+#[cfg(test)]
+mod dream_status_tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_history_does_not_report_live_processing_or_replace_the_current_cycle() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let db = open_migrated(&config.database_path()).unwrap();
+        db.execute("insert into dream_runs(cycle_id,status,provider,created_at) values(1,'running','fixture','2020-01-01T00:00:00+00:00')",[]).unwrap();
+        let mut settings = default_dream_config();
+        settings.enabled = true;
+        assert_eq!(dream_status_payload(&config, &settings)["state"], "IDLE");
+        let lock = hieronymus::dream_locks::dream_cycle_lock(&config, "fixture").unwrap();
+        let starting = dream_status_payload(&config, &settings);
+        assert_eq!(starting["state"], "WORKING");
+        assert_eq!(starting["run_id"], Value::Null);
+        db.execute("insert into dream_runs(cycle_id,status,provider,created_at) values(2,'running','fixture',?1)",[chrono::Utc::now().to_rfc3339()]).unwrap();
+        assert_eq!(dream_status_payload(&config, &settings)["cycle_id"], 2);
+        drop(lock);
+        assert_eq!(dream_status_payload(&config, &settings)["state"], "IDLE");
+        let history: i64 = db
+            .query_row(
+                "select count(*) from dream_runs where status='running'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            history, 2,
+            "history is preserved; status follows live ownership"
+        );
+    }
 }

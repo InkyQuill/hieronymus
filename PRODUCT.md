@@ -40,6 +40,8 @@ AGENTS.md records the product contract; README.md documents installation. The im
 - Let authors continue writing with their agent instead of administering a knowledge base.
 - Make memory provenance, configuration and failures understandable.
 - Preserve explicit author authority and approved terminology.
+- Agents populate and reactivate memory automatically; authors correct mistakes rather than maintain a termbase. Ordinary recall combines crystals, recent memory and source retrieval, returning contextual or uncertain evidence with labels instead of hiding it when story context is missing. Default recall allows a generous result set; strict current-scene validation remains separate.
+- Processing budgets split work into continuing batches. Valid model output is preserved in full; arbitrary output record counts never turn it into a failed Dream run.
 - Keep valuable content local and protect existing data during maintenance.
 
 ## Open Decisions

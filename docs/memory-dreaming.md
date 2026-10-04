@@ -22,6 +22,28 @@ Short-term memories are attached to that active session. Recall also requires an
 active session, records which crystals were activated, and writes a system
 short-term trace back into the session.
 
+Ordinary `hieronymus_recall` combines crystals, recent memories and RAG. Its
+default is broad source inspection (`OmniscientResearch`) with 100 results per
+section, rather than requiring resolved chronology before showing remembered
+text. Read both `results` and `non_current`; uncertainty, invalidation and story
+context remain attached to each item. Explicit `Current` mode retains strict
+current-scene filtering. Research recall activates valid or uncertain crystals
+and creates deduplicated working copies with their original claim bindings;
+invalidated memories are not reactivated. A RAG-only read does not create crystal
+working copies. This does not promote remembered claims to current truth.
+
+The console's Translation choices view combines recent terminology observations,
+remembered rendering facets, rule crystals, translation rules and historical
+termbase imports. Agents and Dreaming populate the modern records automatically;
+authors correct mistakes. Pending observations remain short-term memories and
+are visibly marked as observations rather than deterministic rules.
+
+Output record counts are organization guides, not rejection ceilings. A valid
+provider response is persisted in full even when it exceeds the configured
+per-pass or per-run count. Evidence, coverage, context isolation and protected
+rule checks still validate meaning. Input/context and deterministic work budgets
+split processing into batches; remaining work stays pending for continuation.
+
 Short-term memories have source roles:
 
 - `mundane`: observations from ordinary workflow context.
@@ -378,8 +400,11 @@ model = "my-local-model"
 Comparisons gather up to eight same-scope pairs per Jev request after deterministic
 checks, capped at 16 KiB per pair and 32 KiB of combined pair state. Other model
 providers receive one pair per request. See [SDK and batching](jev-sdk-batching.md). The shared drain budget is 1–32 model pairs (eight
-by default), with one attempt per assignment, 1–30 seconds per assignment and a
-60-second shared deadline including model discovery. Ollama uses discovered
+by default), with one attempt per assignment and a positive configurable timeout
+per request, including model discovery. There is no fixed upper timeout or shared
+one-minute deadline. DeepSeek may need 300 seconds or longer. Dreaming uses the
+provider profile timeout, editable on the Dreaming page; memory comparison uses
+its separate timeout. Changes take effect on the next run. Ollama uses discovered
 context limits and refuses truncation; configured cloud budgets follow the
 existing provider planner. A valid uncertain answer is terminal; only missing
 configuration, transport/timeout or malformed output can invoke the backup.
@@ -427,7 +452,7 @@ qualification. The default remains unassigned.
 
 ### Optional source locations
 
-Supply `source_ref` when capturing a working memory: a file path or a loose label such as `Vol 3, chapter 2` is valid. Session volume/chapter fields provide additional context. Dream preserves links to these source memories, and long-term recall now returns their `sources` (memory ID, source reference, volume, chapter); the console displays Source locations. No location is invented when none was supplied. Multiple cited locations remain separate, including across merged or split crystals.
+Supply `source_ref` when capturing a working memory: a file path or a loose label such as `Vol 3, chapter 2` is valid. Session volume/chapter fields provide additional context. Dream preserves links to these source memories, and long-term recall now returns their `sources` (memory ID, source reference, volume, chapter); the console displays Source locations. No location is invented when none was supplied. Agent responses and the console group citations from the same file revision, volume and chapter into one reference with exact line ranges (for example `334,351-353,366,369`). A SHA is included once; gaps are never filled in. Grouped citations retain all contributing `memory_ids` while `memory_id` names the first for compatibility. Different revisions or contexts stay separate. Original source references remain unchanged in storage, including across merged or split crystals.
 
 A locator is a pointer, not proof that a file was read or a chronological ordering. Exact evidence and temporal/viewpoint applicability still use the existing claim metadata. A later level or status must not replace an earlier fact merely because their text resembles each other. Query the relevant story context to select time/viewpoint; an unspecified-context search can return several matching memories with different locators. Existing linked memories gain this projection without a migration or re-embedding.
 

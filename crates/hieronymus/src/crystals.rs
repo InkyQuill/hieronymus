@@ -1120,14 +1120,16 @@ pub fn source_locations(
          and s.source_language=c.source_language and s.target_language=c.target_language
          and (m.source_ref != '' or s.volume != '' or s.chapter != '') order by m.id",
     )?;
-    statement
+    let sources = statement
         .query_map([crystal_id], |row| {
             Ok(crate::memory_models::MemorySource {
                 memory_id: row.get(0)?,
+                memory_ids: Vec::new(),
                 source_ref: row.get(1)?,
                 volume: row.get(2)?,
                 chapter: row.get(3)?,
             })
         })?
-        .collect()
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(crate::source_locations::compact(sources))
 }

@@ -57,6 +57,7 @@ pub mod semantic_recall;
 pub mod semantic_store;
 pub mod semantic_tokenizer;
 pub mod short_memory;
+mod source_locations;
 pub mod state_classifier;
 pub mod story_applicability;
 pub mod terminology;

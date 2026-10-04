@@ -174,13 +174,20 @@ impl WorkflowResolver {
             let provider =
                 LlmDreamProvider::new(choice.provider.clone(), profile, choice.model.clone())?;
             let provider = if let Some(config) = config {
-                provider.with_prompts(
-                    &config.general_prompt,
-                    config
-                        .workflows
-                        .get(&choice.name)
-                        .map_or("", |workflow| workflow.prompt.as_str()),
-                )
+                provider
+                    .with_prompts(
+                        &config.general_prompt,
+                        config
+                            .workflows
+                            .get(&choice.name)
+                            .map_or("", |workflow| workflow.prompt.as_str()),
+                    )
+                    .with_output_record_target(
+                        config
+                            .workflows
+                            .get(&choice.name)
+                            .map_or(500, |workflow| workflow.max_records_per_pass),
+                    )
             } else {
                 provider
             };

@@ -556,8 +556,7 @@ pub struct NormalizedOutput {
     pub skipped_candidates: Vec<Value>,
 }
 
-/// The `_normalized_output_count` port: every applied section counts against
-/// the per-pass and per-run record budgets.
+/// Count every applied section for diagnostics, without rejecting valid output.
 fn normalized_output_count(output: &NormalizedOutput) -> usize {
     output.crystals.len()
         + output.concepts.len()
@@ -1151,7 +1150,6 @@ impl DreamService {
                 )?;
             }
             validate_normalized_output(&output, &selection_context, &allowed_memory_ids)?;
-            self.validate_pass_output(&choice.name, &output)?;
             // No normalized action may touch an id outside the selected
             // context or an active rule: fail closed before anything is
             // staged (the raw guard sees the contract key; the typed guards
@@ -1199,13 +1197,6 @@ impl DreamService {
             return Err(DreamError::InvalidOutput(format!(
                 "coverage_incomplete: {rendered}"
             )));
-        }
-
-        let staged_record_count: usize = staged.iter().map(normalized_output_count).sum();
-        if staged_record_count as i64 > self.dream_config.max_long_term_records_affected_per_run {
-            return Err(DreamError::InvalidOutput(
-                "dream run exceeds max_long_term_records_affected_per_run".to_string(),
-            ));
         }
 
         // Persistence: one validated mutation batch in one transaction. The
@@ -3184,24 +3175,6 @@ impl DreamService {
     // ------------------------------------------------------------------
     // Caps, thresholds, and redaction
     // ------------------------------------------------------------------
-
-    fn validate_pass_output(
-        &self,
-        pass_name: &str,
-        output: &NormalizedOutput,
-    ) -> Result<(), DreamError> {
-        let workflow = &self.dream_config.workflows[pass_name];
-        let mut limit = workflow.max_records_per_pass;
-        if pass_name == "relations" {
-            limit = limit.min(self.dream_config.max_relation_records_per_pass);
-        }
-        if normalized_output_count(output) as i64 > limit {
-            return Err(DreamError::InvalidOutput(format!(
-                "{pass_name} output exceeds max_records_per_pass"
-            )));
-        }
-        Ok(())
-    }
 
     fn threshold_state(
         &self,
