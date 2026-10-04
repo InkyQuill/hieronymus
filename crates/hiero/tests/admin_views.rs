@@ -27,6 +27,7 @@ fn every_advertised_view_accepts_an_empty_database() {
         assert_eq!(value["selected"], Value::Null, "{name} empty selection");
         assert_eq!(value["detail"]["subtitle"], json!("No rows"), "{name}");
         assert_eq!(value["filters"], json!([]));
+        assert_eq!(value["total_count"], json!(0), "{name} total count");
     }
 }
 
@@ -36,6 +37,111 @@ fn an_unknown_view_is_an_invalid_request() {
     let config = HieronymusConfig::new(root.path());
     let error = snapshot(&config, "Nonsense", &json!({})).unwrap_err();
     assert!(matches!(error, hiero::application::AppError::Invalid(_)));
+}
+
+#[test]
+fn translation_choices_include_agent_facets_and_use_authoritative_rule_ownership() {
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    db.execute("insert into concepts(canonical_name,scope_type,scope_key,created_at,updated_at) values('Sapphire','series','series:main',?1,?1)", [TS]).unwrap();
+    let concept = db.last_insert_rowid();
+    db.execute("insert into concept_facets(concept_id,language,facet_type,value,created_at,updated_at) values(?1,'ru','rendering','Сапфир',?2,?2)", rusqlite::params![concept,TS]).unwrap();
+    let facet = db.last_insert_rowid();
+    db.execute("insert into concepts(canonical_name,scope_type,scope_key,created_at,updated_at) values('Private','project','private-project',?1,?1)", [TS]).unwrap();
+    let private = db.last_insert_rowid();
+    db.execute("insert into concept_facets(concept_id,language,facet_type,value,created_at,updated_at) values(?1,'ru','rendering','Private rendering',?2,?2)",rusqlite::params![private,TS]).unwrap();
+    db.execute("insert into term_rules(source_text,canonical_translation,status,created_at,updated_at) values('Sapphire','Rule rendering','candidate',?1,?1)", [TS]).unwrap();
+    let rule = db.last_insert_rowid();
+    let series: i64 = db
+        .query_row("select id from series where slug='main'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    db.execute("insert into applicabilities(series_id,scope_predicates_json,metadata_state) values(?1,'[]','unspecified')", [series]).unwrap();
+    let app = db.last_insert_rowid();
+    db.execute_batch("insert into origin_receipts(id,kind,principal,event_id,text,context_json,content_hash,created_at) values('rendering-origin','agent','fixture','rendering-event','fixture','{}','hash','now')").unwrap();
+    db.execute("insert into decision_records(decision_id,series_id,origin_id,actor_kind,expected_revision,resulting_revision,canonical_request,result_json,status,created_at) values('rendering-decision',?1,'rendering-origin','agent',0,0,'{}','{}','tentative','now')",[series]).unwrap();
+    db.execute("insert into rule_authority(rule_id,authority,origin_id,decision_id,applicability_id,legacy_protected) values(?1,'learned','rendering-origin','rendering-decision',?2,0)",rusqlite::params![rule,app]).unwrap();
+
+    let main = json!({"series":"main"});
+    let visible = labels(&config, "Renderings", &main);
+    assert!(visible.contains(&"Сапфир".to_string()));
+    assert!(visible.contains(&"Rule rendering".to_string()));
+    assert!(!visible.contains(&"Private rendering".to_string()));
+    let other = labels(&config, "Renderings", &json!({"series":"other"}));
+    assert!(!other.contains(&"Сапфир".to_string()));
+    assert!(!other.contains(&"Rule rendering".to_string()));
+    for (id, expected) in [
+        (format!("facet:{facet}"), "Сапфир"),
+        (format!("rule:{rule}"), "Sapphire"),
+    ] {
+        let value = snapshot(
+            &config,
+            "Renderings",
+            &json!({"series":"main", "selected_id":id}),
+        )
+        .unwrap();
+        assert_eq!(value["selected"]["id"], id);
+        assert_eq!(value["detail"]["title"], expected);
+        assert!(value["total_count"].as_i64().unwrap() >= 3);
+    }
+}
+
+#[test]
+fn translation_observations_are_visible_before_dream_without_becoming_strict_rules() {
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    db.execute("insert into short_term_memories(session_id,source_role,kind,text,created_at) select id,'assistant','terminology','Agent translation observation',?1 from task_sessions where series_slug='main' limit 1", [TS]).unwrap();
+    let memory = db.last_insert_rowid();
+    let view = snapshot(
+        &config,
+        "Renderings",
+        &json!({"series":"main","selected_id":format!("memory:{memory}")}),
+    )
+    .unwrap();
+    assert_eq!(view["selected"]["label"], "Agent translation observation");
+    assert_eq!(view["selected"]["status"], "recent observation");
+    assert_eq!(view["detail"]["body"], "Agent translation observation");
+    assert!(
+        !labels(&config, "Renderings", &json!({"series":"other"}))
+            .contains(&"Agent translation observation".to_string())
+    );
+    let rules: i64 = db
+        .query_row(
+            "select count(*) from term_rules where source_text='Agent translation observation'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rules, 0);
+    db.execute(
+        "update short_term_memories set archived_at=?1 where id=?2",
+        rusqlite::params![TS, memory],
+    )
+    .unwrap();
+    assert!(
+        !labels(&config, "Renderings", &json!({"series":"main"}))
+            .contains(&"Agent translation observation".to_string())
+    );
+    db.execute("insert into crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,status,created_at,updated_at) values('concept','Retained translation evidence','Learned terminology','series','series:main','main','ja','en','[]',0.8,0.9,'active',?1,?1)",[TS]).unwrap();
+    let crystal = db.last_insert_rowid();
+    db.execute(
+        "insert into crystal_sources(crystal_id,short_term_memory_id) values(?1,?2)",
+        rusqlite::params![crystal, memory],
+    )
+    .unwrap();
+    let retained = snapshot(
+        &config,
+        "Renderings",
+        &json!({"series":"main","selected_id":format!("crystal:{crystal}")}),
+    )
+    .unwrap();
+    assert_eq!(retained["selected"]["kind"], "remembered terminology");
+    assert_eq!(retained["detail"]["body"], "Retained translation evidence");
+    assert!(
+        !labels(&config, "Renderings", &json!({"series":"other"}))
+            .contains(&"Learned terminology".to_string())
+    );
 }
 
 #[test]
@@ -62,9 +168,11 @@ fn rows(config: &HieronymusConfig, view: &str, query: &Value) -> Vec<(i64, Strin
 }
 
 fn labels(config: &HieronymusConfig, view: &str, query: &Value) -> Vec<String> {
-    rows(config, view, query)
-        .into_iter()
-        .map(|(_, label)| label)
+    snapshot(config, view, query).unwrap()["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["label"].as_str().unwrap().to_string())
         .collect()
 }
 
@@ -622,4 +730,169 @@ fn long_term_detail_displays_the_inherited_source_locator() {
     let fields = result["detail"]["fields"].to_string();
     assert!(fields.contains("Source locations"));
     assert!(fields.contains("Vol 3, chapter 2"));
+}
+
+#[test]
+fn every_table_counts_the_full_filtered_set_and_pages_distinct_records() {
+    let (_root, config) = seeded_root();
+    for view in VIEW_NAMES {
+        for series in [None, Some("main"), Some("other")] {
+            let all = snapshot(&config, view, &json!({"series":series,"limit":500})).unwrap();
+            let rows = all["rows"].as_array().unwrap();
+            assert_eq!(all["total_count"], json!(rows.len()), "{view} {series:?}");
+            for (offset, expected) in rows.iter().enumerate() {
+                let page = snapshot(
+                    &config,
+                    view,
+                    &json!({"series":series,"limit":1,"offset":offset}),
+                )
+                .unwrap();
+                assert_eq!(page["total_count"], all["total_count"], "{view}");
+                assert_eq!(page["rows"], json!([expected]), "{view} offset {offset}");
+                assert_eq!(page["selected"]["id"], expected["id"], "{view}");
+            }
+        }
+    }
+}
+
+#[test]
+fn search_uses_full_text_unicode_case_and_the_full_set_before_paging() {
+    let (_root, config) = seeded_root();
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    let tx = db.transaction().unwrap();
+    for index in 0..605 {
+        let text = if index >= 601 {
+            "Световой выстрел 100%_"
+        } else {
+            "Unrelated evidence"
+        };
+        tx.execute("insert into crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,status,created_at,updated_at) values('rule',?1,'Opaque title','series','series:main','main','ja','ru','[]',0.8,0.9,'active',?2,?2)",rusqlite::params![text,TS]).unwrap();
+    }
+    tx.commit().unwrap();
+    for view in ["Crystals", "Renderings"] {
+        let first = snapshot(
+            &config,
+            view,
+            &json!({"series":"main","search":"СВЕТОВОЙ ВЫСТРЕЛ 100%_","limit":2}),
+        )
+        .unwrap();
+        let next = snapshot(
+            &config,
+            view,
+            &json!({"series":"main","search":"световой выстрел 100%_","limit":2,"offset":2}),
+        )
+        .unwrap();
+        assert_eq!(first["total_count"], json!(4), "{view}");
+        assert_eq!(next["total_count"], json!(4), "{view}");
+        assert_eq!(first["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(next["rows"].as_array().unwrap().len(), 2);
+        assert_ne!(first["rows"][0]["id"], next["rows"][0]["id"]);
+        assert_eq!(
+            snapshot(
+                &config,
+                view,
+                &json!({"series":"other","search":"Световой"})
+            )
+            .unwrap()["total_count"],
+            json!(0)
+        );
+    }
+    for view in VIEW_NAMES {
+        let result = snapshot(
+            &config,
+            view,
+            &json!({"search":"nonexistent search ' OR 1=1 --"}),
+        )
+        .unwrap();
+        assert_eq!(result["total_count"], json!(0), "{view}");
+        assert_eq!(result["rows"], json!([]), "{view}");
+    }
+}
+
+#[test]
+fn matching_a_series_key_does_not_promote_a_project_scoped_concept() {
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    db.execute("insert into concepts(canonical_name,description,scope_type,scope_key,status,confidence,created_at,updated_at) values('Private project concept','hidden','project','series:main','candidate',0.5,?1,?1)",[TS]).unwrap();
+    let scoped = snapshot(
+        &config,
+        "Concepts",
+        &json!({"series":"main","search":"Private project"}),
+    )
+    .unwrap();
+    assert_eq!(scoped["total_count"], json!(0));
+    assert_eq!(scoped["rows"], json!([]));
+    let all = snapshot(&config, "Concepts", &json!({"search":"Private project"})).unwrap();
+    assert_eq!(all["total_count"], json!(1));
+}
+
+#[test]
+fn search_finds_a_crystals_atomic_claim_even_when_its_summary_has_no_match() {
+    use hieronymus::{
+        claim_capture::ClaimInput,
+        crystals::{CrystalStore, NewCrystal},
+        memory_models::TranslationContext,
+        story_applicability::{ApplicabilityV1, MetadataState},
+        workspace::{ShortTermMemoryInput, WorkspaceStore},
+    };
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    let series_id = db
+        .query_row("select id from series where slug='main'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let context = TranslationContext::new("main", "en", "ru", "translation");
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let session = workspace.start_session(&context).unwrap();
+    let memory = workspace
+        .add_short_term_memory(
+            session.id,
+            &ShortTermMemoryInput::new("terminology", "Imported terms."),
+        )
+        .unwrap();
+    let mut crystal = NewCrystal::new("observation", "A general summary.");
+    crystal.title = "Opaque title".into();
+    crystal.source_memory_ids = vec![memory.id];
+    crystal.claims = vec![ClaimInput {
+        text: "ライト・シュート → Световой выстрел".into(),
+        concept_id: None,
+        applicability: ApplicabilityV1 {
+            series_id,
+            timeline_id: None,
+            volume_key: None,
+            chapter_key: None,
+            scope_predicates: vec![],
+            valid_from: None,
+            valid_until: None,
+            metadata_state: MetadataState::Unspecified,
+            knowledge_gates: vec![],
+        },
+    }];
+    let id = CrystalStore::open(&config)
+        .unwrap()
+        .add_crystal(&context, "observation", &crystal)
+        .unwrap();
+    for view in ["Crystals", "Renderings"] {
+        let result =
+            snapshot(&config, view, &json!({"series":"main","search":"сВеТоВоЙ"})).unwrap();
+        assert_eq!(result["total_count"], json!(1), "{view}");
+        assert_eq!(
+            result["rows"][0]["id"],
+            if view == "Crystals" {
+                json!(id)
+            } else {
+                json!(format!("crystal:{id}"))
+            }
+        );
+        assert_eq!(
+            snapshot(
+                &config,
+                view,
+                &json!({"series":"other","search":"Световой"})
+            )
+            .unwrap()["total_count"],
+            json!(0)
+        );
+    }
 }

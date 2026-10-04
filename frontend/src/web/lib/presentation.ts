@@ -25,11 +25,11 @@ export const memoryGuide: Record<
       "No subjects here yet. Your agent and Dreaming identify them while working with your project.",
   },
   Renderings: {
-    label: "Translation history",
+    label: "Translation choices",
     description:
-      "Historical translation choices. Use “Correct a rendering” to inspect the current approved choice and change it.",
+      "Translation choices remembered by your agent, including recent terminology observations, proposed variants and translation rules. Their status shows how they are used. Correct a choice when your agent gets it wrong.",
     empty:
-      "No historical translation choices here. This list does not show every current approved term.",
+      "No translation choices saved for this selection yet. Your agent records terminology while working, and Dreaming develops those observations into lasting memories.",
   },
   "Short-Term Memory": {
     label: "Recent memories",

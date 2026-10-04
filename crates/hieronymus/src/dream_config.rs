@@ -78,6 +78,7 @@ pub struct WorkflowProfile {
     pub provider: String,
     pub model: String,
     pub enabled: bool,
+    /// Legacy wire name: an organization guide, not an output rejection ceiling.
     pub max_records_per_pass: i64,
     /// Empty uses the built-in instruction for this pass.
     pub prompt: String,

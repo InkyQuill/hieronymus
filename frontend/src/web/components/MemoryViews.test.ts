@@ -8,6 +8,11 @@ import type {
   AdminSnapshot,
 } from "../lib/types";
 import MemoryViews from "./MemoryViews.svelte";
+import { correctionOptions } from "../lib/authority";
+vi.mock("../lib/authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/authority")>()),
+  correctionOptions: vi.fn(async () => ({ series: [], sources: [] })),
+}));
 
 vi.mock("../lib/api", () => ({
   loadAdminSnapshot: vi.fn(),
@@ -190,9 +195,7 @@ test("every advertised view is selectable and renders its returned rows", async 
         view,
         undefined,
         undefined,
-        ["Crystals", "Lessons", "Short-Term Memory"].includes(view)
-          ? { limit: 20, offset: 0 }
-          : undefined,
+        { limit: 20, offset: 0 },
       ),
     );
     await screen.findByText(`${view} record one`);
@@ -399,8 +402,9 @@ test("merge uses two explicitly checked records and clears selection after compl
   await user.click(
     screen.getByRole("checkbox", { name: "Select Crystal Beta" }),
   );
-  await user.click(screen.getByText("More actions and diagnostics"));
-  await user.click(screen.getByRole("button", { name: "Merge Selected" }));
+  await user.click(
+    screen.getByRole("button", { name: "Combine selected memories" }),
+  );
   await user.type(
     screen.getByLabelText("Merged memory text"),
     "Combined evidence",
@@ -488,7 +492,7 @@ test("book selection scopes requests, survives view changes and remembers the ch
       "Concepts",
       undefined,
       "book-b",
-      undefined,
+      { limit: 20, offset: 0 },
     ),
   );
   expect(localStorage.getItem("hieronymus.memory.series")).toBe("book-b");
@@ -498,7 +502,7 @@ test("book selection scopes requests, survives view changes and remembers the ch
       "Concepts",
       undefined,
       undefined,
-      undefined,
+      { limit: 20, offset: 0 },
     ),
   );
   localStorage.clear();
@@ -785,4 +789,263 @@ test("memory source locations are readable without opening technical details", a
   const sources = await screen.findByRole("region", { name: "Memory sources" });
   expect(sources.textContent).toContain("Vol 3, chapter 2");
   expect(sources.closest("details")).toBeNull();
+});
+
+test.each([
+  ["memory:7", "short_term", 7],
+  ["crystal:8", "crystal", 8],
+  ["facet:9", "facet", 9],
+] as const)(
+  "translation choice %s opens the correction for its actual memory",
+  async (id, source, targetId) => {
+    const current = snapshotFor("Renderings");
+    current.snapshot.rows[0].id = id;
+    current.snapshot.selected = current.snapshot.rows[0];
+    loadSnapshotMock.mockReset();
+    loadSnapshotMock.mockResolvedValue(current);
+    const user = userEvent.setup();
+    render(MemoryViews, {
+      props: {
+        dashboard: {
+          ...dashboard,
+          views: ["Renderings"],
+          command_options: [
+            command("edit_memory", "Legacy edit", ["Renderings"], true),
+          ],
+        },
+        onNotice: vi.fn(),
+      },
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Correct this memory" }),
+    );
+    await waitFor(() =>
+      expect(correctionOptions).toHaveBeenCalledWith({ source, id: targetId }),
+    );
+    expect(screen.queryByRole("button", { name: "Legacy edit" })).toBeNull();
+  },
+);
+
+for (const view of ALL_VIEWS) {
+  test(`${view}: paging, page size and selection keep the table mounted`, async () => {
+    const user = userEvent.setup();
+    let resolveSelection: ((value: AdminSnapshot) => void) | undefined;
+    loadSnapshotMock
+      .mockReset()
+      .mockImplementation(async (_view, selected, _series, paging) => {
+        const offset = paging?.offset ?? 0;
+        const next = {
+          snapshot: {
+            ...listSnapshot.snapshot,
+            view,
+            total_count: 75,
+            rows: [{ ...row, id: offset + 1, label: `Entry ${offset + 1}` }],
+            selected: null,
+          },
+        };
+        if (selected !== undefined)
+          return new Promise<AdminSnapshot>((resolve) => {
+            resolveSelection = resolve;
+          });
+        return next;
+      });
+    render(MemoryViews, {
+      dashboard: { ...dashboard, views: [view] },
+      onNotice: vi.fn(),
+    });
+    await screen.findByRole("button", { name: /Entry 1/ });
+    const table = screen.getByRole("table");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("button", { name: /Entry 21/ });
+    expect(screen.queryByRole("button", { name: /^Entry 1/ })).toBeNull();
+    expect(screen.getByRole("table")).toBe(table);
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    await screen.findByRole("button", { name: /Entry 1/ });
+    await user.selectOptions(screen.getByLabelText("Rows per page"), "50");
+    await waitFor(() =>
+      expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+        view,
+        undefined,
+        undefined,
+        { limit: 50, offset: 0 },
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: /Entry 1/ }));
+    await waitFor(() => expect(resolveSelection).toBeDefined());
+    expect(screen.getByRole("table")).toBe(table);
+    expect(screen.queryByText(`Loading ${view}…`)).toBeNull();
+    resolveSelection!({
+      snapshot: {
+        ...listSnapshot.snapshot,
+        view,
+        total_count: 75,
+        rows: [{ ...row, id: 1, label: "Entry 1" }],
+        selected: { ...row, id: 1 },
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("table")).toBe(table));
+  });
+}
+
+test("switching view clears old rows and actions while the new table loads", async () => {
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce(selectedSnapshot)
+    .mockImplementationOnce(() => new Promise(() => {}));
+  render(MemoryViews, {
+    dashboard: { ...dashboard, views: ["Crystals", "Renderings"] },
+    onNotice: vi.fn(),
+  });
+  await screen.findByRole("button", { name: /Crystal Alpha/ });
+  await userEvent.click(screen.getByTitle("Renderings"));
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Correct this memory" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Reinforce Crystal" }),
+  ).toBeNull();
+  expect(
+    screen.getByText("Loading translation choices…", { exact: false }),
+  ).toBeTruthy();
+});
+
+test("search covers the server result set and preserves checked memories across pages and queries", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock
+    .mockReset()
+    .mockImplementation(async (_view, _selected, _series, paging) => ({
+      snapshot: {
+        ...listSnapshot.snapshot,
+        total_count: 45,
+        rows: [
+          {
+            ...row,
+            id: paging?.search ? 9 : (paging?.offset ?? 0) + 7,
+            label: paging?.search
+              ? "Found crystal"
+              : `Crystal ${paging?.offset ?? 0}`,
+          },
+        ],
+        selected: null,
+      },
+    }));
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      command_options: [
+        ...dashboard.command_options,
+        command("merge_selected", "Merge Selected", ["Crystals"], true),
+      ],
+    },
+    onNotice: vi.fn(),
+  });
+  await user.click(
+    await screen.findByRole("checkbox", { name: "Select Crystal 0" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByRole("checkbox", { name: "Select Crystal 20" });
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search long-term memories" }),
+    "русский термин",
+  );
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("checkbox", { name: "Select Found crystal" });
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+    "Crystals",
+    undefined,
+    undefined,
+    { limit: 20, offset: 0, search: "русский термин" },
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select Found crystal" }),
+  );
+  expect(screen.getByText("2 selected")).toBeTruthy();
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Combine selected memories",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.queryByText("2 selected")).toBeNull();
+});
+
+test("combining retained selections works when the current search has no results", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: {
+        ...selectedSnapshot.snapshot,
+        total_count: 2,
+        rows: [row, { ...row, id: 8, label: "Crystal Beta" }],
+      },
+    })
+    .mockResolvedValue({
+      snapshot: {
+        ...listSnapshot.snapshot,
+        total_count: 0,
+        rows: [],
+        selected: null,
+      },
+    });
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      command_options: [
+        ...dashboard.command_options,
+        command("merge_selected", "Merge Selected", ["Crystals"], true),
+      ],
+    },
+    onNotice: vi.fn(),
+  });
+  await user.click(
+    await screen.findByRole("checkbox", { name: "Select Crystal Alpha" }),
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select Crystal Beta" }),
+  );
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search long-term memories" }),
+    "unmatched",
+  );
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByText(/No records match/);
+  await user.click(
+    screen.getByRole("button", { name: "Combine selected memories" }),
+  );
+  expect(screen.getByLabelText("Merged memory text")).toBeTruthy();
+  expect(screen.getByText(/Merging 2 records/)).toBeTruthy();
+});
+
+test("paging away from a record closes its correction instead of relabeling the old target", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: { ...selectedSnapshot.snapshot, total_count: 45 },
+    })
+    .mockResolvedValue({
+      snapshot: {
+        ...selectedSnapshot.snapshot,
+        total_count: 45,
+        rows: [{ ...row, id: 27, label: "Next record" }],
+        selected: { ...row, id: 27 },
+        detail: {
+          ...selectedSnapshot.snapshot.detail,
+          title: "Next record detail",
+        },
+      },
+    });
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await user.click(
+    await screen.findByRole("button", { name: "Correct this memory" }),
+  );
+  expect(screen.getByRole("region", { name: "Correct a memory" })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Next record detail");
+  expect(screen.queryByRole("region", { name: "Correct a memory" })).toBeNull();
 });

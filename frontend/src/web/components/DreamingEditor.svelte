@@ -1,5 +1,6 @@
 <script lang="ts">
   import MemoryComparisonSettings from "./MemoryComparisonSettings.svelte";
+  import DreamProviderTimeouts from "./DreamProviderTimeouts.svelte";
   import SettingsSaveState from "./SettingsSaveState.svelte";
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import { workflowGuide } from "../lib/presentation";
@@ -89,8 +90,8 @@
   <details class="mt-6 border-t border-default pt-2"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Advanced processing limits</summary><p class="mb-4 max-w-[70ch] text-body-sm text-secondary">These limits control how much work a run can attempt. Keep the existing values unless you need to adjust processing size.</p><div class="grid gap-4 sm:grid-cols-2">
     <label class="grid gap-1.5 text-caption text-secondary">Maximum pending memories<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.dreaming.max_pending_short_term_memories} /></label>
     <label class="grid gap-1.5 text-caption text-secondary">Maximum memories per run<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.dreaming.max_short_term_memories_per_run} /></label>
-    <label class="grid gap-1.5 text-caption text-secondary">Maximum long-term records per run<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.dreaming.max_long_term_records_affected_per_run} /></label>
-    <label class="grid gap-1.5 text-caption text-secondary">Maximum relations per pass<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.dreaming.max_relation_records_per_pass} /></label>
+    <label class="grid gap-1.5 text-caption text-secondary">Working-memory batch size<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.dreaming.max_long_term_records_affected_per_run} /></label>
+    <label class="grid gap-1.5 text-caption text-secondary">Relation comparison batch size<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={settings.dreaming.max_relation_records_per_pass} /></label>
   </div>
 
   </details>
@@ -123,7 +124,7 @@
             {#if modelErrors[workflow.provider]}<p role="status">{modelErrors[workflow.provider]}</p>{/if}
             <button type="button" class="min-h-11 text-left text-accent-text disabled:opacity-60" disabled={!workflow.provider || loadingModels[workflow.provider]} onclick={() => loadModels(workflow.provider)}>Refresh models</button>
           </div>
-          <label class="grid gap-1.5 text-caption text-secondary">Maximum records<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={workflow.max_records_per_pass} /></label>
+          <label class="grid gap-1.5 text-caption text-secondary">Output organization guide (records)<input class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40" oninvalid={(event) => { const details = event.currentTarget.closest("details"); if (details) details.open = true; }} type="number" required min="1" bind:value={workflow.max_records_per_pass} /></label>
         </div>
         <details class="mt-5 border-t border-default pt-3">
           <summary class="min-h-11 cursor-pointer py-3 text-body-sm text-accent-text focus-visible:outline-2 focus-visible:outline-accent">Task prompt · {workflow.prompt?.trim() ? "Custom" : "Default"}</summary>
@@ -143,4 +144,5 @@
   </fieldset>
 </form>
 
+<DreamProviderTimeouts {providers} providerIds={providers.map(provider => provider.id)} />
 <MemoryComparisonSettings />

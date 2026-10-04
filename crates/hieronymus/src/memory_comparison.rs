@@ -132,7 +132,6 @@ pub struct Comparator {
     config: HieronymusConfig,
     settings: ComparisonConfig,
     remaining: usize,
-    deadline: Instant,
     transport: Arc<dyn ProviderTransport>,
     routing: String,
     configuration_error: Option<&'static str>,
@@ -147,7 +146,6 @@ impl Comparator {
             config: config.clone(),
             remaining: 0,
             settings: ComparisonConfig::default(),
-            deadline: Instant::now() + Duration::from_secs(60),
             transport: Arc::new(BlockingHttpTransport::new(65_536)),
             routing: String::new(),
             configuration_error: None,
@@ -168,7 +166,6 @@ impl Comparator {
         self.relevance = crate::relevance_config::load(&self.config).ok();
         self.routing = self.compute_routing_fingerprint();
         self.remaining = self.settings.max_pairs_per_run;
-        self.deadline = Instant::now() + Duration::from_secs(60);
     }
     pub fn with_transport(mut self, transport: Arc<dyn ProviderTransport>) -> Self {
         self.transport = transport;
@@ -286,7 +283,7 @@ impl Comparator {
         for (index, (left, right)) in pairs.iter().enumerate() {
             match self.prepare(left, right)? {
                 Ok(value) => results[index] = value,
-                Err((key, pair)) if self.remaining > 0 && Instant::now() < self.deadline => {
+                Err((key, pair)) if self.remaining > 0 => {
                     self.remaining -= 1;
                     pending.push((index, key, pair));
                 }
@@ -374,11 +371,7 @@ impl Comparator {
 
     fn request_jev(&self, a: &Assignment, pairs: &[&Value]) -> Vec<Result<Decision, &'static str>> {
         let response = (|| {
-            let timeout = Duration::from_secs(self.settings.timeout_seconds)
-                .min(self.deadline.saturating_duration_since(Instant::now()));
-            if timeout.is_zero() {
-                return Err("comparison deadline exhausted");
-            }
+            let timeout = Duration::from_secs(self.settings.timeout_seconds);
             let settings = self
                 .relevance
                 .as_ref()
@@ -420,11 +413,7 @@ impl Comparator {
             .collect()
     }
     fn request(&self, a: &Assignment, pair: &Value) -> Result<Decision, &'static str> {
-        let timeout = Duration::from_secs(self.settings.timeout_seconds)
-            .min(self.deadline.saturating_duration_since(Instant::now()));
-        if timeout.is_zero() {
-            return Err("comparison deadline exhausted");
-        }
+        let timeout = Duration::from_secs(self.settings.timeout_seconds);
         let criteria = comparison_criteria();
         let value = {
             let catalog = self

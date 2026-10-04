@@ -13,8 +13,6 @@ use crate::memory_models::{
 use crate::registry::Registry;
 use crate::short_memory::{search_expression, validate_short_memory_text};
 
-const MAX_SEARCH_LIMIT: usize = 50;
-
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
     #[error(transparent)]
@@ -722,7 +720,7 @@ impl WorkspaceStore {
         if expression.is_empty() {
             return Ok(Vec::new());
         }
-        if limit > MAX_SEARCH_LIMIT {
+        if i64::try_from(limit).is_err() {
             return Err(WorkspaceError::LimitTooSmall);
         }
         let mut statement = connection.prepare(

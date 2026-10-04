@@ -17,6 +17,7 @@ use std::{
 struct Wire {
     replies: Mutex<VecDeque<Result<Value, HttpError>>>,
     calls: Mutex<Vec<(String, Value)>>,
+    timeouts: Mutex<Vec<Duration>>,
 }
 impl ProviderTransport for Wire {
     fn get_json(
@@ -32,7 +33,7 @@ impl ProviderTransport for Wire {
         url: &str,
         headers: &[(String, String)],
         body: &Value,
-        _: Duration,
+        timeout: Duration,
     ) -> Result<HttpResponse, HttpError> {
         assert!(
             !headers
@@ -40,6 +41,7 @@ impl ProviderTransport for Wire {
                 .any(|(name, _)| name.eq_ignore_ascii_case("content-type")),
             "the underlying transport owns content type"
         );
+        self.timeouts.lock().unwrap().push(timeout);
         self.calls.lock().unwrap().push((url.into(), body.clone()));
         if url.ends_with("/api/show") {
             return Ok(HttpResponse{status:200,body:json!({"model_info":{"llama.context_length":8192,"general.architecture":"llama"},"template":"","parameters":"num_ctx 8192"}).to_string()});
@@ -143,6 +145,7 @@ fn wire(replies: Vec<Result<Value, HttpError>>) -> Arc<Wire> {
     Arc::new(Wire {
         replies: Mutex::new(replies.into()),
         calls: Mutex::new(vec![]),
+        timeouts: Mutex::new(vec![]),
     })
 }
 
@@ -627,4 +630,47 @@ fn routing_identity_is_stable_within_run_and_refreshed_at_next_run() {
         Decision::Distinct
     );
     assert_eq!(transport.calls.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn comparison_accepts_long_timeouts_and_delivers_them_to_provider() {
+    let (_root, config) = fixture("cloud", None, true);
+    let mut settings = comparison_config::load(&config).unwrap();
+    settings.timeout_seconds = 600;
+    comparison_config::save(&config, &settings).unwrap();
+    assert_eq!(
+        comparison_config::load(&config).unwrap().timeout_seconds,
+        600
+    );
+    let transport = wire(vec![Ok(
+        json!({"choices":[{"message":{"content":"{\"decision\":\"equivalent\"}"}}]}),
+    )]);
+    let (left, right) = pair();
+    let result = Comparator::open(&config)
+        .unwrap()
+        .with_transport(transport.clone())
+        .compare(&left, &right)
+        .unwrap();
+    assert_eq!(result.decision, Decision::Equivalent);
+    let timeouts = transport.timeouts.lock().unwrap();
+    assert!(
+        timeouts
+            .iter()
+            .all(|timeout| *timeout > Duration::from_secs(599)),
+        "{timeouts:?}"
+    );
+}
+
+#[test]
+fn comparison_rejects_zero_and_unrepresentable_timeouts() {
+    for timeout_seconds in [0, u64::MAX] {
+        assert!(
+            ComparisonConfig {
+                timeout_seconds,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
 }

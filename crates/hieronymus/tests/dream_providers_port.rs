@@ -205,6 +205,7 @@ struct FakeTransport {
     outcomes: Mutex<VecDeque<Result<HttpResponse, HttpError>>>,
     calls: Mutex<Vec<RecordedCall>>,
     payloads: Mutex<Vec<Value>>,
+    timeouts: Mutex<Vec<Duration>>,
 }
 
 impl FakeTransport {
@@ -213,6 +214,7 @@ impl FakeTransport {
             outcomes: Mutex::new(outcomes.into_iter().collect()),
             calls: Mutex::new(Vec::new()),
             payloads: Mutex::new(Vec::new()),
+            timeouts: Mutex::new(Vec::new()),
         })
     }
 
@@ -239,6 +241,7 @@ impl ProviderTransport for FakeTransport {
         headers: &[(String, String)],
         _timeout: Duration,
     ) -> Result<HttpResponse, HttpError> {
+        self.timeouts.lock().unwrap().push(_timeout);
         self.calls
             .lock()
             .unwrap()
@@ -847,6 +850,31 @@ fn provider_pass_fails_after_bounded_retry() {
         "the failure must carry the request id: {message}"
     );
     assert_eq!(transport.call_count(), 3, "retry budget is bounded");
+}
+
+#[test]
+fn dream_pass_honors_long_configured_provider_timeout() {
+    let transport = FakeTransport::new(vec![Ok(HttpResponse {
+        status: 200,
+        body: openai_envelope("{}"),
+    })]);
+    let profile = ProviderProfile::new(
+        "DeepSeek",
+        "openai",
+        "http://127.0.0.1:9/v1",
+        SECRET_KEY,
+        600.0,
+    );
+    let provider = LlmDreamProvider::new("deepseek", profile, "deepseek-flash")
+        .unwrap()
+        .with_transport(transport.clone());
+    provider
+        .run_pass("rule_crystals", &context("book"), &[])
+        .unwrap();
+    assert_eq!(
+        *transport.timeouts.lock().unwrap(),
+        vec![Duration::from_secs(600)]
+    );
 }
 
 #[test]

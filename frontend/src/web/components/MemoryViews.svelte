@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { CircleHelp } from "@lucide/svelte";
   import { onMount, untrack } from "svelte";
   import { loadAdminSnapshot, runAdminAction } from "../lib/api";
   import type {
@@ -14,6 +15,16 @@
   import ActionDialog from "./ActionDialog.svelte";
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import { memoryGuide, memoryLabel } from "../lib/presentation";
+  import { compactSourceLocations } from "../lib/source-locations";
+
+  function sourceLocations(value: string) {
+    const occurrences = new Map<string, number>();
+    return compactSourceLocations(value).map(location => {
+      const occurrence = (occurrences.get(location) ?? 0) + 1;
+      occurrences.set(location, occurrence);
+      return { location, key: `${location}:${occurrence}` };
+    });
+  }
 
   type Notice = { message: string; tone: "success" | "error" };
   type Props = { dashboard: AdminDashboard; bookHeader?: HTMLDivElement; onNotice: (notice: Notice) => void };
@@ -56,7 +67,7 @@
   function chooseSeries(value: string) {
     selectedSeries = value;
     page = 0;
-    selectedIds = []; snapshot = null; loadedSnapshot = null; correction = null; dialogCommand = null;
+    clearCombinedSelection(); snapshot = null; loadedSnapshot = null; correction = null; dialogCommand = null;
     try { localStorage.setItem("hieronymus.memory.series", value); } catch { /* Storage may be disabled. */ }
     const url = new URL(window.location.href);
     if (value) url.searchParams.set("series", value); else url.searchParams.delete("series");
@@ -66,10 +77,26 @@
   let detailPanel = $state<HTMLElement>();
   let selectedView = $state("");
   let selectedIds = $state<Array<string | number>>([]);
+  let searchDraft = $state("");
+  let search = $state("");
+  function searchRecords(event: SubmitEvent) {
+    event.preventDefault(); search = searchDraft.trim(); page = 0; correction = null;
+    void load(selectedView);
+  }
+  let selectedRecords = $state<AdminRow[]>([]);
+  function clearCombinedSelection() { selectedIds = []; selectedRecords = []; }
+  const combineCommand = $derived(commandsFor(selectedView).find(command => command.id === "merge_selected"));
   let page = $state(0);
   let loadedPage = 0;
+  let loadedSearch = "";
   let loadedSnapshot: AdminSnapshot["snapshot"] | null = null;
-  const pageSize = 20;
+  let pageSize = $state(20);
+  let loadedPageSize = 20;
+  const helpId = $props.id();
+  function changePageSize(value: string) {
+    pageSize = Number(value); page = 0;
+    void load(selectedView);
+  }
   const recordCount = $derived(snapshot?.total_count ?? snapshot?.rows.length ?? 0);
   const pageCount = $derived(Math.max(1, Math.ceil(recordCount / pageSize)));
   const visibleRows = $derived(snapshot?.total_count !== undefined ? snapshot.rows : (snapshot?.rows ?? []).slice(Math.min(page, pageCount - 1) * pageSize, (Math.min(page, pageCount - 1) + 1) * pageSize));
@@ -91,12 +118,24 @@
 
   async function selectRecord(row: AdminRow) {
     correction = null;
-    await load(selectedView, row.id);
+    await load(selectedView, row.id, true);
     if (window.matchMedia?.("(max-width: 1079px)").matches) detailPanel?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
   function commandsFor(view: string): AdminCommand[] {
-    return commands.filter((command) => command.views.includes(view));
+    const modernRendering = view === "Renderings" && typeof snapshot?.selected?.id === "string";
+    return commands.filter((command) => command.views.includes(view) && !(modernRendering && command.requires_selection));
+  }
+
+  function correctionTarget(row: AdminRow | null): ClaimTarget | undefined {
+    if (!row) return;
+    if (["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)) {
+      return { source: selectedView === "Short-Term Memory" ? "short_term" : "crystal", id: Number(row.id) };
+    }
+    if (selectedView === "Renderings" && typeof row.id === "string") {
+      const match = /^(memory|crystal|facet):(\d+)$/.exec(row.id);
+      if (match) return { source: match[1] === "memory" ? "short_term" : match[1] === "facet" ? "facet" : "crystal", id: Number(match[2]) };
+    }
   }
 
   function actionable(command: AdminCommand, row: AdminRow | null): boolean {
@@ -105,12 +144,16 @@
   }
 
   function applySnapshot(next: AdminSnapshot["snapshot"]) {
+    if (next.selected?.id !== snapshot?.selected?.id) correction = null;
     // Keep unchanged data and its DOM bindings stable during progress events.
     if (JSON.stringify(snapshot) !== JSON.stringify(next)) snapshot = next;
     loadedSnapshot = next;
     loadedPage = page;
+    loadedSearch = search;
+    loadedPageSize = pageSize;
+    try { localStorage.setItem("hieronymus.memory.pageSize", String(pageSize)); } catch { /* Optional preference. */ }
     page = Math.min(page, Math.max(0, Math.ceil((next.total_count ?? next.rows.length) / pageSize) - 1));
-    selectedIds = selectedIds.filter((id) => next.rows.some((row) => row.id === id));
+
   }
 
   // Every load() call takes the next sequence number; a response whose number
@@ -120,14 +163,13 @@
 
   async function load(view: string, selectedId?: string | number, background = false) {
     const sequence = ++loadSequence;
-    if (selectedView !== view) { selectedIds = []; page = 0; loadedSnapshot = null; correction = null; }
+    if (selectedView !== view) { clearCombinedSelection(); page = 0; snapshot = null; loadedSnapshot = null; correction = null; inspection = null; dialogCommand = null; }
     selectedView = view;
     loading = !background;
     error = "";
     if (!background) inspection = null;
     try {
-      const paging = ["Crystals", "Lessons", "Short-Term Memory"].includes(view)
-        ? { limit: pageSize, offset: page * pageSize } : undefined;
+      const paging = { limit: pageSize, offset: page * pageSize, ...(search ? { search } : {}) };
       const next = (await loadAdminSnapshot(view, selectedId, selectedSeries || undefined, paging)).snapshot;
       if (sequence !== loadSequence) return;
       if (paging && next.total_count !== undefined) {
@@ -141,7 +183,7 @@
       applySnapshot(next);
     } catch (reason) {
       if (sequence !== loadSequence) return;
-      if (loadedSnapshot?.view === view) { snapshot = loadedSnapshot; page = loadedPage; }
+      if (loadedSnapshot?.view === view) { snapshot = loadedSnapshot; page = loadedPage; pageSize = loadedPageSize; search = loadedSearch; }
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
       if (sequence === loadSequence) loading = false;
@@ -199,7 +241,7 @@
       // it cannot overwrite this snapshot.
       loadSequence += 1;
       loading = false;
-      selectedIds = [];
+      clearCombinedSelection();
       if (selectedSeries || result.snapshot.total_count !== undefined || snapshot?.total_count !== undefined) await load(selectedView, result.snapshot.selected?.id);
       else applySnapshot(result.snapshot);
       dialogCommand = null;
@@ -221,12 +263,13 @@
 
   function toggleSelection(row: AdminRow, checked: boolean) {
     selectedIds = checked ? [...selectedIds, row.id] : selectedIds.filter((id) => id !== row.id);
+    selectedRecords = checked ? [...selectedRecords, row] : selectedRecords.filter(record => record.id !== row.id);
     if (checked && !snapshot?.selected) void load(selectedView, row.id);
   }
 
   function start(command: AdminCommand) {
     const row = snapshot?.selected ?? null;
-    if (command.requires_selection && !row) return;
+    if (command.id === "merge_selected" ? selectedIds.length < 2 : command.requires_selection && !row) return;
     if (NEEDS_DIALOG.has(command.id)) {
       dialogError = "";
       dialogCommand = command;
@@ -240,6 +283,7 @@
   }
 
   onMount(() => {
+    try { const savedSize = Number(localStorage.getItem("hieronymus.memory.pageSize")); if ([10, 20, 50, 100, 200, 500].includes(savedSize)) pageSize = savedSize; } catch { /* Optional preference. */ }
     let saved = new URLSearchParams(window.location.search).get("series");
     if (saved === null) { try { saved = localStorage.getItem("hieronymus.memory.series"); } catch { /* Optional preference. */ } }
     if (books.some(book => book.slug === saved)) selectedSeries = saved!;
@@ -260,16 +304,11 @@
 
   </div>
   {/if}
-  {#if correction}<div class="col-span-full">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}
-  {#if selectedView === "Renderings"}<p class="col-span-full m-5 text-body-sm text-secondary" role="note">These older translation choices are historical records. Use “Correct a rendering” to inspect and change the current approved translation.</p>{/if}
-  <header class="flex flex-wrap items-center justify-between gap-3">
-    <h1 class="text-display">{globalView ? "Processing history" : "Your project memory"}</h1>
-    {#if !globalView}<button class="min-h-11 rounded-sm border border-default px-4 py-2 text-body-sm hover:bg-raised" onclick={() => correction = {}}>Correct a rendering</button>{/if}
-  </header>
+  <h1 class="sr-only">{globalView ? "Processing history" : "Your project memory"}</h1>
   <div class="min-w-0">
     <label class="mb-4 grid gap-2 text-body-sm text-secondary sm:hidden">Memory section<select class="min-h-11 max-w-full rounded-sm border border-default bg-surface px-3 text-primary" value={selectedView} disabled={runningAction !== null} onchange={(event) => void load(event.currentTarget.value)}>{#each dashboard.views as view (view)}<option value={view}>{memoryLabel(view)}</option>{/each}</select></label>
     <nav
-      class="mb-6 hidden flex-wrap sm:flex gap-1 border-b border-default pb-3"
+      class="mb-3 hidden flex-wrap sm:flex gap-1 border-b border-default pb-1"
       aria-label="Memory view selector"
     >
       {#each dashboard.views as view (view)}
@@ -284,15 +323,33 @@
         >
       {/each}
     </nav>
-    <h3 class="mb-2 text-h3">{memoryLabel(selectedView)}</h3>
-    <p class="mb-4 max-w-[70ch] text-body-sm text-secondary">{memoryGuide[selectedView]?.description ?? "Open a record to inspect its context and source."}</p>
-  {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<p class="col-span-full text-body-sm text-secondary" role="note">A stored memory can still be wrong or outdated. Its status describes storage, not accuracy. Use “Correct this memory” to correct a specific statement.</p>{/if}
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+      <h2 class="text-h3">{memoryLabel(selectedView)}</h2>
+      <button class="min-h-11 min-w-11 rounded-sm text-secondary hover:bg-raised" popovertarget={helpId} aria-label={`About ${memoryLabel(selectedView).toLowerCase()}`}><CircleHelp size={18} class="mx-auto" /></button>
+      <div id={helpId} popover="auto" class="m-auto max-w-[min(90vw,32rem)] rounded-md border border-default bg-surface p-5 text-body-sm text-primary shadow-lg">
+        <h3 class="mb-2 text-h3">{memoryLabel(selectedView)}</h3>
+        <p>{memoryGuide[selectedView]?.description ?? "Open a record to inspect its context and source."}</p>
+        <p class="mt-3">Your agent remembers automatically. A memory may still be uncertain or outdated. Use “Correct this memory” to correct a statement, Your correction stays attached to the statement you selected.</p>
+        {#if canCombine}<p class="mt-3">Open a record by its title. Checkboxes select memories to combine.</p>{/if}
+      </div>
+      <form class="ml-auto flex flex-wrap items-center gap-2" onsubmit={searchRecords} role="search">
+        <label for="memory-search" class="sr-only">Search {memoryLabel(selectedView).toLowerCase()}</label>
+        <input id="memory-search" type="search" bind:value={searchDraft} placeholder="Search titles and content" class="min-h-11 w-64 max-w-full rounded-sm border border-default bg-surface px-3 text-primary" />
+        <button class="min-h-11 rounded-sm border border-default px-4 text-body-sm hover:bg-raised" disabled={loading}>Search</button>
+        {#if search}<button class="min-h-11 px-3 text-body-sm text-secondary hover:bg-raised" onclick={() => { searchDraft = ""; search = ""; page = 0; void load(selectedView); }}>Clear search</button>{/if}
+      </form>
+    </div>
     {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
-    {#if loading}
+    {#if loading && !snapshot}
       <p class="text-body text-secondary">Loading {memoryLabel(selectedView).toLowerCase()}…</p>
     {:else if snapshot}
-      {#if canCombine}<p class="mb-3 text-body-sm text-secondary">Open a record by its title. Checkboxes select memories to combine. {selectedIds.length} selected for combining.</p>{/if}
-      {#if recordCount > pageSize}<nav class="mb-4 flex flex-wrap items-center gap-3" aria-label="Record pages"><span class="text-body-sm text-secondary">Page {Math.min(page + 1, pageCount)} of {pageCount} · {recordCount} records</span><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page === 0 || loading} onclick={() => changePage(page - 1)}>Previous</button><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page >= pageCount - 1 || loading} onclick={() => changePage(page + 1)}>Next</button></nav>{/if}
+      {#if combineCommand && selectedIds.length}<section class="sticky top-24 z-10 mb-3 flex flex-wrap items-center gap-3 border border-default bg-surface p-3" aria-label="Memories selected for combining">
+        <strong class="text-body-sm">{selectedIds.length} selected</strong>
+        <button class="min-h-11 rounded-sm border border-accent px-4 text-accent-text disabled:opacity-50" disabled={selectedIds.length < 2 || runningAction !== null || loading} onclick={() => start(combineCommand!)}>Combine selected memories</button>
+        <button class="min-h-11 px-3 text-body-sm text-secondary" onclick={clearCombinedSelection}>Clear selection</button>
+        <details class="basis-full text-body-sm"><summary class="cursor-pointer">Selected memories (kept across pages and searches)</summary><ul class="max-h-[35vh] overflow-y-auto">{#each selectedRecords as record (record.id)}<li class="flex items-center justify-between gap-2"><span>{record.label}</span><button class="min-h-11 text-secondary" aria-label={`Remove ${record.label} from selection`} onclick={() => toggleSelection(record, false)}>Remove</button></li>{/each}</ul><p class="text-secondary">Combine duplicate memories about the same subject. The agent also consolidates memory automatically.</p></details>
+      </section>{/if}
+      <nav class="mb-4 flex flex-wrap items-center gap-3" aria-label="Record pages"><span class="text-body-sm text-secondary">Page {Math.min(page + 1, pageCount)} of {pageCount} · {recordCount} records</span><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page === 0 || loading} onclick={() => changePage(page - 1)}>Previous</button><button class="min-h-11 rounded-sm border border-default px-4 py-2 disabled:opacity-50" disabled={page >= pageCount - 1 || loading} onclick={() => changePage(page + 1)}>Next</button><label class="ml-auto flex items-center gap-2 text-body-sm text-secondary">Rows per page<select class="min-h-11 rounded-sm border border-default bg-surface px-3 text-primary" value={pageSize} disabled={loading} onchange={(event) => changePageSize(event.currentTarget.value)}>{#each [10, 20, 50, 100, 200, 500] as size (size)}<option value={size}>{size}</option>{/each}</select></label></nav>
       <div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(20rem,.8fr)]">
         <div
           class="overflow-x-auto rounded-md border border-default"
@@ -345,7 +402,7 @@
               ><tbody
                 ><tr
                   ><td class="px-4 py-12 text-center text-body text-secondary"
-                    >{memoryGuide[selectedView]?.empty ?? "No records in this view yet."}{#if selectedSeries && !globalView} Try selecting All books to check other projects.{/if}</td
+                    >{search ? `No records match “${search}”. Try another word or clear the search.` : memoryGuide[selectedView]?.empty ?? "No records in this view yet."}{#if selectedSeries && !globalView} Try selecting All books to check other projects.{/if}</td
                   ></tr
                 ></tbody
               ></table
@@ -356,20 +413,22 @@
           bind:this={detailPanel}
           class="scroll-mt-8 flex min-w-0 flex-col overflow-hidden rounded-md border border-default bg-surface lg:sticky lg:top-28"
           aria-label="Selected memory record"
+          aria-busy={loading}
         >
           {#if snapshot.selected}
             <div class="p-5">
               <h3 class="mt-1 text-h3">{snapshot.detail.title}</h3>
-              {#if ["Crystals", "Lessons", "Short-Term Memory"].includes(selectedView)}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = { target: { source: selectedView === "Short-Term Memory" ? "short_term" : "crystal", id: Number(snapshot!.selected!.id) } }}>Correct this memory</button>{/if}
+              {#if correctionTarget(snapshot.selected)}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50 mt-3" onclick={() => correction = { target: correctionTarget(snapshot!.selected) }}>Correct this memory</button>{/if}
               <p class="mt-1 text-body-sm text-secondary">
                 {snapshot.detail.subtitle}
               </p>
             </div>
-            {#if snapshot.detail.fields.some(([name]) => name === "Source locations")}<section class="mx-5 mb-4" aria-label="Memory sources"><h4 class="text-body-sm font-medium">Sources</h4>{#each snapshot.detail.fields.filter(([name]) => name === "Source locations") as [name, value] (name)}<p class="mt-1 break-words text-body-sm text-secondary">{value}</p>{/each}</section>{/if}
-            {#if snapshot.detail.body && selectedView !== "Dream Audits"}<pre
+            {#if correction}<div class="border-t border-default">{#key correction}<CorrectionForm target={correction.target} onclose={() => correction = null} />{/key}</div>{/if}
+            {#if !correction && snapshot.detail.body && selectedView !== "Dream Audits"}<pre
                 class="mx-5 min-h-30 max-h-[50vh] overflow-auto border border-default bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap"
                 >{snapshot.detail.body}</pre
               >{/if}
+            {#if snapshot.detail.fields.some(([name]) => name === "Source locations")}<section class="mx-5 mb-4" aria-label="Memory sources"><h4 class="text-body-sm font-medium">Sources</h4>{#each snapshot.detail.fields.filter(([name]) => name === "Source locations") as [name, value] (name)}{#each sourceLocations(value) as { location, key } (key)}<p class="mt-1 break-words text-body-sm text-secondary" title={value}>{location.slice(Math.max(location.lastIndexOf("/"), location.lastIndexOf("\\")) + 1)}</p>{/each}{/each}</section>{/if}
             {#if commandsFor(selectedView).length}<div
                 class="border-b border-default p-5"
               >
@@ -389,7 +448,7 @@
                         : command.label}</button
                     >{/each}
                 </div>
-                {#if commandsFor(selectedView).some(command => !["add_memory", "edit_memory"].includes(command.id))}<details class="mt-3"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">More actions and diagnostics</summary><p class="mb-3 text-body-sm text-secondary">Organize stored records, adjust memory strength or inspect evidence. Use correction above to mark a statement wrong or add context.</p><div class="flex flex-wrap gap-2">                  {#each commandsFor(selectedView).filter(command => !["add_memory", "edit_memory"].includes(command.id)) as command (command.id)}<button
+                {#if commandsFor(selectedView).some(command => !["add_memory", "edit_memory", "merge_selected"].includes(command.id))}<details class="mt-3"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">More actions and diagnostics</summary><p class="mb-3 text-body-sm text-secondary">Organize stored records, adjust memory strength or inspect evidence. Use correction above to mark a statement wrong or add context.</p><div class="flex flex-wrap gap-2">                  {#each commandsFor(selectedView).filter(command => !["add_memory", "edit_memory", "merge_selected"].includes(command.id)) as command (command.id)}<button
                       class="min-h-11 rounded-sm border px-4 py-2 text-body-sm {DESTRUCTIVE.has(
                         command.id,
                       )
@@ -460,7 +519,7 @@
   <ActionDialog
     command={dialogCommand}
     view={selectedView}
-    row={snapshot?.selected ?? null}
+    row={dialogCommand.id === "merge_selected" ? (selectedRecords[0] ?? null) : snapshot?.selected ?? null}
     {selectedIds}
     initialSeries={selectedSeries}
     currentText={snapshot?.detail.body ?? ""}

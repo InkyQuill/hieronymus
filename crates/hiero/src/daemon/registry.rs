@@ -159,6 +159,16 @@ impl McpRegistry {
                 input_schema: tool["inputSchema"].clone(),
             });
         }
+        if let Some(recall) = registry
+            .tools
+            .iter_mut()
+            .find(|tool| tool.name == "hieronymus_recall")
+        {
+            recall.description = "Recall remembered knowledge from crystals, recent memories and RAG together. Defaults to broad source inspection: read both results and non_current, with context and uncertainty labels. An active session records crystal activation and creates deduplicated working copies. Use Current only for strict current-scene truth.".into();
+            recall.input_schema["properties"]["limit"]["default"] = serde_json::json!(100);
+            recall.input_schema["properties"]["story_query_mode"]["default"] =
+                serde_json::json!("OmniscientResearch");
+        }
         registry
     }
 

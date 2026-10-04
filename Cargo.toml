@@ -12,7 +12,7 @@ license = "MIT"
 
 [workspace.dependencies]
 indexmap = "2"
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "collation"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "collation", "functions"] }
 home = "0.5"
 tempfile = "3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

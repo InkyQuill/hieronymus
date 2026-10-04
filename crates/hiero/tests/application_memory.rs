@@ -49,6 +49,42 @@ fn start_session(app: &Application, slug: &str) -> i64 {
     session["session_id"].as_i64().unwrap()
 }
 
+#[test]
+fn ordinary_recall_returns_unknown_memory_text_and_more_than_ten_results() {
+    let (_root, app) = test_application();
+    create_series(&app, "book", "ja", "en");
+    let session = start_session(&app, "book");
+    let context = TranslationContext::new("book", "ja", "en", "translation");
+    let store = CrystalStore::open(app.config()).unwrap();
+    for i in 0..24 {
+        store
+            .add_crystal(
+                &context,
+                "lesson",
+                &NewCrystal::new("lesson", format!("Sapphire memory {i}")),
+            )
+            .unwrap();
+    }
+    let args = json!({"session_id":session,"series_slug":"book","query":"sapphire"});
+    let broad = app.call("hieronymus_recall", &args, ACTOR).unwrap();
+    let rows = broad["non_current"].as_array().unwrap();
+    assert_eq!(rows.len(), 24);
+    assert!(
+        rows.iter()
+            .all(|row| row["text"].as_str().unwrap().contains("Sapphire")
+                && row["activation_id"].as_i64().unwrap() > 0)
+    );
+    let strict = app.call("hieronymus_recall", &json!({"story_query_mode":"Current","limit":5,"session_id":session,"series_slug":"book","query":"sapphire"}), ACTOR).unwrap();
+    assert!(strict["results"].as_array().unwrap().is_empty());
+    assert!(
+        strict["non_current"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["text"] == "")
+    );
+}
+
 fn expect_domain(error: AppError, needle: &str) {
     match error {
         AppError::Domain(message) => assert!(
@@ -957,3 +993,59 @@ fn repeated_recall_deduplicates_working_copies_and_rotates_activation_ids() {
 
 #[path = "../../hieronymus/tests/support/current_story.rs"]
 mod current_story;
+
+#[test]
+fn agent_recall_gets_one_file_reference_with_exact_ranges_instead_of_repeated_sources() {
+    use hieronymus::workspace::ShortTermMemoryInput;
+    let (_root, app) = test_application();
+    create_series(&app, "book", "ja", "en");
+    let session = start_session(&app, "book");
+    let workspace = WorkspaceStore::open(app.config()).unwrap();
+    let mut ids = Vec::new();
+    let sha = "a".repeat(64);
+    for line in [334, 351, 352, 353, 366, 369] {
+        let mut input =
+            ShortTermMemoryInput::new("terminology", format!("Supported statement at {line}."));
+        input.source_ref = format!("/book/decisions.md:{line};sha256={sha}");
+        ids.push(workspace.add_short_term_memory(session, &input).unwrap().id);
+    }
+    let mut crystal = NewCrystal::new("concept", "Compactcitations terminology record.");
+    crystal.source_memory_ids = ids.clone();
+    CrystalStore::open(app.config())
+        .unwrap()
+        .add_crystal(
+            &TranslationContext::new("book", "ja", "en", "translation"),
+            "concept",
+            &crystal,
+        )
+        .unwrap();
+    let response = app
+        .call(
+            "hieronymus_recall",
+            &json!({"series_slug":"book","session_id":session,"query":"Compactcitations"}),
+            ACTOR,
+        )
+        .unwrap();
+    let remembered = response["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(response["non_current"].as_array().unwrap())
+        .find(|row| row["sources"].is_array())
+        .unwrap();
+    let sources = remembered["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(
+        sources[0]["source_ref"],
+        format!("/book/decisions.md:334,351-353,366,369;sha256={sha}")
+    );
+    assert_eq!(sources[0]["memory_ids"], json!(ids));
+    let originals = workspace.list_short_term_memories(session).unwrap();
+    assert_eq!(
+        originals
+            .iter()
+            .filter(|memory| memory.source_ref.starts_with("/book/decisions.md:"))
+            .count(),
+        6
+    );
+}

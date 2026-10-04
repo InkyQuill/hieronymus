@@ -63,6 +63,8 @@ pub enum UpdateOutcome {
     Updated,
     /// The feed already offers the installed version; nothing was touched.
     UpToDate,
+    /// The verified new version is installed; derived retrieval is still arming.
+    IndexRebuilding,
     /// The install completed, but the daemon stays stopped until the user
     /// runs `hiero migrate` (database upgrade required).
     MigrationPending,
@@ -72,6 +74,7 @@ impl UpdateOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
             UpdateOutcome::Updated => "updated",
+            UpdateOutcome::IndexRebuilding => "index-rebuilding",
             UpdateOutcome::UpToDate => "up-to-date",
             UpdateOutcome::MigrationPending => "migration-pending",
         }
@@ -667,6 +670,22 @@ fn run_update_core(
     } else {
         Some(RootOwnership::acquire(&config, "update").map_err(|e| refused(e.to_string()))?)
     };
+    let backend_transition =
+        requires_legacy_index_rebuild(&config, previous_version.as_deref(), &release.version)
+            .map_err(refused)?;
+    if backend_transition {
+        if desktop_install == Some(true)
+            || crate::desktop::control::quit_requested(config.data_root())
+                .map_err(|error| refused(error.to_string()))?
+        {
+            return Err(refused("the LanceDB-to-SQLite transition needs candidate activation to rebuild and verify semantic readiness; activation is disabled, so the existing installation was left untouched".into()));
+        }
+        #[cfg(target_os = "linux")]
+        if manager_override.is_none() && !service::manager_enabled(&service_options) {
+            return Err(refused("the LanceDB-to-SQLite transition requires managed candidate startup; the existing installation was left untouched".into()));
+        }
+        lines.push("supported LanceDB-to-SQLite index transition detected; the candidate will rebuild the derived index and must report semantic readiness".into());
+    }
 
     // Snapshot the restore target before ANY mutation, and pick the service
     // manager. Every rollback below drives this one `&dyn ServiceManager`, so
@@ -779,6 +798,7 @@ fn run_update_core(
         Activated {
             daemon_started: bool,
             degraded: bool,
+            index_pending: bool,
         },
         MigrationPending,
     }
@@ -834,6 +854,7 @@ fn run_update_core(
         }
 
         let daemon_started = if (daemon_was_running
+            || backend_transition
             || (desktop_install == Some(false) && previous_version.is_none()))
             && !crate::desktop::control::quit_requested(config.data_root())
                 .map_err(|e| e.to_string())?
@@ -905,6 +926,7 @@ fn run_update_core(
         // the version we just installed (ADR 0009 — never a bare TCP connect
         // or a diagnostic warning); a degraded (exit 1) candidate with no
         // started daemon to authenticate is not activated.
+        let mut index_pending = false;
         if daemon_started {
             poll_until_live(&config, Some(&release.version))
                 .map_err(|reason| format!("candidate readiness check failed ({reason})"))?;
@@ -914,12 +936,30 @@ fn run_update_core(
             // S2/C3 seam: the semantic lane must be armed and answering.
             // `require_semantic_ready` consumes the candidate controller's
             // own evidence-derived state — the same one requests see — so a
-            // candidate with an uninstalled query lane, a stale generation,
-            // or a cancelled first rebuild cannot be activated.
-            require_semantic_ready(&config)
-                .map_err(|reason| format!("candidate semantic lane not ready ({reason})"))?;
+            // candidate with a failed query lane cannot be accepted. Active
+            // acquisition/reconstruction is explicitly deferred, never healthy.
+            index_pending = match semantic_state(&config)
+                .map_err(|reason| format!("candidate semantic lane not ready ({reason})"))?
+            {
+                crate::daemon::semantic_worker::RequiredSemanticState::Ready => false,
+                crate::daemon::semantic_worker::RequiredSemanticState::Acquiring
+                | crate::daemon::semantic_worker::RequiredSemanticState::Rebuilding => true,
+                state => {
+                    crate::daemon::semantic_worker::require_semantic_ready(&state).map_err(
+                        |reason| format!("candidate semantic lane not ready ({reason})"),
+                    )?;
+                    false
+                }
+            };
         } else if degraded {
-            require_offline_doctor(&version_dir, &doctor_report)?;
+            require_offline_doctor(&config, &version_dir, &doctor_report)?;
+            index_pending = doctor_report["findings"]
+                .as_array()
+                .is_some_and(|findings| {
+                    findings
+                        .iter()
+                        .any(|f| f["code"] == "semantic-generation" && f["level"] == "warning")
+                });
             lines.push("candidate installed offline; native assets verified, authenticated daemon readiness deferred until explicit Start".into());
         }
         retirement.allow_launch();
@@ -938,10 +978,11 @@ fn run_update_core(
         Ok(PostSwitch::Activated {
             daemon_started,
             degraded,
+            index_pending,
         })
     })();
 
-    let (daemon_started, degraded) = match outcome {
+    let (daemon_started, degraded, index_pending) = match outcome {
         Err(cause) => {
             // Rollback reacquires ownership after stopping the candidate.
             drop(ownership.take());
@@ -976,7 +1017,8 @@ fn run_update_core(
         Ok(PostSwitch::Activated {
             daemon_started,
             degraded,
-        }) => (daemon_started, degraded),
+            index_pending,
+        }) => (daemon_started, degraded, index_pending),
     };
 
     // Activation is complete; advisory host work must not retain root ownership.
@@ -1002,7 +1044,11 @@ fn run_update_core(
         )),
     }
 
-    lines.push(if degraded && !daemon_started { "offline installation verified; configuration initialization and daemon readiness are deferred until explicit Start".into() } else if degraded {
+    if index_pending {
+        lines.push(if daemon_started { "Update installed. Your memories are preserved. The search index is rebuilding automatically in the background; semantic recall is unavailable until it finishes. Keep the server running.".into() } else { "Update installed. Your memories are preserved. The derived search index needs rebuilding and will rebuild automatically when you start the server; semantic recall is unavailable until then.".into() });
+        lines.push(recovery_prompt(&config));
+    }
+    lines.push(if index_pending { "health check: verified application and preserved source data; semantic readiness deferred, not reported healthy".into() } else if degraded && !daemon_started { "offline installation verified; configuration initialization and daemon readiness are deferred until explicit Start".into() } else if degraded {
         "health check: degraded (doctor warnings) but the candidate confirmed ready; \
          update kept"
             .to_string()
@@ -1016,7 +1062,11 @@ fn run_update_core(
     );
 
     Ok(UpdateReport {
-        outcome: UpdateOutcome::Updated,
+        outcome: if index_pending {
+            UpdateOutcome::IndexRebuilding
+        } else {
+            UpdateOutcome::Updated
+        },
         version: release.version,
         previous_version,
         daemon_started,
@@ -1069,6 +1119,14 @@ fn schema_gate(
     }
 }
 
+/// Copyable assistance for authors; diagnostic inspection precedes any repair.
+fn recovery_prompt(config: &HieronymusConfig) -> String {
+    format!(
+        "Prompt for your agent: Inspect Hieronymus at data root {} with hiero doctor, live service status and private process logs. Explain the update warning and whether semantic rebuilding is progressing. Preserve the memory database, provenance and backups. Let the server rebuild derived indexes automatically; do not delete source data or bypass package/model checksums. Repair a confirmed recoverable failure, or explain the safest choices and their consequences before a destructive change.",
+        config.data_root().display()
+    )
+}
+
 /// Run the ordered rollback state machine and turn its result into the right
 /// error. On a verified rollback the previous version is restored and the
 /// candidate (plus any staging leftover) is pruned; on a rollback that itself
@@ -1083,6 +1141,8 @@ fn activation_failed(
     cause: String,
     operation: &LifecycleOperation,
 ) -> UpdateError {
+    let mut steps = steps.to_vec();
+    steps.push(recovery_prompt(config));
     match rollback(manager, layout, config, snapshot, operation) {
         Ok(()) => {
             // Only now — after the rollback verified — may the candidate go.
@@ -1093,13 +1153,13 @@ fn activation_failed(
                 .unwrap_or("no previous version");
             UpdateError::Failed {
                 message: format!("{cause}; rolled back — restored {restored}"),
-                steps: steps.to_vec(),
+                steps: steps.clone(),
             }
         }
         Err(rollback_error) => UpdateError::FailedAndRollbackFailed {
             original: cause,
             rollback: rollback_error,
-            steps: steps.to_vec(),
+            steps: steps.clone(),
         },
     }
 }
@@ -1508,7 +1568,11 @@ fn require_independent_doctor_scope(report: &serde_json::Value) -> Result<(), St
     }
     Ok(())
 }
-fn require_offline_doctor(version: &Path, report: &serde_json::Value) -> Result<(), String> {
+fn require_offline_doctor(
+    config: &HieronymusConfig,
+    version: &Path,
+    report: &serde_json::Value,
+) -> Result<(), String> {
     if !version.join("assets.json").is_file() {
         return Err("offline doctor warnings require a complete verified semantic payload".into());
     }
@@ -1516,10 +1580,39 @@ fn require_offline_doctor(version: &Path, report: &serde_json::Value) -> Result<
         .get("findings")
         .and_then(|v| v.as_array())
         .ok_or("doctor findings missing")?;
+    let source_data_verified = findings
+        .iter()
+        .any(|f| f["code"] == "database" && f["level"] == "ok");
+    if source_data_verified
+        && findings
+            .iter()
+            .any(|f| f["code"] == "semantic-generation" && f["level"] == "warning")
+    {
+        let connection = rusqlite::Connection::open_with_flags(
+            config.database_path(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| format!("cannot verify preserved memory database: {error}"))?;
+        let mut statement = connection
+            .prepare("PRAGMA quick_check")
+            .map_err(|error| error.to_string())?;
+        let checks = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        for check in checks {
+            let check = check.map_err(|error| error.to_string())?;
+            if check != "ok" {
+                return Err(format!(
+                    "preserved memory database integrity failed: {check}"
+                ));
+            }
+        }
+    }
     if findings
         .iter()
         .any(|f| match f.get("level").and_then(|v| v.as_str()) {
             Some("ok") => false,
+            Some("warning") if f["code"] == "semantic-generation" && source_data_verified => false,
             Some("warning") => !matches!(
                 f.get("code").and_then(|v| v.as_str()),
                 Some("config-root-missing" | "agent-bundles")
@@ -1533,6 +1626,86 @@ fn require_offline_doctor(version: &Path, report: &serde_json::Value) -> Result<
         ));
     }
     Ok(())
+}
+
+/// Recognize only the supported 0.11 backend transition, never a missing or
+/// unrelated SQLite index. Legacy artifacts are evidence of rebuild intent, not
+/// readiness: a verified candidate may finish rebuilding under supervision.
+fn requires_legacy_index_rebuild(
+    config: &HieronymusConfig,
+    previous_version: Option<&str>,
+    candidate_version: &str,
+) -> Result<bool, String> {
+    if !semver::Version::parse(candidate_version)
+        .ok()
+        .is_some_and(|version| version.major > 0 || version.minor >= 12)
+    {
+        return Ok(false);
+    }
+    if !previous_version
+        .and_then(|value| semver::Version::parse(value).ok())
+        .is_some_and(|version| version.major == 0 && version.minor == 11)
+    {
+        return Ok(false);
+    }
+    let (generation, intact) =
+        hieronymus::semantic_store::SemanticStore::probe_active_generation(config)
+            .map_err(|error| format!("cannot inspect the legacy semantic generation: {error}"))?;
+    let Some(generation) = generation else {
+        return Ok(false);
+    };
+    let id = &generation.generation_id;
+    if intact
+        || generation.status != "active"
+        || generation.expected_count != generation.written_count
+        || id.is_empty()
+        || id.len() > 200
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Ok(false);
+    }
+    let sqlite = config
+        .semantic_root()
+        .join(hieronymus::semantic_index::INDEX_DIRECTORY);
+    for suffix in [".sqlite3", ".sqlite3-wal", ".sqlite3-shm"] {
+        match std::fs::symlink_metadata(sqlite.join(format!("generation_{id}{suffix}"))) {
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot inspect the SQLite index path: {error}")),
+        }
+    }
+    let normalized: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let legacy = config.semantic_root().join("lancedb");
+    let table = legacy.join(format!("generation_{normalized}.lance"));
+    let versions = table.join("_versions");
+    for directory in [&legacy, &table, &versions] {
+        match std::fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("cannot inspect the legacy index path: {error}")),
+        }
+    }
+    for entry in std::fs::read_dir(versions).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|value| value == "manifest")
+        {
+            let metadata =
+                std::fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
+            if metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() > 0 {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn validate_payload(staging: &Path) -> Result<(), String> {
@@ -1835,10 +2008,18 @@ mod tests {
         for code in ["service-unit-broken", "semantic-model-invalid"] {
             let report = serde_json::json!({"scope":"payload-config-without-registration","findings":[{"level":"warning","code":code}]});
             require_independent_doctor_scope(&report).unwrap();
-            assert!(require_offline_doctor(version.path(), &report).is_err());
+            assert!(
+                require_offline_doctor(
+                    &HieronymusConfig::new(version.path().join("data")),
+                    version.path(),
+                    &report
+                )
+                .is_err()
+            );
         }
         assert!(
             require_offline_doctor(
+                &HieronymusConfig::new(version.path().join("data")),
                 version.path(),
                 &serde_json::json!({"findings":[{"level":"warning","code":"config-root-missing"}]})
             )
@@ -1851,17 +2032,56 @@ mod tests {
         let version = tempfile::tempdir().unwrap();
         std::fs::write(version.path().join("assets.json"), b"verified separately").unwrap();
         let report = serde_json::json!({"findings":[{"level":"warning","code":"agent-bundles","message":"stale cache"}]});
-        assert!(require_offline_doctor(version.path(), &report).is_ok());
+        assert!(
+            require_offline_doctor(
+                &HieronymusConfig::new(version.path().join("data")),
+                version.path(),
+                &report
+            )
+            .is_ok()
+        );
         let error = serde_json::json!({"findings":[{"level":"error","code":"agent-bundles"}]});
-        assert!(require_offline_doctor(version.path(), &error).is_err());
+        assert!(
+            require_offline_doctor(
+                &HieronymusConfig::new(version.path().join("data")),
+                version.path(),
+                &error
+            )
+            .is_err()
+        );
         let mixed = serde_json::json!({"findings":[{"level":"warning","code":"agent-bundles"},{"level":"warning","code":"semantic-model-invalid"}]});
         assert!(
-            require_offline_doctor(version.path(), &mixed)
-                .unwrap_err()
-                .contains("semantic-model-invalid")
+            require_offline_doctor(
+                &HieronymusConfig::new(version.path().join("data")),
+                version.path(),
+                &mixed
+            )
+            .unwrap_err()
+            .contains("semantic-model-invalid")
         );
         std::fs::remove_file(version.path().join("assets.json")).unwrap();
-        assert!(require_offline_doctor(version.path(), &report).is_err());
+        assert!(
+            require_offline_doctor(
+                &HieronymusConfig::new(version.path().join("data")),
+                version.path(),
+                &report
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn offline_index_repair_requires_an_intact_source_database() {
+        let version = tempfile::tempdir().unwrap();
+        std::fs::write(version.path().join("assets.json"), b"verified separately").unwrap();
+        let config = HieronymusConfig::new(version.path().join("data"));
+        std::fs::create_dir_all(config.data_root()).unwrap();
+        let report = serde_json::json!({"findings":[{"level":"ok","code":"database"},{"level":"warning","code":"semantic-generation"}]});
+        assert!(require_offline_doctor(&config, version.path(), &report).is_err());
+        drop(hieronymus::db::open_migrated(&config.database_path()).unwrap());
+        assert!(require_offline_doctor(&config, version.path(), &report).is_ok());
+        std::fs::write(config.database_path(), b"corrupt source").unwrap();
+        assert!(require_offline_doctor(&config, version.path(), &report).is_err());
     }
 
     #[test]
@@ -2123,7 +2343,8 @@ mod tests {
             } => {
                 assert!(original.contains("Some(42)"), "{original}");
                 assert!(rollback.contains("reload"), "{rollback}");
-                assert_eq!(steps, &vec!["step one".to_string()]);
+                assert_eq!(steps.first().unwrap(), "step one");
+                assert!(steps.last().unwrap().contains("agent"));
             }
             other => panic!("expected FailedAndRollbackFailed, got {other:?}"),
         }
@@ -2381,6 +2602,129 @@ mod tests {
         assert!(manager.calls().is_empty());
         assert!(all_links_point_at(&layout, "9.9.0").is_ok());
         assert!(layout.version_dir("1.0.0").exists());
+    }
+
+    fn legacy_generation_fixture(config: &HieronymusConfig) -> std::path::PathBuf {
+        hieronymus::semantic_store::SemanticStore::open(config).unwrap();
+        let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+        db.execute_batch("insert into semantic_generations(generation_id,status,provider,model,model_revision,dimensions,normalization,tokenizer,max_input_tokens,max_batch_inputs,expected_count,written_count,active,created_at,updated_at)
+            values('legacy-generation-1','active','test','fixture','r1',2,'l2','byte-fold-v1',128,1,1,1,1,'now','now')").unwrap();
+        let versions = config
+            .semantic_root()
+            .join("lancedb/generation_legacy_generation_1.lance/_versions");
+        std::fs::create_dir_all(&versions).unwrap();
+        let manifest = versions.join("1.manifest");
+        std::fs::write(
+            &manifest,
+            "synthetic legacy manifest; recognition is not index readiness",
+        )
+        .unwrap();
+        manifest
+    }
+
+    #[test]
+    fn legacy_transition_recognition_is_narrow_and_read_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(temp.path());
+        let manifest = legacy_generation_fixture(&config);
+        let source_before = sha256_file(&config.database_path()).unwrap();
+        assert!(requires_legacy_index_rebuild(&config, Some("0.11.0"), "0.12.0").unwrap());
+        assert!(!requires_legacy_index_rebuild(&config, Some("0.11.0"), "0.11.1").unwrap());
+        assert!(!requires_legacy_index_rebuild(&config, Some("0.12.0"), "0.12.1").unwrap());
+        assert_eq!(source_before, sha256_file(&config.database_path()).unwrap());
+        let sqlite = config.semantic_root().join("sqlite-vectors");
+        std::fs::create_dir_all(&sqlite).unwrap();
+        let index = sqlite.join("generation_legacy-generation-1.sqlite3");
+        std::fs::write(&index, "corrupt SQLite file").unwrap();
+        assert!(!requires_legacy_index_rebuild(&config, Some("0.11.0"), "0.12.0").unwrap());
+        std::fs::remove_file(index).unwrap();
+        std::fs::remove_file(&manifest).unwrap();
+        assert!(!requires_legacy_index_rebuild(&config, Some("0.11.0"), "0.12.0").unwrap());
+        assert_eq!(source_before, sha256_file(&config.database_path()).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_transition_rejects_symlinked_and_unrelated_indexes() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(temp.path());
+        let manifest = legacy_generation_fixture(&config);
+        let table = manifest.parent().unwrap().parent().unwrap();
+        let renamed = table.with_file_name("generation_unrelated.lance");
+        std::fs::rename(table, &renamed).unwrap();
+        assert!(!requires_legacy_index_rebuild(&config, Some("0.11.0"), "0.12.0").unwrap());
+        std::os::unix::fs::symlink(&renamed, table).unwrap();
+        assert!(!requires_legacy_index_rebuild(&config, Some("0.11.0"), "0.12.0").unwrap());
+    }
+
+    struct BackendTransitionManager {
+        config: HieronymusConfig,
+        semantic_state: &'static str,
+        calls: std::cell::RefCell<Vec<&'static str>>,
+    }
+    impl ServiceManager for BackendTransitionManager {
+        fn stop(&self) -> Result<(), crate::service::ServiceError> {
+            self.calls.borrow_mut().push("stop");
+            Ok(())
+        }
+        fn reload(&self) -> Result<(), crate::service::ServiceError> {
+            self.calls.borrow_mut().push("reload");
+            Ok(())
+        }
+        fn start(&self) -> Result<(), crate::service::ServiceError> {
+            self.calls.borrow_mut().push("start");
+            fake_live_daemon(
+                &self.config,
+                &"de".repeat(16),
+                "0.12.0",
+                self.semantic_state,
+            );
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn stopped_legacy_backend_update_requires_candidate_semantic_readiness() {
+        for state in ["ready", "failed", "rebuilding"] {
+            let temp = tempfile::tempdir().unwrap();
+            let (options, layout) = staged_update(temp.path(), "0.11.0", "0.12.0", 1);
+            let config = hieronymus::data_root::load_config(options.data_root.as_deref());
+            let manifest = legacy_generation_fixture(&config);
+            let source_before = sha256_file(&config.database_path()).unwrap();
+            let legacy_before = sha256_file(&manifest).unwrap();
+            let manager = BackendTransitionManager {
+                config: config.clone(),
+                semantic_state: state,
+                calls: Default::default(),
+            };
+            let result = run_update_impl(&options, Some(&manager));
+            if state != "failed" {
+                let report = result.unwrap();
+                assert!(report.daemon_started);
+                assert_eq!(
+                    report.outcome,
+                    if state == "ready" {
+                        UpdateOutcome::Updated
+                    } else {
+                        UpdateOutcome::IndexRebuilding
+                    }
+                );
+                assert!(all_links_point_at(&layout, "0.12.0").is_ok());
+                assert_eq!(*manager.calls.borrow(), vec!["start"]);
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("candidate semantic lane not ready"),
+                    "{error}"
+                );
+                assert!(all_links_point_at(&layout, "0.11.0").is_ok());
+                assert!(manager.calls.borrow().contains(&"stop"));
+            }
+            assert_eq!(source_before, sha256_file(&config.database_path()).unwrap());
+            assert_eq!(legacy_before, sha256_file(&manifest).unwrap());
+        }
     }
 
     #[cfg(target_os = "linux")]

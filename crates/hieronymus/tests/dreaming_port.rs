@@ -725,7 +725,7 @@ fn dreaming_applies_the_previously_unsupported_concept_section() {
 }
 
 #[test]
-fn dreaming_fails_closed_when_pass_output_exceeds_max_records_per_pass() {
+fn dreaming_preserves_valid_output_above_the_record_guide() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
@@ -755,31 +755,21 @@ fn dreaming_fails_closed_when_pass_output_exceeds_max_records_per_pass() {
         }),
     )
     .unwrap();
-    let error = service.run_cycle("manual", false).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("knowledge_crystals output exceeds max_records_per_pass"),
-        "{error}"
-    );
-
-    let run_row = query(&config, "select status from dream_runs", &[]).remove(0);
-    assert_eq!(run_row[0], json!("failed"));
-    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
-    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
-    assert_eq!(session_row[0], json!("completed"));
-    assert_eq!(session_row[1], Value::Null);
+    service.run_cycle("manual", false).unwrap();
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(2));
     assert_eq!(
         scalar(
             &config,
             "select count(*) from short_term_memories where archived_at is not null"
         ),
-        json!(0)
+        json!(3)
     );
+    let status = query(&config, "select status from dream_runs", &[]).remove(0);
+    assert_eq!(status[0], json!("completed"));
 }
 
 #[test]
-fn dreaming_fails_closed_when_batch_exceeds_max_long_term_records_affected_per_run() {
+fn dreaming_preserves_valid_output_above_the_run_record_guide() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
@@ -815,27 +805,17 @@ fn dreaming_fails_closed_when_batch_exceeds_max_long_term_records_affected_per_r
         }),
     )
     .unwrap();
-    let error = service.run_cycle("manual", false).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("exceeds max_long_term_records_affected_per_run"),
-        "{error}"
-    );
-
-    let run_row = query(&config, "select status from dream_runs", &[]).remove(0);
-    assert_eq!(run_row[0], json!("failed"));
-    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
-    let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
-    assert_eq!(session_row[0], json!("completed"));
-    assert_eq!(session_row[1], Value::Null);
+    service.run_cycle("manual", false).unwrap();
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(3));
     assert_eq!(
         scalar(
             &config,
             "select count(*) from short_term_memories where archived_at is not null"
         ),
-        json!(0)
+        json!(1)
     );
+    let status = query(&config, "select status from dream_runs", &[]).remove(0);
+    assert_eq!(status[0], json!("completed"));
 }
 
 // ---------------------------------------------------------------------------

@@ -217,7 +217,11 @@ pub struct ShortTermMemoryRecord {
 /// Labels locate information; they are not verified file reads or timeline ordering.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemorySource {
+    /// First contributing memory, retained for compatibility with single citations.
     pub memory_id: i64,
+    /// All contributing memories when grouped citations were grouped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_ids: Vec<i64>,
     pub source_ref: String,
     pub volume: String,
     pub chapter: String,

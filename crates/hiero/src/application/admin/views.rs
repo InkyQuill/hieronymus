@@ -81,6 +81,7 @@ struct AdminQuery {
     limit: i64,
     offset: i64,
     series: Option<String>,
+    search: Option<String>,
 }
 
 impl AdminQuery {
@@ -107,6 +108,7 @@ impl AdminQuery {
             limit,
             offset,
             series: string("series").or_else(|| string("context")),
+            search: string("search"),
         }
     }
 }
@@ -126,6 +128,20 @@ pub fn snapshot(config: &HieronymusConfig, view: &str, query: &Value) -> Result<
 
     let connection = open_migrated(&config.database_path())
         .map_err(|_| AppError::Domain("admin store is unavailable".to_string()))?;
+
+    let needle = params.search.as_deref().unwrap_or("").to_lowercase();
+    connection
+        .create_scalar_function(
+            "memory_matches",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            move |ctx| {
+                let text: String = ctx.get(0)?;
+                Ok(needle.is_empty() || text.to_lowercase().contains(&needle))
+            },
+        )
+        .map_err(|_| AppError::Domain("memory search is unavailable".into()))?;
 
     let rows = rows_for_view(&connection, view, &params)
         .map_err(|_| AppError::Domain(format!("failed to load the {view} view")))?;
@@ -154,14 +170,31 @@ fn memory_count(
     params: &AdminQuery,
 ) -> rusqlite::Result<Option<i64>> {
     let count = match view {
+        "Renderings" => connection.query_row(
+            &format!("{RENDERINGS} select count(*) from renderings where (?1 is null or scope=?1 or scope='global') and (memory_matches(search_text) or row_id in (select 'crystal:' || b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))"),
+            [&params.series], |row| row.get(0),
+        )?,
         "Short-Term Memory" => connection.query_row(
-            "select count(*) from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and (?1 is null or s.series_slug=?1)",
+            "select count(*) from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and (?1 is null or s.series_slug=?1) and memory_matches(m.text || ' ' || m.kind)",
             [&params.series], |row| row.get(0),
         )?,
         "Crystals" | "Lessons" => connection.query_row(
-            "select count(*) from crystals where (?1 is null or crystal_type=?1) and (?2 is null or series_slug=?2)",
+            "select count(*) from crystals where (?1 is null or crystal_type=?1) and (?2 is null or series_slug=?2) and (memory_matches(title || ' ' || text) or id in (select b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))",
             rusqlite::params![if view == "Lessons" { Some("lesson") } else { None }, params.series], |row| row.get(0),
         )?,
+        "Concepts" => connection.query_row(
+            "select count(*) from concepts where (?1 is null or (scope_type='series' and scope_key=?1) or scope_type='global') and memory_matches(canonical_name || ' ' || description)",
+            [params.series.as_ref().map(|series| format!("series:{series}"))], |row| row.get(0),
+        )?,
+        "Short-Term Sessions" => connection.query_row(
+            "select count(*) from task_sessions where (?1 is null or series_slug=?1) and memory_matches(task_type || ' ' || volume || ' ' || chapter || ' ' || status)",
+            [&params.series], |row| row.get(0),
+        )?,
+        "Dream Runs" | "Dream Audits" | "Audit Log" => {
+            let table = match view { "Dream Runs" => "dream_runs", "Dream Audits" => "dream_audit_entries", _ => "audit_log" };
+            let content = match view { "Dream Runs" => "provider || ' ' || status || ' ' || cycle_id", "Dream Audits" => "event_type || ' ' || summary || ' ' || severity", _ => "action || ' ' || note || ' ' || entity_type || ' ' || entity_id" };
+            connection.query_row(&format!("select count(*) from {table} where memory_matches({content})"), [], |row| row.get(0))?
+        }
         _ => return Ok(None),
     };
     Ok(Some(count))
@@ -247,7 +280,7 @@ fn concept_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Resul
     let mut statement = connection.prepare(
         "select id, canonical_name, status, confidence, scope_type, scope_key
          from concepts
-         where (?1 is null or scope_key = ?1 or scope_type = 'global')
+         where (?1 is null or (scope_type = 'series' and scope_key = ?1) or scope_type = 'global') and memory_matches(canonical_name || ' ' || description)
          order by id
          limit ?2 offset ?3",
     )?;
@@ -297,45 +330,93 @@ fn load_concept_tags(connection: &Connection, concept_id: i64) -> rusqlite::Resu
         .collect()
 }
 
-/// `_list_strict_terms(label_column="canonical_translation")` — the Renderings
-/// view is the strict-term table.
+// Keep legacy ids numeric; modern records use typed ids so selections cannot collide.
+const RENDERINGS: &str = "with renderings as (
+    select cast(id as text) as row_id, id as sort_id, 0 as source_order,
+           category as kind, canonical_translation as label, status, series_slug as scope,
+           source_language, target_language, '' as quality, source_text || ' ' || canonical_translation || ' ' || notes as search_text
+    from strict_terms
+    union all
+    select 'facet:' || f.id, f.id, 1, 'translation variant', f.value,
+           case when f.superseded_at is not null then 'superseded' else c.status end,
+           coalesce(nullif(cr.series_slug, ''),
+             case when c.scope_type = 'series' and c.scope_key like 'series:%' then substr(c.scope_key, 8)
+                  when c.scope_type = 'global' then 'global' else 'unresolved' end),
+           '', f.language, printf('%.0f%% conf', f.confidence * 100), f.value || ' ' || c.canonical_name || ' ' || c.description
+    from concept_facets f join concepts c on c.id = f.concept_id
+    left join crystals cr on cr.id = f.source_crystal_id
+    where f.facet_type = 'rendering'
+    union all
+    select 'rule:' || r.id, r.id, 2, 'translation rule', r.canonical_translation, r.status,
+           case when a.metadata_state='legacy_global' then 'global' else coalesce(s.slug, 'unresolved') end,
+           r.source_language, r.target_language, '', r.source_text || ' ' || r.canonical_translation || ' ' || r.notes
+    from term_rules r left join rule_authority ra on ra.rule_id=r.id
+    left join applicabilities a on a.id=ra.applicability_id
+    left join series s on s.id=a.series_id
+    union all
+    select 'memory:' || m.id, -m.id, 3, m.kind, substr(m.text, 1, 240),
+           'recent observation', s.series_slug, s.source_language, s.target_language, m.source_role, m.text
+    from short_term_memories m join task_sessions s on s.id=m.session_id
+    where m.archived_at is null and m.kind in ('terminology', 'translation_rule')
+    union all
+    select 'crystal:' || c.id, c.id, 4,
+           case when c.crystal_type='rule' then 'remembered rule' else 'remembered terminology' end, c.title,
+           c.status, c.series_slug, c.source_language, c.target_language,
+           printf('%.0f%% conf', c.confidence * 100), c.title || ' ' || c.text
+    from crystals c where (c.crystal_type='rule' or exists (
+      select 1 from crystal_sources cs join short_term_memories m on m.id=cs.short_term_memory_id
+      where cs.crystal_id=c.id and m.kind in ('terminology', 'translation_rule')))
+      and not exists (select 1 from term_rules r where r.rule_crystal_id=c.id)
+)";
+
+/// Agent-extracted renderings and deterministic rules, with historical imports retained.
 fn rendering_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Result<Vec<Value>> {
-    let mut statement = connection.prepare(
-        "select id, category, canonical_translation, status, series_slug,
-                source_language, target_language
-         from strict_terms
-         where (?1 is null or series_slug = ?1)
-         order by id
-         limit ?2 offset ?3",
-    )?;
+    let mut statement = connection.prepare(&format!(
+        "{RENDERINGS} select * from renderings
+         where (?1 is null or scope = ?1 or scope = 'global') and (memory_matches(search_text) or row_id in (select 'crystal:' || b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))
+         order by source_order, sort_id limit ?2 offset ?3"
+    ))?;
     let rows = statement
         .query_map(
             rusqlite::params![params.series, params.limit, params.offset],
             |row| {
-                let id: i64 = row.get("id")?;
-                let category: String = row.get("category")?;
-                let label: String = row.get("canonical_translation")?;
+                let id: String = row.get("row_id")?;
+                let category: String = row.get("kind")?;
+                let label: String = row.get("label")?;
                 let status: String = row.get("status")?;
-                let series_slug: String = row.get("series_slug")?;
+                let series_slug: String = row.get("scope")?;
+                let quality: String = row.get("quality")?;
                 let language_pair = language_pair(
                     &row.get::<_, String>("source_language")?,
                     &row.get::<_, String>("target_language")?,
                 );
-                Ok((id, category, label, status, series_slug, language_pair))
+                Ok((
+                    id,
+                    category,
+                    label,
+                    status,
+                    series_slug,
+                    language_pair,
+                    quality,
+                ))
             },
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, category, label, status, series_slug, language_pair) in rows {
+    for (id, category, label, status, series_slug, language_pair, quality) in rows {
+        let tags = match id.parse::<i64>() {
+            Ok(id) => load_strict_term_tags(connection, id)?,
+            Err(_) => Vec::new(),
+        };
         out.push(admin_row(
-            json!(id),
+            id.parse::<i64>().map_or_else(|_| json!(id), |id| json!(id)),
             &category,
             label,
             &status,
             series_slug,
             language_pair,
-            String::new(),
-            load_strict_term_tags(connection, id)?,
+            quality,
+            tags,
         ));
     }
     Ok(out)
@@ -361,7 +442,7 @@ fn crystal_rows(
                 source_language, target_language, tags_json, confidence, strength
          from crystals
          where (?1 is null or crystal_type = ?1)
-           and (?2 is null or series_slug = ?2)
+           and (?2 is null or series_slug = ?2) and (memory_matches(title || ' ' || text) or id in (select b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))
          order by id
          limit ?3 offset ?4",
     )?;
@@ -418,7 +499,7 @@ fn short_term_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Re
          from short_term_memories as m
          join task_sessions as s on s.id = m.session_id
          where m.archived_at is null
-           and (?1 is null or s.series_slug = ?1)
+           and (?1 is null or s.series_slug = ?1) and memory_matches(m.text || ' ' || m.kind)
          order by m.id desc
          limit ?2 offset ?3",
     )?;
@@ -455,7 +536,7 @@ fn session_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Resul
         "select id, task_type, series_slug, volume, chapter, status,
                 source_language, target_language
          from task_sessions
-         where (?1 is null or series_slug = ?1)
+         where (?1 is null or series_slug = ?1) and memory_matches(task_type || ' ' || volume || ' ' || chapter || ' ' || status)
          order by id desc
          limit ?2 offset ?3",
     )?;
@@ -491,6 +572,7 @@ fn dream_run_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Res
     let mut statement = connection.prepare(
         "select id, provider, cycle_id, status, created_crystal_count, proposal_count
          from dream_runs
+         where memory_matches(provider || ' ' || status || ' ' || cycle_id)
          order by id desc
          limit ?1 offset ?2",
     )?;
@@ -521,6 +603,7 @@ fn dream_audit_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::R
     let mut statement = connection.prepare(
         "select id, event_type, summary, severity, dream_run_id, created_at
          from dream_audit_entries
+         where memory_matches(event_type || ' ' || summary || ' ' || severity)
          order by id desc
          limit ?1 offset ?2",
     )?;
@@ -552,6 +635,7 @@ fn audit_log_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Res
     let mut statement = connection.prepare(
         "select id, action, note, entity_type, entity_id, created_at
          from audit_log
+         where memory_matches(action || ' ' || note || ' ' || entity_type || ' ' || entity_id)
          order by id desc
          limit ?1 offset ?2",
     )?;
@@ -625,10 +709,7 @@ fn detail_for_view(
             Some(id) => concept_detail(connection, id),
             None => Ok(missing_detail("concept")),
         },
-        "Renderings" => match id {
-            Some(id) => strict_term_detail(connection, id),
-            None => Ok(missing_detail("term")),
-        },
+        "Renderings" => rendering_detail(connection, selected),
         "Short-Term Memory" => match id {
             Some(id) => short_term_detail(connection, id),
             None => Ok(missing_detail("short-term memory")),
@@ -792,6 +873,93 @@ fn concept_detail(connection: &Connection, concept_id: i64) -> rusqlite::Result<
             ("Facets", facets.len().to_string()),
         ],
     ))
+}
+
+fn rendering_detail(connection: &Connection, selected: &Value) -> rusqlite::Result<Value> {
+    let Some(id) = row_id_string(selected) else {
+        return Ok(missing_detail("translation choice"));
+    };
+    if let Ok(id) = id.parse::<i64>() {
+        return strict_term_detail(connection, id);
+    }
+    if let Some(id) = id
+        .strip_prefix("memory:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return short_term_detail(connection, id);
+    }
+    if let Some(id) = id
+        .strip_prefix("crystal:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return crystal_detail(connection, id);
+    }
+    if let Some(id) = id
+        .strip_prefix("facet:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return connection
+            .query_row(
+                "select f.value, f.language, f.confidence, f.is_canonical, f.source_crystal_id,
+                    c.canonical_name, c.description from concept_facets f
+             join concepts c on c.id=f.concept_id where f.id=?1",
+                [id],
+                |row| {
+                    let source: Option<i64> = row.get(4)?;
+                    Ok(detail(
+                        row.get(0)?,
+                        "Remembered translation variant".into(),
+                        row.get(6)?,
+                        vec![
+                            ("Subject", row.get(5)?),
+                            ("Language", row.get(1)?),
+                            ("Confidence", percent(row.get(2)?)),
+                            (
+                                "Preferred variant",
+                                if row.get::<_, bool>(3)? { "Yes" } else { "No" }.into(),
+                            ),
+                            (
+                                "Source memory",
+                                source.map_or_else(|| "Not linked".into(), |id| id.to_string()),
+                            ),
+                        ],
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(no_rows)
+            .map(|value| value.unwrap_or_else(|| missing_detail("translation choice")));
+    }
+    if let Some(id) = id
+        .strip_prefix("rule:")
+        .and_then(|id| id.parse::<i64>().ok())
+    {
+        return connection
+            .query_row(
+                "select source_text, canonical_translation, status, notes, provenance,
+                    source_language, target_language from term_rules where id=?1",
+                [id],
+                |row| {
+                    Ok(detail(
+                        row.get(0)?,
+                        format!("Translation rule / {}", row.get::<_, String>(2)?),
+                        row.get(3)?,
+                        vec![
+                            ("Rendering", row.get(1)?),
+                            ("Provenance", row.get(4)?),
+                            (
+                                "Language",
+                                language_pair(&row.get::<_, String>(5)?, &row.get::<_, String>(6)?),
+                            ),
+                        ],
+                    ))
+                },
+            )
+            .map(Some)
+            .or_else(no_rows)
+            .map(|value| value.unwrap_or_else(|| missing_detail("translation choice")));
+    }
+    Ok(missing_detail("translation choice"))
 }
 
 fn strict_term_detail(connection: &Connection, term_id: i64) -> rusqlite::Result<Value> {
@@ -1085,4 +1253,20 @@ pub(super) fn excerpt(text: &str) -> String {
     }
     let cut: String = normalized.chars().take(LIMIT - 1).collect();
     format!("{cut}...")
+}
+
+#[cfg(test)]
+mod missing_choice_tests {
+    use super::*;
+
+    #[test]
+    fn deleted_facets_and_rules_have_missing_details() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        let db = open_migrated(&config.database_path()).unwrap();
+        for id in ["facet:999", "rule:999"] {
+            let result = rendering_detail(&db, &json!({"id":id})).unwrap();
+            assert_eq!(result, missing_detail("translation choice"));
+        }
+    }
 }

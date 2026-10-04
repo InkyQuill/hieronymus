@@ -505,6 +505,16 @@ fn validate_provider_profile(
             "{prefix}.timeout_seconds must be greater than 0"
         )));
     }
+    if std::time::Duration::try_from_secs_f64(provider.timeout_seconds)
+        .ok()
+        .filter(|timeout| !timeout.is_zero())
+        .and_then(|timeout| std::time::Instant::now().checked_add(timeout))
+        .is_none()
+    {
+        return Err(ProviderCatalogError::new(format!(
+            "{prefix}.timeout_seconds must be representable as a request deadline"
+        )));
+    }
     Ok(())
 }
 

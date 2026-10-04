@@ -567,7 +567,7 @@ struct RecallArgs {
 }
 
 fn default_recall_limit() -> i64 {
-    10
+    100
 }
 
 /// Recall for a stored session: the session's own context rules (cross-series
@@ -583,7 +583,11 @@ fn default_recall_limit() -> i64 {
 /// the current corpus, whether the lane is unarmed, degraded, or the shared
 /// semantic service reports it cannot serve yet.
 fn recall(application: &Application, arguments: &Value) -> Result<Value, AppError> {
-    let args = decode::<RecallArgs>(arguments)?;
+    let mut args = decode::<RecallArgs>(arguments)?;
+    if arguments.get("story_query_mode").is_none() {
+        args.story.story_query_mode =
+            hieronymus::story_applicability::QueryMode::OmniscientResearch;
+    }
     let series = series_context(application, &args.series_slug)?;
     let store = workspace(application)?;
     let session = store.get_session(args.session_id).map_err(domain)?;
