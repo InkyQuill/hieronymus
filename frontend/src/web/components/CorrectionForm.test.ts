@@ -254,3 +254,43 @@ test("unresolved occurrence context cannot offer or submit a current rendering",
   expect(screen.queryByLabelText("Current rendering to replace")).toBeNull();
   expect(screen.getByText(/Current rendering cannot be resolved/)).toBeTruthy();
 });
+
+test("large crystals offer searchable paged previews and show full text only for the selected claim", async () => {
+  const user = userEvent.setup();
+  const claims = Array.from({ length: 35 }, (_, index) => ({
+    claim_id: index + 1,
+    revision: 1,
+    applicability: app,
+    text: `Утверждение ${index + 1}. ${"Повторяющийся длинный контекст. ".repeat(30)}`,
+  }));
+  vi.mocked(correctionSelection).mockResolvedValue({ ...selection, claims });
+  render(CorrectionForm, {
+    props: { target: { source: "crystal", id: 4 }, onclose: vi.fn() },
+  });
+  await screen.findByText("Утверждение 1.");
+  expect(screen.getAllByRole("radio")).toHaveLength(10);
+  expect(screen.queryByLabelText("Correction")).toBeNull();
+  await user.type(
+    screen.getByRole("searchbox", { name: "Find a statement" }),
+    "Утверждение 35.",
+  );
+  expect(screen.getAllByRole("radio")).toHaveLength(1);
+  await user.click(screen.getByRole("radio"));
+  expect(screen.getByLabelText("Correction")).toBeTruthy();
+  expect(screen.getByText("Read the complete statement")).toBeTruthy();
+  expect(
+    screen.getByText(claims[34].text.trim()).closest("details")?.open,
+  ).toBe(false);
+  await user.selectOptions(screen.getByLabelText("Correction"), "qualify");
+  await user.type(
+    screen.getByLabelText("Pointer or context for your agent"),
+    "Исправленный контекст",
+  );
+  await user.click(screen.getByRole("button", { name: "Apply correction" }));
+  expect(submitCorrection).toHaveBeenCalledWith(
+    expect.objectContaining({
+      selected_claims: [{ id: 35, revision: 1 }],
+      structured: { kind: "qualify", qualification: "Исправленный контекст" },
+    }),
+  );
+});

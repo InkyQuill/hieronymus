@@ -754,3 +754,145 @@ fn every_table_counts_the_full_filtered_set_and_pages_distinct_records() {
         }
     }
 }
+
+#[test]
+fn search_uses_full_text_unicode_case_and_the_full_set_before_paging() {
+    let (_root, config) = seeded_root();
+    let mut db = open_migrated(&config.database_path()).unwrap();
+    let tx = db.transaction().unwrap();
+    for index in 0..605 {
+        let text = if index >= 601 {
+            "Световой выстрел 100%_"
+        } else {
+            "Unrelated evidence"
+        };
+        tx.execute("insert into crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,status,created_at,updated_at) values('rule',?1,'Opaque title','series','series:main','main','ja','ru','[]',0.8,0.9,'active',?2,?2)",rusqlite::params![text,TS]).unwrap();
+    }
+    tx.commit().unwrap();
+    for view in ["Crystals", "Renderings"] {
+        let first = snapshot(
+            &config,
+            view,
+            &json!({"series":"main","search":"СВЕТОВОЙ ВЫСТРЕЛ 100%_","limit":2}),
+        )
+        .unwrap();
+        let next = snapshot(
+            &config,
+            view,
+            &json!({"series":"main","search":"световой выстрел 100%_","limit":2,"offset":2}),
+        )
+        .unwrap();
+        assert_eq!(first["total_count"], json!(4), "{view}");
+        assert_eq!(next["total_count"], json!(4), "{view}");
+        assert_eq!(first["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(next["rows"].as_array().unwrap().len(), 2);
+        assert_ne!(first["rows"][0]["id"], next["rows"][0]["id"]);
+        assert_eq!(
+            snapshot(
+                &config,
+                view,
+                &json!({"series":"other","search":"Световой"})
+            )
+            .unwrap()["total_count"],
+            json!(0)
+        );
+    }
+    for view in VIEW_NAMES {
+        let result = snapshot(
+            &config,
+            view,
+            &json!({"search":"nonexistent search ' OR 1=1 --"}),
+        )
+        .unwrap();
+        assert_eq!(result["total_count"], json!(0), "{view}");
+        assert_eq!(result["rows"], json!([]), "{view}");
+    }
+}
+
+#[test]
+fn matching_a_series_key_does_not_promote_a_project_scoped_concept() {
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    db.execute("insert into concepts(canonical_name,description,scope_type,scope_key,status,confidence,created_at,updated_at) values('Private project concept','hidden','project','series:main','candidate',0.5,?1,?1)",[TS]).unwrap();
+    let scoped = snapshot(
+        &config,
+        "Concepts",
+        &json!({"series":"main","search":"Private project"}),
+    )
+    .unwrap();
+    assert_eq!(scoped["total_count"], json!(0));
+    assert_eq!(scoped["rows"], json!([]));
+    let all = snapshot(&config, "Concepts", &json!({"search":"Private project"})).unwrap();
+    assert_eq!(all["total_count"], json!(1));
+}
+
+#[test]
+fn search_finds_a_crystals_atomic_claim_even_when_its_summary_has_no_match() {
+    use hieronymus::{
+        claim_capture::ClaimInput,
+        crystals::{CrystalStore, NewCrystal},
+        memory_models::TranslationContext,
+        story_applicability::{ApplicabilityV1, MetadataState},
+        workspace::{ShortTermMemoryInput, WorkspaceStore},
+    };
+    let (_root, config) = seeded_root();
+    let db = open_migrated(&config.database_path()).unwrap();
+    let series_id = db
+        .query_row("select id from series where slug='main'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let context = TranslationContext::new("main", "en", "ru", "translation");
+    let workspace = WorkspaceStore::open(&config).unwrap();
+    let session = workspace.start_session(&context).unwrap();
+    let memory = workspace
+        .add_short_term_memory(
+            session.id,
+            &ShortTermMemoryInput::new("terminology", "Imported terms."),
+        )
+        .unwrap();
+    let mut crystal = NewCrystal::new("observation", "A general summary.");
+    crystal.title = "Opaque title".into();
+    crystal.source_memory_ids = vec![memory.id];
+    crystal.claims = vec![ClaimInput {
+        text: "ライト・シュート → Световой выстрел".into(),
+        concept_id: None,
+        applicability: ApplicabilityV1 {
+            series_id,
+            timeline_id: None,
+            volume_key: None,
+            chapter_key: None,
+            scope_predicates: vec![],
+            valid_from: None,
+            valid_until: None,
+            metadata_state: MetadataState::Unspecified,
+            knowledge_gates: vec![],
+        },
+    }];
+    let id = CrystalStore::open(&config)
+        .unwrap()
+        .add_crystal(&context, "observation", &crystal)
+        .unwrap();
+    for view in ["Crystals", "Renderings"] {
+        let result =
+            snapshot(&config, view, &json!({"series":"main","search":"сВеТоВоЙ"})).unwrap();
+        assert_eq!(result["total_count"], json!(1), "{view}");
+        assert_eq!(
+            result["rows"][0]["id"],
+            if view == "Crystals" {
+                json!(id)
+            } else {
+                json!(format!("crystal:{id}"))
+            }
+        );
+        assert_eq!(
+            snapshot(
+                &config,
+                view,
+                &json!({"series":"other","search":"Световой"})
+            )
+            .unwrap()["total_count"],
+            json!(0)
+        );
+    }
+}

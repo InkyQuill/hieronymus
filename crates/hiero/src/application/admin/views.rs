@@ -81,6 +81,7 @@ struct AdminQuery {
     limit: i64,
     offset: i64,
     series: Option<String>,
+    search: Option<String>,
 }
 
 impl AdminQuery {
@@ -107,6 +108,7 @@ impl AdminQuery {
             limit,
             offset,
             series: string("series").or_else(|| string("context")),
+            search: string("search"),
         }
     }
 }
@@ -126,6 +128,20 @@ pub fn snapshot(config: &HieronymusConfig, view: &str, query: &Value) -> Result<
 
     let connection = open_migrated(&config.database_path())
         .map_err(|_| AppError::Domain("admin store is unavailable".to_string()))?;
+
+    let needle = params.search.as_deref().unwrap_or("").to_lowercase();
+    connection
+        .create_scalar_function(
+            "memory_matches",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            move |ctx| {
+                let text: String = ctx.get(0)?;
+                Ok(needle.is_empty() || text.to_lowercase().contains(&needle))
+            },
+        )
+        .map_err(|_| AppError::Domain("memory search is unavailable".into()))?;
 
     let rows = rows_for_view(&connection, view, &params)
         .map_err(|_| AppError::Domain(format!("failed to load the {view} view")))?;
@@ -155,28 +171,29 @@ fn memory_count(
 ) -> rusqlite::Result<Option<i64>> {
     let count = match view {
         "Renderings" => connection.query_row(
-            &format!("{RENDERINGS} select count(*) from renderings where (?1 is null or scope=?1 or scope='global')"),
+            &format!("{RENDERINGS} select count(*) from renderings where (?1 is null or scope=?1 or scope='global') and (memory_matches(search_text) or row_id in (select 'crystal:' || b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))"),
             [&params.series], |row| row.get(0),
         )?,
         "Short-Term Memory" => connection.query_row(
-            "select count(*) from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and (?1 is null or s.series_slug=?1)",
+            "select count(*) from short_term_memories m join task_sessions s on s.id=m.session_id where m.archived_at is null and (?1 is null or s.series_slug=?1) and memory_matches(m.text || ' ' || m.kind)",
             [&params.series], |row| row.get(0),
         )?,
         "Crystals" | "Lessons" => connection.query_row(
-            "select count(*) from crystals where (?1 is null or crystal_type=?1) and (?2 is null or series_slug=?2)",
+            "select count(*) from crystals where (?1 is null or crystal_type=?1) and (?2 is null or series_slug=?2) and (memory_matches(title || ' ' || text) or id in (select b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))",
             rusqlite::params![if view == "Lessons" { Some("lesson") } else { None }, params.series], |row| row.get(0),
         )?,
         "Concepts" => connection.query_row(
-            "select count(*) from concepts where (?1 is null or scope_key=?1 or scope_type='global')",
+            "select count(*) from concepts where (?1 is null or (scope_type='series' and scope_key=?1) or scope_type='global') and memory_matches(canonical_name || ' ' || description)",
             [params.series.as_ref().map(|series| format!("series:{series}"))], |row| row.get(0),
         )?,
         "Short-Term Sessions" => connection.query_row(
-            "select count(*) from task_sessions where (?1 is null or series_slug=?1)",
+            "select count(*) from task_sessions where (?1 is null or series_slug=?1) and memory_matches(task_type || ' ' || volume || ' ' || chapter || ' ' || status)",
             [&params.series], |row| row.get(0),
         )?,
         "Dream Runs" | "Dream Audits" | "Audit Log" => {
             let table = match view { "Dream Runs" => "dream_runs", "Dream Audits" => "dream_audit_entries", _ => "audit_log" };
-            connection.query_row(&format!("select count(*) from {table}"), [], |row| row.get(0))?
+            let content = match view { "Dream Runs" => "provider || ' ' || status || ' ' || cycle_id", "Dream Audits" => "event_type || ' ' || summary || ' ' || severity", _ => "action || ' ' || note || ' ' || entity_type || ' ' || entity_id" };
+            connection.query_row(&format!("select count(*) from {table} where memory_matches({content})"), [], |row| row.get(0))?
         }
         _ => return Ok(None),
     };
@@ -263,7 +280,7 @@ fn concept_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Resul
     let mut statement = connection.prepare(
         "select id, canonical_name, status, confidence, scope_type, scope_key
          from concepts
-         where (?1 is null or scope_key = ?1 or scope_type = 'global')
+         where (?1 is null or (scope_type = 'series' and scope_key = ?1) or scope_type = 'global') and memory_matches(canonical_name || ' ' || description)
          order by id
          limit ?2 offset ?3",
     )?;
@@ -317,7 +334,7 @@ fn load_concept_tags(connection: &Connection, concept_id: i64) -> rusqlite::Resu
 const RENDERINGS: &str = "with renderings as (
     select cast(id as text) as row_id, id as sort_id, 0 as source_order,
            category as kind, canonical_translation as label, status, series_slug as scope,
-           source_language, target_language, '' as quality
+           source_language, target_language, '' as quality, source_text || ' ' || canonical_translation || ' ' || notes as search_text
     from strict_terms
     union all
     select 'facet:' || f.id, f.id, 1, 'translation variant', f.value,
@@ -325,27 +342,27 @@ const RENDERINGS: &str = "with renderings as (
            coalesce(nullif(cr.series_slug, ''),
              case when c.scope_type = 'series' and c.scope_key like 'series:%' then substr(c.scope_key, 8)
                   when c.scope_type = 'global' then 'global' else 'unresolved' end),
-           '', f.language, printf('%.0f%% conf', f.confidence * 100)
+           '', f.language, printf('%.0f%% conf', f.confidence * 100), f.value || ' ' || c.canonical_name || ' ' || c.description
     from concept_facets f join concepts c on c.id = f.concept_id
     left join crystals cr on cr.id = f.source_crystal_id
     where f.facet_type = 'rendering'
     union all
     select 'rule:' || r.id, r.id, 2, 'translation rule', r.canonical_translation, r.status,
            case when a.metadata_state='legacy_global' then 'global' else coalesce(s.slug, 'unresolved') end,
-           r.source_language, r.target_language, ''
+           r.source_language, r.target_language, '', r.source_text || ' ' || r.canonical_translation || ' ' || r.notes
     from term_rules r left join rule_authority ra on ra.rule_id=r.id
     left join applicabilities a on a.id=ra.applicability_id
     left join series s on s.id=a.series_id
     union all
     select 'memory:' || m.id, -m.id, 3, m.kind, substr(m.text, 1, 240),
-           'recent observation', s.series_slug, s.source_language, s.target_language, m.source_role
+           'recent observation', s.series_slug, s.source_language, s.target_language, m.source_role, m.text
     from short_term_memories m join task_sessions s on s.id=m.session_id
     where m.archived_at is null and m.kind in ('terminology', 'translation_rule')
     union all
     select 'crystal:' || c.id, c.id, 4,
            case when c.crystal_type='rule' then 'remembered rule' else 'remembered terminology' end, c.title,
            c.status, c.series_slug, c.source_language, c.target_language,
-           printf('%.0f%% conf', c.confidence * 100)
+           printf('%.0f%% conf', c.confidence * 100), c.title || ' ' || c.text
     from crystals c where (c.crystal_type='rule' or exists (
       select 1 from crystal_sources cs join short_term_memories m on m.id=cs.short_term_memory_id
       where cs.crystal_id=c.id and m.kind in ('terminology', 'translation_rule')))
@@ -356,7 +373,7 @@ const RENDERINGS: &str = "with renderings as (
 fn rendering_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Result<Vec<Value>> {
     let mut statement = connection.prepare(&format!(
         "{RENDERINGS} select * from renderings
-         where (?1 is null or scope = ?1 or scope = 'global')
+         where (?1 is null or scope = ?1 or scope = 'global') and (memory_matches(search_text) or row_id in (select 'crystal:' || b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))
          order by source_order, sort_id limit ?2 offset ?3"
     ))?;
     let rows = statement
@@ -425,7 +442,7 @@ fn crystal_rows(
                 source_language, target_language, tags_json, confidence, strength
          from crystals
          where (?1 is null or crystal_type = ?1)
-           and (?2 is null or series_slug = ?2)
+           and (?2 is null or series_slug = ?2) and (memory_matches(title || ' ' || text) or id in (select b.crystal_id from claim_bindings b join memory_claims mc on mc.id=b.claim_id where b.crystal_id is not null and memory_matches(mc.text)))
          order by id
          limit ?3 offset ?4",
     )?;
@@ -482,7 +499,7 @@ fn short_term_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Re
          from short_term_memories as m
          join task_sessions as s on s.id = m.session_id
          where m.archived_at is null
-           and (?1 is null or s.series_slug = ?1)
+           and (?1 is null or s.series_slug = ?1) and memory_matches(m.text || ' ' || m.kind)
          order by m.id desc
          limit ?2 offset ?3",
     )?;
@@ -519,7 +536,7 @@ fn session_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Resul
         "select id, task_type, series_slug, volume, chapter, status,
                 source_language, target_language
          from task_sessions
-         where (?1 is null or series_slug = ?1)
+         where (?1 is null or series_slug = ?1) and memory_matches(task_type || ' ' || volume || ' ' || chapter || ' ' || status)
          order by id desc
          limit ?2 offset ?3",
     )?;
@@ -555,6 +572,7 @@ fn dream_run_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Res
     let mut statement = connection.prepare(
         "select id, provider, cycle_id, status, created_crystal_count, proposal_count
          from dream_runs
+         where memory_matches(provider || ' ' || status || ' ' || cycle_id)
          order by id desc
          limit ?1 offset ?2",
     )?;
@@ -585,6 +603,7 @@ fn dream_audit_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::R
     let mut statement = connection.prepare(
         "select id, event_type, summary, severity, dream_run_id, created_at
          from dream_audit_entries
+         where memory_matches(event_type || ' ' || summary || ' ' || severity)
          order by id desc
          limit ?1 offset ?2",
     )?;
@@ -616,6 +635,7 @@ fn audit_log_rows(connection: &Connection, params: &AdminQuery) -> rusqlite::Res
     let mut statement = connection.prepare(
         "select id, action, note, entity_type, entity_id, created_at
          from audit_log
+         where memory_matches(action || ' ' || note || ' ' || entity_type || ' ' || entity_id)
          order by id desc
          limit ?1 offset ?2",
     )?;

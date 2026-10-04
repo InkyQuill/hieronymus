@@ -402,8 +402,9 @@ test("merge uses two explicitly checked records and clears selection after compl
   await user.click(
     screen.getByRole("checkbox", { name: "Select Crystal Beta" }),
   );
-  await user.click(screen.getByText("More actions and diagnostics"));
-  await user.click(screen.getByRole("button", { name: "Merge Selected" }));
+  await user.click(
+    screen.getByRole("button", { name: "Combine selected memories" }),
+  );
   await user.type(
     screen.getByLabelText("Merged memory text"),
     "Combined evidence",
@@ -907,4 +908,144 @@ test("switching view clears old rows and actions while the new table loads", asy
   expect(
     screen.getByText("Loading translation choices…", { exact: false }),
   ).toBeTruthy();
+});
+
+test("search covers the server result set and preserves checked memories across pages and queries", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock
+    .mockReset()
+    .mockImplementation(async (_view, _selected, _series, paging) => ({
+      snapshot: {
+        ...listSnapshot.snapshot,
+        total_count: 45,
+        rows: [
+          {
+            ...row,
+            id: paging?.search ? 9 : (paging?.offset ?? 0) + 7,
+            label: paging?.search
+              ? "Found crystal"
+              : `Crystal ${paging?.offset ?? 0}`,
+          },
+        ],
+        selected: null,
+      },
+    }));
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      command_options: [
+        ...dashboard.command_options,
+        command("merge_selected", "Merge Selected", ["Crystals"], true),
+      ],
+    },
+    onNotice: vi.fn(),
+  });
+  await user.click(
+    await screen.findByRole("checkbox", { name: "Select Crystal 0" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByRole("checkbox", { name: "Select Crystal 20" });
+  expect(screen.getByText("1 selected")).toBeTruthy();
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search long-term memories" }),
+    "русский термин",
+  );
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("checkbox", { name: "Select Found crystal" });
+  expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+    "Crystals",
+    undefined,
+    undefined,
+    { limit: 20, offset: 0, search: "русский термин" },
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select Found crystal" }),
+  );
+  expect(screen.getByText("2 selected")).toBeTruthy();
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Combine selected memories",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.queryByText("2 selected")).toBeNull();
+});
+
+test("combining retained selections works when the current search has no results", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: {
+        ...selectedSnapshot.snapshot,
+        total_count: 2,
+        rows: [row, { ...row, id: 8, label: "Crystal Beta" }],
+      },
+    })
+    .mockResolvedValue({
+      snapshot: {
+        ...listSnapshot.snapshot,
+        total_count: 0,
+        rows: [],
+        selected: null,
+      },
+    });
+  render(MemoryViews, {
+    dashboard: {
+      ...dashboard,
+      command_options: [
+        ...dashboard.command_options,
+        command("merge_selected", "Merge Selected", ["Crystals"], true),
+      ],
+    },
+    onNotice: vi.fn(),
+  });
+  await user.click(
+    await screen.findByRole("checkbox", { name: "Select Crystal Alpha" }),
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Select Crystal Beta" }),
+  );
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search long-term memories" }),
+    "unmatched",
+  );
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByText(/No records match/);
+  await user.click(
+    screen.getByRole("button", { name: "Combine selected memories" }),
+  );
+  expect(screen.getByLabelText("Merged memory text")).toBeTruthy();
+  expect(screen.getByText(/Merging 2 records/)).toBeTruthy();
+});
+
+test("paging away from a record closes its correction instead of relabeling the old target", async () => {
+  const user = userEvent.setup();
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce({
+      snapshot: { ...selectedSnapshot.snapshot, total_count: 45 },
+    })
+    .mockResolvedValue({
+      snapshot: {
+        ...selectedSnapshot.snapshot,
+        total_count: 45,
+        rows: [{ ...row, id: 27, label: "Next record" }],
+        selected: { ...row, id: 27 },
+        detail: {
+          ...selectedSnapshot.snapshot.detail,
+          title: "Next record detail",
+        },
+      },
+    });
+  render(MemoryViews, { dashboard, onNotice: vi.fn() });
+  await user.click(
+    await screen.findByRole("button", { name: "Correct this memory" }),
+  );
+  expect(screen.getByRole("region", { name: "Correct a memory" })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Next record detail");
+  expect(screen.queryByRole("region", { name: "Correct a memory" })).toBeNull();
 });

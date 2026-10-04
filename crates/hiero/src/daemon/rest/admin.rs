@@ -569,7 +569,15 @@ fn snapshot_value(config: &HieronymusConfig, view: &str, selected_id: &str) -> V
 /// domain module clamps and parses them.
 fn admin_query_from_params(params: &BTreeMap<String, String>) -> Value {
     let mut query = serde_json::Map::new();
-    for key in ["selected_id", "id", "limit", "offset", "series", "context"] {
+    for key in [
+        "selected_id",
+        "id",
+        "limit",
+        "offset",
+        "series",
+        "context",
+        "search",
+    ] {
         if let Some(value) = params.get(key).filter(|value| !value.is_empty()) {
             query.insert(key.to_string(), json!(value));
         }

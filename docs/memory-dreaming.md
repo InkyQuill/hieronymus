@@ -457,3 +457,12 @@ Supply `source_ref` when capturing a working memory: a file path or a loose labe
 A locator is a pointer, not proof that a file was read or a chronological ordering. Exact evidence and temporal/viewpoint applicability still use the existing claim metadata. A later level or status must not replace an earlier fact merely because their text resembles each other. Query the relevant story context to select time/viewpoint; an unspecified-context search can return several matching memories with different locators. Existing linked memories gain this projection without a migration or re-embedding.
 
 These locators are inherited from retained working memories and sessions. Archiving preserves them; explicitly hard-deleting those source rows removes their locators. They are not independent immutable evidence snapshots.
+
+
+### Inspecting and correcting memory
+
+Each console memory/history table supports a Unicode lowercase substring search over its full title/content projection before pagination. Crystal claims are included, even when a term is absent from the crystal summary. Search respects the selected book, preserves complete matching counts, and treats punctuation such as `%` and `_` literally. This author-facing inspection search is separate from semantic agent recall.
+
+Corrections start from a selected memory, inside its detail panel. A searchable, paged statement list shows short previews; the exact selected statement and authority revisions remain intact for submission. Full statement text is available by disclosure. Navigating to a different memory closes the old correction so a decision cannot be submitted under another record's heading.
+
+Combining is an optional action for duplicate memories, not an author maintenance requirement. Checked records remain selected across pages and searches within the same book/view. A visible selection toolbar opens the merge action, including when the current search returns no records; changing book/view clears the selection. Dreaming continues to perform automatic consolidation.
