@@ -113,9 +113,10 @@ export function formatReadiness(value: unknown): ReadinessView {
       provider: provider.provider,
       model: provider.model,
       condition: conditionLabels[provider.condition],
-      reason: provider.condition === "untested"
-        ? "No calls observed since the server started or provider settings changed. Previous Dreaming runs remain in processing history."
-        : provider.reason,
+      reason:
+        provider.condition === "untested"
+          ? "No calls observed since the server started or provider settings changed. Previous Dreaming runs remain in processing history."
+          : provider.reason,
     })),
   };
 }
