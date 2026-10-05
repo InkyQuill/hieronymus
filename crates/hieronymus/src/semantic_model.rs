@@ -405,6 +405,7 @@ fn stream_chunked_body_with_progress(
     let mut input = std::io::BufReader::new(std::io::Cursor::new(buffered).chain(stream));
     let mut output = std::io::BufWriter::new(std::fs::File::create(destination)?);
     let mut total = 0u64;
+    let mut buffer = vec![0_u8; STREAM_BUFFER_BYTES];
     loop {
         let mut line = Vec::new();
         input.by_ref().take(129).read_until(b'\n', &mut line)?;
@@ -435,16 +436,26 @@ fn stream_chunked_body_with_progress(
             }
             break;
         }
+        let chunk_start = total;
         total = total
             .checked_add(size)
             .filter(|value| *value <= max_bytes)
             .ok_or_else(|| {
                 SemanticError::Download(format!("download exceeded the {max_bytes} byte limit"))
             })?;
-        let copied = std::io::copy(&mut input.by_ref().take(size), &mut output)?;
+        let mut chunk = input.by_ref().take(size);
+        let mut copied = 0;
+        loop {
+            let count = chunk.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            output.write_all(&buffer[..count])?;
+            copied += count as u64;
+            progress(chunk_start + copied, None);
+        }
         let mut separator = [0; 2];
         input.read_exact(&mut separator)?;
-        progress(total, None);
         if copied != size || separator != *b"\r\n" {
             return Err(SemanticError::Download("truncated chunked download".into()));
         }
@@ -493,6 +504,34 @@ mod chunk_tests {
         assert_eq!(observations.borrow().first(), Some(&(0, Some(bytes))));
         assert_eq!(observations.borrow().last(), Some(&(bytes, Some(bytes))));
         assert!(observations.borrow().windows(2).all(|w| w[0].0 < w[1].0));
+        assert_eq!(std::fs::read(dir.path().join("body")).unwrap(), body);
+    }
+    #[test]
+    fn large_chunk_reports_progress_before_it_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![42; STREAM_BUFFER_BYTES * 2 + 7];
+        let mut response = format!("{:x}\r\n", body.len()).into_bytes();
+        response.extend_from_slice(&body);
+        response.extend_from_slice(b"\r\n0\r\n\r\n");
+        let observations = std::cell::RefCell::new(Vec::new());
+        stream_chunked_body_with_progress(
+            &mut std::io::Cursor::new(response),
+            &dir.path().join("body"),
+            &[],
+            body.len() as u64,
+            &|n, total| observations.borrow_mut().push((n, total)),
+        )
+        .unwrap();
+        assert!(
+            observations
+                .borrow()
+                .iter()
+                .any(|(n, total)| *n > 0 && *n < body.len() as u64 && total.is_none())
+        );
+        assert_eq!(
+            observations.borrow().last(),
+            Some(&(body.len() as u64, None))
+        );
         assert_eq!(std::fs::read(dir.path().join("body")).unwrap(), body);
     }
     #[test]
