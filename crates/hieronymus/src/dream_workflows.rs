@@ -149,6 +149,29 @@ impl WorkflowResolver {
         self.provider_for_dream(choice, None)
     }
 
+    /// Explicit console previews use the knowledge workflow assignment even
+    /// when background scheduling or that workflow is disabled.
+    pub fn propose_merge(
+        &self,
+        config: &DreamConfig,
+        records: &serde_json::Value,
+    ) -> Result<serde_json::Value, DreamError> {
+        let workflow = config.workflows.get("knowledge_crystals").ok_or_else(|| {
+            DreamError::InvalidWorkflow(
+                "Configure the knowledge Dreaming model before combining memories".into(),
+            )
+        })?;
+        let mut choice = WorkflowChoice {
+            name: "knowledge_crystals".into(),
+            enabled: true,
+            provider: workflow.provider.clone(),
+            model: workflow.model.clone(),
+        };
+        (choice.provider, choice.model) = resolved_assignment(&choice, &self.catalog);
+        self.provider_for_dream(&choice, Some(config))?
+            .propose_merge(records)
+    }
+
     pub(crate) fn provider_with_config(
         &self,
         choice: &WorkflowChoice,

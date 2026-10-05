@@ -3,6 +3,7 @@ import type {
   AdminActionBody,
   AdminActionResult,
   AdminSnapshot,
+  MergePreview,
   DreamSettings,
   IngestSettings,
   ModelCache,
@@ -155,6 +156,14 @@ export async function startAdminDreaming(): Promise<{
   return request("/api/admin/actions/run_manual_dreaming", {
     method: "POST",
     body: "{}",
+  });
+}
+
+export function prepareMergePreview(view: string, ids: Array<string | number>, signal?: AbortSignal): Promise<MergePreview> {
+  return request("/api/admin/merge-preview", {
+    method: "POST",
+    body: JSON.stringify({ view, ids }),
+    signal,
   });
 }
 

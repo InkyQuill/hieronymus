@@ -402,7 +402,7 @@ fn manual_dream_all_drains_small_batch_even_below_minimum() {
 }
 
 #[test]
-fn dreaming_ignores_active_sessions() {
+fn dreaming_processes_observations_without_completing_active_session() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "only-sense-online");
@@ -414,14 +414,14 @@ fn dreaming_ignores_active_sessions() {
         &workspace,
         session.id,
         "correction",
-        "Active notes should wait.",
+        "Active notes are eligible.",
     );
 
     let service = DreamService::open(&config, WorkflowResolver::deterministic()).unwrap();
     let run = service.run_cycle("manual", false).unwrap();
 
     assert_eq!(run.status, "completed");
-    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(0));
+    assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
     let session_row = query(&config, "select status, cycle_id from task_sessions", &[]).remove(0);
     assert_eq!(session_row[0], json!("active"));
     assert_eq!(session_row[1], Value::Null);
@@ -865,19 +865,19 @@ fn evidence_dream_runs_all_passes_over_the_same_selection() {
         calls.iter().map(|(_pass, ids)| ids.clone()).collect();
     assert_eq!(distinct_selections.len(), 1);
     let selection = calls[0].1.clone();
-    assert_eq!(selection.len(), 2);
-    assert!(!selection.contains(&extra_ids[0]));
+    assert_eq!(selection.len(), 3);
+    assert!(selection.contains(&extra_ids[0]));
 
     let mut expected_phase_rows: Vec<(String, String, i64, i64)> = expected_passes
         .iter()
-        .map(|pass| (pass.to_string(), "completed".to_string(), 2, 0))
+        .map(|pass| (pass.to_string(), "completed".to_string(), 3, 0))
         .collect();
     // knowledge_crystals staged one crystal; coverage_audit accounted for
     // both selected memories.
     expected_phase_rows[3].3 = 1;
-    expected_phase_rows[6].3 = 2;
+    expected_phase_rows[6].3 = 3;
     // The persistence phase applies the one validated mutation batch.
-    expected_phase_rows.push(("persistence".to_string(), "completed".to_string(), 2, 1));
+    expected_phase_rows.push(("persistence".to_string(), "completed".to_string(), 3, 1));
     assert_eq!(phase_rows(&config), expected_phase_rows);
     assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
 
@@ -1429,8 +1429,20 @@ impl DreamProvider for ContextRecordingProvider {
         assert!(
             memories
                 .iter()
-                .all(|memory| memory.session_id == memories[0].session_id)
+                .all(|memory| memory.evidence_context["series_slug"] == context.series_slug)
         );
+        for memory in memories {
+            assert!(memory.text.contains(&format!(
+                "chapter {}.",
+                memory.evidence_context["chapter"].as_str().unwrap()
+            )));
+            let expected = if memory.evidence_context["chapter"] == "3" {
+                json!("Narrator")
+            } else {
+                json!("Unspecified")
+            };
+            assert_eq!(memory.evidence_context["story_viewpoint"], expected);
+        }
         self.calls.lock().unwrap().push((
             context.clone(),
             memories.iter().map(|memory| memory.id).collect(),
@@ -1485,9 +1497,12 @@ fn provider_batches_preserve_series_chapter_and_viewpoint_context() {
     assert_eq!(result.outcome, "completed");
     assert_eq!(result.progress.archived_inputs, 3);
     let calls = calls.lock().unwrap();
-    for expected in expected {
-        assert!(calls.contains(&expected));
-    }
+    let combined = (
+        expected[0].0.clone(),
+        vec![expected[0].1[0], expected[1].1[0]],
+    );
+    assert!(calls.contains(&combined));
+    assert!(calls.contains(&expected[2]));
     assert_eq!(
         scalar(
             &config,
@@ -1623,18 +1638,28 @@ impl DreamProvider for SelectivelyDeferringProvider {
         context: &TranslationContext,
         memories: &[ShortTermMemoryRecord],
     ) -> Result<Value, DreamError> {
-        if pass != "coverage_audit" && memories[0].text == "Insufficient evidence." {
-            return Ok(json!({}));
+        if pass == "coverage_audit" {
+            return Ok(
+                json!({"covered_memory_ids": memories.iter().map(|m|m.id).collect::<Vec<_>>()}),
+            );
         }
-        DeterministicDreamProvider.run_pass(pass, context, memories)
+        let supported: Vec<_> = memories
+            .iter()
+            .filter(|m| m.text != "Insufficient evidence.")
+            .cloned()
+            .collect();
+        DeterministicDreamProvider.run_pass(pass, context, &supported)
     }
 }
 
 #[test]
-fn deferred_oldest_session_does_not_starve_newer_sessions_after_restart() {
+fn deferred_oldest_observation_does_not_starve_newer_work_after_restart() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "book");
+    let mut settings = default_dream_config();
+    settings.max_short_term_memories_per_run = 1;
+    save_dream_config(&config, &settings).unwrap();
     let old = completed_session(&config, "book", &["Insufficient evidence."]);
     let new = completed_session(&config, "book", &["Mira carries three keys."]);
     let service = DreamService::open(
@@ -1673,4 +1698,148 @@ fn deferred_oldest_session_does_not_starve_newer_sessions_after_restart() {
         vec![vec![json!(new[0])]]
     );
     assert_eq!(reopened.run_all("manual", true, false).unwrap().batches, 1);
+}
+
+#[test]
+fn implicit_clarification_across_active_sessions_can_commit_one_shared_successor() {
+    struct ClarificationProvider;
+    impl DreamProvider for ClarificationProvider {
+        fn name(&self) -> &str {
+            "clarification"
+        }
+        fn run_pass(
+            &self,
+            pass: &str,
+            _: &TranslationContext,
+            memories: &[ShortTermMemoryRecord],
+        ) -> Result<Value, DreamError> {
+            assert_eq!(memories.len(), 2);
+            assert_ne!(memories[0].session_id, memories[1].session_id);
+            assert_eq!(memories[0].text, "The agent assumes Mira carries two keys.");
+            assert_eq!(
+                memories[1].text,
+                "The user explains Mira carries three keys."
+            );
+            let ids: Vec<_> = memories.iter().map(|m| m.id).collect();
+            Ok(match pass {
+                "knowledge_crystals" => {
+                    json!({"crystals":[{"text":"Mira carries three keys.","source_memory_ids":ids}]})
+                }
+                "coverage_audit" => json!({"covered_memory_ids":ids}),
+                _ => json!({}),
+            })
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let initial = ws.start_session(&context("book")).unwrap();
+    let later = ws.start_session(&context("book").chapter("3")).unwrap();
+    add_memory(
+        &ws,
+        initial.id,
+        "note",
+        "The agent assumes Mira carries two keys.",
+    );
+    add_memory(
+        &ws,
+        later.id,
+        "note",
+        "The user explains Mira carries three keys.",
+    );
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(ClarificationProvider)),
+    )
+    .unwrap();
+    let result = service.run_all("manual", true, false).unwrap();
+    assert_eq!(result.progress.archived_inputs, 2);
+    assert_eq!(
+        query(&config, "select text from crystals", &[]),
+        vec![vec![json!("Mira carries three keys.")]]
+    );
+    assert_eq!(
+        scalar(&config, "select count(*) from crystal_sources"),
+        json!(2)
+    );
+    assert_eq!(
+        scalar(
+            &config,
+            "select count(*) from task_sessions where status='active'"
+        ),
+        json!(2)
+    );
+    assert_eq!(
+        scalar(&config, "select count(*) from short_term_memories"),
+        json!(2)
+    );
+}
+
+#[test]
+fn interleaved_sessions_keep_capture_order_before_model_budgeting() {
+    struct OrderProvider;
+    impl DreamProvider for OrderProvider {
+        fn name(&self) -> &str {
+            "capture-order"
+        }
+        fn fitting_memory_count(
+            &self,
+            _: &str,
+            _: &TranslationContext,
+            memories: &[ShortTermMemoryRecord],
+        ) -> Result<usize, DreamError> {
+            assert_eq!(
+                memories.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+                &[
+                    "First assumption.",
+                    "User clarification.",
+                    "Later observation."
+                ][..memories.len()]
+            );
+            Ok(memories.len().min(2))
+        }
+        fn run_pass(
+            &self,
+            pass: &str,
+            _: &TranslationContext,
+            memories: &[ShortTermMemoryRecord],
+        ) -> Result<Value, DreamError> {
+            assert_eq!(
+                memories.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+                vec!["First assumption.", "User clarification."]
+            );
+            let ids: Vec<_> = memories.iter().map(|m| m.id).collect();
+            Ok(match pass {
+                "knowledge_crystals" => {
+                    json!({"crystals":[{"text":"The clarified assertion.","source_memory_ids":ids}]})
+                }
+                "coverage_audit" => json!({"covered_memory_ids":ids}),
+                _ => json!({}),
+            })
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let a = ws.start_session(&context("book")).unwrap();
+    let b = ws.start_session(&context("book")).unwrap();
+    add_memory(&ws, a.id, "note", "First assumption.");
+    add_memory(&ws, b.id, "note", "User clarification.");
+    let last = add_memory(&ws, a.id, "note", "Later observation.");
+    let service = DreamService::open(
+        &config,
+        WorkflowResolver::serving(|| Box::new(OrderProvider)),
+    )
+    .unwrap();
+    service.run_cycle("manual", false).unwrap();
+    assert_eq!(
+        query(
+            &config,
+            "select id from short_term_memories where archived_at is null",
+            &[]
+        ),
+        vec![vec![json!(last)]]
+    );
 }

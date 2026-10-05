@@ -20,7 +20,7 @@ needed. Record-count guidance must not discard important information.
 `source_role` is optional provenance metadata, not a trust mechanism. A label
 such as `user`, high credibility or rule intent does not establish explicit-user
 authority. Learned input stays subject to evidence and applicability validation.
-Dreaming creates durable memory from completed-session observations.
+Dreaming creates durable memory from observations across sessions.
 
 Reuse a compatible session owned by the leading workflow. If this task starts
 its own session, retain the actual returned ID and complete it when the task ends.

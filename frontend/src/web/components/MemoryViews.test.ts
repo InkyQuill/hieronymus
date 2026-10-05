@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
-import { loadAdminSnapshot, runAdminAction } from "../lib/api";
+import { loadAdminSnapshot, runAdminAction, prepareMergePreview } from "../lib/api";
 import type {
   AdminActionResult,
   AdminDashboard,
@@ -17,6 +17,7 @@ vi.mock("../lib/authority", async (importOriginal) => ({
 vi.mock("../lib/api", () => ({
   loadAdminSnapshot: vi.fn(),
   runAdminAction: vi.fn(),
+  prepareMergePreview: vi.fn(),
 }));
 
 const loadSnapshotMock = vi.mocked(loadAdminSnapshot);
@@ -110,6 +111,7 @@ beforeEach(() => {
   history.replaceState(null, "", "/admin/memory");
   loadSnapshotMock.mockReset();
   runActionMock.mockReset();
+  vi.mocked(prepareMergePreview).mockReset().mockResolvedValue({title:"Combined memory",text:"Suggested combined evidence",source_snapshots:[]});
   loadSnapshotMock
     .mockResolvedValueOnce(listSnapshot)
     .mockResolvedValue(selectedSnapshot);
@@ -405,10 +407,9 @@ test("merge uses two explicitly checked records and clears selection after compl
   await user.click(
     screen.getByRole("button", { name: "Combine selected memories" }),
   );
-  await user.type(
-    screen.getByLabelText("Merged memory text"),
-    "Combined evidence",
-  );
+  const mergedText = await screen.findByLabelText("Merged memory text");
+  await user.clear(mergedText);
+  await user.type(mergedText, "Combined evidence");
   await user.click(
     screen.getByLabelText(/apply this change to the stored memory/i),
   );
@@ -419,8 +420,9 @@ test("merge uses two explicitly checked records and clears selection after compl
     view: "Crystals",
     ids: [7, 8],
     text: "Combined evidence",
-    title: "",
+    title: "Combined memory",
     confirmed: true,
+    source_snapshots: [],
   });
   await waitFor(() =>
     expect(
@@ -1017,8 +1019,8 @@ test("combining retained selections works when the current search has no results
   await user.click(
     screen.getByRole("button", { name: "Combine selected memories" }),
   );
-  expect(screen.getByLabelText("Merged memory text")).toBeTruthy();
-  expect(screen.getByText(/Merging 2 records/)).toBeTruthy();
+  expect(await screen.findByLabelText("Merged memory text")).toBeTruthy();
+  expect(screen.getByText(/Review the suggested memory for 2 selected records/)).toBeTruthy();
 });
 
 test("paging away from a record closes its correction instead of relabeling the old target", async () => {

@@ -18,7 +18,7 @@ Ordinary use does not require approving a queue or manually tagging every fact.
 | Claim | A statement bound to a memory or source, with validity and applicability. |
 | Terminology rule | Structured source/target forms and matching policy enforced by validation. |
 | RAG source | Imported source text used as evidence during retrieval. |
-| Dreaming | Background processing of completed sessions into durable, evidence-linked memory. |
+| Dreaming | Background processing of observations into durable, evidence-linked memory. |
 
 A concept rename preserves identity; replacing a rendering does not merge two
 characters. Tags describe context but do not establish identity. A source locator
@@ -33,7 +33,7 @@ Neither score grants authority.
 3. It recalls memory and the applicable deterministic terminology contract.
 4. It reads, writes or translates, recording significant observations and uncertainty.
 5. It validates applicable terminology and completes the session it owns.
-6. Dreaming processes completed-session observations in continuing batches.
+6. Dreaming processes observations across sessions in continuing batches.
 
 A nested skill leaves its caller's session active. Finishing an assistant turn,
 switching chats or pausing prompt capture does not finish the task. SessionEnd
@@ -104,8 +104,12 @@ is already understood.
 
 ## Consolidation, forgetting and failure
 
-Dreaming processes evidence from one completed session per batch. It does not
-reinterpret another task's observations under the selected task's context.
+Dreaming combines pending observations across sessions within one project and
+language scope. Session completion is not an eligibility gate. Each observation
+retains its own task/story context; a batch does not give every input the first
+task's context. Later clarifications can revise earlier assumptions without an
+explicit correction marker; the model must distinguish corrections from story
+changes. Capture order supplies recency, not authority.
 Every consumed observation needs a committed successor or an authorized discard
 reason; unsupported outputs leave it pending. Merely listing an input as covered
 cannot archive it. Valid output is preserved in full; resource budgets split
@@ -118,6 +122,12 @@ a warning after persistence without pretending that the failed phase passed.
 Passive decay lowers eligible advisory strength after meaningful completed work,
 with a floor; it deletes no records and does not change confidence. Rules,
 explicit user authority, recent use and uncertain applicability are protected.
+Manual combining first asks the configured knowledge Dreaming model for an
+editable proposal over all selected crystals. Preparation is read-only. User
+confirmation creates the new memory and archives its sources atomically, retaining
+lineage; changed source snapshots require a new proposal. Rules and incompatible
+project/language/type scopes cannot be merged through this action.
+
 Comparison may consolidate compatible duplicates only after evidence, scope and
 snapshot checks. An uncertain answer preserves both records. See
 [Memory and Dreaming](memory-dreaming.md) for budgets and settings.

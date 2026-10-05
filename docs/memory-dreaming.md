@@ -1,6 +1,6 @@
 # Memory and Dreaming
 
-Dreaming turns observations from completed tasks into durable, evidence-linked
+Dreaming turns observations across tasks into durable, evidence-linked
 memory, then maintains the affected records. It runs in the background; authors
 inspect problems and correct mistakes instead of curating a required queue.
 [Business logic](business-logic.md) introduces the memory terms and authority rules.
@@ -11,16 +11,25 @@ A series is language-neutral. Sessions retain the actual languages, task and sto
 context. Short-term memories belong to an active session; recall requires one,
 uses its context and rejects conflicting explicit arguments.
 
-Complete the session after the task's writes and validation. Completion makes its
-observations eligible for Dreaming; it does not prove processing has finished.
+Complete the session after the task's writes and validation. Completion records
+task lifecycle; observations are already eligible for Dreaming and completion
+does not prove processing has finished.
 Recalled crystals create deduplicated working copies with original claim bindings.
 Invalidated memories are not reactivated. A RAG-only read does not create those copies.
 
-Each provider batch selects from one completed session, oldest-first with a
-restart-safe rotating cursor. A deferred old task cannot indefinitely starve newer
-work. Large sessions continue through further batches. No selected task's context
-is applied to another task's observations. Source roles are freeform provenance
-metadata; they do not authenticate a user or grant rule authority.
+Each provider batch selects pending observations from one project/language scope
+across sessions, including active tasks, with a restart-safe rotating observation
+cursor. A deferred old observation cannot indefinitely starve newer work. Model
+budgets split large queues into further batches. Every observation carries its own
+source/task/story context; session IDs are absent from model prompts. Larger
+observation IDs indicate later capture, not higher authority or later story time.
+The model can consolidate later clarifications with earlier assumptions without
+an explicit correction marker. This is gradual model-driven learning, not a
+guarantee that every implicit correction will be recognized in a single run.
+Source roles are freeform provenance metadata; they do not authenticate a user
+or grant rule authority. Existing session IDs remain storage/API handles.
+Activated memory context and pending co-activation links also span sessions within
+the project/language scope; resumed link batches retain their stored membership.
 
 Memory prose is compact and primarily English for searchability, with exact
 source forms, renderings, quotations and relevant non-English text preserved.
@@ -103,9 +112,10 @@ while retaining the committed persistence counts.
 
 ## Passive decay
 
-`completed_session_v1` gives one opportunity per fully consumed session whose
-fresh evidence persisted as a crystal or facet. Idle time, empty/failed runs,
-partial batches and another series' work create no opportunity. Unknown story
+`consolidated_project_v1` gives one opportunity when a project/language queue
+is fully consumed and the current batch persisted fresh evidence as a crystal
+or facet, irrespective of how many sessions contributed. Idle time, empty/failed
+runs, partial queues and another series' work create no opportunity. Unknown story
 order cannot establish non-use; stored session context governs eligibility.
 
 Eligible unused advisory crystals lose 0.02 strength with a 0.20 floor. Confidence,

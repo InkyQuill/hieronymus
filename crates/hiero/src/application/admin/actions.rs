@@ -531,6 +531,99 @@ fn delete_selected(
 // merge_selected
 // --------------------------------------------------------------------------
 
+fn selected_merge_crystals(
+    connection: &rusqlite::Connection,
+    ids: &[i64],
+) -> Result<Vec<CrystalRow>, AppError> {
+    let distinct: std::collections::BTreeSet<i64> = ids.iter().copied().collect();
+    if distinct.len() != ids.len() {
+        return Err(AppError::Invalid(
+            "crystal ids must identify distinct crystals".to_string(),
+        ));
+    }
+    if ids.len() < 2 {
+        return Err(AppError::Invalid(
+            "at least two distinct crystals are required".to_string(),
+        ));
+    }
+    let mut rows = Vec::with_capacity(ids.len());
+    for crystal_id in ids {
+        let row = load_crystal_row(connection, *crystal_id)?;
+        reject_rule_crystal(&row, "merge")?;
+        if row.status != "active" && row.status != "candidate" {
+            return Err(AppError::Domain(
+                "crystals must be active or candidate".to_string(),
+            ));
+        }
+        rows.push(row);
+    }
+    let first = &rows[0];
+    for row in &rows[1..] {
+        for (label, a, b) in [
+            ("series_slug", &first.series_slug, &row.series_slug),
+            (
+                "source_language",
+                &first.source_language,
+                &row.source_language,
+            ),
+            (
+                "target_language",
+                &first.target_language,
+                &row.target_language,
+            ),
+            ("crystal_type", &first.crystal_type, &row.crystal_type),
+            ("scope_type", &first.scope_type, &row.scope_type),
+            ("scope_key", &first.scope_key, &row.scope_key),
+        ] {
+            if a != b {
+                return Err(AppError::Domain(format!("crystal {label} does not match")));
+            }
+        }
+    }
+    Ok(rows)
+}
+
+fn merge_source_snapshots(
+    connection: &rusqlite::Connection,
+    ids: &[i64],
+    rows: &[CrystalRow],
+) -> Result<Value, AppError> {
+    ids.iter()
+        .zip(rows)
+        .map(|(id, row)| {
+            let claims = hieronymus::memory_comparison::snapshot(
+                connection,
+                hieronymus::claim_reads::ClaimTarget::Crystal(*id),
+            )
+            .map_err(domain)?;
+            Ok(json!({"id":id,"record":row,"claims":claims}))
+        })
+        .collect::<Result<Vec<_>, AppError>>()
+        .map(Value::Array)
+}
+
+/// Prepare an editable suggestion using the configured knowledge Dreaming model.
+/// Source records remain untouched until the existing confirmed merge action.
+pub fn preview_merge(config: &HieronymusConfig, args: &Value) -> Result<Value, AppError> {
+    if arg_view(args, "Crystals") != "Crystals" && arg_view(args, "Crystals") != "Lessons" {
+        return Err(AppError::Invalid(
+            "Model-assisted merging is available for crystals and lessons".into(),
+        ));
+    }
+    let ids = id_list(args)?;
+    let mut connection = open_db(config)?;
+    let transaction = connection.transaction().map_err(store_unavailable)?;
+    let rows = selected_merge_crystals(&transaction, &ids)?;
+    let sources = merge_source_snapshots(&transaction, &ids, &rows)?;
+    transaction.commit().map_err(store_unavailable)?;
+    let settings = hieronymus::dream_config::load_dream_config(config).map_err(domain)?;
+    let catalog = hieronymus::provider_config::load_provider_catalog(config).map_err(domain)?;
+    let proposal = hieronymus::dream_workflows::WorkflowResolver::from_catalog(catalog)
+        .propose_merge(&settings, &sources)
+        .map_err(domain)?;
+    Ok(json!({"title":proposal["title"],"text":proposal["text"],"source_snapshots":sources}))
+}
+
 /// `merge_selected({ids, text, title?, view, confirmed})` — merge distinct
 /// selected rows into a new memory.
 ///
@@ -608,56 +701,21 @@ fn merge_selected(config: &HieronymusConfig, actor: &str, args: &Value) -> Resul
         ));
     }
 
-    let distinct: std::collections::BTreeSet<i64> = ids.iter().copied().collect();
-    if distinct.len() != ids.len() {
-        return Err(AppError::Invalid(
-            "crystal ids must identify distinct crystals".to_string(),
-        ));
-    }
-    if ids.len() < 2 {
-        return Err(AppError::Invalid(
-            "at least two distinct crystals are required".to_string(),
-        ));
-    }
     let text = require_str(args, "text")?;
     let title = arg_str(args, "title").unwrap_or_default().to_string();
-
     let mut connection = open_db(config)?;
-    let transaction = connection.transaction().map_err(store_unavailable)?;
-    let mut rows = Vec::with_capacity(ids.len());
-    for crystal_id in &ids {
-        let row = load_crystal_row(&transaction, *crystal_id)?;
-        reject_rule_crystal(&row, "merge")?;
-        if row.status != "active" && row.status != "candidate" {
-            return Err(AppError::Domain(
-                "crystals must be active or candidate".to_string(),
-            ));
-        }
-        rows.push(row);
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(store_unavailable)?;
+    let rows = selected_merge_crystals(&transaction, &ids)?;
+    if let Some(expected) = args.get("source_snapshots")
+        && *expected != merge_source_snapshots(&transaction, &ids, &rows)?
+    {
+        return Err(AppError::Invalid(
+            "Selected memories changed. Prepare a new merge proposal before saving.".into(),
+        ));
     }
     let first = &rows[0];
-    for row in &rows[1..] {
-        for (label, a, b) in [
-            ("series_slug", &first.series_slug, &row.series_slug),
-            (
-                "source_language",
-                &first.source_language,
-                &row.source_language,
-            ),
-            (
-                "target_language",
-                &first.target_language,
-                &row.target_language,
-            ),
-            ("crystal_type", &first.crystal_type, &row.crystal_type),
-            ("scope_type", &first.scope_type, &row.scope_type),
-            ("scope_key", &first.scope_key, &row.scope_key),
-        ] {
-            if a != b {
-                return Err(AppError::Domain(format!("crystal {label} does not match")));
-            }
-        }
-    }
     let strength = rows.iter().map(|row| row.strength).fold(0.0_f64, f64::max);
     let confidence = rows
         .iter()

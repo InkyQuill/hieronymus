@@ -216,6 +216,15 @@ pub(super) fn snapshot(_request: &Request, runtime: &DaemonRuntime, query: &str)
     Response::json(200, &payload)
 }
 
+/// Prepare an editable model proposal without changing the selected memories.
+pub(super) fn merge_preview(request: &Request, runtime: &DaemonRuntime) -> Response {
+    let body = request_body(request).unwrap_or_else(|| json!({}));
+    match crate::application::admin::preview_merge(&runtime.config, &body) {
+        Ok(proposal) => Response::json(200, &proposal),
+        Err(error) => Response::json(400, &json!({"error":error.to_string()})),
+    }
+}
+
 /// `POST /api/admin/actions/{action}` — the typed, audited admin write
 /// surface (plan W3). The domain logic and the audit row live in
 /// [`crate::application::admin::run_action`]; this handler decodes the body,
