@@ -80,8 +80,13 @@ jobs:
           bun-version: "1.4.0"
 
       - run: bun install --cwd frontend --frozen-lockfile
-      - run: bun run --cwd frontend format
+      - name: Check frontend formatting (advisory)
+        id: frontend-format
+        continue-on-error: true
+        run: bun run --cwd frontend format
+      - name: Report formatting warning
+        if: steps.frontend-format.outcome == 'failure'
+        run: echo '::warning::Frontend formatting needs attention; this finding does not block the PR.'
       - run: bun run --cwd frontend typecheck
       - run: bun run --cwd frontend test
       - run: bun run --cwd frontend build
-

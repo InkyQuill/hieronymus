@@ -159,7 +159,11 @@ export async function startAdminDreaming(): Promise<{
   });
 }
 
-export function prepareMergePreview(view: string, ids: Array<string | number>, signal?: AbortSignal): Promise<MergePreview> {
+export function prepareMergePreview(
+  view: string,
+  ids: Array<string | number>,
+  signal?: AbortSignal,
+): Promise<MergePreview> {
   return request("/api/admin/merge-preview", {
     method: "POST",
     body: JSON.stringify({ view, ids }),

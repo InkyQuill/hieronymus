@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
-import { loadAdminSnapshot, runAdminAction, prepareMergePreview } from "../lib/api";
+import {
+  loadAdminSnapshot,
+  runAdminAction,
+  prepareMergePreview,
+} from "../lib/api";
 import type {
   AdminActionResult,
   AdminDashboard,
@@ -111,7 +115,11 @@ beforeEach(() => {
   history.replaceState(null, "", "/admin/memory");
   loadSnapshotMock.mockReset();
   runActionMock.mockReset();
-  vi.mocked(prepareMergePreview).mockReset().mockResolvedValue({title:"Combined memory",text:"Suggested combined evidence",source_snapshots:[]});
+  vi.mocked(prepareMergePreview).mockReset().mockResolvedValue({
+    title: "Combined memory",
+    text: "Suggested combined evidence",
+    source_snapshots: [],
+  });
   loadSnapshotMock
     .mockResolvedValueOnce(listSnapshot)
     .mockResolvedValue(selectedSnapshot);
@@ -1020,7 +1028,9 @@ test("combining retained selections works when the current search has no results
     screen.getByRole("button", { name: "Combine selected memories" }),
   );
   expect(await screen.findByLabelText("Merged memory text")).toBeTruthy();
-  expect(screen.getByText(/Review the suggested memory for 2 selected records/)).toBeTruthy();
+  expect(
+    screen.getByText(/Review the suggested memory for 2 selected records/),
+  ).toBeTruthy();
 });
 
 test("paging away from a record closes its correction instead of relabeling the old target", async () => {
