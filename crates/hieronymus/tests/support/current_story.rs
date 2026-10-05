@@ -11,7 +11,9 @@ use rusqlite::params;
 
 pub fn register(config: &HieronymusConfig, slug: &str) {
     let mut db = open_migrated(&config.database_path()).unwrap();
-    let tx = db.transaction().unwrap();
+    let tx = db
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
     let series: i64 = tx
         .query_row("select id from series where slug=?", [slug], |r| r.get(0))
         .unwrap();

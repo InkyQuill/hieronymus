@@ -35,11 +35,9 @@ transports, the Svelte console, migration tooling and distribution. Implemented
 mechanics still need behavioral fixes and optimization; implementation does not
 imply complete real-model or cross-platform qualification.
 
-Semantic retrieval currently uses LanceDB on main. [PR #119](https://github.com/InkyQuill/hieronymus/pull/119)
-implements its replacement with bundled SQLite and exact cosine ranking in Rust,
-preserving series prefiltering and generation switching. The model, ONNX Runtime
-and tokenizer remain unchanged. This documentation cleanup does not change the
-backend. See the [SQLite decision and validation](https://github.com/InkyQuill/hieronymus/blob/87a74f9029389ad670a950468aa66488554f7c47/docs/research/2026-10-02-sqlite-vector-decision.md) for that separate change.
+Semantic retrieval uses bundled SQLite and exact cosine ranking in Rust.
+The model, ONNX Runtime and tokenizer remain unchanged. See the
+[SQLite decision and validation](https://github.com/InkyQuill/hieronymus/blob/87a74f9029389ad670a950468aa66488554f7c47/docs/research/2026-10-02-sqlite-vector-decision.md).
 
 ## Active work — optimization and behavior fixes
 

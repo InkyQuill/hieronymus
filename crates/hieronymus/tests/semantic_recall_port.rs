@@ -123,6 +123,13 @@ fn activate_generation(fixture: &Fixture) {
 }
 
 fn armed_service(fixture: &Fixture) -> RecallService {
+    hieronymus::memory_semantics::maintain(
+        &fixture.config,
+        &mut FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS),
+        &mut model_tokenizer(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
     RecallService::open(&fixture.config)
         .unwrap()
         .with_semantic_lane(SemanticLane::new(

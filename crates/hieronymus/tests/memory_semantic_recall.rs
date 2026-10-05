@@ -47,7 +47,18 @@ impl ChunkTokenizer for Tokens {
         Ok(vec![1])
     }
 }
+fn maintain(config: &HieronymusConfig) {
+    hieronymus::memory_semantics::maintain(
+        config,
+        &mut Multilingual(FakeEmbeddingProvider::new(4)),
+        &mut Tokens,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+}
 fn service(config: &HieronymusConfig) -> RecallService {
+    // Simulate one independent worker tick before querying the fixture.
+    maintain(config);
     RecallService::open(config)
         .unwrap()
         .with_semantic_lane(SemanticLane::new(
@@ -90,6 +101,7 @@ fn russian_and_japanese_queries_find_english_memory_across_sessions() {
     let second = ws.start_session(&context).unwrap();
     let recall = service(&config);
     for query in ["кто пьёт чай утром", "朝のお茶"] {
+        maintain(&config);
         let result = recall.recall(second.id, &context, query, 10).unwrap();
         assert!(
             result
@@ -148,6 +160,7 @@ fn stale_deleted_archived_and_foreign_memory_never_survive_hydration() {
     assert!(!result.hits.iter().any(
         |h| matches!(h,RecallHit::LongTerm{crystal,..} if [id,foreign_id].contains(&crystal.id))
     ));
+    maintain(&config);
     assert_eq!(
         db.query_row(
             "select count(*) from memory_vectors where kind='crystal' and id=?",
@@ -236,6 +249,7 @@ fn malformed_derived_vectors_rebuild_without_source_changes() {
             rusqlite::params![bad, id],
         )
         .unwrap();
+        maintain(&config);
         let result = recall.recall_context(&context, "чай", 10).unwrap();
         assert!(
             !result
@@ -325,7 +339,7 @@ fn semantic_claim_hydration_budget_reports_an_incomplete_candidate_pool() {
         .unwrap();
     let recall = service(&config);
     for _ in 0..17 {
-        recall.recall_context(&context, "чай", 10).unwrap();
+        maintain(&config);
     }
     let db = open_migrated(&config.database_path()).unwrap();
     let indexed: i64 = db
@@ -337,7 +351,60 @@ fn semantic_claim_hydration_budget_reports_an_incomplete_candidate_pool() {
         result
             .warnings
             .iter()
-            .any(|w| w.kind == "memory_semantic_pending"),
+            .any(|w| w.kind == "memory_semantic_scan_limited"),
         "a full vector index does not mean every claim candidate was examined"
+    );
+}
+
+#[test]
+fn recall_does_not_index_memory() {
+    let (_root, config, context) = setup();
+    CrystalStore::open(&config)
+        .unwrap()
+        .add_crystal(
+            &context,
+            "lesson",
+            &claimed(&config, "book", "Mira drinks tea."),
+        )
+        .unwrap();
+    // Create the derived table with cancellation before any inference.
+    hieronymus::memory_semantics::maintain(
+        &config,
+        &mut Multilingual(FakeEmbeddingProvider::new(4)),
+        &mut Tokens,
+        &std::sync::atomic::AtomicBool::new(true),
+    )
+    .unwrap();
+    let recall = RecallService::open(&config)
+        .unwrap()
+        .with_semantic_lane(SemanticLane::new(
+            Box::new(Multilingual(FakeEmbeddingProvider::new(4))),
+            Box::new(Tokens),
+        ));
+    for _ in 0..3 {
+        assert!(
+            recall
+                .recall_context(&context, "чай", 10)
+                .unwrap()
+                .warnings
+                .iter()
+                .any(|w| w.kind == "memory_semantic_pending")
+        );
+    }
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select count(*) from memory_vectors", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    maintain(&config);
+    assert!(
+        !recall
+            .recall_context(&context, "чай", 10)
+            .unwrap()
+            .warnings
+            .iter()
+            .any(|w| w.kind == "memory_semantic_pending")
     );
 }

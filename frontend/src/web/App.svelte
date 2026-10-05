@@ -211,7 +211,14 @@
   onMount(() => {
     void refreshSection();
     if (section !== "admin" && section !== "memory") return;
-    return connectAdminEvents(() => { void refreshSection(); });
+    const disconnect = connectAdminEvents(() => { void refreshSection(); });
+    // Autonomous indexing can progress without a Dreaming event or a recall.
+    const timer = section === "admin" ? setInterval(() => {
+      if (!busy && !sectionRefresh) {
+        void loadAdminDashboard().then(value => { adminDashboard = value; }).catch(reason => { error = reason instanceof Error ? reason.message : String(reason); });
+      }
+    }, 2_000) : undefined;
+    return () => { disconnect(); if (timer !== undefined) clearInterval(timer); };
   });
 </script>
 

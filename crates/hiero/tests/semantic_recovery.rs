@@ -1614,3 +1614,103 @@ fn an_import_that_would_empty_the_corpus_is_refused_before_committing() {
         "and it must not have moved the corpus revision"
     );
 }
+
+#[test]
+fn memory_backlog_drains_without_recall_and_resumes_after_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HieronymusConfig::new(root.path());
+    hieronymus::registry::Registry::open(&config)
+        .unwrap()
+        .create_series("book", "Book", "ja", "ru", None)
+        .unwrap();
+    let context =
+        hieronymus::memory_models::TranslationContext::new("book", "ja", "ru", "translate");
+    let store = hieronymus::crystals::CrystalStore::open(&config).unwrap();
+    let mut last = 0;
+    for n in 0..70 {
+        last = store
+            .add_crystal(
+                &context,
+                "lesson",
+                &hieronymus::crystals::NewCrystal::new("lesson", format!("Memory {n}")),
+            )
+            .unwrap();
+    }
+    let workspace = hieronymus::workspace::WorkspaceStore::open(&config).unwrap();
+    let session = workspace.start_session(&context).unwrap();
+    let temporary = workspace
+        .add_short_term_memory(
+            session.id,
+            &hieronymus::workspace::ShortTermMemoryInput::new("note", "Temporary memory"),
+        )
+        .unwrap();
+    let arm = Arc::new(TestArm::new(&config));
+    let (group, controller) = start_controller(&config, arm.clone());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while controller.memory_indexing().progress.indexed == 0 && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(controller.memory_indexing().progress.indexed > 0);
+    group.stop_and_join().unwrap();
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    db.execute(
+        "update crystals set text='Changed while stopped' where id=?",
+        [last],
+    )
+    .unwrap();
+    let (group, controller) = start_controller(&config, arm);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while (controller.memory_indexing().state != "ready"
+        || controller.memory_indexing().progress.total != 71)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let progress = controller.memory_indexing();
+    assert_eq!(progress.state, "ready", "{progress:?}");
+    assert_eq!(progress.progress.indexed, 71);
+    assert_eq!(progress.progress.pending, 0);
+    assert_eq!(
+        db.query_row(
+            "select source_text from memory_vectors where kind='crystal' and id=?",
+            [last],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "Changed while stopped"
+    );
+    let added = store
+        .add_crystal(
+            &context,
+            "lesson",
+            &hieronymus::crystals::NewCrystal::new("lesson", "Added while running"),
+        )
+        .unwrap();
+    db.execute(
+        "update crystals set text='Changed while running' where id=?",
+        [last],
+    )
+    .unwrap();
+    db.execute(
+        "update short_term_memories set archived_at='now' where id=?",
+        [temporary.id],
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let reconciled = || {
+        db.query_row("select exists(select 1 from memory_vectors where kind='crystal' and id=?1) and exists(select 1 from memory_vectors where kind='crystal' and id=?2 and source_text='Changed while running') and not exists(select 1 from memory_vectors where kind='short_term' and id=?3)", rusqlite::params![added,last,temporary.id], |r| r.get::<_,bool>(0)).unwrap()
+    };
+    while !reconciled() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        reconciled(),
+        "Live additions, edits and deletions must reconcile without recall or restart"
+    );
+    let progress = controller.memory_indexing();
+    assert_eq!(progress.state, "ready", "{progress:?}");
+    assert_eq!(progress.progress.total, 71);
+    assert_eq!(progress.progress.pending, 0);
+    group.stop_and_join().unwrap();
+}

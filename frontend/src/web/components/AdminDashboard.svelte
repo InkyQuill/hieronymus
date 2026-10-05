@@ -30,6 +30,7 @@
   ] as const;
   const currentPhase = $derived(String(dashboard.dream_status.current_phase ?? ""));
   const currentPhaseIndex = $derived(workflow.findIndex(([phase]) => phase === currentPhase));
+  const indexing = $derived(dashboard.memory_indexing);
   const readiness = $derived(formatReadiness(dashboard.readiness));
 
   function workflowState(index: number): "complete" | "active" | "pending" {
@@ -76,6 +77,15 @@
           <p class="mt-3 text-caption text-secondary">{dreamState === "DISABLED" ? "Scheduled processing is off. You can run it manually or enable a schedule in Dreaming settings." : dreamState === "IDLE" ? "Dreaming turns recent memories into lasting knowledge. It runs on the configured schedule." : "Processing status is unavailable."}</p>
         {/if}
         <div class="mt-4 flex flex-wrap gap-4 text-body-sm"><a href="/config/dreaming" class="text-accent-text underline">Processing settings</a><a href="/admin/memory?view=Dream%20Runs" class="text-accent-text underline">View processing history</a></div>
+    </section>
+    <section class="mt-4 rounded-md border border-default bg-surface p-5" aria-label="Memory indexing status">
+      <div class="flex flex-wrap items-baseline justify-between gap-4"><h3 class="text-h3">Memory indexing</h3><span class="text-body-sm text-secondary">{indexing?.state === "indexing" ? "Indexing in the background" : indexing?.state === "ready" ? "Up to date" : indexing?.state === "failed" ? "Needs attention" : indexing ? "Waiting for the search model" : "Status unavailable"}</span></div>
+      <p class="mt-3 max-w-[70ch] text-body-sm text-secondary">Indexing helps your agent find related memories across languages. It runs automatically while the server is open.</p>
+      {#if indexing && indexing.state !== "waiting"}
+        <p class="mt-3 text-body-sm tabular-nums">{indexing.indexed.toLocaleString()} / {indexing.total.toLocaleString()} memories indexed · {indexing.pending.toLocaleString()} remaining</p>
+        <progress class="mt-3 h-2 w-full accent-[var(--hiero-accent)]" aria-label="Memory indexing progress" max={Math.max(1, indexing.total)} value={indexing.indexed}></progress>
+      {/if}
+      {#if indexing?.detail}<p role="alert" class="mt-3 text-body-sm text-danger">{indexing.detail}</p><p class="mt-2 text-body-sm text-secondary">The server will retry automatically. Check the search model settings if this continues.</p>{/if}
     </section>
     <section class="mt-4 rounded-md border border-default bg-surface p-5" aria-label="Local service status">
       <h3 class="mb-4 text-h3">Local service</h3>

@@ -209,6 +209,14 @@ fn armed_lane_runs_end_to_end_with_a_matching_provider() {
     import_text(&fixture, "a.txt", "Cooking Talent appears here.");
     activate_generation(&fixture);
 
+    hieronymus::memory_semantics::maintain(
+        &fixture.config,
+        &mut FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS),
+        &mut model_tokenizer(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+
     let armed = arm_with_provider(
         &fixture.config,
         Box::new(FakeEmbeddingProvider::new(EMBEDDING_DIMENSIONS)),

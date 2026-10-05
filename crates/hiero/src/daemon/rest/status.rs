@@ -61,6 +61,7 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
         "dreaming": dreaming,
         "mcp_adapter": {"available": true, "mode": "local-http"},
         "semantic": semantic_payload(&semantic),
+        "memory_indexing": memory_indexing_payload(runtime),
         "readiness": runtime.dream.readiness().snapshot_with_semantic(&semantic.state),
         "housekeeping": {"last_cycle": Value::Null, "pending": pending > 0},
     });
@@ -76,6 +77,20 @@ pub(super) fn status_payload(runtime: &DaemonRuntime) -> Value {
         redact_status_strings(&mut payload["providers"], &secrets);
         redact_status_strings(&mut payload["dreaming"]["last_error"], &secrets);
         redact_status_strings(&mut payload["semantic"]["detail"], &secrets);
+        redact_status_strings(&mut payload["memory_indexing"]["detail"], &secrets);
+    }
+    payload
+}
+
+pub(super) fn memory_indexing_payload(runtime: &DaemonRuntime) -> Value {
+    let mut payload = json!(runtime.semantic.memory_indexing());
+    if let Ok(catalog) = load_provider_catalog(&runtime.config) {
+        let secrets: Vec<_> = catalog
+            .providers
+            .values()
+            .map(|p| p.key().expose_secret().as_str())
+            .collect();
+        redact_status_strings(&mut payload["detail"], &secrets);
     }
     payload
 }

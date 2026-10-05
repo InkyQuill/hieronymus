@@ -3,6 +3,15 @@
 Hieronymus memory dreaming turns task-local observations into searchable long-term
 translation memory without letting fuzzy memory override active rule crystals.
 
+Memory vectors are indexed automatically by the server in continuing background
+batches, independently of recall. Overview shows indexed/remaining counts and
+failures; the tray turns blue while indexing. Restarting resumes from current
+source records. This is ongoing maintenance: additions and edits are indexed,
+while deleted or archived memories simply leave the index. Shrinking memory is
+normal database activity, not an indexing failure. Dreaming includes reconsolidation, archival and salience decay;
+correction signals and source-index recovery have their own supervised workers.
+A limited recall candidate scan is reported separately from unfinished indexing.
+
 ## Mental Model
 
 Hieronymus uses one global local store by default. Unless a command passes

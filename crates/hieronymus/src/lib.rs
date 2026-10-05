@@ -34,7 +34,7 @@ pub mod feedback;
 pub mod ingest_config;
 pub mod memory_comparison;
 pub mod memory_models;
-mod memory_semantics;
+pub mod memory_semantics;
 pub mod migrate;
 pub mod ownership;
 pub mod provider_config;
