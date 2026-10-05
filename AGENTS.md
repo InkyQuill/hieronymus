@@ -64,6 +64,14 @@ Current product contracts and accepted ADR amendments govern product behavior; s
 - `--data-root` overrides `HIERONYMUS_DATA_ROOT`, which overrides the platform default. Keep the CLI, installers, desktop launchers, and service registrations consistent. Never persist development or temporary fixture paths into a user's real service registration.
 - Tests that install services or desktop registrations must use disposable configuration, data, and registration directories and must not contact the real user service manager.
 
+## Working with Docs
+
+Make sure that the committed documentation is not overly complex. It is useful for LLMs sometimes but not all of it is read actually. So we need to keep only the bare minimum when the commit happens. Old plans that have been implemented should be deleted after implementation.Make sure you do sweeps against all product documentation to make sure it is current at all times. All the old documentation should stay local and gitignored. All the decisions that need to be retained should be kept concise and in ADRs. Do not make too many ADRs, keep updating old ones instead.
+
+## Overengineering stance
+
+Make sure to not overengineer checks. All the harnesses should be simple, robust, and not covered by overengineered tests. Keep it simple, stupid. Tests should cover business logic and edge cases, not just tests for the sake of tests. TDD is useful, but do not use it for every simple thing unless you covering a bug / feature.
+
 ## Simplicity and useful verification
 
 - Tests must verify product behavior, business logic, or a real edge case. Remove tests that merely mirror implementation details, private helper structure, or source spelling.
