@@ -408,3 +408,78 @@ fn recall_does_not_index_memory() {
             .any(|w| w.kind == "memory_semantic_pending")
     );
 }
+
+#[test]
+fn invalid_memories_do_not_starve_later_batches_and_can_recover() {
+    struct Selective {
+        inner: FakeEmbeddingProvider,
+        recovered: bool,
+    }
+    impl EmbeddingProvider for Selective {
+        fn identity(&self) -> &EmbeddingIdentity {
+            self.inner.identity()
+        }
+        fn embed_document(&mut self, ids: &[u32]) -> Result<Vec<f32>, SemanticError> {
+            self.inner.embed_document(ids)
+        }
+        fn embed_query(&mut self, ids: &[u32]) -> Result<Vec<f32>, SemanticError> {
+            self.inner.embed_query(ids)
+        }
+        fn embed_document_text(
+            &mut self,
+            text: &str,
+            _: &[u32],
+        ) -> Result<Vec<f32>, SemanticError> {
+            if !self.recovered && text.contains("invalid") {
+                Err(SemanticError::InvalidEmbedding("zero norm".into()))
+            } else {
+                Ok(vec![1., 0., 0., 0.])
+            }
+        }
+    }
+    let (_root, config, context) = setup();
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let session = ws.start_session(&context).unwrap();
+    for n in 0..33 {
+        let text = if n < 32 {
+            format!("invalid memory {n}")
+        } else {
+            "healthy memory".into()
+        };
+        let mut input = ShortTermMemoryInput::new("note", &text);
+        input.claims = vec![current_story::claim(&config, "book", &text)];
+        ws.add_short_term_memory(session.id, &input).unwrap();
+    }
+    let mut provider = Selective {
+        inner: FakeEmbeddingProvider::new(4),
+        recovered: false,
+    };
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    assert!(
+        hieronymus::memory_semantics::maintain(&config, &mut provider, &mut Tokens, &stop).is_err()
+    );
+    assert!(
+        hieronymus::memory_semantics::maintain(&config, &mut provider, &mut Tokens, &stop).is_err()
+    );
+    let db = open_migrated(&config.database_path()).unwrap();
+    assert_eq!(
+        db.query_row("select source_text from memory_vectors", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "healthy memory"
+    );
+    provider.recovered = true;
+    hieronymus::memory_semantics::maintain(&config, &mut provider, &mut Tokens, &stop).unwrap();
+    assert_eq!(
+        hieronymus::memory_semantics::progress(&config, &provider)
+            .unwrap()
+            .pending,
+        0
+    );
+    assert_eq!(
+        db.query_row("select count(*) from memory_index_failures", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}

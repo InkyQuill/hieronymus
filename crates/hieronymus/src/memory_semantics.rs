@@ -5,6 +5,7 @@ use crate::{
     db::open_migrated,
     memory_models::TranslationContext,
     semantic_embeddings::EmbeddingProvider,
+    semantic_error::SemanticError,
     semantic_jobs::{AuthoritativeChunk, ChunkTokenizer},
 };
 use rusqlite::{Connection, params};
@@ -26,25 +27,24 @@ fn encode(
     series: &str,
     text: &str,
     query: bool,
-) -> Result<Vec<f32>, String> {
-    let ids = tokenizer
-        .tokenize(&AuthoritativeChunk {
-            chunk_id: 0,
-            series_slug: series.into(),
-            text: text.into(),
-        })
-        .map_err(|e| e.to_string())?;
+) -> Result<Vec<f32>, SemanticError> {
+    let ids = tokenizer.tokenize(&AuthoritativeChunk {
+        chunk_id: 0,
+        series_slug: series.into(),
+        text: text.into(),
+    })?;
     let vector = if query {
         provider.embed_query_text(text, &ids)
     } else {
         provider.embed_document_text(text, &ids)
-    }
-    .map_err(|e| e.to_string())?;
+    }?;
     if vector.len() != provider.identity().dimensions()
         || vector.iter().any(|v| !v.is_finite())
         || vector.iter().all(|v| *v == 0.0)
     {
-        return Err("invalid memory embedding".into());
+        return Err(SemanticError::InvalidEmbedding(
+            "invalid memory embedding".into(),
+        ));
     }
     Ok(vector)
 }
@@ -57,7 +57,7 @@ pub struct IndexProgress {
 }
 
 fn ensure_vectors(db: &Connection) -> Result<(), String> {
-    db.execute_batch("create table if not exists memory_vectors(kind text not null,id integer not null,identity text not null,source_text text not null,vector_json text not null,primary key(kind,id))").map_err(|e| e.to_string())
+    db.execute_batch("create table if not exists memory_vectors(kind text not null,id integer not null,identity text not null,source_text text not null,vector_json text not null,primary key(kind,id)); create table if not exists memory_index_failures(kind text not null,id integer not null,identity text not null,source_text text not null,error text not null,last_attempt integer not null,primary key(kind,id))").map_err(|e| e.to_string())
 }
 
 pub fn progress(
@@ -87,7 +87,7 @@ pub fn maintain(
     ensure_vectors(&db)?;
     let model = identity(provider);
     let sql = format!(
-        "select s.kind,s.id,s.text,s.series_slug from ({SOURCES}) s left join memory_vectors v on v.kind=s.kind and v.id=s.id where v.id is null or v.identity!=?1 or v.source_text!=s.text order by s.kind,s.id limit ?2"
+        "select s.kind,s.id,s.text,s.series_slug from ({SOURCES}) s left join memory_vectors v on v.kind=s.kind and v.id=s.id left join memory_index_failures f on f.kind=s.kind and f.id=s.id and f.identity=?1 and f.source_text=s.text where v.id is null or v.identity!=?1 or v.source_text!=s.text order by f.last_attempt,s.kind,s.id limit ?2"
     );
     let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
     let mut rows = stmt
@@ -105,7 +105,7 @@ pub fn maintain(
     drop(stmt);
     // Check corrupt derived vectors once the ordinary backlog is drained.
     if rows.is_empty() {
-        let mut stmt = db.prepare(&format!("select s.kind,s.id,s.text,s.series_slug from ({SOURCES}) s join memory_vectors v on v.kind=s.kind and v.id=s.id where case when json_valid(v.vector_json) then json_array_length(v.vector_json)!=?1 or exists(select 1 from json_each(v.vector_json) where type not in ('real','integer')) or not exists(select 1 from json_each(v.vector_json) where value!=0) else 1 end limit ?2")).map_err(|e| e.to_string())?;
+        let mut stmt = db.prepare(&format!("select s.kind,s.id,s.text,s.series_slug from ({SOURCES}) s join memory_vectors v on v.kind=s.kind and v.id=s.id left join memory_index_failures f on f.kind=s.kind and f.id=s.id and f.identity=v.identity and f.source_text=s.text where case when json_valid(v.vector_json) then json_array_length(v.vector_json)!=?1 or exists(select 1 from json_each(v.vector_json) where type not in ('real','integer')) or not exists(select 1 from json_each(v.vector_json) where value!=0) else 1 end order by f.last_attempt,s.kind,s.id limit ?2")).map_err(|e| e.to_string())?;
         rows = stmt
             .query_map(
                 params![provider.identity().dimensions() as i64, BATCH as i64],
@@ -115,17 +115,37 @@ pub fn maintain(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
     }
+    let mut errors = Vec::new();
     for (kind, id, text, series) in rows {
         if stop.load(std::sync::atomic::Ordering::Acquire) {
             break;
         }
-        let vector = encode(provider, tokenizer, &series, &text, false)?;
+        let vector = match encode(provider, tokenizer, &series, &text, false) {
+            Ok(vector) => vector,
+            Err(error @ SemanticError::InvalidEmbedding(_)) => {
+                let detail = format!("{kind} {id}: {error}");
+                db.execute("insert into memory_index_failures(kind,id,identity,source_text,error,last_attempt) values(?1,?2,?3,?4,?5,unixepoch()) on conflict(kind,id) do update set identity=excluded.identity,source_text=excluded.source_text,error=excluded.error,last_attempt=excluded.last_attempt", params![kind,id,model,text,detail]).map_err(|e| e.to_string())?;
+                errors.push(detail);
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        db.execute(
+            "delete from memory_index_failures where kind=?1 and id=?2",
+            params![kind, id],
+        )
+        .map_err(|e| e.to_string())?;
         // A concurrent source edit/deletion cannot publish a stale vector.
         db.execute(&format!("insert into memory_vectors(kind,id,identity,source_text,vector_json) select ?1,?2,?3,?4,?5 where exists(select 1 from ({SOURCES}) where kind=?1 and id=?2 and text=?4) on conflict(kind,id) do update set identity=excluded.identity,source_text=excluded.source_text,vector_json=excluded.vector_json"),params![kind,id,model,text,serde_json::to_string(&vector).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
     }
     // Bounded cleanup; queries independently exclude all archived/deleted rows.
     db.execute(&format!("delete from memory_vectors where rowid in(select v.rowid from memory_vectors v where not exists(select 1 from ({SOURCES}) s where s.kind=v.kind and s.id=v.id) limit 32)"),[]).map_err(|e|e.to_string())?;
-    Ok(())
+    db.execute(&format!("delete from memory_index_failures where rowid in(select f.rowid from memory_index_failures f where not exists(select 1 from ({SOURCES}) s where s.kind=f.kind and s.id=f.id and s.text=f.source_text) limit 32)"), []).map_err(|e| e.to_string())?;
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 pub struct Candidates {
@@ -146,7 +166,8 @@ pub fn search(
 ) -> Result<Candidates, String> {
     provider.verify_identity().map_err(|e| e.to_string())?;
     let model = identity(provider);
-    let query = encode(provider, tokenizer, &context.series_slug, query, true)?;
+    let query = encode(provider, tokenizer, &context.series_slug, query, true)
+        .map_err(|e| e.to_string())?;
     let filter = "s.series_slug=?1 and (s.source_language='' or s.source_language=?2) and (s.target_language='' or s.target_language=?3)";
     let mut stmt=db.prepare(&format!("select s.kind,s.id,v.vector_json from ({SOURCES}) s join memory_vectors v on v.kind=s.kind and v.id=s.id and v.source_text=s.text and v.identity=?4 where {filter} order by s.kind,s.id")).map_err(|e|e.to_string())?;
     let rows = stmt
