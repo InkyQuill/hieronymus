@@ -7,7 +7,7 @@ export function synchronizeVersion(version: string, manifest: string, lock: stri
   let changed = false;
   const cargo = manifest.replace(/(\[workspace\.package\][\s\S]*?\nversion = ")[^"]+("\n)/, (_, a, b) => {changed = true; return a + version + b;});
   if (!changed) throw new Error("Workspace version missing");
-  const names = new Set(["hiero", "hieronymus", "hiero-desktop"]);
+  const names = new Set(["hiero", "hieronymus", "hiero-desktop", "hiero-decision"]);
   const cargoLock = lock.replace(/(\[\[package\]\]\nname = "([^"]+)"\nversion = ")[^"]+("\n)/g, (all, a, name, b) => {
     if (!names.delete(name)) return all;
     return a + version + b;
