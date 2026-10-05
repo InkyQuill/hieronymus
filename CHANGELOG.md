@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## [0.13.0](https://github.com/InkyQuill/hieronymus/compare/v0.12.0...v0.13.0) (2026-10-04)
+
+
+### Features
+
+* **console:** search memory and focus corrections on selected statements ([780da5c](https://github.com/InkyQuill/hieronymus/commit/780da5c8b737db0d6eaa67a81aa757437e6f88dc))
+
+
+### Bug Fixes
+
+* **console:** stabilize every memory table and prioritize remembered content ([a9a2cfe](https://github.com/InkyQuill/hieronymus/commit/a9a2cfeafc6879dbc7741493806b2759304d5590))
+* **memory:** preserve Dream output and reactivate mixed recall with compact sources ([7eae886](https://github.com/InkyQuill/hieronymus/commit/7eae886418d6b3edfd9425c93766105b6199268d))
+* restore memory, long Dream requests and a searchable console ([ced2a74](https://github.com/InkyQuill/hieronymus/commit/ced2a742e7f62acbd32331fc312db82d9aadd6ab))
+* **update:** rebuild supported legacy LanceDB generations during activation ([fbc300a](https://github.com/InkyQuill/hieronymus/commit/fbc300aae082f5e9ba73b19f2df328af712bcb56))
+* **update:** retain verified candidates while derived indexes rebuild ([3f643a2](https://github.com/InkyQuill/hieronymus/commit/3f643a2e75b44b723d0418f84ba7b8e1449b2a3b))
+
 ## [0.12.0](https://github.com/InkyQuill/hieronymus/compare/v0.11.0...v0.12.0) (2026-10-03)
 
 ### Milestone: SQLite semantic retrieval
