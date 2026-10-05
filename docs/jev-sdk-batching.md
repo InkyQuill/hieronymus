@@ -1,82 +1,55 @@
-# Jev SDK and batching decision (#110)
+# Decision adapter and comparison batching
 
-As of 2026-10-05, use the unpublished workspace crate
-[`hiero-decision`](../crates/hiero-decision/UPSTREAM.md), a narrow derivative
-of zchee's decision-model-sdk at `c5d4459`. The four-project
-[audit](research/2026-10-05-decision-sdk-audit.md) motivated this replacement:
-the old registry package stopped resolving on clean release runners.
-Rust 1.98 remains the workspace baseline.
+The workspace uses unpublished `hiero-decision`, a narrow named-question protocol
+rather than a full external SDK. [ADR 0007](adr/0007-provider-catalog-and-workflow-assignments.md)
+records the decision and rejected runtime expansions;
+[UPSTREAM.md](../crates/hiero-decision/UPSTREAM.md) retains donor/license provenance.
 
-The local protocol prepares named questions, retains structured extension
-fields and validates independent answers. Authentication and synchronous
-bounded HTTP remain in `ProviderTransport`; no SDK HTTP/TLS client, Tower
-adapter, async runtime, retry machinery or macro dependency is needed.
+## Protocol and transport boundary
 
-Configure the endpoint explicitly, cap responses at 64 KiB, disable retries and
-use the caller's timeout (remaining shared deadline for comparisons). Map errors
-to fixed diagnostic codes rather than SDK error bodies, which can contain input.
-Domain validation remains necessary: SDK parsing does not establish compatible
-story scope, authority, calibrated equivalence or transaction-time freshness.
-Invalid named answers are omitted while valid siblings remain available for
-independent domain validation. Duplicate response keys fail closed; Noul,
-confidence, distributions, Choice winners and Score rubrics receive protocol
-validation before domain thresholds. The production transport bounds wire
-overhead separately and enforces the 64 KiB decoded body limit. This avoids
-retrying already valid evidence.
+Prepare named Noul/Choice/Score questions with structured extension fields and
+match answers by requested name, never object order. Validate probabilities,
+distributions, winners and score rubrics. Omit invalid independent answers while
+preserving valid siblings; duplicate JSON keys and oversized bodies fail closed.
+Protocol validity does not prove story equivalence, authority or current evidence.
 
-## Batching behavior
+Synchronous `ProviderTransport` owns endpoint/authentication/TLS/deadlines. Jev uses
+an explicit endpoint, no redirects or automatic retries, a 64 KiB decoded-body cap
+and bounded wire overhead. Fixed diagnostic codes replace unsafe echoed error bodies.
+No async SDK runtime, second HTTP client, environment-selected endpoint or payload
+logging is added. Discovery and inference share the configured request budget.
 
-The [parallel questions cookbook](https://docs.typesafe.ai/cookbooks/parallel_questions)
-asks multiple named questions against one state. Apply that mechanism to bounded
-same-scope comparison groups: at most eight pairs and 32 KiB of serialized pair
-state per request, with a 16 KiB individual pair cap. Instructions address the
-specific named pair; answers are matched by name, never object order. The
-cookbook's particular cost/latency measurements are not a performance claim for
-our mixed-pair workload.
+## Comparison batches
 
-Both reconsolidation and link processing gather questions before inference.
-Link prefetch reads at most eight future pairs without moving the durable cursor;
-each mutation still revalidates snapshots and commits its cursor and audit
-atomically. No quadratic pair list is materialized. Local vetoes and cached
-answers consume no network calls. The existing total pair budget and 60-second
-shared drain deadline remain in force. A valid uncertain answer is terminal;
-only failed answers enter the explicitly configured fallback, also batched if
-it is Jev. Other model providers retain their single-pair context planning.
+After deterministic scope/provenance/name/number/polarity checks, gather up to eight
+same-scope pairs in one Jev request: 16 KiB per individual pair, 32 KiB serialized
+combined state. Question instructions bind their specific pair. Local vetoes and
+cached answers consume no network calls. Valid uncertainty is terminal; only failed
+answers enter an explicitly configured fallback. Other providers retain single-pair
+context planning. Separate user prompts are not pooled or delayed for batching.
 
-Prompt relevance already asks literary and technical Noul questions together;
-it now uses the same SDK adapter. Separate user messages are not delayed or
-pooled across requests.
+Reconsolidation and linking gather questions before inference. Link prefetch reads
+at most eight future pairs without advancing the durable cursor. Each mutation
+rechecks snapshots and commits cursor/audit atomically. No quadratic pair list is
+materialized. Pair/run budgets and configurable timeouts are owned by
+[Memory and Dreaming](memory-dreaming.md#working-copies-and-comparison), not a fixed
+shared one-minute drain deadline.
 
-## Other cookbook suggestions
+Cache identity includes pair versions, routing and rubric/parser versions. Change
+identity when those contracts change. A cached accepted answer still requires
+transaction-time evidence/applicability checks before destructive consolidation.
+Prompt relevance asks its separate literary/technical questions through the same
+protocol adapter; comparison thresholds do not calibrate message capture.
 
-- [Entity alignment](https://docs.typesafe.ai/cookbooks/entity_alignment): use
-  semantic assessment after candidate generation, retaining deterministic
-  name/number/polarity vetoes and scope checks.
-- [Classifying RAG passages](https://docs.typesafe.ai/cookbooks/classifying_rag_passages):
-  relevance and contradiction are distinct signals. This change does not add an
-  inference call to recall or let ranking overwrite approved terminology.
-- [Citation checks](https://docs.typesafe.ai/cookbooks/citation_check): exact
-  evidence and source validation precede model judgment; existing snapshot and
-  claim checks remain authoritative.
-- [Semantic find](https://docs.typesafe.ai/cookbooks/semantic_find): a forced
-  choice does not prove an answer exists. Keep explicit insufficient-context
-  outcomes instead of interpreting any winner as equivalence.
+## Verification limits
 
-Controlled tests cover named mapping, partial failure, terminal uncertainty,
-cache reuse, limits and provider envelopes. Native accuracy requires the
-separate opt-in synthetic provider test; ordinary unit tests do not qualify it.
+Controlled tests cover named mapping, partial failure, caps, timeouts, credential
+redaction, no retry/redirect, fallback and terminal uncertainty. They establish the
+adapter boundary, not model accuracy.
 
-## Live synthetic check
-
-In the **batched run** on 2026-10-02, the SDK adapter sent the six existing synthetic calibration
-pairs in one batch. All six returned validated assessments: purchased/bought was
-equivalent, locked/unlocked contradictory, and closed/shut, before/after,
-safe/poisonous and borrowed/lent were insufficient-context. No negative pair was
-accepted as equivalent. This is more conservative than the earlier single-pair
-run documented in [memory dreaming](memory-dreaming.md); batching is qualified for bounded transport and safe abstention, not equal
-semantic recall or general accuracy. The test used a disposable database and
-only synthetic text.
-
-The first live adapter attempt exposed duplicate Content-Type headers from SDK
-and transport. The adapter now leaves content type, accept and framing to
-`ProviderTransport`; the successful rerun and mock regression cover that repair.
+`real_jev_synthetic_pair_calibration` is explicitly ignored and requires
+`HIERO_TEST_COMPARISON_CREDENTIAL_ROOT` with a private `relevance.conf`. It sends
+synthetic pairs in a disposable fixture, not manuscript data. Follow its current
+input requirements and the [runtime-check guidance](rust-cutover-rehearsal.md).
+Historical single/batch pilots differed in abstention; neither is a general
+calibration guarantee or qualification of the new local protocol by inheritance.

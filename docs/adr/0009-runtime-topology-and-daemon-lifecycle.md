@@ -1,96 +1,63 @@
-# Use One Binary With Explicit Multi-Process Runtime Boundaries
+# 0009 — Daemon ownership and process boundaries
 
-## Status
-
-Accepted on 2026-08-31.
-
-## Owner amendment — 2026-09-12
-
-The server owns the running application and its web interface. `hiero` remains a convenience CLI. The tray is a companion of the running server and follows its lifetime, including when the server is started from the CLI; it should be visible whenever the desktop environment supports a tray. Earlier tray-first startup wording does not make the helper the application owner.
-
-See [the release product direction](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/maintenance/v0.9.0/product-direction.md).
+Status: accepted 2026-08-31; desktop packaging and server ownership amended
+2026-09-11/12. Consolidated 2026-10-05.
 
 ## Context
 
-The Rust proposal describes “one binary, one process,” while also allowing a
-long-running daemon, direct CLI commands, and a stdio MCP adapter. Those are
-separate operating-system processes and can contend for SQLite, the semantic
-index, and dream-cycle ownership.
-
-The current product also needs a daemon that survives terminal closure and is
-available to configured HTTP MCP clients after login or reboot.
+A single distribution entry point does not mean one process. CLI, daemon, stdio
+and native UI have different lifetimes; letting each write live memory creates
+competing authority and recovery paths.
 
 ## Decision
 
-Ship one distributable `hiero` binary with three explicit execution roles:
+`hiero daemon` owns HTTP/WebSocket/MCP, normal live mutations, Dreaming and semantic
+workers. Short-lived CLI and `hiero mcp` processes communicate with it. The stdio
+adapter never opens SQLite. Export is read-only; exclusive upgrade/recovery refuses
+while the daemon owns the data root.
 
-- `hiero daemon`: a foreground server process owning HTTP, WebSocket, MCP,
-  background dreaming, and semantic-index workers;
-- short-lived CLI processes for read-only inspection and narrowly approved
-  maintenance commands;
-- `hiero mcp`: a stdio adapter that connects to the daemon and never opens the
-  application database directly.
+The domain crate owns storage and algorithms. `hiero` owns CLI/daemon/transports/
+distribution. `hiero-desktop` isolates native UI dependencies from headless operation;
+`hiero-decision` owns only the named model protocol. These are explicit boundaries,
+not duplicated memory backends.
 
-All domain mutations used by normal CLI, MCP, and frontend workflows go through
-the daemon. Offline database maintenance is limited to commands documented as
-exclusive operations, including database upgrade, verification, backup, and
-repair. Such commands must refuse to run while the daemon owns the data root.
+The server owns the running application and tray presence directly or through its
+supervised helper. Desktop startup can ensure the server is running; the helper is
+not the owner of database or inference. Supported managers are systemd user service,
+macOS LaunchAgents and owned per-user Windows tasks. Desktop login preferences
+and headless service mode remain distinct; see [tray registration](../desktop-tray.md).
 
-`hiero start` installs or starts the per-user service appropriate to the
-platform. `hiero daemon` remains foreground-only for supervisors and debugging.
-`hiero stop` requests authenticated graceful shutdown through the discovered
-daemon endpoint. Supported service managers are:
+Publish nonsecret discovery and separate private credentials atomically. Detect
+stale state using authenticated health and process-instance identity, not PID alone.
+Keep bounded readable diagnostics with credential/grant redaction. Startup classifies
+schema/config/journal state before publication and never silently migrates legacy,
+newer, corrupt or partial state. Report the exact remediation command.
 
-- Linux: systemd user service;
-- macOS: LaunchAgent;
-- Windows is outside the initial supported cutover. Adding it requires a later
-  ADR that selects and verifies a per-user service mechanism.
+Live mutations share domain validation/audit regardless of their frontend. Dream
+cycles serialize with an OS lock per data root; scheduled collisions skip and manual
+requests report conflict unless explicitly waiting. Never break a live lock or wait
+while holding a database write transaction.
 
-The daemon writes bounded logs and a non-secret discovery record atomically.
-The record contains protocol version, endpoint, process identity, start time,
-and instance id. The bearer token is stored separately with user-only
-permissions. Stale discovery state is detected by authenticated health probing
-and process-instance comparison, never by PID existence alone.
+### Desktop lifecycle transactions
 
-Dreaming remains protected by an OS-level cross-process lock because exclusive
-offline maintenance and manual debug execution can still be separate
-processes. Every caller performs one nonblocking OS `try_lock_exclusive` on a
-dedicated blocking thread. The scheduler skips the tick and records `locked`;
-manual daemon requests return conflict; exclusive CLI maintenance exits with a
-diagnostic naming the current owner. No caller waits or retries while holding a
-Tokio worker thread. The guard owns the open file handle for the entire critical
-section and releases it on drop.
+Install/update serializes verified pair assembly, helper retirement, stop/root release,
+registration snapshot, immutable selection and activation/rollback. Session locks,
+authenticated instance records and the root launch gate prevent enumeration races.
+Continuing native operations, another active session or ambiguous ownership refuse
+mutation. Explicit Quit intent survives retirement and failed activation; passive
+polling or helper resume must not restart an intentionally stopped server.
 
-Before binding a port or publishing discovery, daemon startup runs the shared
-bounded `StateClassifier`. Classification reads schema/config version markers,
-required file presence, and the cutover-journal state; it does not run typed
-converters, integrity scans, backups, or index work. `hiero migrate --dry-run`
-begins with this classifier but additionally performs the full converter and
-verification rehearsal defined by ADR 0010. Only the current supported Rust
-schema, current config versions, and a complete or absent cutover journal may
-start. A legacy Python schema exits with
-`migration_required`; legacy config exits with `config_migration_required`; a
-post-database/pre-config cutover exits with `config_promotion_required`. Each
-diagnostic includes the exact command. Newer, unknown, corrupt, or partially
-upgraded state fails closed. Startup never auto-migrates and never publishes
-readiness for rejected state.
+Rollback restores registrations, native enabled/mode state and the prior complete
+version. Indeterminate recovery retains artifacts and reports pending state.
+Persistent coordination locks are not unlinked. Windows self-uninstall needs an
+external verified helper path; data/settings remain unless explicitly deleted.
+
+A custom Linux unit directory is definition-only and cannot establish native-manager
+startup/update acceptance. Native GUI, manager, inference and host evidence remain
+separate; source inclusion and portable tests do not qualify the desktop.
 
 ## Consequences
 
-The binary is operationally simple to distribute but the runtime topology is
-honest about multiple processes. Centralizing normal mutations in the daemon
-removes concurrent LanceDB writers and gives CLI, MCP, and web actions one
-authorization, audit, and scoring path.
-
-Direct-store CLI behavior from the initial proposal is rejected except for
-explicit exclusive maintenance commands.
-
-### 2026-09-11 desktop packaging amendment
-
-The unpublished 0.9.0 candidate ships a separate native helper. Linux Desktop mode uses an on-demand daemon plus XDG tray login registration; Windows uses owned per-user native tasks; macOS preserves Headless/ Desktop `RunAtLoad` mode with separate owned LaunchAgents and no implicit crash restart. Actual native execution evidence is recorded in the desktop platform support matrix; source inclusion checks do not establish OS acceptance.
-
-Desktop install/update holds one lifecycle operation through verified pair assembly, authenticated helper retirement, stop/root release, native registration snapshot, immutable version selection and activation/rollback. A root launch gate closes enumeration races, session OS locks prove retirement, and secret-protected root/session/instance records authenticate a distinct retirement action. Pending desktop actions, other active sessions and continuing native manager/browser gates refuse mutation. Explicit Quit intent survives retirement and failed activation; helper resume does not start a previously stopped daemon. Registrations and actual native enabled/mode state are restored along with the prior complete version. An indeterminate rollback retains artifacts and reports the pending state.
-
-Standalone installers use local verified releases and the same Rust activation transaction. No installed Python or Bun is required. Windows direct self-uninstall refuses before mutation because the executing image cannot be removed; the PowerShell installer provides an external verified CLI uninstall path. Data/settings are preserved, and persistent coordination lock files are not unlinked.
-
-A Linux custom unit directory remains definition-only. A package operation that needs managed startup/restoration refuses before retirement, stop or selection when that capability is unavailable. Offline install/upgrade evidence plus a separately launched disposable daemon does not establish native manager active-update acceptance.
+There is one live mutation authority and one shared validation path, while platform
+UI can crash or recover independently. Headless operation needs no GUI library.
+This topology keeps distribution small without hiding multi-process coordination.

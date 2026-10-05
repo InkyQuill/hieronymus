@@ -1,59 +1,80 @@
-# Desktop runtime targets and split release contract
+# Native platform artifacts
 
-The model remains mandatory and pinned to `paraphrase-multilingual-MiniLM-L12-v2` revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`; ONNX Runtime remains **1.28.0**. Acquisition verification does not establish native host, installed application, or interactive desktop acceptance.
+This reference owns native artifact layout and integrity. Actual desktop/session
+acceptance is separate; use [desktop checks](desktop-qualification.md).
 
-## Measured upstream inputs (2026-09-11)
+## Targets and pins
 
-The complete archive/member pins and sizes are in [`scripts/onnxruntime-targets.json`](../scripts/onnxruntime-targets.json). The three available official archives were independently hashed against the [upstream release API](https://api.github.com/repos/microsoft/onnxruntime/releases/tags/v1.28.0), then passed through the production bounded extractor and every shipped runtime/member hash check. No third-party binary was stripped or changed.
+| Target | Runtime acquisition |
+| --- | --- |
+| `x86_64-unknown-linux-gnu` | Pinned official Linux archive |
+| `x86_64-pc-windows-msvc` | Pinned official archive and companion DLL |
+| `aarch64-apple-darwin` | Pinned official Apple Silicon archive |
+| `x86_64-apple-darwin` | Reviewed source-built archive with source/run/receipt provenance |
 
-| Exact target               | Official archive / archive SHA-256                                                                      | Installed runtime / member SHA-256                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `x86_64-unknown-linux-gnu` | `onnxruntime-linux-x64-1.28.0.tgz` / `a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407` | `lib/libonnxruntime.so` / `1461ef7cc3d9e49982591721683cc3e3a55580aeca9a5254e7aac47b75ee4bab`    |
-| `x86_64-pc-windows-msvc`   | `onnxruntime-win-x64-1.28.0.zip` / `abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc`   | `lib/onnxruntime.dll` / `18370c375f07357fa5874344a9d9ac17e6b6fe1eb18b1dd209d79483b4470257`      |
-| `aarch64-apple-darwin`     | `onnxruntime-osx-arm64-1.28.0.tgz` / `1268b359718099bde2cedb55787f182a130067bc4f31e8c88478c445b850d3d8` | `lib/libonnxruntime.dylib` / `dc19bbcb2f5c9fb3c68b4f9248aa0a35065ff702c5dbeae75eac54a74da97b6d` |
-| `x86_64-apple-darwin`      | **Absent upstream; pinned source build required**                                                       | **No measured/approved output exists; staging and runtime verification fail closed**            |
+The authoritative archive/member hashes, sizes and source provenance are in
+[`onnxruntime-targets.json`](../scripts/onnxruntime-targets.json). Intel's reviewed
+source route is already pinned; native desktop use remains unqualified. The measured
+macOS runtime load-command floor is 14.0, which is not a whole-app compatibility
+claim. Windows runtime/CRT deployment belongs to native installer checks.
 
-Windows also requires the archive's `lib/onnxruntime_providers_shared.dll` (`599629fa643707defe9156140ae5edd73531f221aa97b7585b1c9bb0a93586f8`). Each platform ships its own pinned `LICENSE`, `ThirdPartyNotices.txt`, and `VERSION_NUMBER` under `licenses/runtime`; Windows CRLF bytes have different hashes. Development import libraries, PDB/dSYM files and headers are acquisition inputs, not required installed runtime members.
+Model/tokenizer identity is pinned separately from native runtime. It remains
+`paraphrase-multilingual-MiniLM-L12-v2` at revision
+`e8f8c211226b894fcb81acc59f3b34ba3efd5f42`, with ONNX Runtime 1.28.0.
+Acquisition verification is not installed inference or interactive acceptance.
 
-| Runtime binary observations                                                                                | Native execution / support floor evidence                                                                                                                                                                                             |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux ELF requires up to GLIBC 2.27, GLIBCXX 3.4.21, CXXABI 1.3.11                                         | Disposable Linux document/query inference exercised on CachyOS, kernel 7.2.3-1-cachyos x86_64, glibc 2.44, Rust 1.96.0, Bun 1.4.0. This does not determine the final GUI/app distribution floor.                                      |
-| Windows PE AMD64 imports MSVCP140, MSVCP140_1, VCRUNTIME140, VCRUNTIME140_1, UCRT and api-ms-win-core-path | Native inference/CRT deployment/installed desktop acceptance pending. Upstream lists Windows 10 and VC++ 2019; PE header subsystem 6.0 is not a compatibility claim. CRT installation or approved redistribution is a packaging gate. |
-| Apple Silicon Mach-O arm64, LC_BUILD_VERSION minos 14.0.0, SDK 26.2.0                                      | Native inference/installed desktop acceptance pending. Runtime deployment floor is measured; whole-app floor and signing/notarization remain unqualified.                                                                             |
-| Intel macOS source route requests deployment target 14.0                                                   | Build output, toolchain, measured minimum OS, inference and interactive acceptance all pending. No hash or OS qualification can be inferred from a requested CMake setting.                                                           |
+## Common model and target metadata
 
-References: [upstream compatibility](https://onnxruntime.ai/docs/reference/compatibility.html), [Windows runtime installation requirements](https://onnxruntime.ai/docs/install/), [upstream 1.24.1 removal of Intel binaries](https://github.com/microsoft/onnxruntime/releases/tag/v1.24.1). Exact artifact evidence takes precedence over generic build-documentation minimums.
+[`scripts/shared-model.ts`](../scripts/shared-model.ts) produces canonical regular
+ustar members in fixed order/metadata with pinned Bun. Produce once and distribute
+identical archive bytes plus `ModelArtifact` metadata to all target jobs. Existing
+output must match its digest; never overwrite an immutable artifact.
 
-Directory staging starts at the parsed native filesystem root and traverses only its remaining components. This preserves `C:\` drive roots and `\\server\share\` UNC roots; roots must already exist, and every traversed directory still undergoes alias/type validation. Native drive/UNC prefix semantics are covered by portable `node:path.win32` tests, without claiming Windows filesystem acceptance.
+Format-2 `release-<triple>.json` binds application version, exact target/channel,
+platform archive/digest and common model name/revision/archive/digest/member map,
+with the current `signature:null` policy. Windows uses ZIP, others tar.gz.
+Unknown/duplicate fields, unsupported signatures, model drift and wrong targets
+are refused. Legacy monolithic input uses a separate decoder; split output has
+no `release.json` alias. HTTPS acquisition falls back to legacy only on explicit
+404, never on malformed metadata, TLS failure or a missing model artifact.
 
-## One common model artifact
+The platform archive carries executables/helper/launcher as applicable, `lib/`,
+notices and `assets.json`, with no model payload. The model archive carries the
+pinned `models/minilm` files, with no runtime members. Installation assembles
+verified copies into each immutable version; a rehashed content-addressed cache
+is acquisition only, never runtime authority.
 
-`packageCommonModel(modelDirectory, outputDirectory)` in [`scripts/shared-model.ts`](../scripts/shared-model.ts) is the canonical producer: fixed order, regular ustar entries, modes/uid/gid/mtime, four exact member names, and gzip level 6. CI should run it **once with pinned Bun 1.4.0 on Linux**, then distribute the exact output and returned `ModelArtifact` descriptor to every target job. Do not recompress separately on each platform or accept different bytes under the same filename. Existing output must match the newly calculated digest; it is never overwritten.
+## Verification and extraction
 
-The archive is `hieronymus-model-paraphrase-multilingual-MiniLM-L12-v2-e8f8c211226b894fcb81acc59f3b34ba3efd5f42.tar.gz`, containing exactly `models/minilm/{model.onnx,tokenizer.json,LICENSE,README.md}`. Uncompressed member bytes total 479,398,374. The canonical Linux/Bun 1.4.0 output measured on 2026-09-11 is 435,109,879 bytes (414.95 MiB), SHA-256 `4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0`. Every target references the same archive SHA-256 and member map. The model revision, tokenizer pins and runtime version are unchanged.
+Authenticate both archive digests into owned retained snapshots before inspecting
+or extracting members. Subsequent source-file edits cannot change accepted bytes.
+Snapshot storage is bounded, privately created and released on every path;
+no source directory is modified. Combined extraction remains bounded.
 
-`acquireCommonModel` uses a content-addressed `<sha256>.tar.gz` cache and rehashes each reuse, including cache hits. This cache is an acquisition source only. Installation assembles verified copies into each immutable version so rollback does not depend on a cache, feed, or mutable shared model directory.
+Reject traversal, duplicate/colliding/undeclared members, missing pins, unsafe links,
+devices and expansion overflow. A failed fresh assembly removes only its own output
+and reports cleanup failure. Unix aliases are restricted to literal links to `hiero`.
+Windows framing validates strict ZIP32 local/central identity before the archive
+library can coalesce names: no encryption, ZIP64, descriptors, overlap or extras.
 
-## Strict format 2 transport schema
+`assets.json` binds final platform members except itself and all model members.
+Produce it after stripping/applicable signing, never changing pinned upstream bytes.
+macOS sealed app manifests/receipts remain outside the seal to avoid digest cycles.
+A desktop install requires the matching helper even where a general headless verifier
+allows its absence. Native filesystem paths preserve drive/UNC roots while validating
+traversed components; portable path tests do not qualify Windows filesystem behavior.
 
-Each target has `release-<exact-triple>.json`, with exactly `format_version: 2`, application `version`, `target`, `channel`, `platform: {archive, sha256}`, `model: {name, revision, archive, sha256, members}`, and `signature: null`. Windows platform archives use `.zip`; Linux/Darwin use `.tar.gz`. SHA-256 strings are lowercase and artifact names derive from exact target/version constants. Unknown or duplicate fields, wrong targets/extensions, unsupported signatures, model drift and metadata over 64 KiB are refused.
+`hiero release-verify --release-dir DIR [--output ABSENT_DIR]` uses the same typed
+verification/assembly path. Inputs must remain immutable throughout packaging.
 
-New split output must never emit a misleading `release.json` alias. The old monolithic Linux `release.json` is supported as **input only** through a separate strict legacy decoder and inspector. Existing installed updaters/old standalone installers cannot consume split output; users need the current standalone installer to bootstrap that support. Runtime SHA-256 metadata provides transport integrity within the existing unsigned trust model, not an independent authenticity signature.
+## Source-built Intel runtime
 
-Rust interfaces: `release_manifest::{ReleaseV2, Artifact, ModelArtifact, metadata_name, platform_name, model_name, model_members}`; `release_archive::{verify_split_directory, extract_split_directory, VerifiedSplitRelease}`. Verification returns both archive paths, the parsed manifest, exact metadata digest and assembled assets digest. `hiero release-verify --release-dir ... [--output <absent-directory>]` dispatches exact-target v2 input to pair verification/assembly. HTTPS staging first requests the exact target metadata, and falls back to legacy only on an explicit HTTP 404; malformed metadata, TLS failures, redirects and missing second artifacts never fall back. These acquisition/CLI seams do not by themselves complete updater activation, desktop bootstrap, rollback or `.app` integration.
+[`scripts/build-intel-runtime.ts`](../scripts/build-intel-runtime.ts) requires native
+Intel macOS and the pinned upstream source. It records source/submodules, toolchain,
+commands, measured dependencies/OS floor, tests and archive/member hashes. A candidate
+receipt alone does not grant loading authority: reviewed pins do. Python is an
+upstream ONNX source-build tool, not a Hieronymus runtime dependency.
 
-## Archive and assembled-member policy
-
-Both archive digests are checked before inspecting or writing members. Rust hashes the exact bytes streamed from each regular source file into an owned anonymous snapshot. Inspection and extraction read only those retained snapshots, so an in-place source rewrite after authentication cannot change the accepted bytes; replayed member hashes must still match. The streaming copy uses a 64 KiB buffer and at most 1 GiB of temporary storage per archive (2 GiB for the pair), without buffering whole archives in RAM. Snapshot creation, copy, sync and seek errors fail closed. Each compressed archive is limited to 1 GiB, each expanded archive and the combined extraction to 3 GiB. Upstream acquisition uses 512 MiB compressed / 2 GiB expanded bounds. Traversal, duplicate members, collisions between archives, undeclared members, missing pins, unsupported links/devices/extensions and expansion overflow fail before activation. An unsuccessful fresh assembly removes its own output directory; cleanup failure is reported alongside the verification error. Snapshot handles are dropped on every success/error path. tempfile 3.27.0 uses O_TMPFILE or unlink-before-return on Unix (the verifier checks zero links and applies mode 0600 before writing) and exclusive share_mode(0) with DELETE_ON_CLOSE on Windows. No source-directory file is created or modified, no snapshot pathname is exposed or reopened, and inspection receives only Read+Seek. An unlink failure in the Unix fallback is refused before any release bytes are copied; that filesystem fault can leave only the crate-created empty temporary file. Windows temporary files use the native inherited ACL plus exclusive sharing; these are nonsecret release bytes, not credentials. Native Windows execution remains a separate qualification gate.
-
-Windows ZIP production must emit strict ZIP32: stored/deflate members, matching local/central names/CRC/sizes, contiguous member ranges, no encryption, data descriptors, ZIP64, extra fields, comments or overlapping records. The independent Rust framing validator runs before zip 8.6, whose normal metadata index coalesces duplicate names. Unix tar permits only regular files, fixed directories and the three legacy command links pointing literally to `hiero`.
-
-The internal payload remains flat: `hiero` or `hiero.exe`, optional `hiero-desktop[.exe]`, Windows-required `hiero-launcher.exe`, `lib/`, `licenses/runtime/`, and `assets.json`. A helper is optional only for this general/headless verifier; desktop packaging/installers must require it before daemon stop or activation. Model members are forbidden in the platform archive; runtime members are forbidden in the model archive. A future macOS `.app` mapping and icon resources must extend the explicit policy without weakening collision/path checks.
-
-For v2, `assets.json` binds every regular platform member except itself, plus all model members; its semantic identity and exact map are checked before assembly. `release-assets` includes present Hieronymus binary/helper/launcher hashes alongside the pinned runtime/model/notices. Legacy archives keep their original manifest semantics and inspector. Generate v2 assets from **final** Hieronymus bytes after stripping and any applicable signing transformations. Never strip/rewrite pinned ONNX runtime/companion bytes. `.app` signing must avoid a self-reference cycle; receipts and evidence that depend on a sealed bundle's digest belong outside sealed content. Final installed qualification must bind platform/model/target-manifest/assembled-assets digests and signing state.
-
-## Missing Intel runtime: reviewable source route
-
-[`scripts/build-intel-runtime.ts`](../scripts/build-intel-runtime.ts) requires a native macOS x86_64 host and clean source checkout at `da9b5e364c465de65c49d91e696cd6485270757f` (upstream `v1.28.0`). It runs upstream update/build/tests with a shared library, two jobs, explicit x86_64 architecture and requested macOS 14 deployment target, recording source/submodules, commands, OS/Xcode/clang/CMake/Python, build log, Mach-O architecture/dependencies/load commands and measured member/archive hashes. Python is an upstream source-build dependency, not an installed Hieronymus dependency. Flags were checked against [the pinned build implementation](https://github.com/microsoft/onnxruntime/blob/da9b5e364c465de65c49d91e696cd6485270757f/tools/ci_build/build.py) and [upstream native build documentation](https://onnxruntime.ai/docs/build/inferencing.html).
-
-The receipt says `candidate-requires-review`; it does not enable acquisition or semantic loading automatically. After an actual successful build, review provenance/dependencies/notices and measured OS floor, promote the exact measured descriptor into the shared pins with an explicit source-built origin implementation, then qualify real installed inference. Until that reviewed promotion exists, Intel release staging and runtime verification intentionally refuse. This route has **not been executed on an Intel host**; no candidate receipt or fabricated digest is shipped. Native runner preparation, tests, interactive acceptance and publication gates remain separate work.
+Runtime source tests, final packaged inference and visible desktop workflows are
+separate evidence. Record their gaps honestly rather than turning reviewed acquisition
+into a compatibility or performance claim.

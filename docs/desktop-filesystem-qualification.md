@@ -1,6 +1,6 @@
 # Desktop filesystem qualification
 
-Task 8 supplies native filesystem implementations and native tests. Cross-target
+The runtime has native filesystem implementations and native tests. Cross-target
 source checks do not establish native runtime or installed-artifact acceptance.
 Run this checklist on disposable local storage as the normal desktop user after
 the platform dependency graph is available. Do not point tests at a book project,
@@ -91,7 +91,7 @@ behavior must be tested with the real packaged executable before acceptance.
 The application root is per-user trusted storage. A corrupt selection or foreign
 launcher causes an error. Switching versions preserves the original launchers
 and atomically changes only the record. The JSON record is not an authenticity
-signature against the same account. Later update/helper coordination owns
+signature against the same account. The separate update/helper transaction owns
 launcher replacement, crash repair of partially created initial endpoints,
 running-executable cleanup, and complete installed-artifact rollback/uninstall.
 Do not infer those capabilities from filesystem tests. Runtime acquisition and

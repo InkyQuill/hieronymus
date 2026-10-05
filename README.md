@@ -64,15 +64,19 @@ bun run --cwd frontend typecheck
 bun run --cwd frontend test
 ```
 
+For contributor rules and the full verification checklist, see
+[AGENTS.md](AGENTS.md). The [documentation index](docs/README.md) separates
+author guides, business logic, technical references and accepted decisions.
+
 The release helpers use Bun's built-in TypeScript support. Follow
 [build ownership](docs/distribution.md#build-ownership) to acquire pinned assets
 and build an archive. Ordinary tests use fixtures; real model and installed-artifact
 tests require explicit disposable inputs and are ignored by default.
 
-The previous Python application, package, tests and qualification orchestration
-are archived on [`stale/python-v0.7.0`](https://github.com/InkyQuill/hieronymus/tree/stale/python-v0.7.0).
-Historical fixtures remain available to Rust migration tests. See
-[the archive policy](docs/archive/python-v0.7.0.md) for older plans and records.
+The previous Python application is archived on
+[`stale/python-v0.7.0`](https://github.com/InkyQuill/hieronymus/tree/stale/python-v0.7.0).
+Later rewrite tooling and qualification records have separate provenance; see
+[the archive policy](docs/archive/python-v0.7.0.md).
 
 Configuration and memory use the standard per-user configuration directory:
 `$XDG_CONFIG_HOME/hieronymus` on Linux (default `~/.config/hieronymus`),

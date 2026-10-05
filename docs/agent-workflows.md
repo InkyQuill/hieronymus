@@ -118,8 +118,8 @@ the generated Codex server environment supplies `CODEX_MCP_PROTOCOL_VERSION=2026
 zCode exposes a supported per-server `protocolVersion=2026-07-28` override outside the
 shared bundle; a disposable native zCode3.11.2 probe observed server/discover, tools/list, status and
 series_list with this override. This is protocol evidence, not candidate workflow acceptance.
-Historical P2 failures and newer qualification status are
-tracked in [host acceptance](agent-host-acceptance.md).
+[Host checks](agent-host-acceptance.md) distinguish protocol diagnostics from
+actual installed workflow acceptance.
 
 Pi can install `<data-root>/agent-plugins/pi` as an ordinary package:
 

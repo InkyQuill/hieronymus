@@ -1,477 +1,200 @@
-# Memory Dreaming
+# Memory and Dreaming
 
-Hieronymus memory dreaming turns task-local observations into searchable long-term
-translation memory without letting fuzzy memory override active rule crystals.
+Dreaming turns observations from completed tasks into durable, evidence-linked
+memory, then maintains the affected records. It runs in the background; authors
+inspect problems and correct mistakes instead of curating a required queue.
+[Business logic](business-logic.md) introduces the memory terms and authority rules.
 
-Memory vectors are indexed automatically by the server in continuing background
-batches, independently of recall. Overview shows indexed/remaining counts and
-failures; the tray turns blue while indexing. Restarting resumes from current
-source records. This is ongoing maintenance: additions and edits are indexed,
-while deleted or archived memories simply leave the index. Shrinking memory is
-normal database activity, not an indexing failure. Dreaming includes reconsolidation, archival and salience decay;
-correction signals and source-index recovery have their own supervised workers.
-A limited recall candidate scan is reported separately from unfinished indexing.
+## Sessions and pending work
 
-## Mental Model
+A series is language-neutral. Sessions retain the actual languages, task and story
+context. Short-term memories belong to an active session; recall requires one,
+uses its context and rejects conflicting explicit arguments.
 
-Hieronymus uses one global local store by default. Unless a command passes
-`--data-root` or the environment sets `HIERONYMUS_DATA_ROOT`, the store lives under
-`~/.config/hieronymus`, with a single SQLite database at
-`~/.config/hieronymus/hieronymus.sqlite`. Setting `HIERONYMUS_DATA_ROOT` moves that
-same global store to another directory, where the database is still named
-`hieronymus.sqlite`.
+Complete the session after the task's writes and validation. Completion makes its
+observations eligible for Dreaming; it does not prove processing has finished.
+Recalled crystals create deduplicated working copies with original claim bindings.
+Invalidated memories are not reactivated. A RAG-only read does not create those copies.
 
-Series are language-neutral containers. A series carries language tags such as
-`ja`, `en`, and `ru`; legacy `source_language` and `target_language` fields are
-compatibility hints and are not the canonical model. Task sessions are the
-activation surface. A translation, review, editing, or management workflow starts
-a session for a concrete context: series, language tags or compatibility
-source/target fields, task type, and story scopes such as `book:5/chapter:5`.
-Short-term memories are attached to that active session. Recall also requires an
-active session, records which crystals were activated, and writes a system
-short-term trace back into the session.
+Each provider batch selects from one completed session, oldest-first with a
+restart-safe rotating cursor. A deferred old task cannot indefinitely starve newer
+work. Large sessions continue through further batches. No selected task's context
+is applied to another task's observations. Source roles are freeform provenance
+metadata; they do not authenticate a user or grant rule authority.
 
-Ordinary `hieronymus_recall` combines crystals, recent memories and RAG. Its
-default is broad source inspection (`OmniscientResearch`) with 100 results per
-section, rather than requiring resolved chronology before showing remembered
-text. Read both `results` and `non_current`; uncertainty, invalidation and story
-context remain attached to each item. Explicit `Current` mode retains strict
-current-scene filtering. Research recall activates valid or uncertain crystals
-and creates deduplicated working copies with their original claim bindings;
-invalidated memories are not reactivated. A RAG-only read does not create crystal
-working copies. This does not promote remembered claims to current truth.
+Memory prose is compact and primarily English for searchability, with exact
+source forms, renderings, quotations and relevant non-English text preserved.
+Facets cite the selected observations supporting them; concepts retain identity
+through renames and ordinary decay. Inferred thought memories remain labeled and
+rank below comparable source-backed memory.
 
-The console's Translation choices view combines recent terminology observations,
-remembered rendering facets, rule crystals, translation rules and historical
-termbase imports. Agents and Dreaming populate the modern records automatically;
-authors correct mistakes. Pending observations remain short-term memories and
-are visibly marked as observations rather than deterministic rules.
+## What commits
 
-Output record counts are organization guides, not rejection ceilings. A valid
-provider response is persisted in full even when it exceeds the configured
-per-pass or per-run count. Evidence, coverage, context isolation and protected
-rule checks still validate meaning. Input/context and deterministic work budgets
-split processing into batches; remaining work stays pending for continuation.
+Seven passes cover concepts, terminology candidates, rule crystals, knowledge
+crystals, relations, reinforcement and coverage. Outputs cite selected input IDs.
+The app stages, validates and deduplicates output before its persistence transaction.
+Evidence, context isolation, authority and snapshot checks remain necessary even
+when the JSON is valid. Provider output alone cannot override an active rule.
 
-Short-term memories have source roles:
+For each selected input, the persistence audit records an `input_dispositions` outcome:
 
-- `mundane`: observations from ordinary workflow context.
-- `mentor`: higher-trust guidance from an expert or reviewer voice.
-- `user`: explicit user preference, correction, or instruction.
-- `system`: traces generated by Hieronymus itself, such as recalled crystals.
+| Outcome | Consequence |
+| --- | --- |
+| Represented by specific committed crystal/facet IDs | Input can be archived with those successors. |
+| Intentionally discarded with an accepted reason | Input can be archived under the discard policy. |
+| Deferred / `no_committed_successor` | Input remains pending; coverage enumeration is insufficient. |
 
-Concepts are durable identity anchors. A concept gathers multilingual facets,
-semantic tags, rule crystals, thought memories, and ordinary crystals around one
-meaningful subject. The concept identity survives renames and ordinary memory
-decay; language-specific names, renderings, descriptions, and notes live on
-facets.
+A discard reason is nonempty and at most 512 characters. Explicit-user evidence
+and rule-intent inputs cannot be discarded through the provider path. Accepted
+successors take precedence over discard requests. Dispositions, successor links,
+archive changes and persistence completion commit together; rollback leaves inputs
+retryable. A session becomes dreamed only when no pending input remains.
 
-Facets are the language-scoped and story-scoped surface of a concept. They hold
-forms, renderings, aliases, notes, semantic tags, story scopes, canonical flags,
-and historical or superseded data without changing the durable concept identity.
+Valid provider output is persisted in full even when it exceeds configured output
+record guidance. Input/context and deterministic work budgets split processing
+into batches; they are not arbitrary output rejection ceilings. Unsupported or
+empty outputs leave work pending. A zero-progress drain stops and reports pending
+rather than retrying forever.
 
-Semantic tags are freeform LLM- or user-supplied metadata such as `talent`,
-`subskill`, `location`, or `faction`. They help search, recall, and dreaming
-cluster related memories, but they are not durable identity anchors by
-themselves.
+## Scheduling, providers and concurrency
 
-Example concept produced or maintained by dreaming:
+Configure profiles in `provider.conf` and Dream assignments/prompts in `dream.conf`
+through Settings. [ADR 0007](adr/0007-provider-catalog-and-workflow-assignments.md)
+explains configuration ownership. Cloud models use advertised context capacities;
+Ollama needs a bounded plan and must not silently truncate input. Structured
+extraction disables thinking where supported.
 
-```yaml
-concept:
-  canonical_name: Cooking Talent
-  semantic_tags: [talent]
-  story_scopes: [book:5/chapter:5]
-facets:
-  - language_tags: [en]
-    kind: name
-    value: Cooking Talent
-    is_canonical: true
-  - language_tags: [ja]
-    kind: source_form
-    value: 料理
-  - language_tags: [ru]
-    kind: rendering
-    value: Готовка
+Scheduled runs respect the minimum pending-memory threshold. The urgent cap or
+backlog escape after repeated low-count skips can run earlier. Thresholds count
+short-term memories, not crystals. Manual runs drain eligible pending work,
+including the last small batch:
+
+```sh
+hiero tool-call hieronymus_dream --args '{}' --json
 ```
 
-Story scopes are freeform boosts, not filters. A `book:5/chapter:5` concept
-facet or crystal ranks higher during matching work in that chapter, but unscoped
-or differently scoped memories can still be recalled when their text, concept
-links, semantic tags, or rule relevance are strong.
+Cycles serialize per data root through `dream-cycle.lock` and an in-process guard.
+The daemon coalesces manual requests into its active or pending run; the MCP
+call waits for that run's drain result. Scheduled cycles use nonblocking admission. `dream-cycle.json`
+is informational; a live OS lock is never broken based on stale state.
 
-Crystals are long-term memory records. They are searchable by context, concept
-links, facets, semantic tags, story scopes, and text, carry strength and
-confidence scores; advisory strength can decay after meaningful sessions. The current crystal types
-are:
+Provider profile timeouts are positive, configurable request budgets. Comparison
+uses its own timeout. There is no fixed one-minute Dream drain deadline or arbitrary
+upper timeout; long-thinking providers may need 300 seconds or more. Changed
+settings take effect on the next run.
 
-- `lesson`: a user-facing rule, preference, correction, or workflow lesson.
-- `concept`: a reusable concept, setting fact, naming observation, or world detail.
-- `erudition`: background knowledge or expert guidance that may help future
-  decisions.
+## Audits and recovery
 
-Persisted memory prose is primarily English for searchability. Japanese and
-Russian belong in source forms, renderings, aliases, quotations, notes, or
-metadata when the non-English text itself matters. Short-term memories are small
-extracts; long-term crystals should stay to one or two sentences.
+Audits retain affected input/record IDs, evidence and applicability, provider/model
+and configuration identity, prompts and bounded redacted payloads where available,
+parse warnings, accepted/rejected outputs and actual mutations. They are append-only;
+corrections append later events. Completion of one phase does not prove later
+maintenance or a provider succeeded.
 
-Thought memories are low-confidence crystals proposed by dreaming when it infers
-a possibly useful connection that did not come directly from source text or user
-input. They are marked as inferred, use lower credibility, and rank below
-source-backed memories until later evidence reinforces them.
+A failed provider or coverage pass applies no staged persistence outputs and leaves
+work retryable. Already committed immediate corrections remain effective during
+provider outages. Correction gathering and source-index recovery have separate
+supervised workers; pending/parked jobs are not successful consolidation.
 
-Most crystals are advisory. Active rule crystals are mandatory translation
-rules; they do not decay while active. Changing their authority requires the
-validated correction path; confidence and Dream comparison cannot override them.
+Maintenance operates on a bounded affected set, not the whole store. Failed
+salience decay after persistence can complete with committed counts and a visible
+failed-phase warning. If the warning cannot be recorded, the run fails honestly
+while retaining the committed persistence counts.
 
-Recall uses a dual-lane strategy. The memory lane searches active short-term
-memories, crystals, concepts, facets, metadata, and protected rule crystals. The
-RAG lane searches imported project text and glossary chunks. Active rule crystals
-rank above RAG evidence, while ordinary memory and RAG results share the remaining
-limit through a budgeted merge. RAG evidence is advisory and does not create or
-activate rule crystals by itself.
+## Passive decay
 
-Recall and reinforcement are separate. Recall protects a crystal from immediate
-decay in the dream cycle that processes the active session, but it does not
-strengthen the crystal. Reinforcement comes from explicit feedback, evidence of
-use, and dream-cycle processing. In the CLI this is recorded with `feedback`
-events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
-`caused_correction`.
+`completed_session_v1` gives one opportunity per fully consumed session whose
+fresh evidence persisted as a crystal or facet. Idle time, empty/failed runs,
+partial batches and another series' work create no opportunity. Unknown story
+order cannot establish non-use; stored session context governs eligibility.
 
-Dream cycles process completed sessions. Short-term memories stay pending until
-dreaming processes them or a user removes them. Each provider batch selects memories from one completed session. Selection
-starts oldest-first, then rotates through pending sessions using the last
-committed persistence audit as a restart-safe cursor. A deferred old session
-cannot starve newer work on subsequent runs.
-It never interprets another session under that session's story context. Large
-sessions are split by the configured input cap and the tightest complete
-request/response budget among assigned providers. Omitted inputs stay pending;
-bounded drain runs select subsequent batches. Every configured pass receives
-that same snapshot, including per-source session, languages, story metadata and
-claim applicability. Dream-created concept identities are scoped to the series;
-facets must cite the specific selected source IDs supporting them. Provider/model assignments
-come from `~/.config/hieronymus/dream.conf`; provider profiles and API keys come
-from `~/.config/hieronymus/provider.conf`.
+Eligible unused advisory crystals lose 0.02 strength with a 0.20 floor. Confidence,
+text and status stay unchanged; nothing is deleted. Rules, explicit-user authority
+or confirmation, recall/working copies, recent concurrent use, newly created/edited
+records and unknown/qualified/invalid claims are protected.
 
-Dreaming has seven independent, evidence-tracked passes: concepts, terminology
-candidates, rule crystals, knowledge crystals, relations, reinforcement, and a
-coverage audit. Outputs must cite selected short-memory IDs. Hieronymus stages,
-validates, de-duplicates, and bounds all output before one commit. If any pass
-or the coverage audit fails, nothing is applied and sessions remain completed for
-retry. Concepts and terminology candidates are advisory; only a rule crystal
-with explicit user-rule evidence can enforce a rendering. Reinforcement and
-compaction then inspect the affected memory set and decide what to reinforce, decay,
-combine, supersede, or archive. Optional discovery workflows can be assigned to a
-separate provider profile, such as a local Ollama model.
+The phase scans at most `max_total_affected_crystals` and uses only the remaining
+crystal-change budgets after earlier phases. A capped opportunity is terminal;
+restart cannot apply catch-up decay. Opportunity markers, affected IDs, deltas
+and successful audit commit together. Passive decay does not change the content-edit
+timestamp. Evidence-based reinforcement can later restore strength.
 
-Coverage enumeration alone never authorizes archival. In the persistence
-transaction each input receives an `input_dispositions` audit entry: represented
-by specific committed crystal/facet IDs, intentionally discarded with a reason,
-or deferred (`no_committed_successor`). Coverage may return `discarded_memories`
-entries containing a selected `memory_id` and a nonempty reason of at most 512
-characters. Explicit user evidence and rule-intent inputs cannot be discarded by
-this provider path. Accepted successors take precedence over discard requests.
-Rejected or empty outputs leave unsupported inputs pending and their session
-completed; the session becomes dreamed only when no pending input remains.
-Dispositions, successors, archive updates and phase completion commit together;
-a rollback leaves inputs eligible for retry. A zero-progress drain stops and
-reports `pending`, so deferred work does not cause a retry loop. Later explicit
-or scheduled runs can retry it after provider/prompt configuration is corrected.
+## Semantic memory indexing
 
-The affected memory set is bounded. It starts with the completed short-term
-memories selected for the cycle, then adds nearby concepts, facets, active rule
-crystals, related ordinary crystals, semantic-tag matches, story-scope matches,
-and explicit links. Dreaming records and changes only that bounded set; it does
-not rescore or rewrite the whole store on each run.
+The server indexes crystals and pending observations in continuing background
+batches, independently of recall. SQLite `memory_vectors` is derived cache data;
+missing, changed-text or model-incompatible rows form the backlog. Inference runs
+outside write transactions and publication rechecks the source. Restart resumes
+from authoritative rows. Maintenance continues throughout the server lifetime,
+including after idle periods: additions and edits are indexed, while deleted or
+archived sources leave the index. Progress totals reflect current memory; a
+shrinking total is normal database activity, not an indexing failure.
 
-Providers produce structured JSON that Hieronymus validates before applying dream
-outputs. Malformed entries are parsed best-effort when they still contain useful
-content, but receive confidence penalties and may be downgraded to advisory or
-thought memory instead of becoming active rules. Items without required content
-are rejected. Invalid provider output records a failed dream run and leaves
-completed sessions pending so they can be retried after the provider, prompt, or
-config is corrected.
+Overview exposes indexed/remaining counts and failures; the tray indicates work.
+Recall reads the index and distinguishes unfinished indexing from a bounded
+candidate scan. `memory_semantic_pending` and `memory_semantic_unavailable` are
+explicit warnings; lexical matches do not establish semantic success. See
+[semantic storage](adr/0013-semantic-index-and-platform-support.md).
 
-Every dream cycle writes an audit record. The audit includes prompts, bounded raw
-provider payloads where available, parsed provider output, malformed-output
-penalties, affected short-term memory IDs, the affected memory set,
-provider/model/config snapshots, accepted, rejected, recovered, created, updated,
-and skipped records, created or updated concepts and facets, semantic tags, story
-scopes, rule crystals, thought memories, links, supersessions, consolidation,
-linking, decay, and reinforcement decisions. Audit records are append-only;
-corrections create later events.
+## Working copies and comparison
 
-Provider-backed smoke coverage exercises multiple crystallization batches and
-the following maintenance phase in one dream run, so audit inspection can trace
-provider input, provider output, parse warnings, and maintenance mutations
-together.
+Dream input separates fresh `memories` from `activated_memories`. At most eight
+compatible copies from up to 512 recent candidates augment a request. Fresh
+observations retain at least one complete record and three quarters of their fitted
+allowance. Final rendered instructions, snapshots and reserved output must fit.
+Copies cannot satisfy fresh coverage or justify double reinforcement.
 
-Passive decay uses the `completed_session_v1` policy: one opportunity per fully
-consumed task session whose fresh evidence was persisted as a crystal or facet,
-at successful Dream completion. Partial drain batches, idle time, empty runs,
-skips, errors and work in another series do not create opportunities. Unknown
-story order or applicability cannot establish non-use. Candidates must match the
-session's series and language pair and have current claims in its persisted story
-context. Request-local research mode is not persisted as session metadata; decay
-uses the stored context rather than inferring a research flag.
+Exact unchanged copies can reinforce strength once without increasing confidence.
+Changed names, numbers or polarity trigger conservative vetoes. Other changes
+require verified equivalence before absorption. Series, languages, applicability,
+concept identity, evidence and current snapshots must agree. Source rows, lineage,
+metadata and links are retained. Uncertainty or incompatibility preserves copies;
+coactivation can remain an advisory association.
 
-An unused advisory crystal loses 0.02 strength, with a floor of 0.20. Confidence,
-text and status never change through passive decay, and no record is deleted.
-Rules, explicit user authority or confirmation, recall/working copies, and
-records created or edited since the session began are protected. Passive decay
-changes strength without changing the content-edit timestamp, so independent
-overlapping sessions retain their own opportunities. Records with
-unknown, qualified or invalid claims are also protected. Recent concurrent use
-protects a record even if it happened in another session.
-
-The phase scans at most `max_total_affected_crystals` candidates per opportunity
-and consumes only the remaining minimum of the three existing crystal-change
-caps after preceding phases. A capped opportunity is terminal; later batches or
-restarts cannot apply additional decay for it. There is no catch-up decay owed
-for failed sessions or a rolled-back advisory opportunity. If decay fails after
-persistence, the run completes with its actual input/creation counts and a
-visible `salience_decay` warning plus a failed-phase audit; the drain can continue.
-If even the warning audit cannot be stored, the run fails honestly while retaining
-committed counts and completed persistence phases. Successful decay completion,
-opportunity markers, exact affected
-IDs and strength deltas commit in one transaction. The `salience_decay` audit
-records the policy, limits and before/after scores; `cycle_decay` memory events
-also appear in the existing Dream review. Strength remains above the floor and
-can recover through the usual evidence-based reinforcement paths.
-
-Automatic dreaming is cycle-based. Scheduled dreaming respects the configured
-minimum pending-memory threshold by default. It may run sooner only when the
-urgent cap is reached or the backlog escape rule fires after repeated
-not-enough-memory skips. The threshold counts short-term memories, not long-term
-crystals or remembered terminology.
-
-## Dream Cycle Concurrency
-
-Dream cycles are serialized per Hieronymus data root. CLI, MCP, admin TUI, and
-daemon autostart all share the same `dream-cycle.lock` file under the config
-root, plus an in-process guard for service threads.
-
-Manual runs fail fast when another cycle is active:
-
-```bash
-hiero dream
-```
-
-Use explicit waiting only when the caller is prepared to block:
-
-```bash
-hiero dream --wait
-```
-
-Autostart never waits. If a scheduled cycle is due while another cycle is
-active, it records a skipped dream run and reports `reason: cycle-active` in
-service status.
-
-The `dream-cycle.json` state file is informational. Hieronymus removes stale
-state only when the recorded PID is no longer running; it never breaks a live
-OS lock.
-
-## CLI Workflow
-
-Initialize the language-neutral series in the global store. `--source-language`
-and `--target-language` remain compatibility fields; the language tags are the
-current recall and dreaming vocabulary:
-
-```bash
-hieronymus init-series oso --title "Only Sense Online" --source-language ja --target-language en
-```
-
-Start a task session for the chapter being translated. With `--json`, the
-command prints `{"session_id": 1}` in a fresh store:
-
-```bash
-hieronymus session-start oso --json --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
-```
-
-Add a short-term correction to the active session:
-
-```bash
-hieronymus remember-short 1 --role user --kind correction --text "Define obscure Japanese cultural terms when the average English reader may not know them."
-```
-
-Complete the session so it can be processed by dreaming:
-
-```bash
-hieronymus session-complete 1
-```
-
-Run dreaming manually. This uses all seven configured Dream pass profiles.
-Manual `hiero dream` drains all pending short-term memories, including a final
-small batch below the scheduled minimum threshold:
-
-```bash
-hieronymus dream
-```
-
-Recall requires an active session. Start a new session for the next workflow;
-with `--json`, a fresh store prints `{"session_id": 2}`:
-
-```bash
-hieronymus session-start oso --json --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
-```
-
-Recall the crystallized lesson in that new active session:
-
-```bash
-hieronymus recall 2 --series oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002 --query "cultural terms"
-```
-
-## MCP Tools
-
-The MCP server exposes the same workflow plus primitive concept, facet, tag, and
-rule-crystal operations:
-
-- `hieronymus_session_start`
-- `hieronymus_short_term_add`
-- `hieronymus_session_complete`
-- `hieronymus_dream`
-- `hieronymus_recall`
-- `hieronymus_feedback`
-- `hieronymus_series_create`
-- `hieronymus_series_set_language_tags`
-- `hieronymus_concept_create`
-- `hieronymus_concept_facet_add`
-- `hieronymus_concept_semantic_tags_set`
-- `hieronymus_crystal_link_concept`
-- `hieronymus_rule_crystals_list`
-- `hieronymus_concept_proposals_list`
-
-`hieronymus_dream` uses the configured workflow providers. Recall uses the
-stored active session context by default, and rejects calls whose explicit
-context arguments do not match the session. Legacy memory-add and termbase MCP
-tools remain available as compatibility wrappers; user corrections enter
-short-term memory and deterministic validation reads active rule crystals.
-
-## Semantic memory retrieval and pair comparison
-
-Mixed recall embeds active crystals and pending short-term memories, including
-compatible sessions, with the same pinned multilingual embedding provider used
-by semantic retrieval. Lexical, metadata and semantic candidates are fused before
-the common story, viewpoint, language, evidence and correction checks. Approved
-termbase rules remain an independent deterministic contract.
-
-Derived vectors live in SQLite `memory_vectors`. Missing, changed-text or
-changed-model rows are a durable queue: each recall prepares at most 32 records
-before its coherent read. Archived/deleted sources are excluded immediately;
-bounded cleanup follows. Malformed vectors are rebuilt. Search streams the full
-eligible index while retaining only top candidates; it has no fixed ID cutoff.
-`memory_semantic_pending` reports unfinished indexing and
-`memory_semantic_unavailable` reports a missing/failing embedding lane. Lexical
-results do not imply that semantic retrieval succeeded. These rebuildable tables
-are derived caches, not claim authority or a separate source migration.
-
-Dream model input separates fresh `memories` from `activated_memories`.
-Only working copies already activated in the compatible session are considered.
-Candidates are ranked by overlap with fresh observations and useful activation
-evidence, from at most 512 recent copies, with at most eight added to a request.
-Fresh observations retain at least one complete record and three quarters of
-their fitted record allowance. Every workflow fits the final rendered request,
-including instructions, source snapshots and reserved output; a copy that does
-not fit stays pending. Context copies cannot supply fresh coverage or authorize
-a second model reinforcement of their originals. Their exact hydrated records
-and original snapshots are revalidated before persistence and recorded in audit.
-
-Text edit ratios and token similarity never authorize discarding a change or
-absorbing a crystal. Changed names, numbers and polarity receive conservative
-deterministic vetoes. Other changes require a verified equivalent assessment;
-distinct, contradictory, unavailable or uncertain comparisons preserve the
-working copy. Unchanged copies can reinforce activation strength once, without
-increasing confidence. Active rules, explicit user authority and correction
-effects cannot be overridden by comparison. Absorption requires compatible
-series/language/applicability/concept scope, evidence and current snapshots;
-lineage, typed metadata and links are retained, including the absorbed source
-row. Otherwise coactivation may record an advisory association.
-
-The **Memory comparison** settings in Dream configure an independent primary
-provider/model and an optional explicit backup. Nothing is assigned by default.
-`jev` uses the TypeSafe credential saved under Prompt relevance; other provider
-IDs reuse the provider catalog. No cloud fallback is implicit. Configuration is
-stored privately in `comparison.conf`, for example:
+**Memory comparison** is unassigned by default. Configure a primary and optional
+explicit backup privately in `comparison.conf` or Settings. Jev reuses the Prompt
+relevance credential; other model IDs use provider profiles. There is no implicit
+cloud backup. A valid uncertain answer is terminal; only unavailable configuration,
+transport/timeout or malformed output can use the configured fallback.
 
 ```toml
 max_pairs_per_run = 8
-timeout_seconds = 10
+timeout_seconds = 300
 
 [primary]
-provider = "jev"
-model = "jev-1.13.0"
-
-[fallback]
-provider = "my-ollama"
-model = "my-local-model"
+provider = "my-provider"
+model = "my-model"
 ```
 
-Comparisons gather up to eight same-scope pairs per Jev request after deterministic
-checks, capped at 16 KiB per pair and 32 KiB of combined pair state. Other model
-providers receive one pair per request. See [SDK and batching](jev-sdk-batching.md). The shared drain budget is 1–32 model pairs (eight
-by default), with one attempt per assignment and a positive configurable timeout
-per request, including model discovery. There is no fixed upper timeout or shared
-one-minute deadline. DeepSeek may need 300 seconds or longer. Dreaming uses the
-provider profile timeout, editable on the Dreaming page; memory comparison uses
-its separate timeout. Changes take effect on the next run. Ollama uses discovered
-context limits and refuses truncation; configured cloud budgets follow the
-existing provider planner. A valid uncertain answer is terminal; only missing
-configuration, transport/timeout or malformed output can invoke the backup.
-Audit records provider/model assignment, fallback reason and decision.
+The per-run model pair budget is 1–32. Jev batches up to eight eligible pairs,
+16 KiB per pair and 32 KiB combined state. Other providers receive one pair per
+request. Discovery and inference share that request's configurable timeout;
+see [decision adapter](jev-sdk-batching.md).
 
-Valid assessments are cached by exact pair versions and routing identity.
-Outages have a five-minute cooldown; configuration, credentials or content changes
-invalidate the key. Corrupt cache entries are discarded. A cached model answer
-still requires transaction-time snapshot validation before mutation.
+Cache identity includes exact pair versions, routing and rubric/parser versions.
+Transaction-time validation remains necessary on cache hits. Outages have a
+five-minute cooldown; credential, configuration or content changes invalidate
+identity. Corrupt entries are discarded. Unchanged unresolved copies can be parked
+with durable snapshot markers instead of repeatedly scheduling Dream; evidence,
+claim, applicability or routing changes reopen them. Budget exhaustion never parks
+unassessed work. Invalid optional comparison configuration disables comparison
+with a diagnostic, while independent Dream phases remain available.
 
-Unresolved working copies retain their source records, but an unchanged checked
-snapshot no longer blocks later copies or repeatedly schedules Dream. Durable
-markers include copy/source content, claim/evidence revisions and routing identity.
-Transactional invalidation reopens affected copies when source, claim,
-evidence or applicability inputs change; strength/access bookkeeping does not.
-SQL excludes parked copies before full snapshot hydration. Routing settings and
-credentials are held consistently for one run and refreshed for the next;
-transient provider outages reopen after five minutes.
-Markers commit with the phase audit. Budget exhaustion never parks unassessed work.
-A completed drain therefore means no eligible work remains, not that unresolved
-copies were accepted or archived. Invalid or unreadable optional `comparison.conf`
-disables model comparison with an explicit configuration diagnostic; independent
-Dream phases and deterministic exact-content checks remain available. Fixing the
-configuration takes effect on the next run.
+## Inspecting sources and results
 
-Readiness means the assignment and credentials exist, not that the selected
-model has been calibrated. Controlled provider and multilingual embedding tests
-verify routing, budgets and safety, not native model accuracy. The optional
-`real_jev_synthetic_pair_calibration` test sends only six synthetic pairs, uses a
-disposable database and requires an explicit
-`HIERO_TEST_COMPARISON_CREDENTIAL_ROOT` containing a private `relevance.conf`.
+Capture `source_ref` when available; session book/chapter metadata adds context.
+Recall projects source locations from retained observations. Citations group the
+same file revision/context into exact line ranges, preserving gaps and all contributing
+memory IDs. No location is invented. A locator is not an immutable evidence receipt
+or chronological ordering. Archival preserves locators; hard deletion of their source
+rows removes them.
 
-The current SDK **batched run** on 2026-10-02 sent all six synthetic pairs in
-one request: purchased/bought was equivalent, locked/unlocked contradictory,
-and closed/shut, before/after, safe/poisonous and borrowed/lent were
-insufficient-context. See [the batching report](jev-sdk-batching.md#live-synthetic-check).
+Console search uses Unicode lowercase substring matching over full projected text
+and claims before pagination; `%` and `_` are literal. Corrections select one exact
+statement with its authority revisions. Changing the selected memory closes the old
+correction. Optional merge selection persists across pages/searches in the same
+book/view and clears on a book/view change.
 
-An earlier **single-pair run** on the same date accepted both synonym pairs
-(closed/shut, purchased/bought), classified before/after and safe/poisonous as
-contradictory, and abstained on locked/unlocked and borrowed/lent. These are
-separate observations, not interchangeable calibration results. Neither run
-accepted a negative pair as equivalent. The six synthetic examples do not
-establish general accuracy, equal single/batch quality, or real Ollama/cloud
-qualification. The default remains unassigned.
-
-### Optional source locations
-
-Supply `source_ref` when capturing a working memory: a file path or a loose label such as `Vol 3, chapter 2` is valid. Session volume/chapter fields provide additional context. Dream preserves links to these source memories, and long-term recall now returns their `sources` (memory ID, source reference, volume, chapter); the console displays Source locations. No location is invented when none was supplied. Agent responses and the console group citations from the same file revision, volume and chapter into one reference with exact line ranges (for example `334,351-353,366,369`). A SHA is included once; gaps are never filled in. Grouped citations retain all contributing `memory_ids` while `memory_id` names the first for compatibility. Different revisions or contexts stay separate. Original source references remain unchanged in storage, including across merged or split crystals.
-
-A locator is a pointer, not proof that a file was read or a chronological ordering. Exact evidence and temporal/viewpoint applicability still use the existing claim metadata. A later level or status must not replace an earlier fact merely because their text resembles each other. Query the relevant story context to select time/viewpoint; an unspecified-context search can return several matching memories with different locators. Existing linked memories gain this projection without a migration or re-embedding.
-
-These locators are inherited from retained working memories and sessions. Archiving preserves them; explicitly hard-deleting those source rows removes their locators. They are not independent immutable evidence snapshots.
-
-
-### Inspecting and correcting memory
-
-Each console memory/history table supports a Unicode lowercase substring search over its full title/content projection before pagination. Crystal claims are included, even when a term is absent from the crystal summary. Search respects the selected book, preserves complete matching counts, and treats punctuation such as `%` and `_` literally. This author-facing inspection search is separate from semantic agent recall.
-
-Corrections start from a selected memory, inside its detail panel. A searchable, paged statement list shows short previews; the exact selected statement and authority revisions remain intact for submission. Full statement text is available by disclosure. Navigating to a different memory closes the old correction so a decision cannot be submitted under another record's heading.
-
-Combining is an optional action for duplicate memories, not an author maintenance requirement. Checked records remain selected across pages and searches within the same book/view. A visible selection toolbar opens the merge action, including when the current search returns no records; changing book/view clears the selection. Dreaming continues to perform automatic consolidation.
+Model assignment and transport tests establish routing and safeguards, not literary
+accuracy. Live synthetic probes, representative text judgments and installed-host
+checks are separate opt-in evidence; see [runtime checks](rust-cutover-rehearsal.md).

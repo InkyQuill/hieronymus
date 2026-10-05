@@ -46,7 +46,7 @@ bun run build
 
 Real model and installed-artifact tests are explicitly ignored by default. Supply their documented disposable fixture inputs and run them explicitly when qualifying those paths; missing inputs must fail. See `docs/rust-cutover-rehearsal.md`. Passing synthetic provider or transport tests does not establish native agent-host acceptance.
 
-Current product contracts and accepted ADR amendments govern product behavior; see docs/README.md and docs/roadmap.md. Completed execution plans and one-off reports live in Git history. Preserve frozen Python fixtures as historical evidence; do not introduce a Python parity release gate. ADR 0016's autonomous authority design is not evidence that its runtime has been implemented.
+Current product contracts and accepted decisions govern product behavior; start at [docs/README.md](docs/README.md). Preserve frozen compatibility fixtures as historical evidence; do not introduce a Python parity release gate. An accepted ADR describes intended behavior, not proof of runtime or native-host acceptance.
 
 ## Release checks and blockers
 
@@ -66,7 +66,15 @@ Current product contracts and accepted ADR amendments govern product behavior; s
 
 ## Working with Docs
 
-Make sure that the committed documentation is not overly complex. It is useful for LLMs sometimes but not all of it is read actually. So we need to keep only the bare minimum when the commit happens. Old plans that have been implemented should be deleted after implementation.Make sure you do sweeps against all product documentation to make sure it is current at all times. All the old documentation should stay local and gitignored. All the decisions that need to be retained should be kept concise and in ADRs. Do not make too many ADRs, keep updating old ones instead.
+- Write for a person with a concrete task. Lead with what they can do or need to understand; define domain terms before using them. Keep author instructions separate from protocol, build and release details. Use the repository's English documentation language consistently.
+- [README.md](README.md) owns the introduction and installation entry point; [docs/README.md](docs/README.md) is the single navigation index. [PRODUCT.md](PRODUCT.md) owns purpose and product principles; [DESIGN.md](DESIGN.md) owns interface conventions; [docs/business-logic.md](docs/business-logic.md) explains memory, authority and failure behavior. Usage and technical guides own their procedures. AGENTS.md owns contributor instructions, not a second product specification.
+- Give each rule one maintained home. Link to it instead of copying settings, commands, schemas, version pins, test totals or release requirements. Add a document only when an existing guide cannot serve its distinct reader/task; list it in the documentation index.
+- Record consequential business-logic decisions in the existing relevant ADR: context, decision, reason/tradeoff, consequences and implementation/evidence limits. Update its main text to the current decision; remove superseded requirements from the active reading path. Git preserves the previous wording. Create another ADR only for a distinct decision that cannot reasonably fit an existing one; do not renumber old ADRs.
+- Distinguish accepted policy, implemented behavior, measured results and unresolved work. Verify implementation claims against current code/tests; never infer native-host acceptance, provider accuracy or release readiness from a plan, generated assets, mocks or old receipts. Put actionable unresolved work in an issue or the concise roadmap.
+- Before finishing a behavior change, sweep all affected product guides, ADRs, agent resources and links for contradictions. For a documentation consolidation, inventory every project-owned Markdown file, including hidden/local files; classify runtime resources, provenance and frozen evidence separately from reader documentation. Exclude dependencies, build outputs and other worktrees.
+- Keep only maintained guides and decisions in committed docs. After implementation, fold lasting rules into their owning guide/ADR and remove completed plans, one-off research, logs and reports from the active tree. Preserve originals under ignored `docs/.local/` before removal or substantial rewriting; earlier committed versions remain in Git. Never alter frozen fixtures/receipts or legal notices to simplify prose.
+- Markdown under `crates/hiero/resources/` is embedded agent-facing runtime input. Treat edits as product changes, not cosmetic documentation cleanup. Keep upstream/license provenance beside the component it describes. Local `.remember/` notes and `.agents/` skills are not public product guides.
+- Check local links, heading anchors, documented commands and stale references. Use focused documentation/script checks for documentation-only changes; do not rebuild unchanged native binaries or add a documentation gate merely for file presence. Keep audit inventories and cleanup reports local rather than committing another maintenance document.
 
 ## Overengineering stance
 

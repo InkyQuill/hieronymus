@@ -1,87 +1,43 @@
-# Reimplement Hieronymus In Rust Through Contract-Gated Cutover
+# 0008 — Rust runtime and one-way cutover
 
-## Status
-
-Accepted on 2026-08-31. This ADR supersedes the Python-authority paragraph in
-[ADR 0005 §Decision](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/adr/0005-product-vision.md#decision), specifically the decision
-that Python remains authoritative for backend behavior. ADR 0005's product
-model and non-language-specific boundaries remain current.
+Status: accepted 2026-08-31; migration is complete. Consolidated 2026-10-05.
+Supersedes ADR 0005's Python-backend authority. The old migration sequence and
+qualification reports are history, not an ongoing Python parity release gate.
 
 ## Context
 
-Hieronymus is currently a Python application with a Svelte web console, a local
-SQLite database, CLI and MCP integrations, background dreaming, and managed
-installation. The documents under `docs/rust-migration-proposal/` describe a
-Rust replacement, but they mix durable product decisions, illustrative Rust
-APIs, migration mechanics, and release sequencing. Several of those details
-conflict with the current database and frontend contracts.
-
-A language rewrite is not evidence of behavioral compatibility. Existing user
-data and agent integrations must remain usable, and the Python implementation
-must remain the behavioral reference until an explicit cutover gate passes.
+Replacing the backend language must preserve user data and public behavior.
+A working compilation is not evidence that upgrades, terminology or agent
+integrations still work. The earlier Python application supplied frozen reference
+fixtures while the Rust runtime was built.
 
 ## Decision
 
-Reimplement Hieronymus as a Rust workspace and distribute it as one `hiero`
-binary. Use an ADR-first, contract-gated program rather than treating the six
-existing proposal documents as implementation-ready specifications.
+Rust owns domain behavior, CLI, daemon, MCP and distribution. The Svelte console
+remains the interactive frontend. Bun is a build/release-helper dependency;
+Python is not part of the application, current build or release workflow.
+Native GUI helpers and the local decision protocol retain explicit workspace
+boundaries under [ADR 0009](0009-runtime-topology-and-daemon-lifecycle.md).
 
-This narrower, later ADR controls any conflict with ADR 0005's
-Python-authority paragraph. The authority order during the migration is:
+Keep frozen historical fixtures as reusable test inputs and versioned Rust
+expectations for intentional changes. Public behavior is governed by accepted
+product decisions and relevant tests, not by preserving a retired Python
+implementation indefinitely. Do not silently edit historical expected outputs
+to make a new implementation pass.
 
-1. project instructions and ADR 0008's Rust replacement/cutover decision;
-2. other accepted ADRs, with narrower later ADRs controlling explicit conflicts;
-3. explicit compatibility specifications and versioned contract fixtures;
-4. tests that implement those contracts;
-5. current Python behavior where no higher-level decision changes it;
-6. `docs/rust-migration-proposal/` as design input only.
+Managed schema cutover is one-way. Preserve immutable pre-upgrade backups;
+unknown, corrupt, newer or unsafe sources fail before mutation. Rust recovery
+uses current schemas or verified import of those backups. Never launch an older
+binary against a newer schema or promise Python runtime rollback. Rust and
+Python must not concurrently mutate one database.
 
-The migration uses staged replacement:
+## Consequences and verification
 
-1. snapshot current CLI, MCP, HTTP, configuration, and database contracts;
-2. build independently testable Rust vertical slices;
-3. run parity tests against fixed fixtures and copied databases;
-4. rehearse one-way upgrade and failure recovery on production-shaped copies;
-5. switch managed installation to Rust only after every release gate passes;
-6. retain the immutable pre-upgrade backup for data recovery and forensic
-   comparison, not as a supported Python runtime rollback path.
+The old application is available on `stale/python-v0.7.0`; later migration tooling
+has separate historical snapshots. [Archive policy](../archive/python-v0.7.0.md)
+explains their provenance. Neither is a current deployment dependency.
 
-No mixed-language runtime is required after cutover. Temporary test harnesses
-may invoke both implementations, but Rust and Python must not concurrently
-mutate the same database.
-
-## Cutover Gates
-
-> **Note (2026-09-03, owner):** this checklist is reviewed by the owner as a
-> plain list of questions before approving cutover; it produces no recorded
-> attestations, evidence records, or gate tooling. "Every manifest entry"
-> is read as "the public surfaces the ported tests cover", per the
-> certification-light amendment of the program design.
-
-Cutover requires all of the following:
-
-- every compatibility-manifest entry is implemented, intentionally changed by
-  an accepted ADR, or explicitly removed;
-- upgrade dry-run and real upgrade succeed on clean, minimal legacy, and
-  production-shaped database fixtures;
-- deterministic terminology tests pass independently of fuzzy recall tests;
-- daemon authentication and lifecycle tests pass on every supported platform;
-- Rust unit, integration, contract, and frontend tests pass;
-- release artifacts install without Python, Node, or Bun on the target machine;
-- one-way upgrade, pre-commit failure recovery, and backup data recovery are
-  exercised against a release candidate.
-
-## Consequences
-
-The rewrite proceeds more slowly at the beginning because contracts and data
-conversion are made explicit. It avoids a big-bang release whose failures would
-be discovered only against a user's database or agent configuration.
-
-The existing proposal documents must be reconciled with the accepted ADR/spec
-set before they can be marked historical or removed. Implementation plans must
-reference the normative specs, not proposal pseudocode.
-
-Cutover is one-way at the product level. After a database is successfully
-upgraded and the Rust release is activated, Python is not a supported runtime or
-rollback target. Recovery tooling belongs to Rust and operates on the Rust
-schema or imports data from the immutable pre-upgrade backup.
+Use focused behavior checks and the contributor checklist in AGENTS.md. Package,
+real-model and native-host checks have distinct evidence boundaries; see
+[runtime checks](../rust-cutover-rehearsal.md). Release failures follow the current
+P0/advisory policy rather than obsolete cutover gates.
