@@ -185,6 +185,8 @@ export type AdminActionBody = {
   /// add_memory / edit_memory / merge_selected
   text?: string;
   title?: string;
+  /// Bind an edited merge proposal to the source records it was prepared from.
+  source_snapshots?: unknown[];
   /// add_memory
   series?: string;
   source_language?: string;
@@ -201,6 +203,12 @@ export type AdminActionBody = {
   all?: boolean;
   /// split_crystal
   parts?: AdminSplitPart[];
+};
+
+export type MergePreview = {
+  title: string;
+  text: string;
+  source_snapshots: unknown[];
 };
 
 export type AdminProvenance = {

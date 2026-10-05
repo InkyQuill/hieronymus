@@ -62,6 +62,35 @@ comes from evidence/manifests, not guessed chapter numbers. Unknown context rema
 labeled uncertainty. Broad research may return historical/non-current evidence;
 strict current-scene validation remains a separate operation.
 
+### Consolidation across tasks
+
+Sessions are storage and agent-lifecycle handles, not boundaries of learned
+meaning. Dreaming selects observations across active/completed sessions within
+one project/language scope, with a bounded rotating observation cursor. Every
+input retains its own source/story context instead of inheriting another task's
+chapter or viewpoint. Session IDs do not enter model prompts; observation capture
+order is a recency signal, never authority or narrative order.
+
+Later clarification need not explicitly identify an earlier record to correct.
+The model may learn the supported current understanding from both observations.
+This trades a hard session boundary for gradual model-driven consolidation;
+implicit correction accuracy is not guaranteed by batching or synthetic tests.
+Deterministic terminology, user authority, evidence disposition and applicability
+checks still govern persistence. Co-activation processing spans compatible
+project/language scopes; passive decay counts drained project work rather than
+individual sessions. Existing session identifiers remain compatible storage/API
+handles; this change does not migrate or delete source history.
+
+Manual combining is optional author maintenance. It first sends all selected
+compatible crystals to the knowledge Dreaming model and offers an editable title
+and memory text. Preview does not alter records; a confirmed merge checks source
+snapshots when supplied, preserves lineage and archives the originals in one
+transaction. The web preview flow supplies snapshots; direct crystal merges
+without them remain accepted without the stale-source check.
+Model failure leaves the selection intact and offers retry. This avoids asking
+authors to write the combined memory from an empty form. Concept identity merging
+remains a separate direct operation into the first selected concept.
+
 ### Reliability and integrations
 
 Keep local state ownership, rebuildable indexes and bounded auditable processing.

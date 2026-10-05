@@ -1,8 +1,19 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import type { AdminCommand, AdminRow } from "../lib/types";
 import ActionDialog from "./ActionDialog.svelte";
+import { prepareMergePreview } from "../lib/api";
+vi.mock("../lib/api", () => ({ prepareMergePreview: vi.fn() }));
+const prepareMergeMock = vi.mocked(prepareMergePreview);
+const sourceSnapshots = [{ id: 7, record: { text: "Original memory" } }];
+beforeEach(() => {
+  prepareMergeMock.mockReset().mockResolvedValue({
+    title: "Combined memory",
+    text: "Suggested combined memory.",
+    source_snapshots: sourceSnapshots,
+  });
+});
 
 function command(
   id: string,
@@ -269,7 +280,7 @@ test("a cancelled confirmation posts nothing", async () => {
   expect(onClose).toHaveBeenCalled();
 });
 
-test("merge_selected needs at least two ids and merged text", async () => {
+test("merge_selected prepares an editable proposal and commits only after confirmation", async () => {
   const user = userEvent.setup();
   const onSubmit = vi.fn();
   render(ActionDialog, {
@@ -283,10 +294,18 @@ test("merge_selected needs at least two ids and merged text", async () => {
     },
   });
 
-  await user.type(
-    screen.getByLabelText("Merged memory text"),
-    "The hero is Alto; the city is Verel.",
+  const field = await screen.findByLabelText("Merged memory text");
+  expect((field as HTMLTextAreaElement).value).toBe(
+    "Suggested combined memory.",
   );
+  expect(prepareMergeMock).toHaveBeenCalledWith(
+    "Crystals",
+    [7, 8],
+    expect.any(AbortSignal),
+  );
+  expect(onSubmit).not.toHaveBeenCalled();
+  await user.clear(field);
+  await user.type(field, "The hero is Alto; the city is Verel.");
   await user.click(
     screen.getByLabelText(/apply this change to the stored memory/i),
   );
@@ -296,8 +315,9 @@ test("merge_selected needs at least two ids and merged text", async () => {
     view: "Crystals",
     ids: [7, 8],
     text: "The hero is Alto; the city is Verel.",
-    title: "",
+    title: "Combined memory",
     confirmed: true,
+    source_snapshots: sourceSnapshots,
   });
 });
 
@@ -369,4 +389,86 @@ test("delete confirmation falls back to the detail record only without checked i
     ids: [7],
     confirmed: true,
   });
+});
+
+test("failed merge preparation leaves originals untouched and can be retried", async () => {
+  prepareMergeMock.mockRejectedValueOnce(
+    new Error("Dreaming model unavailable"),
+  );
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(ActionDialog, {
+    command: command("merge_selected", "Merge Selected"),
+    view: "Crystals",
+    selectedIds: [7, 8],
+    onSubmit,
+    onClose: vi.fn(),
+  });
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Dreaming model unavailable",
+  );
+  expect(screen.queryByLabelText("Merged memory text")).toBeNull();
+  expect(onSubmit).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Try preparing again" }));
+  expect(
+    (
+      (await screen.findByLabelText(
+        "Merged memory text",
+      )) as HTMLTextAreaElement
+    ).value,
+  ).toBe("Suggested combined memory.");
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+test("a regenerated merge suggestion requires a new confirmation", async () => {
+  const user = userEvent.setup();
+  render(ActionDialog, {
+    command: command("merge_selected", "Merge Selected"),
+    view: "Crystals",
+    selectedIds: [7, 8],
+    onSubmit: vi.fn(),
+    onClose: vi.fn(),
+  });
+  await screen.findByLabelText("Merged memory text");
+  const confirmation = screen.getByLabelText(
+    /apply this change to the stored memory/i,
+  ) as HTMLInputElement;
+  await user.click(confirmation);
+  let finish:
+    | ((proposal: import("../lib/types").MergePreview) => void)
+    | undefined;
+  const pending = new Promise<import("../lib/types").MergePreview>(
+    (resolve) => {
+      finish = resolve;
+    },
+  );
+  prepareMergeMock.mockReturnValueOnce(pending);
+  await user.click(
+    screen.getByRole("button", { name: "Prepare another suggestion" }),
+  );
+  expect(confirmation.disabled).toBe(true);
+  expect(confirmation.checked).toBe(false);
+  expect(
+    (screen.getByLabelText("Merged title (optional)") as HTMLInputElement)
+      .disabled,
+  ).toBe(true);
+  finish?.({
+    title: "Revised suggestion",
+    text: "Revised combined memory.",
+    source_snapshots: sourceSnapshots,
+  });
+  await waitFor(() =>
+    expect(
+      (screen.getByLabelText("Merged memory text") as HTMLTextAreaElement)
+        .value,
+    ).toBe("Revised combined memory."),
+  );
+  expect(confirmation.checked).toBe(false);
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Merge Selected",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
 });

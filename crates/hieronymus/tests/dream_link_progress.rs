@@ -114,10 +114,6 @@ fn scalar(config: &HieronymusConfig, sql: &str) -> Value {
     query(config, sql, &[]).remove(0).remove(0)
 }
 
-fn scalar_params(config: &HieronymusConfig, sql: &str, params: &[&dyn rusqlite::ToSql]) -> Value {
-    query(config, sql, params).remove(0).remove(0)
-}
-
 fn execute(config: &HieronymusConfig, sql: &str) {
     open_migrated(&config.database_path())
         .unwrap()
@@ -424,121 +420,54 @@ fn duplicate_activations_pair_once_and_consume_once() {
 }
 
 #[test]
-fn sessions_never_share_a_batch() {
+fn sessions_share_a_resumable_project_batch() {
     let root = tempfile::tempdir().unwrap();
     let config = config(&root);
     create_series(&config, "only-sense-online");
-    let session_one = start_session(&config, "only-sense-online");
-    let session_two = start_session(&config, "only-sense-online");
+    let one = start_session(&config, "only-sense-online");
+    let two = start_session(&config, "only-sense-online");
     let texts = dissimilar_texts();
-    let first_left = add_crystal(&config, "only-sense-online", texts[0]);
-    let first_right = add_crystal(&config, "only-sense-online", texts[1]);
-    let second_left = add_crystal(&config, "only-sense-online", texts[0]);
-    let second_right = add_crystal(&config, "only-sense-online", texts[2]);
-    add_activation(&config, session_one, first_left);
-    add_activation(&config, session_one, first_right);
-    add_activation(&config, session_two, second_left);
-    add_activation(&config, session_two, second_right);
+    let left = add_crystal(&config, "only-sense-online", texts[0]);
+    let right = add_crystal(&config, "only-sense-online", texts[1]);
+    let third = add_crystal(&config, "only-sense-online", texts[2]);
+    add_activation(&config, one, left);
+    add_activation(&config, two, right);
+    add_activation(&config, two, third);
     let run_id = create_run(&config, 1);
-
-    // Budget one: session one's pair (lowest session id first) consumes the
-    // budget, so session two is not snapshotted yet — no queued work is
-    // created ahead of budget. Its activations stay unconsumed.
     let mut progress = open_progress(&config, run_id);
     assert_eq!(progress.process(601, 1).unwrap(), 1);
-    let batches = query(
-        &config,
-        "select b.id, b.session_id, b.completed_cycle,
-                (select count(*) from dream_link_members m
-                 where m.batch_id = b.id
-                   and m.activation_id in (
-                     select id from crystal_activations where session_id = b.session_id
-                   )) as own_members,
-                (select count(*) from dream_link_members m where m.batch_id = b.id) as members
-         from dream_link_batches b order by b.id",
-        &[],
+    assert_eq!(
+        scalar(&config, "select count(*) from dream_link_batches"),
+        json!(1)
     );
     assert_eq!(
-        batches.len(),
-        1,
-        "session two has no batch while the budget was spent"
-    );
-    assert_eq!(batches[0][1], json!(session_one));
-    assert_eq!(
-        batches[0][2],
-        json!(601),
-        "session one's single-pair batch completed"
+        scalar(&config, "select count(*) from dream_link_members"),
+        json!(3)
     );
     assert_eq!(
-        batches[0][3], batches[0][4],
-        "batch one holds only its session's activations"
-    );
-    assert_eq!(
-        scalar_params(
+        scalar(
             &config,
-            "select count(*) from crystal_activations where session_id = ?1 and cycle_id is null",
-            &[&session_two]
+            "select count(*) from crystal_activations where cycle_id is null"
         ),
-        json!(2),
-        "session two's activations stay unconsumed and unsnapshotted"
+        json!(3)
     );
-
-    // The next call snapshots session two into its own batch and completes it.
-    assert_eq!(progress.process(602, 10).unwrap(), 1);
-    let second_batch = query(
-        &config,
-        "select session_id, completed_cycle,
-                (select count(*) from dream_link_members m
-                 where m.batch_id = b.id
-                   and m.activation_id in (
-                     select id from crystal_activations where session_id = b.session_id
-                   )) as own_members,
-                (select count(*) from dream_link_members m where m.batch_id = b.id) as members
-         from dream_link_batches b where session_id = ?1",
-        &[&session_two],
-    )
-    .remove(0);
-    assert_eq!(second_batch[0], json!(session_two));
-    assert_eq!(second_batch[1], json!(602));
-    assert_eq!(
-        second_batch[2], second_batch[3],
-        "batch two holds only its session's activations"
-    );
+    drop(progress);
+    let mut resumed = open_progress(&config, run_id);
+    assert_eq!(resumed.process(602, 10).unwrap(), 2);
     assert_eq!(
         scalar(&config, "select count(*) from crystal_links"),
-        json!(2)
+        json!(3)
     );
     assert_eq!(
-        query(
+        scalar(
             &config,
-            "select distinct session_id, cycle_id from crystal_activations order by session_id",
-            &[]
-        ),
-        vec![
-            vec![json!(session_one), json!(601)],
-            vec![json!(session_two), json!(602)],
-        ],
-        "each session's activations are stamped with their own batch's completion cycle"
-    );
-    // No cross-session link ever exists.
-    assert_eq!(
-        scalar_params(
-            &config,
-            "select count(*) from crystal_links
-             where (source_crystal_id in (?, ?) and target_crystal_id in (?, ?))
-                or (source_crystal_id in (?, ?) and target_crystal_id in (?, ?))",
-            &[
-                &first_left,
-                &first_right,
-                &second_left,
-                &second_right, //
-                &second_left,
-                &second_right,
-                &first_left,
-                &first_right,
-            ]
+            "select count(*) from crystal_activations where cycle_id is null"
         ),
         json!(0)
+    );
+    assert_eq!(
+        scalar(&config, "select count(*) from dream_link_batches"),
+        json!(1)
     );
 }
 

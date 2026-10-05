@@ -340,3 +340,88 @@ fn a_dot_invalid_profile_is_probed_for_real_never_faked() {
         "a .invalid host never actually connects: {check}"
     );
 }
+
+#[test]
+fn merge_preview_is_read_only_and_confirmation_rejects_changed_sources() {
+    let model = LoopbackModels::start(|_| {
+        (200, json!({"choices":[{"message":{"content":r#"{"title":"Names","text":"Alto lives in Verel."}"#}}]}).to_string())
+    });
+    let (fixture, root, daemon) = start_daemon_with_browser_session();
+    save_profile(&fixture, "merge-model", &model.url());
+    let config = hieronymus::data_root::HieronymusConfig::new(root.path());
+    let mut settings = hieronymus::dream_config::default_dream_config();
+    let assignment = settings.workflows.get_mut("knowledge_crystals").unwrap();
+    assignment.provider = "merge-model".into();
+    assignment.model = "merge-test".into();
+    assignment.enabled = false;
+    hieronymus::dream_config::save_dream_config(&config, &settings).unwrap();
+    hieronymus::registry::Registry::open(&config)
+        .unwrap()
+        .create_series("book", "Book", "ja", "ru", None)
+        .unwrap();
+    let store = hieronymus::crystals::CrystalStore::open(&config).unwrap();
+    let context =
+        hieronymus::memory_models::TranslationContext::new("book", "ja", "ru", "translate");
+    let first = store
+        .add_crystal(
+            &context,
+            "concept",
+            &hieronymus::crystals::NewCrystal::new("concept", "The hero is Alto."),
+        )
+        .unwrap();
+    let second = store
+        .add_crystal(
+            &context,
+            "concept",
+            &hieronymus::crystals::NewCrystal::new("concept", "He lives in Verel."),
+        )
+        .unwrap();
+    let post = |path: &str, body: Value| {
+        send_request(
+            fixture.port,
+            "POST",
+            path,
+            &browser_headers(&fixture, &[("Origin", common::same_origin(fixture.port))]),
+            body.to_string().as_bytes(),
+        )
+    };
+    let preview = post(
+        "/api/admin/merge-preview",
+        json!({"ids":[first,second],"view":"Crystals"}),
+    );
+    assert_eq!(preview.status, 200, "{:?}", preview.raw_body);
+    let proposal = preview.body();
+    assert_eq!(proposal["text"], "Alto lives in Verel.");
+    let db = hieronymus::db::open_migrated(&config.database_path()).unwrap();
+    let active = || {
+        db.query_row(
+            "select count(*) from crystals where status='active'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(active(), 2);
+    let mut body = json!({"view":"Crystals","ids":[first,second],"confirmed":true,"title":proposal["title"],"text":proposal["text"],"source_snapshots":proposal["source_snapshots"]});
+    db.execute(
+        "update crystals set text='Alto lives in another city.' where id=?1",
+        [second],
+    )
+    .unwrap();
+    let stale = post("/api/admin/actions/merge_selected", body.clone());
+    assert_eq!(stale.status, 400);
+    assert!(stale.body()["error"].as_str().unwrap().contains("changed"));
+    assert_eq!(active(), 2);
+    let fresh = post(
+        "/api/admin/merge-preview",
+        json!({"ids":[first,second],"view":"Crystals"}),
+    );
+    assert_eq!(fresh.status, 200, "{:?}", fresh.raw_body);
+    body["source_snapshots"] = fresh.body()["source_snapshots"].clone();
+    body["text"] = json!("Alto lives in another city.");
+    let saved = post("/api/admin/actions/merge_selected", body);
+    assert_eq!(saved.status, 200, "{:?}", saved.raw_body);
+    assert_eq!(active(), 1);
+    assert_eq!(model.request_count(), 2);
+    daemon.shutdown().unwrap();
+}

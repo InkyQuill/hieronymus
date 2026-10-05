@@ -350,8 +350,7 @@ fn load_autostart_state(config: &HieronymusConfig) -> AutostartState {
     }
 }
 
-/// Completed sessions and their unarchived short-term memories that dreaming
-/// has not consumed yet.
+/// Storage sessions and their pending observations, irrespective of lifecycle.
 pub(super) fn pending_counts(config: &HieronymusConfig) -> (i64, i64) {
     let Ok(connection) = hieronymus::db::open_migrated(&config.database_path()) else {
         return (0, 0);
@@ -364,9 +363,8 @@ pub(super) fn pending_counts(config: &HieronymusConfig) -> (i64, i64) {
              from task_sessions
              join short_term_memories
                on short_term_memories.session_id = task_sessions.id
-             where task_sessions.status = 'completed'
-               and task_sessions.cycle_id is null
-               and short_term_memories.archived_at is null",
+             where short_term_memories.archived_at is null
+               and short_term_memories.source_crystal_id is null",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -434,6 +432,41 @@ fn redact_status_strings(value: &mut Value, secrets: &[&str]) {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+
+    #[test]
+    fn status_counts_active_observations_and_clears_after_dreaming() {
+        let root = tempfile::tempdir().unwrap();
+        let config = HieronymusConfig::new(root.path());
+        hieronymus::registry::Registry::open(&config)
+            .unwrap()
+            .create_series("book", "Book", "ja", "ru", None)
+            .unwrap();
+        let workspace = hieronymus::workspace::WorkspaceStore::open(&config).unwrap();
+        let session = workspace
+            .start_session(&hieronymus::memory_models::TranslationContext::new(
+                "book",
+                "ja",
+                "ru",
+                "translate",
+            ))
+            .unwrap();
+        workspace
+            .add_short_term_memory(
+                session.id,
+                &hieronymus::workspace::ShortTermMemoryInput::new("note", "Mira has three keys."),
+            )
+            .unwrap();
+        assert_eq!(dreaming_payload(&config)["pending_short_term_memories"], 1);
+        hieronymus::dreaming::DreamService::open(
+            &config,
+            hieronymus::dream_workflows::WorkflowResolver::deterministic(),
+        )
+        .unwrap()
+        .run_cycle("manual", false)
+        .unwrap();
+        assert_eq!(dreaming_payload(&config)["pending_short_term_memories"], 0);
+        assert_eq!(workspace.get_session(session.id).unwrap().status, "active");
+    }
 
     #[test]
     fn status_reports_persisted_dream_failure_and_clears_after_success() {

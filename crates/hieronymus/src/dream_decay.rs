@@ -1,6 +1,8 @@
-//! Passive salience decay counts a completed, meaningful session, never time or
-//! individual drain batches. Completion, its once-only opportunity ledger,
+//! Passive salience decay gives one opportunity per fully drained project/language
+//! scope in a cycle, regardless of session count. Its opportunity ledger,
 //! strength deltas and audit share the caller's immediate transaction.
+
+use std::collections::HashSet;
 
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
@@ -45,9 +47,15 @@ pub(crate) fn complete_in_transaction(
     let mut budget = cap.saturating_sub(affected).max(0) as usize;
     let mut statement = tx.prepare(
         "select s.id, s.created_at from task_sessions s
-         where s.status='dreamed' and s.cycle_id=?1
+         where exists(select 1 from dream_audit_entries a,
+             json_each(a.payload_json,'$.input_dispositions') disposition
+             join short_term_memories input on input.id=json_extract(disposition.value,'$.memory_id')
+             where a.dream_run_id=?4 and a.event_type='phase_completed'
+               and json_extract(disposition.value,'$.disposition')='represented'
+               and input.session_id=s.id)
            and not exists (select 1 from memory_events e
-                           where e.session_id=s.id and e.event_type=?2)
+                           where e.cycle_id=?1 and e.event_type=?2
+                             and e.session_id in(select id from task_sessions where series_slug=s.series_slug and source_language=s.source_language and target_language=s.target_language))
            and exists (
              select 1 from short_term_memories m
              where m.session_id=s.id and m.archived_at is not null
@@ -58,6 +66,13 @@ pub(crate) fn complete_in_transaction(
                                join claim_bindings facet on facet.claim_id=source.claim_id
                                where source.short_term_id=m.id and facet.facet_id is not null))
            )
+         and not exists (
+             select 1 from short_term_memories pending
+             join task_sessions owner on owner.id=pending.session_id
+             where pending.archived_at is null and pending.source_crystal_id is null
+               and owner.series_slug=s.series_slug and owner.source_language=s.source_language
+               and owner.target_language=s.target_language
+           )
          order by s.id limit ?3",
     )?;
     let sessions = statement
@@ -65,13 +80,16 @@ pub(crate) fn complete_in_transaction(
             params![
                 cycle_id,
                 OPPORTUNITY,
-                settings.max_short_term_memories_per_run
+                settings.max_short_term_memories_per_run,
+                run_id
             ],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
     let workspace = crate::workspace::WorkspaceStore::for_read(config);
+    let mut decayed = HashSet::new();
+    let mut opportunities = HashSet::new();
     for (session_id, started_at) in sessions {
         let session = match workspace.get_session_with_connection(tx, session_id) {
             Ok(session) => session,
@@ -149,6 +167,9 @@ pub(crate) fn complete_in_transaction(
         let scanned = candidates.len();
         let mut changes: Vec<Value> = Vec::new();
         for (id, before) in candidates {
+            if decayed.contains(&id) {
+                continue;
+            }
             if budget == 0 {
                 break;
             }
@@ -171,22 +192,30 @@ pub(crate) fn complete_in_transaction(
                 params![
                     id,
                     session_id,
-                    format!("unused in completed session {session_id}"),
+                    format!("unused during project consolidation (context {session_id})"),
                     after - before,
                     cycle_id,
                     timestamp
                 ],
             )?;
             changes.push(json!({"crystal_id":id,"strength_before":before,"strength_after":after,"strength_delta":after-before,"confidence_delta":0.0}));
+            decayed.insert(id);
             budget -= 1;
         }
-        // Even a capped/zero-candidate opportunity is terminal. Another drain
-        // batch cannot age more records for this same logical work session.
-        tx.execute(
-            "insert into memory_events(session_id,event_type,source_role,evidence,applied,cycle_id,created_at)
-             values(?1,?2,'system','session salience opportunity v1',1,?3,?4)",
-            params![session_id,OPPORTUNITY,cycle_id,timestamp],
-        )?;
+        // One ledger entry per project/language scope; evaluate all represented
+        // story contexts but never decay the same crystal twice in this cycle.
+        let scope = (
+            session.context.series_slug.clone(),
+            session.context.source_language.clone(),
+            session.context.target_language.clone(),
+        );
+        if opportunities.insert(scope) {
+            tx.execute(
+                "insert into memory_events(session_id,event_type,source_role,evidence,applied,cycle_id,created_at)
+                 values(?1,?2,'system','project consolidation salience opportunity v1',1,?3,?4)",
+                params![session_id,OPPORTUNITY,cycle_id,timestamp],
+            )?;
+        }
         tx.execute("update dream_phase_runs set status='completed',output_count=?1,completed_at=?2 where id=?3", params![changes.len() as i64,timestamp,phase_id])?;
         DreamAuditStore::append_in_transaction(
             tx,
@@ -197,7 +226,7 @@ pub(crate) fn complete_in_transaction(
             "completed salience_decay phase",
             &json!({
                 "phase_name":"salience_decay","session_id":session_id,"series_slug":session.context.series_slug,
-                "policy":"completed_session_v1","step":STRENGTH_STEP,"floor":STRENGTH_FLOOR,
+                "policy":"consolidated_project_v1","step":STRENGTH_STEP,"floor":STRENGTH_FLOOR,
                 "candidate_scan_limit":settings.max_total_affected_crystals,"scanned_candidates":scanned,
                 "crystal_budget":cap,"remaining_budget":budget,"decayed_crystals":changes,
             }),

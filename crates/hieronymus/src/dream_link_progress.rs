@@ -5,7 +5,7 @@
 //! crystal pairs. Before this module, a cycle budget smaller than the pair
 //! count still stamped every selected activation consumed
 //! (`crystal_activations.cycle_id`), permanently dropping the unprocessed
-//! pairs. Here the eligible activations of one session are snapshotted into
+//! pairs. Here the eligible activations of one project/language scope are snapshotted into
 //! ONE durable batch with activation membership and deletion-safe crystal
 //! identities. Cursor offsets enumerate unique pairs lazily; only terminal
 //! pairs occupy `dream_link_pairs`. Each effect, terminal row, cursor advance,
@@ -197,7 +197,7 @@ impl LinkProgress {
     }
 
     /// Process at most `pair_budget` queued pairs for `cycle`, resuming open
-    /// batches first and then snapshotting fresh ones (one per session). The
+    /// batches first and then snapshotting fresh ones (one per project/language scope). The
     /// returned count is pairs terminalized (applied or skipped) in this
     /// call — not selected activations. A zero budget consumes nothing: no
     /// batch is created, no pair is touched, no activation is stamped.
@@ -221,9 +221,8 @@ impl LinkProgress {
             self.drive_batch(&mut connection, batch_id, cycle, &mut budget)?;
         }
 
-        // Fresh snapshots: one durable batch per session that still has
-        // unconsumed useful activations and no open batch (session
-        // isolation: activations from different sessions never share one).
+        // Fresh snapshots span sessions within the same project/language scope.
+        // Existing durable batches retain their membership when resumed.
         if budget > 0 {
             for session_id in sessions_without_open_batch(&connection, budget)? {
                 if budget == 0 {
@@ -292,10 +291,10 @@ impl LinkProgress {
         }
     }
 
-    /// Snapshot one session's unconsumed useful activations into a durable
+    /// Snapshot one project's unconsumed useful activations into a durable
     /// batch: UNIQUE activation membership and sorted crystal identities.
     /// Pair enumeration itself is lazy. One immediate transaction, so a crash
-    /// leaves either no batch or a complete one. `None` when the session has
+    /// leaves either no batch or a complete one. `None` when the scope has
     /// no unconsumed activations (no batch is created).
     fn snapshot_batch(
         &mut self,
@@ -317,7 +316,13 @@ impl LinkProgress {
             let batch_id = transaction.last_insert_rowid();
             transaction.execute(
                 "insert into dream_link_members(batch_id, activation_id)
-                 select ?1, id from crystal_activations where outcome='useful' and cycle_id is null and session_id=?2",
+                 select ?1,ca.id from crystal_activations ca
+                 join task_sessions s on s.id=ca.session_id
+                 join task_sessions seed on seed.id=?2
+                 where ca.outcome='useful' and ca.cycle_id is null
+                   and s.series_slug=seed.series_slug and s.source_language=seed.source_language
+                   and s.target_language=seed.target_language
+                   and not exists(select 1 from dream_link_members old where old.activation_id=ca.id)",
                 rusqlite::params![batch_id, session_id])?;
             // Linear snapshot work, entirely in SQLite. No pair cross join,
             // and no Rust vector proportional to the number of activations.
@@ -599,9 +604,15 @@ fn sessions_without_open_batch(
         "select distinct ca.session_id
          from crystal_activations ca
          where ca.outcome = 'useful' and ca.cycle_id is null
+           and not exists(select 1 from dream_link_members m where m.activation_id=ca.id)
            and not exists (
              select 1 from dream_link_batches b
-             where b.session_id = ca.session_id and b.completed_cycle is null
+             join task_sessions owner on owner.id=b.session_id
+             join task_sessions current on current.id=ca.session_id
+             where owner.series_slug=current.series_slug
+               and owner.source_language=current.source_language
+               and owner.target_language=current.target_language
+               and b.completed_cycle is null
            )
          order by ca.session_id limit ?1",
     )?;

@@ -231,7 +231,7 @@ fn decay_audit_failure_rolls_back_score_ledger_and_success_status() {
 }
 
 #[test]
-fn ambiguous_context_at_completion_skips_decay_without_failing_run() {
+fn changed_source_context_rolls_back_persistence_and_decay() {
     let f = Fixture::new();
     let id = f.crystal(
         "book",
@@ -248,8 +248,12 @@ fn ambiguous_context_at_completion_skips_decay_without_failing_run() {
             db.execute("delete from task_session_story_scopes where session_id=? and story_scope like 'volume:%'",[session]).unwrap();
         }
     }));
-    let result = service.run_cycle("manual", false).unwrap();
-    assert_eq!(result.status, "completed");
+    let error = service.run_cycle("manual", false).unwrap_err();
+    assert!(error.to_string().contains("selected input changed"));
+    assert_eq!(
+        f.count("select count(*) from short_term_memories where archived_at is null"),
+        1
+    );
     assert_eq!(f.scores(id), (0.5, 0.5));
     assert_eq!(
         f.count("select count(*) from memory_events where event_type='dream_decay_opportunity'"),
@@ -258,7 +262,7 @@ fn ambiguous_context_at_completion_skips_decay_without_failing_run() {
 }
 
 #[test]
-fn overlapping_sessions_each_decay_without_masking_real_edits() {
+fn overlapping_sessions_share_decay_opportunity_without_masking_real_edits() {
     let f = Fixture::new();
     let eligible = f.crystal("book", NewCrystal::new("lesson", "Shared unused lesson"));
     let edited = f.crystal(
@@ -274,14 +278,14 @@ fn overlapping_sessions_each_decay_without_masking_real_edits() {
     )
     .unwrap();
     f.run();
-    assert!((f.scores(eligible).0 - 0.46).abs() < 1e-9);
+    assert!((f.scores(eligible).0 - 0.48).abs() < 1e-9);
     assert_eq!(f.scores(edited), (0.5, 0.5));
     assert_eq!(
         f.count("select count(*) from memory_events where event_type='dream_decay_opportunity'"),
-        2
+        1
     );
     f.run();
-    assert!((f.scores(eligible).0 - 0.46).abs() < 1e-9);
+    assert!((f.scores(eligible).0 - 0.48).abs() < 1e-9);
 }
 
 #[test]
@@ -303,10 +307,10 @@ fn advisory_failure_keeps_persistence_history_and_drains_remaining_sessions() {
         f.count(
             "select count(*) from dream_phase_runs where phase='persistence' and status='completed'"
         ),
-        2
+        1
     );
-    assert_eq!(f.count("select count(*) from dream_audit_entries where event_type='phase_failed' and json_extract(payload_json,'$.phase_name')='salience_decay'"),2);
-    assert_eq!(f.count("select count(*) from dream_runs where status='completed' and input_count=1 and created_crystal_count=1"),2);
+    assert_eq!(f.count("select count(*) from dream_audit_entries where event_type='phase_failed' and json_extract(payload_json,'$.phase_name')='salience_decay'"),1);
+    assert_eq!(f.count("select count(*) from dream_runs where status='completed' and input_count=2 and created_crystal_count=2"),1);
 }
 
 #[test]
@@ -376,5 +380,19 @@ fn unavailable_warning_audit_keeps_committed_reconsolidation_history() {
     assert_eq!(
         f.count("select count(*) from short_term_memories where archived_at is not null"),
         2
+    );
+}
+
+#[test]
+fn unknown_first_context_does_not_hide_later_applicable_project_work() {
+    let f = Fixture::new();
+    let eligible = f.crystal("book", NewCrystal::new("lesson", "Shared unused lesson"));
+    f.session(&Fixture::context("book").chapter("Unknown"), 1);
+    f.session(&Fixture::context("book"), 1);
+    f.run();
+    assert!((f.scores(eligible).0 - 0.48).abs() < 1e-9);
+    assert_eq!(
+        f.count("select count(*) from memory_events where event_type='dream_decay_opportunity'"),
+        1
     );
 }

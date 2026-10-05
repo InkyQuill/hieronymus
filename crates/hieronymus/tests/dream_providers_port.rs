@@ -580,9 +580,24 @@ fn provider_pass_sends_openai_payload_and_parses_fenced_output() {
         assert_eq!(payload["response_format"], json!({"type": "json_object"}));
         let prompt = payload["messages"][0]["content"].as_str().unwrap();
         let rendered: Value = serde_json::from_str(prompt).unwrap();
-        assert_eq!(rendered["context"]["chapter"], json!(""));
-        assert_eq!(rendered["context"]["story_viewpoint"], json!("Unspecified"));
-        assert_eq!(rendered["memories"][0]["session_id"], json!(1));
+        assert_eq!(rendered["memories"][0]["context"]["chapter"], json!(""));
+        assert_eq!(
+            rendered["memories"][0]["context"]["story_viewpoint"],
+            json!("Unspecified")
+        );
+        assert!(
+            rendered["memories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m.get("session_id").is_none())
+        );
+        assert_eq!(rendered["memories"][1]["context"]["chapter"], json!("3"));
+        assert_eq!(
+            rendered["memories"][1]["context"]["story_viewpoint"],
+            json!("Narrator")
+        );
+        assert!(rendered["context"].get("chapter").is_none());
         assert_eq!(
             rendered["memories"][0]["context"]["series_slug"],
             json!("book")
@@ -612,8 +627,14 @@ fn provider_pass_sends_openai_payload_and_parses_fenced_output() {
     }));
     let (_root, config) = temp_config();
     create_series(&config, "book");
-    let memories = completed_session(&config, "book", &["The selected memory is important."]);
-    assert_eq!(memories.len(), 1);
+    let mut memories = completed_session(&config, "book", &["The selected memory is important."]);
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let mut later_context = context("book").chapter("3");
+    later_context.story_viewpoint = hieronymus::story_applicability::Viewpoint::Narrator;
+    let later = ws.start_session(&later_context).unwrap();
+    add_memory(&ws, later.id, "note", "The user's later clarification.");
+    memories.extend(ws.list_short_term_memories(later.id).unwrap());
+    assert_eq!(memories.len(), 2);
 
     let provider = LlmDreamProvider::new(
         "local-llm",
@@ -1826,4 +1847,51 @@ fn concept_pass_requests_concepts_facets_and_linked_assertions() {
     assert_eq!(output.concepts.len(), 1);
     assert_eq!(output.facets.len(), 1);
     assert_eq!(output.crystals[0].concept_names, ["Mira"]);
+}
+
+#[test]
+fn merge_preview_uses_selected_records_and_returns_an_editable_draft() {
+    let transport = FakeTransport::new(vec![Ok(HttpResponse {
+        status: 200,
+        body: openai_envelope(r#"{"title":"Names","text":"Alto lives in Verel."}"#),
+    })]);
+    let provider = LlmDreamProvider::new(
+        "preview",
+        openai_profile("https://example.invalid/v1"),
+        "test-model",
+    )
+    .unwrap()
+    .with_transport(transport.clone());
+    let records = json!([{"id":1,"text":"The hero is Alto."},{"id":2,"text":"He lives in Verel."}]);
+    let result = provider.propose_merge(&records).unwrap();
+    assert_eq!(
+        result,
+        json!({"title":"Names","text":"Alto lives in Verel."})
+    );
+    let payloads = transport.payloads.lock().unwrap();
+    let prompt: Value =
+        serde_json::from_str(payloads[0]["messages"][0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(prompt["selected_records"], records);
+}
+
+#[test]
+fn merge_preview_rejects_empty_model_text() {
+    let transport = FakeTransport::new(vec![Ok(HttpResponse {
+        status: 200,
+        body: openai_envelope(r#"{"title":"Names","text":" "}"#),
+    })]);
+    let provider = LlmDreamProvider::new(
+        "preview",
+        openai_profile("https://example.invalid/v1"),
+        "test-model",
+    )
+    .unwrap()
+    .with_transport(transport);
+    assert!(
+        provider
+            .propose_merge(&json!([]))
+            .unwrap_err()
+            .to_string()
+            .contains("text must not be empty")
+    );
 }

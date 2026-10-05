@@ -13,7 +13,7 @@ mod actions;
 mod audit;
 mod views;
 
-pub use actions::{ACTION_NAMES, run_action, validate_action_request};
+pub use actions::{ACTION_NAMES, preview_merge, run_action, validate_action_request};
 pub use views::{VIEW_NAMES, snapshot};
 
 use rusqlite::Connection;

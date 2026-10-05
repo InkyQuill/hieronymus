@@ -83,6 +83,10 @@ pub(crate) fn handle(
             }),
             _ => not_found(),
         },
+        "/api/admin/merge-preview" => match request.method.as_str() {
+            "POST" => guard_api(request, runtime, admin::merge_preview),
+            _ => not_found(),
+        },
         "/api/admin/actions/run_manual_dreaming" => match request.method.as_str() {
             "POST" => guard_api(request, runtime, admin::run_manual_dreaming),
             _ => not_found(),

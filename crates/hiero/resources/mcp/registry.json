@@ -704,7 +704,7 @@
       "name": "hieronymus_crystal_story_scopes_set"
     },
     {
-      "description": "Run dreaming over all pending completed-session memories.",
+      "description": "Run dreaming over pending observations across sessions within each project/language scope.",
       "input_schema": {
         "properties": {
           "provider": {
@@ -1269,7 +1269,7 @@
       "name": "hieronymus_series_set_language_tags"
     },
     {
-      "description": "Complete an agent workflow session so it can be dreamed.",
+      "description": "Complete an agent workflow session. Observations are eligible for dreaming before completion.",
       "input_schema": {
         "properties": {
           "session_id": {

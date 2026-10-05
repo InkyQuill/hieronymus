@@ -35,7 +35,13 @@ to import a whole manuscript.
 In **Memory**, choose a book, search records and inspect source locations or
 processing history. Search covers full record text before pagination. Technical
 details are available by disclosure. Optional duplicate combining is a maintenance
-convenience; automatic consolidation does not require it.
+convenience; automatic consolidation does not require it. Select at least two
+compatible crystals and choose **Combine selected memories**. The knowledge
+model assigned in Dreaming prepares a title and combined text for you to review
+and edit. Confirm only when ready to save: preparation and cancellation leave
+originals untouched. If a selected memory changes, prepare a fresh suggestion.
+Model errors appear in the dialog with a retry action. Concept combining instead
+keeps the first selected concept as the target.
 
 Use **Correct this memory** for an exact statement, or **Correct a rendering**
 for a selected source occurrence. Results distinguish applied, tentative and
@@ -50,7 +56,8 @@ OpenAI-compatible, Gemini, Anthropic and Ollama profiles are supported. These
 providers process memory; they are separate from your writing agent.
 
 In **Dreaming**, assign the workflow models, enable scheduling and adjust pending
-memory thresholds. Dreaming processes completed sessions. A low pending count can
+memory thresholds. Dreaming combines observations across sessions within each
+project/language scope, including active tasks. A low pending count can
 legitimately leave scheduled work waiting; a manual run drains eligible batches,
 including the final small batch. A run with no progress leaves pending work visible.
 

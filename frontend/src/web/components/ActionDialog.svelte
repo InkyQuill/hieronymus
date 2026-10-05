@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { prepareMergePreview } from "../lib/api";
   import type {
     AdminActionBody,
     AdminCommand,
     AdminRow,
     AdminSplitPart,
+    MergePreview,
   } from "../lib/types";
 
   type Props = {
@@ -53,6 +55,11 @@
   let series = $state("");
   let text = $state("");
   let title = $state("");
+  let mergePreview = $state<MergePreview | null>(null);
+  let preparingMerge = $state(false);
+  let mergeError = $state("");
+  let mergeRequest: AbortController | null = null;
+  const modelMerge = $derived(actionId === "merge_selected" && view !== "Concepts");
   // `edit_memory` seeds the title field for display, but for an untitled
   // crystal the seed is an excerpt of the text — so `title` is only sent when
   // its current value differs from the seed (the backend keeps the stored
@@ -83,6 +90,7 @@
         ? document.activeElement
         : null;
     dialog.showModal();
+    if (modelMerge) void prepareMerge();
     await tick();
     dialog
       .querySelector<HTMLElement>(
@@ -91,7 +99,34 @@
       ?.focus();
   });
 
-  onDestroy(() => previouslyFocused?.focus());
+  onDestroy(() => {
+    mergeRequest?.abort();
+    previouslyFocused?.focus();
+  });
+
+  async function prepareMerge() {
+    mergeRequest?.abort();
+    const request = new AbortController();
+    mergeRequest = request;
+    preparingMerge = true;
+    mergeError = "";
+    confirmed = false;
+    try {
+      const proposal = await prepareMergePreview(view, [...targetIds()], request.signal);
+      if (request.signal.aborted) return;
+      mergePreview = proposal;
+      confirmed = false;
+      title = proposal.title;
+      text = proposal.text;
+      preparingMerge = false;
+      await tick();
+      dialog.querySelector<HTMLElement>("#action-title")?.focus();
+    } catch (reason) {
+      if (!request.signal.aborted) mergeError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      if (!request.signal.aborted) preparingMerge = false;
+    }
+  }
 
   function addPart() {
     parts = [...parts, { id: nextPartId++, title: "", text: "" }];
@@ -128,6 +163,7 @@
           text: text.trim(),
           title: title.trim(),
           confirmed: true,
+          ...(mergePreview ? { source_snapshots: mergePreview.source_snapshots } : {}),
         };
       case "split_crystal":
         return {
@@ -151,7 +187,7 @@
   }
 
   function canSubmit(): boolean {
-    if (busy) return false;
+    if (busy || preparingMerge) return false;
     if (isDestructive && !confirmed) return false;
     switch (command.id) {
       case "add_memory":
@@ -159,7 +195,7 @@
       case "edit_memory":
         return text.trim().length > 0;
       case "merge_selected":
-        return text.trim().length > 0 && targetIds().length >= 2;
+        return targetIds().length >= 2 && (!modelMerge || (mergePreview !== null && text.trim().length > 0));
       case "split_crystal":
         return (
           parts.filter((part) => part.text.trim().length > 0).length >= 2
@@ -240,13 +276,19 @@
       ></textarea>
     {:else if command.id === "merge_selected"}
       <p class="text-body-sm text-secondary">
-        Merging {targetIds().length || "the selected"} records into one new memory.
+        {#if modelMerge}Review the suggested memory for {targetIds().length} selected records. You can edit it before combining; the originals change only when you confirm.{:else}Combine {targetIds().length} selected concepts into the first selected concept.{/if}
       </p>
+      {#if modelMerge}
+      {#if preparingMerge}<p role="status" class="text-body-sm text-secondary">Preparing a suggestion with your Dreaming model…</p>{/if}
+      {#if mergeError}<p role="alert" class="border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{mergeError}</p>{/if}
+      {#if mergeError || mergePreview}<button type="button" class="justify-self-start min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-body-sm text-primary hover:bg-raised disabled:opacity-60" disabled={preparingMerge || busy} onclick={() => void prepareMerge()}>{mergeError ? "Try preparing again" : "Prepare another suggestion"}</button>{/if}
+      {#if mergePreview}
       <label class="grid gap-1.5 text-caption text-secondary" for="action-title">Merged title (optional)</label>
       <input
         id="action-title"
         class="min-h-11 rounded-sm border border-strong bg-raised px-3 py-2 text-body text-primary focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40"
         bind:value={title}
+        disabled={preparingMerge || busy}
       />
       <label class="grid gap-1.5 text-caption text-secondary" for="action-text">Merged memory text</label>
       <textarea
@@ -255,7 +297,10 @@
         bind:value={text}
         rows="5"
         required
+        disabled={preparingMerge || busy}
       ></textarea>
+      {/if}
+      {/if}
     {:else if command.id === "split_crystal"}
       <fieldset class="grid gap-4">
         <legend class="text-caption text-secondary">Resulting memories (at least two)</legend>
@@ -306,7 +351,7 @@
 
     {#if isDestructive}
       <label class="flex items-center gap-2.5 text-body-sm text-danger">
-        <input type="checkbox" bind:checked={confirmed} />
+        <input type="checkbox" bind:checked={confirmed} disabled={busy || preparingMerge || (modelMerge && !mergePreview)} />
         Yes, apply this change to the stored memory.
       </label>
     {/if}

@@ -971,7 +971,30 @@ pub(crate) fn hydrate_memory(
     } else {
         None
     };
+    let mut evidence_context = connection.query_row(
+        "select series_slug,source_language,target_language,task_type,volume,chapter,
+                story_timeline_id,story_scene_key,story_viewpoint_json
+         from task_sessions where id=?1",
+        [row.1],
+        |r| {
+            Ok(serde_json::json!({
+                "series_slug": r.get::<_,String>(0)?, "source_language": r.get::<_,String>(1)?,
+                "target_language": r.get::<_,String>(2)?, "task_type": r.get::<_,String>(3)?,
+                "volume": r.get::<_,String>(4)?, "chapter": r.get::<_,String>(5)?,
+                "story_timeline_id": r.get::<_,Option<i64>>(6)?,
+                "story_scene_key": r.get::<_,Option<String>>(7)?,
+                "story_viewpoint": r.get::<_,String>(8)?
+            }))
+        },
+    )?;
+    evidence_context["story_viewpoint"] = serde_json::from_str(
+        evidence_context["story_viewpoint"]
+            .as_str()
+            .unwrap_or("null"),
+    )
+    .map_err(|e| WorkspaceError::Json(e.to_string()))?;
     Ok(ShortTermMemoryRecord {
+        evidence_context,
         source_crystal_id: row.10,
         source_crystal_snapshot,
         claim_annotation: crate::claim_reads::source_annotation(

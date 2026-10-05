@@ -3,7 +3,7 @@
 //! auditable dream cycles with explicit mutation ownership.
 //!
 //! One cycle: OS lock acquisition (one nonblocking `try_lock`, held for the
-//! whole cycle), a durable run row, a bounded selection of completed-session
+//! whole cycle), a durable run row, a bounded selection of pending
 //! short-term memories, the enabled evidence passes each behind its own
 //! freshly resolved [`crate::dream_workflows::WorkflowResolver`] provider
 //! (ADR 0007), one validated mutation batch applied transactionally, and
@@ -24,7 +24,7 @@
 //! transaction. Supersede and reinforce targets are authorized against the
 //! selected context and active-rule protection (ADR 0011) before any store
 //! call; rule-related model output can only ever produce candidates and
-//! proposals. Passive feedback and session-based salience decay are audited domain
+//! proposals. Passive feedback and project-based salience decay are audited domain
 //! operations; the scheduler's interval clock belongs to the daemon's dream
 //! controller (task D5). This module
 //! owns the bounded single cycle, the drain over successive capped batches
@@ -280,7 +280,7 @@ pub fn scheduled_decision(
     ScheduledDecision::NotEnoughMemories
 }
 
-/// Completed-session short-term memories that have not been archived and are
+/// Short-term observations that have not been archived and are
 /// crystallization-eligible (the dreaming input count).
 pub fn pending_short_term_memory_count(config: &HieronymusConfig) -> Result<i64, DreamError> {
     let connection = open_migrated(&config.database_path())?;
@@ -288,8 +288,7 @@ pub fn pending_short_term_memory_count(config: &HieronymusConfig) -> Result<i64,
         "select count(*)
          from short_term_memories
          join task_sessions on task_sessions.id = short_term_memories.session_id
-         where task_sessions.status = 'completed'
-           and short_term_memories.archived_at is null
+         where short_term_memories.archived_at is null
            and short_term_memories.source_crystal_id is null",
         [],
         |row| row.get::<_, i64>(0),
@@ -342,6 +341,13 @@ pub fn resolved_provider_label(config: &HieronymusConfig) -> Result<String, Drea
 /// not erased trait objects.
 pub trait DreamProvider {
     fn name(&self) -> &str;
+
+    /// Propose one merged memory without changing stored records.
+    fn propose_merge(&self, _records: &Value) -> Result<Value, DreamError> {
+        Err(DreamError::Provider(
+            "This provider cannot propose a merged memory".into(),
+        ))
+    }
 
     /// Number of complete records fitting the provider's context window.
     /// Providers without context discovery retain the configured item cap.
@@ -448,6 +454,7 @@ fn canonical_pass_projection(
         },
         "memories": memories.iter().map(|memory| json!({
             "id": memory.id,
+            "context": memory.evidence_context,
             "text": memory.text,
             "source_credibility": memory.source_credibility,
             "rule_intent": memory.rule_intent,
@@ -683,7 +690,7 @@ impl DreamService {
         self.run_locked(owner, true, skip_when_locked)
     }
 
-    /// Drain every pending completed-session memory (`run_all`): successive
+    /// Drain every pending observation (`run_all`): successive
     /// capped batches, each one bounded selection with its own durable run
     /// row, until a batch completes nothing (the backlog is drained, the
     /// minimum is not met, or another cycle holds the lock). Per-cycle caps
@@ -966,9 +973,8 @@ impl DreamService {
 
         // Selection: the bounded affected-memory set. One snapshot feeds
         // every pass, capped by max_short_term_memories_per_run.
-        let mut groups = self.select_pending_completed_groups(
-            self.dream_config.max_short_term_memories_per_run as usize,
-        )?;
+        let (mut groups, observation_order) =
+            self.select_pending_groups(self.dream_config.max_short_term_memories_per_run as usize)?;
         if groups.is_empty() {
             let deterministic = self.run_deterministic_phases(
                 run_id,
@@ -986,6 +992,16 @@ impl DreamService {
                 0,
             );
         }
+        // Rotation is attempt progress, not evidence disposition. Commit it
+        // before provider fitting/calls and independently of persistence.
+        self.audit.append(
+            run_id,
+            None,
+            "selection_attempted",
+            "info",
+            "selected observations for provider processing",
+            &json!({"cursor_memory_id": observation_order[0]}),
+        )?;
         let providers = selected
             .iter()
             .map(|choice| {
@@ -993,14 +1009,17 @@ impl DreamService {
                     .provider_with_config(choice, &self.dream_config)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // One session is the conservative compatibility boundary: even equal
-        // series/languages do not establish equal story time or viewpoint.
-        groups.truncate(1);
         let selection_context = groups[0].context.clone();
         let mut selected_memories: Vec<ShortTermMemoryRecord> = groups
             .iter()
             .flat_map(|group| group.memories.iter().cloned())
             .collect();
+        let positions: HashMap<i64, usize> = observation_order
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (*id, index))
+            .collect();
+        selected_memories.sort_by_key(|memory| positions[&memory.id]);
         for (choice, provider) in selected.iter().zip(&providers) {
             let count = provider.fitting_memory_count(
                 &choice.name,
@@ -1024,10 +1043,9 @@ impl DreamService {
             (selected_memories.len() * 3 / 4).max(1)
         };
         selected_memories.truncate(fresh_count);
-        let mut remaining = selected_memories.len();
+        let selected_ids: HashSet<i64> = selected_memories.iter().map(|m| m.id).collect();
         for group in &mut groups {
-            group.memories.truncate(remaining);
-            remaining -= group.memories.len();
+            group.memories.retain(|m| selected_ids.contains(&m.id));
         }
         groups.retain(|group| !group.memories.is_empty());
         let context_copies = candidates;
@@ -1334,25 +1352,29 @@ impl DreamService {
             || self.links_pending()?)
     }
 
-    /// Port of `_load_pending_completed_groups`: at most `limit` pending
-    /// memories from completed sessions, grouped by session, ordered by
-    /// session then memory id. Session-scoped working copies
+    /// Select one project/language scope across sessions. Rotate by the first
+    /// observation of the last attempted batch so failed or deferred inputs cannot starve
+    /// newer work. Session-scoped working copies
     /// (`source_crystal_id` set) are the reconsolidator's input, never
     /// crystallization input.
-    fn select_pending_completed_groups(
+    fn select_pending_groups(
         &self,
         limit: usize,
-    ) -> Result<Vec<SelectionGroup>, DreamError> {
+    ) -> Result<(Vec<SelectionGroup>, Vec<i64>), DreamError> {
         if limit < 1 {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let mut connection = open_migrated(&self.config.database_path())?;
         let connection = connection.transaction()?;
-        // The last committed persistence audit is a durable round-robin cursor.
-        // Deferred oldest inputs cannot monopolize all future provider runs.
-        let last_session_id: i64 = connection.query_row(
+        // Attempts advance independently of provider success or persistence.
+        // Fall back to older persistence audits for installations with no attempts.
+        let last_memory_id: i64 = connection.query_row(
             "select coalesce((
-               select json_extract(payload_json, '$.request_summary.session_ids[0]')
+               select json_extract(payload_json, '$.cursor_memory_id')
+               from dream_audit_entries where event_type='selection_attempted'
+               order by id desc limit 1
+             ), (
+               select json_extract(payload_json, '$.request_summary.selected_memory_ids[0]')
                from dream_audit_entries
                where event_type='phase_completed'
                  and json_extract(payload_json, '$.phase_name')='persistence'
@@ -1362,31 +1384,28 @@ impl DreamService {
             |row| row.get(0),
         )?;
         let mut statement = connection.prepare(
-            "select task_sessions.id, short_term_memories.id
-             from short_term_memories
-             join task_sessions on task_sessions.id = short_term_memories.session_id
-             where task_sessions.status = 'completed'
-               and short_term_memories.archived_at is null
-               and short_term_memories.source_crystal_id is null
-               and task_sessions.id = (
-                 select s.id from task_sessions s
-                 join short_term_memories m on m.session_id = s.id
-                 where s.status = 'completed' and m.archived_at is null
-                   and m.source_crystal_id is null
-                 order by case when s.id > ?2 then 0 else 1 end, s.id
-                 limit 1
-               )
-             order by task_sessions.id, short_term_memories.id
-             limit ?1",
+            "with seed as (
+               select s.series_slug,s.source_language,s.target_language
+               from short_term_memories m join task_sessions s on s.id=m.session_id
+               where m.archived_at is null and m.source_crystal_id is null
+               order by case when m.id > ?2 then 0 else 1 end, m.id limit 1
+             )
+             select s.id,m.id from short_term_memories m
+             join task_sessions s on s.id=m.session_id join seed
+               on s.series_slug=seed.series_slug and s.source_language=seed.source_language
+                  and s.target_language=seed.target_language
+             where m.archived_at is null and m.source_crystal_id is null
+             order by case when m.id > ?2 then 0 else 1 end, m.id limit ?1",
         )?;
-        let rows = statement
-            .query_map(rusqlite::params![limit as i64, last_session_id], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-            })?;
+        let rows = statement.query_map(rusqlite::params![limit as i64, last_memory_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut observation_order = Vec::new();
         let mut session_order: Vec<i64> = Vec::new();
         let mut by_session: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
         for row in rows {
             let (session_id, memory_id) = row?;
+            observation_order.push(memory_id);
             if !by_session.contains_key(&session_id) {
                 session_order.push(session_id);
             }
@@ -1411,10 +1430,10 @@ impl DreamService {
                 memories,
             });
         }
-        Ok(groups)
+        Ok((groups, observation_order))
     }
 
-    /// Rank only this session's activated working copies against its fresh
+    /// Rank the project's activated working copies against its fresh
     /// observations, with useful activation evidence as a secondary signal.
     fn select_activated_context(
         &self,
@@ -1425,11 +1444,16 @@ impl DreamService {
         let query =
             crate::story_applicability::StoryApplicability::resolve_context(&db, &group.context)
                 .map_err(|e| DreamError::Json(e.to_string()))?;
-        let mut stmt=db.prepare("select m.id, (select count(*) from crystal_activations a where a.session_id=m.session_id and a.crystal_id=m.source_crystal_id and a.outcome='useful') from short_term_memories m join crystals c on c.id=m.source_crystal_id where m.session_id=? and m.archived_at is null and c.status='active' order by m.id desc limit 512")?;
+        let mut stmt=db.prepare("select m.id, (select count(*) from crystal_activations a where a.session_id=m.session_id and a.crystal_id=m.source_crystal_id and a.outcome='useful') from short_term_memories m join crystals c on c.id=m.source_crystal_id join task_sessions s on s.id=m.session_id where s.series_slug=?1 and s.source_language=?2 and s.target_language=?3 and m.archived_at is null and c.status='active' order by m.id desc limit 512")?;
         let rows = stmt
-            .query_map([group.session_id], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-            })?
+            .query_map(
+                rusqlite::params![
+                    group.context.series_slug,
+                    group.context.source_language,
+                    group.context.target_language
+                ],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         let mut candidates = Vec::new();
         for (id, useful) in rows {
@@ -1578,7 +1602,7 @@ impl DreamService {
                     "select exists(
                        select 1 from short_term_memories m
                        join task_sessions s on s.id=m.session_id
-                       where m.id=?1 and m.archived_at is null and s.status='completed'
+                       where m.id=?1 and m.archived_at is null
                      )",
                     [memory.id],
                     |row| row.get(0),
@@ -2412,7 +2436,7 @@ impl DreamService {
     /// co-activated crystals strengthen (or create) their `crystal_links` row
     /// (hebbian rule); near-duplicate pairs combine pairwise. Progress is
     /// durable per pair (task D4): eligible activations are snapshotted into
-    /// one durable batch per session, each budgeted pair commits its
+    /// one durable batch per project/language scope, each budgeted pair commits its
     /// reinforcement, its pair-row terminalization, and its audit entry
     /// atomically, and unprocessed pairs stay queued — so an exhausted
     /// budget or a mid-phase crash resumes on the next cycle instead of
@@ -2632,7 +2656,7 @@ impl DreamService {
             commit_audited(&mut connection, |tx| {
                 tx.execute("insert into dream_phase_runs(dream_run_id,phase,provider_profile,provider_type,model,status,error,created_at,completed_at) values(?1,'salience_decay','deterministic','deterministic','deterministic','failed',?2,?3,?3)", rusqlite::params![run_id,warning,now()])?;
                 let phase_id = tx.last_insert_rowid();
-                DreamAuditStore::append_in_transaction(tx, run_id, Some(phase_id), "phase_failed", "warning", "advisory salience decay rolled back; persisted work retained", &json!({"phase_name":"salience_decay","error":warning,"committed_domain_effects":"none: decay transaction rolled back","retry":"no catch-up; future sessions have independent opportunities"})).map_err(tx_error)?;
+                DreamAuditStore::append_in_transaction(tx, run_id, Some(phase_id), "phase_failed", "warning", "advisory salience decay rolled back; persisted work retained", &json!({"phase_name":"salience_decay","error":warning,"committed_domain_effects":"none: decay transaction rolled back","retry":"no catch-up; future project consolidations have independent opportunities"})).map_err(tx_error)?;
                 tx.execute("update dream_runs set status='completed',input_count=?1,created_crystal_count=?2,proposal_count=?3,error=?4,completed_at=?5 where id=?6",rusqlite::params![input_count,created_crystal_count,proposal_count,warning,now(),run_id])?;
                 Ok(())
             })?;
@@ -2814,6 +2838,7 @@ impl DreamService {
                 .iter()
                 .map(|group| group.memories.len())
                 .sum::<usize>(),
+            "selected_memory_ids": groups.iter().flat_map(|g| g.memories.iter().map(|m|m.id)).collect::<Vec<_>>(),
             "session_ids": groups.iter().map(|group| group.session_id).collect::<Vec<_>>(),
             "context_count": groups.len(),
             "batch_cap": self.dream_config.max_short_term_memories_per_cycle,
