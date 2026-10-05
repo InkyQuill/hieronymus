@@ -1,0 +1,22 @@
+   Compiling typesafe-sdk v0.2.0 (/tmp/hiero-sdk-audit-20261005/codeitlikemiley)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running tests/hiero_audit.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/hiero_audit-0dd981d108b4f4c6)
+
+running 1 test
+test audit_debug_redacts_api_key ... FAILED
+
+failures:
+
+---- audit_debug_redacts_api_key stdout ----
+
+thread 'audit_debug_redacts_api_key' (1089330) panicked at tests/hiero_audit.rs:34:2:
+Debug exposes API key
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    audit_debug_redacts_api_key
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test hiero_audit`

@@ -1,0 +1,1395 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running unittests src/lib.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/decision_model_adapter-c16d85bc3850af71)
+
+running 325 tests
+test client::tests::a_builder_leaves_everything_but_its_two_arguments_at_the_defaults ... ok
+test client::tests::a_provider_name_alone_does_not_displace_an_instance ... ok
+test client::tests::a_call_without_any_model_is_refused_with_upstreams_sentence ... ok
+test client::tests::a_model_name_on_the_call_is_resolved_before_the_instance_of_the_client ... ok
+test client::tests::a_model_name_of_the_client_without_a_provider_is_refused_with_upstreams_sentence ... ok
+test client::tests::debug_of_a_client_names_the_type_of_its_instance_and_none_of_its_fields ... ok
+test client::tests::a_failed_build_takes_out_only_its_own_empty_cell ... ok
+test client::tests::a_failed_build_leaves_no_cell_in_the_map ... ok
+test client::tests::the_future_of_send_is_send ... ok
+test client::tests::debug_of_a_request_prints_the_overrides_and_never_the_state ... ok
+test client::tests::the_instance_of_the_client_is_asked_when_the_call_names_nothing ... ok
+test client::tests::the_setters_reach_the_client ... ok
+test client::tests::the_instance_of_the_call_is_asked_before_anything_else ... ok
+test convert::tests::metrics_tie_choice ... ok
+test convert::tests::values_that_do_not_match_the_questions_are_refused ... ok
+test convert::tests::discrete_values_become_certain_answers ... ok
+test convert::tests::probabilities_become_answers_in_question_order ... ok
+test convert::tests::unnormalized_probabilities_are_reported_as_given_and_scored_as_a_distribution ... ok
+test convert::tests::a_structured_criterion_keeps_its_members_in_order_in_the_legend ... ok
+test decode::tests::a_name_outside_ascii_is_the_name_it_spells ... ok
+test decode::tests::duplicate_members_keep_the_last_value ... ok
+test decode::tests::a_name_written_with_an_escape_is_the_name_it_spells ... ok
+test client::tests::typed_decoding_keeps_text_and_json_criteria_of_a_score ... ok
+test decode::tests::every_problem_is_listed_in_question_order ... ok
+test decode::tests::guard_decode_discrete_noul ... ok
+test decode::tests::guard_decode_answers_root ... ok
+test decode::tests::a_level_is_an_integer_text ... ok
+test decode::tests::output_rejects_extra_fields_and_internal_field_names ... ok
+test decode::tests::guard_decode_discrete_choice ... ok
+test decode::tests::guard_decode_discrete_score ... ok
+test decode::tests::guard_decode_probability ... ok
+test decode::tests::output_validation_preserves_types_bounds_and_allowed_values ... ok
+test decode::tests::the_internals_entry_point_counts_answers_or_names_the_problem ... ok
+test decode::tests::probability_labels_preserve_arbitrary_names ... ok
+test error::tests::an_error_is_one_pointer_and_crosses_threads ... ok
+test decode::tests::question_ids_preserve_arbitrary_names ... ok
+test decode::tests::guard_decode_probability_map ... ok
+test error::tests::an_error_trace_serializes_upstream_two_members ... ok
+test error::tests::debug_prints_the_kind_and_counts_never_the_validation_text ... ok
+test error::tests::display_is_the_sentence_of_each_kind ... ok
+test error::tests::the_kind_and_its_name_match_the_constructor ... ok
+test error::tests::source_is_the_sdk_errors_cause_or_the_recorded_cause ... ok
+test error::tests::the_kind_name_of_a_provider_failure_needs_only_a_reference ... ok
+test error::tests::a_chain_printer_prints_the_sdk_message_once ... ok
+test error::tests::the_trace_is_absent_until_attached ... ok
+test error::tests::a_vendor_failure_renders_by_the_sdk_rules_message_present_body_absent ... ok
+test metrics::tests::choice_confidence_is_not_clamped_below_zero ... ok
+test metrics::tests::first_max_keeps_the_earliest_of_equal_values ... ok
+test metrics::tests::debug_data_takes_the_largest_error_over_every_distribution ... ok
+test metrics::tests::metrics_single_label ... ok
+test metrics::tests::metrics_tie_mode ... ok
+test metrics::tests::metrics_to_bits_mixed ... ok
+test metrics::tests::metrics_to_bits_tenths ... ok
+test metrics::tests::metrics_upstream_confidence ... ok
+test metrics::tests::normalization_rescales_only_when_enabled_and_over_the_tolerance ... ok
+test metrics::tests::one_hot_marks_the_selected_outcome_only ... ok
+test metrics::tests::metrics_upstream_normalization ... ok
+test metrics::tests::sum_adds_the_compensation_only_when_it_is_finite_and_not_zero ... ok
+test metrics::tests::zero_total_rescales_to_uniform ... ok
+test model::tests::a_malformed_question_is_reported_before_too_few_criteria ... ok
+test model::tests::a_choice_or_score_with_one_criterion_gets_upstream_sentence ... ok
+test model::tests::a_repeated_name_keeps_its_first_place_and_its_last_value ... ok
+test model::tests::absent_content_is_written_as_no_additional_instructions ... ok
+test model::tests::debug_of_content_prints_its_shape_and_length ... ok
+test error::tests::a_long_vendor_message_is_cut_at_200_characters ... ok
+test model::tests::built_questions_keep_their_order_labels_and_descriptions ... ok
+test model::tests::invalid_dictionary_questions_are_rejected ... ok
+test model::tests::non_string_content_keeps_member_order_as_compact_text ... ok
+test model::tests::sdk_question_fields_are_revalidated ... ok
+test model::tests::null_members_mean_absent_where_upstream_allows_none ... ok
+test model::tests::outcomes_are_labels_or_level_numbers_in_criteria_order ... ok
+test model::tests::text_that_is_not_a_question_object_is_refused ... ok
+test model::tests::shapes_the_sdk_already_refuses_are_refused_here_too ... ok
+test prompt::tests::correction_prompt_wraps_the_message_in_the_upstream_frame ... ok
+test prompt::tests::extract_json_strips_the_four_information_separators ... ok
+test model::tests::shapes_the_closed_models_refuse_are_invalid_requests ... ok
+test prompt::tests::guard_correction_extra_key ... ok
+test prompt::tests::guard_fence ... ok
+test prompt::tests::prompt_constants_match_upstream ... ok
+test prompt::tests::user_message_escapes_tags_in_a_string_state ... ok
+test prompt::tests::user_message_refuses_a_null_state ... ok
+test prompt::tests::user_message_escapes_tags_in_a_struct_state ... ok
+test prompt::tests::user_message_reports_a_state_that_is_not_json ... ok
+test prompt::tests::user_message_writes_an_overflowing_number_text_as_it_is ... ok
+test prompt::tests::user_message_writes_non_finite_numbers_as_null ... ok
+test prompt::tests::user_message_writes_numbers_as_pydantic ... ok
+test prompt::tests::user_message_writes_numbers_as_pydantic_in_nested_and_f32_values ... ok
+test prompt::tests::user_message_writes_strings_as_pydantic ... ok
+test prompt::tests::user_message_writes_numbers_of_a_json_value_as_pydantic ... ok
+test prompt::tests::guard_correction_wrong_label ... ok
+test prompt::tests::validation_message_escapes_names ... ok
+test prompt::tests::validation_message_cuts_a_long_problem ... ok
+test prompt::tests::with_schema_instruction_appends_the_template ... ok
+test prompt::tests::validation_message_lists_eight_problems_and_counts_the_rest ... ok
+test prompt::tests::validation_message_names_each_problem ... ok
+test provider::anthropic::tests::a_body_that_is_not_an_object_is_not_read_as_a_reply ... ok
+test provider::anthropic::tests::a_base_url_the_shared_rules_refuse_is_refused_without_being_repeated ... ok
+test provider::anthropic::tests::a_callers_own_service_carries_the_request ... ok
+test metrics::tests::metrics_prop_rescale ... ok
+test provider::anthropic::tests::a_key_that_cannot_be_sent_is_refused_without_being_repeated ... ok
+test provider::anthropic::tests::a_prompted_request_has_no_output_config ... ok
+test metrics::tests::metrics_prop_bounds ... ok
+test metrics::tests::metrics_prop_within_tolerance ... ok
+test provider::anthropic::tests::a_builder_left_at_its_defaults_holds_the_shared_limits ... ok
+test provider::anthropic::tests::a_provider_without_a_key_is_not_built ... ok
+test provider::anthropic::tests::a_reply_joins_its_text_blocks_and_reads_the_usage ... ok
+test provider::anthropic::tests::a_provider_left_at_the_default_base_url_sends_to_anthropics_path ... ok
+test provider::anthropic::tests::a_structured_request_puts_the_schema_in_output_config ... ok
+test provider::anthropic::tests::a_stop_reason_is_escaped_and_cut_before_it_is_printed ... ok
+test provider::anthropic::tests::a_failure_status_is_an_api_error_with_the_request_in_the_trace ... ok
+test provider::anthropic::tests::a_token_count_the_vendor_left_out_is_none ... ok
+test provider::anthropic::tests::a_zero_deadline_or_size_limit_is_refused ... ok
+test provider::anthropic::tests::a_zero_output_limit_is_refused ... ok
+test provider::anthropic::tests::an_added_root_is_refused_with_a_callers_own_service ... ok
+test provider::anthropic::tests::an_added_root_that_is_not_a_certificate_is_refused ... ok
+test provider::anthropic::tests::a_cloned_builder_builds_a_provider_with_the_same_settings ... ok
+test provider::anthropic::tests::a_success_body_that_is_not_json_leaves_no_response_in_the_trace ... ok
+test provider::anthropic::tests::a_request_carries_the_key_the_version_and_the_recorded_body ... ok
+test provider::anthropic::tests::system_messages_are_joined_and_the_other_turns_keep_their_order ... ok
+test decode::tests::a_deeply_nested_reply_is_refused_without_recursion ... ok
+test provider::anthropic::tests::anthropic_names_its_endpoint_for_the_retry_line ... ok
+test provider::anthropic::tests::debug_prints_the_model_the_host_and_the_api_only ... ok
+test provider::anthropic::tests::the_base_url_is_the_vendors_when_none_is_given_or_set ... ok
+test provider::anthropic::tests::the_names_are_the_model_and_the_public_type_path ... ok
+test provider::factory::tests::an_unknown_provider_name_is_rejected ... ok
+test provider::anthropic::tests::a_reply_cut_at_the_output_limit_is_not_an_answer ... ok
+test provider::factory::tests::a_failed_build_is_the_providers_own_config_error ... ok
+test provider::anthropic::tests::the_key_and_the_base_url_come_from_the_environment_when_not_given ... ok
+test provider::gemini::tests::a_builder_left_at_its_defaults_holds_the_shared_limits ... ok
+test provider::gemini::tests::a_clone_asks_the_same_model_at_the_same_endpoint ... ok
+test provider::factory::tests::a_gemini_name_builds_a_gemini_provider ... ok
+test provider::gemini::tests::a_failure_status_is_an_api_error_with_the_request_recorded ... ok
+test provider::gemini::tests::a_completed_reply_without_text_is_an_empty_answer ... ok
+test provider::gemini::tests::a_provider_left_at_the_default_base_url_sends_to_the_vendors_path ... ok
+test provider::gemini::tests::a_cloned_builder_builds_a_provider_with_the_same_settings ... ok
+test provider::gemini::tests::a_body_without_a_status_is_not_the_vendor_s_reply ... ok
+test provider::anthropic::tests::a_success_body_that_is_not_a_messages_reply_is_not_an_answer ... ok
+test provider::gemini::tests::a_success_body_that_is_not_json_is_refused_and_not_recorded ... ok
+test provider::gemini::tests::debug_prints_the_model_the_host_and_the_api_only ... ok
+test provider::factory::tests::every_compiled_in_name_builds_its_own_provider ... ok
+test provider::gemini::tests::a_key_variable_that_is_not_utf_8_is_refused_by_name ... ok
+test provider::gemini::tests::a_provider_without_a_key_is_refused ... ok
+test provider::gemini::tests::a_status_the_vendor_chose_is_escaped_and_cut ... ok
+test provider::gemini::tests::request_puts_schema_in_response_format_when_structured ... ok
+test provider::gemini::tests::request_omits_response_format_when_prompted ... ok
+test provider::gemini::tests::request_sends_correction_turns_as_steps ... ok
+test provider::gemini::tests::text_is_empty_without_any ... ok
+test provider::gemini::tests::text_is_the_last_model_output_s_text ... ok
+test provider::gemini::tests::text_parts_are_joined_in_forward_order ... ok
+test provider::gemini::tests::text_that_is_not_a_string_counts_as_empty ... ok
+test provider::gemini::tests::text_walk_skips_other_steps_until_text_is_found ... ok
+test provider::gemini::tests::text_walk_stops_at_a_user_input_step ... ok
+test provider::gemini::tests::text_walk_stops_at_another_step_once_text_is_found ... ok
+test provider::gemini::tests::text_walk_stops_at_the_first_other_item_after_a_text_one ... ok
+test provider::gemini::tests::text_walk_treats_content_that_is_not_a_list_as_another_step ... ok
+test provider::gemini::tests::result_reads_output_text_and_usage ... ok
+test provider::gemini::tests::the_base_url_is_never_read_from_the_environment ... ok
+test provider::gemini::tests::the_builder_refuses_a_base_url_it_cannot_use ... ok
+test provider::gemini::tests::the_builder_refuses_a_key_it_cannot_send ... ok
+test provider::gemini::tests::the_body_s_error_text_stays_out_of_the_refusal ... ok
+test provider::anthropic::tests::every_stop_reason_is_an_answer_or_names_itself ... ok
+test provider::gemini::tests::the_builder_refuses_a_root_that_is_not_a_certificate ... ok
+test provider::gemini::tests::system_messages_are_joined_and_left_out_when_empty ... ok
+test provider::gemini::tests::incomplete_status_is_not_an_answer ... ok
+test provider::gemini::tests::the_builder_refuses_a_zero_limit ... ok
+test provider::http::tests::a_base_url_that_is_relative_or_not_for_the_web_is_refused ... ok
+test provider::http::tests::a_body_that_cannot_be_read_is_a_connection_error ... ok
+test provider::gemini::tests::gemini_names_its_endpoint_for_the_retry_line ... ok
+test provider::http::tests::a_body_that_declares_no_length_is_cut_at_the_limit ... ok
+test provider::http::tests::a_connection_message_is_cut_at_200_characters_without_splitting_an_escape ... ok
+test provider::http::tests::a_connection_message_names_at_most_eight_escaped_links ... ok
+test provider::gemini::tests::omitted_usage_is_not_an_answer ... ok
+test provider::http::tests::a_failure_response_over_the_limit_that_repeats_the_key_in_a_header_is_not_shown ... ok
+test provider::http::tests::a_failure_response_that_repeats_the_key_as_json_writes_it_is_not_shown ... ok
+test provider::gemini::tests::the_provider_names_its_model_and_its_public_path ... ok
+test provider::http::tests::a_chain_too_long_to_search_counts_as_holding_the_key ... ok
+test provider::gemini::tests::the_request_is_one_post_to_the_interactions_path_with_the_key ... ok
+test provider::http::tests::a_failure_response_that_repeats_the_key_as_a_header_name_is_not_shown ... ok
+test provider::http::tests::a_key_a_failure_body_escapes_and_the_sdk_decodes_is_not_shown ... ok
+test provider::http::tests::a_key_escaped_twice_by_a_derived_debug_is_withheld ... ok
+test provider::http::tests::a_key_in_a_member_of_a_failure_body_the_sdk_reads_no_message_from_is_not_shown ... ok
+test provider::http::tests::a_key_is_found_as_a_json_string_holds_it ... ok
+test provider::http::tests::a_key_is_found_as_debug_of_its_bytes_writes_it ... ok
+test provider::http::tests::a_key_is_found_in_the_forms_debug_writes_it_in ... ok
+test provider::http::tests::a_key_that_only_the_alternate_debug_prints_is_withheld ... ok
+test provider::http::tests::a_key_that_only_the_escaped_message_spells_is_withheld ... ok
+test provider::http::tests::a_key_the_sdk_would_cut_out_of_a_failure_message_is_not_shown_in_part ... ok
+test provider::http::tests::a_non_answer_names_the_vendor_and_escapes_and_cuts_the_reason ... ok
+test provider::http::tests::a_failure_response_that_repeats_the_key_in_a_header_is_not_shown ... ok
+test provider::http::tests::a_root_that_is_not_a_certificate_is_a_config_error ... ok
+test provider::http::tests::a_failure_response_that_repeats_the_key_in_its_body_is_not_shown ... ok
+test provider::http::tests::a_success_body_that_is_not_utf8_or_is_empty_is_a_non_answer ... ok
+test provider::http::tests::a_failure_response_with_another_key_keeps_its_body_and_headers ... ok
+test provider::http::tests::a_test_build_does_not_read_the_process_environment ... ok
+test provider::http::tests::a_zero_timeout_is_refused ... ok
+test provider::http::tests::an_empty_key_is_refused ... ok
+test provider::http::tests::an_sdk_error_a_service_raises_is_passed_through ... ok
+test provider::http::tests::http_base_url_with_a_fragment_is_refused ... ok
+test provider::http::tests::http_base_url_with_a_query_is_refused ... ok
+test provider::http::tests::http_base_url_with_userinfo_is_refused ... ok
+test provider::http::tests::a_failure_status_over_the_limit_is_still_an_api_error ... ok
+test provider::http::tests::a_request_carries_the_key_the_headers_and_the_body ... ok
+test provider::http::tests::a_success_body_that_repeats_the_key_is_returned_as_it_arrived ... ok
+test provider::http::tests::http_foreign_error_holding_the_key_is_withheld ... ok
+test provider::http::tests::http_log_uri_has_no_query_and_no_userinfo ... ok
+test provider::http::tests::http_log_uri_leaves_out_a_path_prefix ... ok
+test provider::http::tests::http_connect_refused_is_a_connection_error ... ok
+test provider::http::tests::http_event_holds_method_log_uri_status_and_elapsed ... ok
+test provider::http::tests::http_non_json_success_body_is_a_non_answer ... ok
+test provider::http::tests::http_redirect_is_not_followed ... ok
+test provider::gemini::tests::the_settings_are_checked_before_the_roots_are_loaded ... ok
+test provider::gemini::tests::the_key_is_read_from_the_two_variables_in_the_vendor_s_order ... ok
+test provider::http::tests::http_status_400_is_a_bad_request ... ok
+test provider::http::tests::http_status_401_is_an_authentication_error ... ok
+test provider::http::tests::key_header_illegal_byte ... ok
+test provider::http::tests::key_header_sensitive ... ok
+test provider::http::tests::http_status_403_is_a_permission_error ... ok
+test provider::http::tests::response_cap_default ... ok
+test provider::http::tests::http_status_418_is_another_api_error ... ok
+test provider::http::tests::http_status_429_is_a_rate_limit_error ... ok
+test provider::http::tests::response_cap_zero ... ok
+test provider::http::tests::http_status_500_is_a_server_error ... ok
+test provider::http::tests::the_recorder_keeps_the_fields_of_every_span_and_at_returns_events_only ... ok
+test provider::http::tests::the_request_headers_are_json_the_user_agent_and_the_key ... ok
+test provider::http::tests::response_cap_exact ... ok
+test provider::http::tests::response_cap_plus_one ... ok
+test provider::http::tests::no_event_of_any_target_holds_the_key_or_the_base_urls_path ... ok
+test provider::openai::tests::a_body_over_the_limit_is_refused_by_the_provider ... ok
+test provider::openai::tests::a_chat_content_of_null_is_the_empty_text ... ok
+test provider::openai::tests::a_chat_finish_reason_other_than_stop_or_none_is_not_an_answer ... ok
+test provider::openai::tests::a_chat_reply_gives_its_content_and_its_usage ... ok
+test provider::http::tests::the_transport_speaks_http2_over_tls_to_a_root_that_was_added ... ok
+test provider::http::tests::the_transport_types_and_an_attempt_cross_threads ... ok
+test provider::http::tests::http_deadline_passing_is_a_timeout ... ok
+test provider::openai::tests::a_clone_asks_the_same_model_at_the_same_endpoint ... ok
+test provider::openai::tests::a_json_body_that_is_not_the_vendors_reply_is_not_an_answer ... ok
+test provider::http::tests::a_second_replacement_waits_for_the_first_to_end ... ok
+test provider::http::tests::the_environment_is_read_through_its_replacement ... ok
+test client::tests::the_latency_starts_after_the_state_is_written ... ok
+test provider::openai::tests::a_provider_runs_over_a_service_of_the_callers_own ... ok
+test provider::openai::tests::a_refusal_part_is_not_an_answer_wherever_it_stands ... ok
+test provider::openai::tests::a_provider_reports_its_model_and_its_public_type_path ... ok
+test provider::openai::tests::a_responses_status_is_named_even_when_it_is_unknown_or_absent ... ok
+test provider::openai::tests::a_custom_endpoint_from_the_environment_defaults_to_chat ... ok
+test provider::openai::tests::a_responses_text_is_every_output_text_part_of_every_message_in_order ... ok
+test provider::openai::tests::a_key_given_nowhere_is_a_config_error_that_names_the_variable ... ok
+test provider::openai::tests::a_setting_that_cannot_be_used_is_refused_when_the_provider_is_built ... ok
+test provider::openai::tests::an_unfinished_response_is_not_an_answer ... ok
+test provider::openai::tests::a_token_count_the_vendor_left_out_is_none_and_a_zero_stays_a_zero ... ok
+test provider::openai::tests::a_failure_status_is_an_api_error_with_the_request_in_the_trace ... ok
+test provider::openai::tests::a_loopback_base_url_selects_chat_completions_unless_the_api_is_named ... ok
+test provider::openai::tests::only_the_first_chat_choice_is_read ... ok
+test provider::openai::tests::a_refused_reply_is_in_the_trace_of_a_real_exchange ... ok
+test provider::openai::tests::prompted_mode_sends_no_response_format ... ok
+test provider::openai::tests::a_success_body_that_is_not_json_is_not_an_answer ... ok
+test provider::openai::tests::chat_completions_in_native_mode_sends_the_wrapped_schema ... ok
+test provider::openai::tests::the_api_defaults_to_responses_only_for_openais_own_host ... ok
+test provider::openai::tests::chat_completions_in_prompted_mode_sends_a_null_response_format ... ok
+test provider::openai::tests::neither_the_provider_nor_its_builder_prints_the_key_or_the_base_url ... ok
+test provider::openai::tests::the_native_response_format_wraps_the_schema ... ok
+test provider::openai::tests::the_schema_is_sent_as_the_text_it_was_given_as ... ok
+test provider::openai::tests::a_builder_left_at_its_defaults_holds_the_shared_limits ... ok
+test provider::tests::a_caller_provider_runs_behind_a_trait_object ... ok
+test provider::tests::a_message_serializes_as_role_and_content_and_reads_back ... ok
+test provider::tests::a_non_answer_is_the_inner_error_and_leaves_the_response_unrecorded ... ok
+test provider::tests::a_role_outside_the_three_is_refused ... ok
+test provider::tests::a_schema_keeps_the_text_of_an_object_and_drops_surrounding_space ... ok
+test provider::tests::a_schema_that_is_not_one_json_object_is_an_invalid_request ... ok
+test provider::tests::a_trait_object_reports_the_concrete_type_name_unless_overridden ... ok
+test provider::tests::an_attempt_trace_keeps_text_that_is_not_json_as_a_json_string ... ok
+test provider::tests::an_unknown_provider_name_is_refused_without_repeating_it ... ok
+test provider::tests::debug_of_a_call_and_its_trace_prints_counts_and_kinds ... ok
+test provider::tests::debug_of_a_message_and_a_result_prints_lengths_not_text ... ok
+test provider::tests::debug_of_a_schema_prints_its_length ... ok
+test provider::tests::log_uri_of_a_provider_that_does_not_override_it_is_none ... ok
+test provider::tests::log_uri_of_a_provider_that_overrides_it_is_its_own_uri ... ok
+test provider::tests::messages_and_schema_outlive_the_borrow_of_the_call ... ok
+test provider::tests::provider_names_are_usable_in_a_constant ... ok
+test provider::tests::provider_names_read_and_print_as_upstream_spells_them ... ok
+test provider::tests::results_non_answers_and_schemas_compare_and_clone ... ok
+test provider::tests::the_future_of_a_provider_is_send ... ok
+test provider::tests::the_seam_types_cross_threads ... ok
+test provider::tests::the_unknown_provider_message_lists_every_compiled_in_provider ... ok
+test response::tests::a_recorded_response_without_a_stop_reason_serializes_a_null_finish_reason ... ok
+test response::tests::a_response_serializes_model_usage_answers_and_debug_in_order ... ok
+test response::tests::a_response_trace_serializes_probabilities_before_the_attempts ... ok
+test response::tests::a_result_without_a_recorded_response_falls_back_to_text_and_tokens ... ok
+test response::tests::a_retry_reason_is_a_category_message_pair ... ok
+test response::tests::an_attempt_that_recorded_nothing_and_failed_has_a_null_response ... ok
+test response::tests::an_attempt_with_a_recorded_exchange_carries_api_finish_reason_and_request ... ok
+test response::tests::debug_escapes_and_cuts_the_stop_reason_and_the_stored_one_stays_whole ... ok
+test response::tests::debug_of_a_response_prints_counts_and_never_the_trace_text ... ok
+test response::tests::debug_of_an_attempt_prints_roles_lengths_and_kinds ... ok
+test response::tests::original_probabilities_are_left_out_when_empty ... ok
+test response::tests::retry_categories_work_as_set_members ... ok
+test response::tests::the_response_types_cross_threads ... ok
+test response::tests::usage_accessors_return_what_was_counted ... ok
+test response::tests::usage_serializes_upstream_members_with_latency_in_seconds ... ok
+test retry::tests::a_non_retryable_error_is_not_retried ... ok
+test retry::tests::a_reply_that_is_not_an_answer_ends_the_loop_without_a_retry ... ok
+test retry::tests::reasons_are_appended_after_the_ones_already_recorded ... ok
+test retry::tests::retries_are_exhausted_and_the_reasons_recorded ... ok
+test retry::tests::retries_succeed_after_a_transient_error ... ok
+test retry::tests::the_retry_future_is_send ... ok
+test run::tests::a_total_is_unknown_once_any_count_is ... ok
+test run::tests::the_decode_failure_displays_the_validation_message_and_debugs_a_count ... ok
+test run::tests::the_evaluation_future_is_send ... ok
+test schema::tests::clean_docstring_expands_tabs_and_drops_the_empty_last_lines ... ok
+test schema::tests::defs_sort_as_strings_with_eleven_or_more_maps ... ok
+test schema::tests::descriptions_written_in_place_keep_their_tabs_and_line_ends ... ok
+test schema::tests::empty_names_and_escaped_characters_are_written_as_upstream_writes_them ... ok
+test schema::tests::every_measured_case_is_named_by_a_test ... ok
+test schema::tests::map_descriptions_are_cleaned_as_python_docstrings ... ok
+test schema::tests::non_string_content_is_copied_as_its_compact_json ... ok
+test schema::tests::non_string_content_loses_the_white_space_between_its_tokens_only ... ok
+test schema::tests::probability_labels_preserve_arbitrary_names ... ok
+test schema::tests::properties_named_properties_or_default_keep_their_generated_order ... ok
+test schema::tests::question_ids_preserve_arbitrary_names ... ok
+test provider::openai::tests::responses_in_native_mode_moves_the_system_prompt_into_instructions ... ok
+test provider::openai::tests::responses_in_prompted_mode_keeps_the_system_prompt_in_the_input ... ok
+test provider::openai::tests::the_builder_wins_over_the_environment ... ok
+test provider::openai::tests::openai_names_its_endpoint_for_the_retry_line ... ok
+test provider::openai::tests::the_key_and_the_base_url_are_read_from_the_environment_once_at_build ... ok
+test provider::openai::tests::without_a_base_url_anywhere_the_provider_speaks_responses_to_openai ... ok
+test provider::openai::tests::a_provider_left_at_the_default_base_url_sends_to_openais_paths ... ok
+
+test result: ok. 325 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+     Running tests/cassettes.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/cassettes-9fc77214defebc7e)
+
+running 15 tests
+test cassette_name_set_equals_the_fixture_directory ... ok
+test cassette_name_set_check_names_an_unlisted_file ... ok
+test cassette_reader_refuses_two_interactions ... ok
+test cassette_reader_refuses_string_body ... ok
+test expected_name_set_equals_the_fixture_directory ... ok
+test cassette_reader_refuses_response_header_outside_allowlist ... ok
+test cassette_reader_refuses_filtered_query_parameter ... ok
+test cassette_reader_refuses_unknown_member ... ok
+test expected_name_set_check_names_an_unlisted_file ... ok
+test cassette_reader_refuses_wrong_version ... ok
+test cassette_reader_refuses_filtered_request_header ... ok
+test expected_response_change_names_first_pointer ... ok
+test expected_question_sets_match_the_recordings ... ok
+test expected_response_equals_itself_and_its_wire_form ... ok
+test cassette_reader_reads_all ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/client.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/client-03c31d8e4c3aa6df)
+
+running 27 tests
+test invalid_questions_are_rejected ... ok
+test an_attempt_holds_what_the_provider_recorded ... ok
+test a_state_that_is_null_or_not_json_is_refused_before_any_request ... ok
+test a_fenced_reply_is_read_and_echoed_raw ... ok
+test missing_provider_setting_is_rejected ... ok
+test attempts_are_independent_and_replayable ... ok
+test guard_retry_reason ... ok
+test probabilities_are_rescaled_only_when_normalization_is_on ... ok
+test prompted_mode_adds_schema_instructions_native_does_not ... ok
+test malformed_retry_exhaustion_preserves_debug ... ok
+test malformed_structure_is_retried ... ok
+test ask_decodes_the_answers_into_a_hand_written_question_set ... ok
+test retry_bookkeeping_a_refusal_is_one_call_without_a_reason ... ok
+test retry_bookkeeping_the_default_client_makes_one_call ... ok
+test structured_state_prompt_is_delimited_and_escapes_embedded_tags ... ok
+test the_provider_is_checked_before_the_state_and_the_state_before_the_questions ... ok
+test the_instance_of_a_call_is_asked_in_the_place_of_the_clients ... ok
+test sdk_questions_and_response_serialization ... ok
+test one_event_per_finished_attempt_with_counts_and_kinds_only ... ok
+test retries_of_an_earlier_turn_are_kept_across_a_correction ... ok
+test usage_totals_preserve_unknown_counts_across_corrections ... ok
+test usage_separates_last_attempt_from_cumulative_totals ... ok
+test retries_are_exhausted ... ok
+test retry_bookkeeping_two_failures_then_an_answer ... ok
+test transient_errors_are_retried ... ok
+test the_retry_line_names_the_log_uri_of_the_provider ... ok
+test the_latency_covers_the_request ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/lifecycle.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/lifecycle-5f15dbe200a12e3c)
+
+running 16 tests
+test lifecycle_cache_key_is_resolved_pair_per_client_anthropic ... ok
+test lifecycle_custom_provider_is_supported_anthropic ... ok
+test lifecycle_custom_provider_is_supported_openai ... ok
+test lifecycle_environment_is_read_on_first_use_anthropic ... ok
+test lifecycle_cache_key_is_resolved_pair_per_client_openai ... ok
+test lifecycle_concurrent_first_use_builds_one_anthropic ... ok
+test lifecycle_environment_is_read_on_first_use_openai ... ok
+test lifecycle_concurrent_first_use_builds_one_openai ... ok
+test lifecycle_failed_build_is_not_cached_anthropic ... ok
+test lifecycle_failed_build_is_not_cached_openai ... ok
+test lifecycle_injected_on_the_client_is_borrowed_anthropic ... ok
+test lifecycle_injected_on_the_client_is_borrowed_openai ... ok
+test lifecycle_injected_per_call_is_borrowed_anthropic ... ok
+test lifecycle_injected_per_call_is_borrowed_openai ... ok
+test lifecycle_reuses_owned_provider_anthropic ... ok
+test lifecycle_reuses_owned_provider_openai ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+     Running tests/parity_metrics.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/parity_metrics-6dca153df3a235bf)
+
+running 1 test
+test parity_metrics_expected_responses ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/parity_schema.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/parity_schema-2180df41819b3052)
+
+running 1 test
+test parity_schema_prompted_cassettes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/providers_anthropic.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/providers_anthropic-f96f2bed10a2955b)
+
+running 49 tests
+test base_url_refused_with_a_query ... ok
+test base_url_refused_with_a_fragment ... ok
+test base_url_refused_with_userinfo ... ok
+test cassette_replay_context_probe_discrete_native ... ok
+test cassette_replay_context_probe_probabilities_native ... ok
+test cassette_replay_context_probe_probabilities_prompted ... ok
+test cassette_replay_context_probe_discrete_prompted ... ok
+test cassette_replay_reference_shape_discrete_native ... ok
+test a_failure_body_over_the_size_limit_is_reported_with_a_fixed_text ... ok
+test a_failure_body_that_repeats_the_key_is_not_shown ... ok
+test foreign_service_error_holding_the_headers_shows_no_key ... ok
+test cassette_replay_reference_shape_discrete_prompted ... ok
+test key_echo_in_the_stop_reason ... ok
+test cassette_replay_reference_shape_probabilities_prompted ... ok
+test key_echo_in_an_unread_member_is_returned ... ok
+test cassette_replay_reference_shape_probabilities_native ... ok
+test key_echo_escaped_in_the_stop_reason ... ok
+test key_never_printed_in_the_retry_line_of_a_base_url_that_holds_it ... ok
+test nonanswer_end_turn_native ... ok
+test nonanswer_end_turn_prompted ... ok
+test a_reply_cut_at_the_output_limit_is_not_asked_for_again ... ok
+test nonanswer_max_tokens_native ... ok
+test nonanswer_max_tokens_prompted ... ok
+test nonanswer_model_context_window_exceeded_native ... ok
+test nonanswer_model_context_window_exceeded_prompted ... ok
+test nonanswer_no_stop_reason_native ... ok
+test nonanswer_no_stop_reason_prompted ... ok
+test nonanswer_pause_turn_native ... ok
+test nonanswer_pause_turn_prompted ... ok
+test nonanswer_refusal_native ... ok
+test nonanswer_refusal_prompted ... ok
+test nonanswer_stop_sequence_native ... ok
+test nonanswer_tool_use_native ... ok
+test nonanswer_stop_sequence_prompted ... ok
+test nonanswer_tool_use_prompted ... ok
+test nonanswer_unknown_native ... ok
+test nonanswer_unknown_prompted ... ok
+test prompt_bytes_context_probe_discrete ... ok
+test prompt_bytes_context_probe_probabilities ... ok
+test prompt_bytes_reference_shape_discrete ... ok
+test prompt_bytes_reference_shape_probabilities ... ok
+test redirect_not_followed ... ok
+test retry_budget_of_one_sends_two_requests ... ok
+test retry_budget_of_zero_sends_one_request ... ok
+test user_data_not_printed ... ok
+test key_never_printed_in_an_error_display ... ok
+test key_never_printed_in_an_error_debug ... ok
+test key_never_printed_in_a_trace_or_a_debug_of_what_holds_it ... ok
+test key_never_printed_in_an_event_of_any_target ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/providers_gemini.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/providers_gemini-735acb94a7eb2e5e)
+
+running 34 tests
+test base_url_refused_with_a_query ... ok
+test base_url_refused_with_a_fragment ... ok
+test base_url_refused_with_userinfo ... ok
+test a_failure_body_over_the_limit_is_reported_without_it ... ok
+test a_failure_body_that_repeats_the_key_is_not_shown ... ok
+test cassette_replay_context_probe_probabilities_native ... ok
+test cassette_replay_context_probe_discrete_prompted ... ok
+test cassette_replay_reference_shape_discrete_native ... ok
+test cassette_replay_context_probe_discrete_native ... ok
+test foreign_service_error_holding_the_headers_never_shows_the_key ... ok
+test cassette_replay_context_probe_probabilities_prompted ... ok
+test cassette_replay_reference_shape_discrete_prompted ... ok
+test cassette_replay_reference_shape_probabilities_prompted ... ok
+test cassette_replay_reference_shape_probabilities_native ... ok
+test key_echo_in_an_unread_member_is_returned ... ok
+test gemini_incomplete_response_is_not_an_answer ... ok
+test key_echo_in_the_interaction_status ... ok
+test key_echo_escaped_in_the_status ... ok
+test key_never_printed_by_the_retry_line_when_the_key_is_in_the_path ... ok
+test gemini_transport_preserves_corrections_and_usage ... ok
+test prompt_bytes_context_probe_discrete ... ok
+test prompt_bytes_context_probe_probabilities ... ok
+test prompt_bytes_reference_shape_probabilities ... ok
+test prompt_bytes_reference_shape_discrete ... ok
+test redirect_not_followed_to_another_host ... ok
+test the_gemini_recordings_are_eight_and_four_have_a_reference ... ok
+test retry_budget_of_one_is_two_requests ... ok
+test retry_budget_of_zero_is_one_request ... ok
+test user_data_not_printed_by_debug_display_or_an_event ... ok
+test key_never_printed_by_an_error_s_display ... ok
+test key_never_printed_by_debug ... ok
+test key_never_printed_in_the_events ... ok
+test key_never_printed_in_the_trace ... ok
+test gemini_transport_errors_obey_the_budget ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/providers_openai.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/providers_openai-1d251175a32f40f7)
+
+running 89 tests
+test base_url_refused_with_a_query ... ok
+test base_url_refused_with_a_fragment ... ok
+test base_url_refused_with_userinfo ... ok
+test a_failure_body_over_the_size_limit_is_reported_by_a_fixed_text ... ok
+test cassette_replay_context_probe_probabilities_prompted ... ok
+test cassette_replay_context_probe_discrete_native ... ok
+test cassette_replay_context_probe_discrete_prompted ... ok
+test cassette_replay_reference_shape_discrete_prompted ... ok
+test cassette_replay_context_probe_probabilities_native ... ok
+test cassette_replay_reference_shape_discrete_native ... ok
+test cassette_replay_reference_shape_probabilities_native ... ok
+test foreign_service_error_holding_the_headers_shows_no_key ... ok
+test cassette_replay_reference_shape_probabilities_prompted ... ok
+test concurrent_attempts_are_isolated_when_the_first_completes ... ok
+test chat_request_shape_native ... ok
+test a_failure_body_that_repeats_the_key_is_not_shown ... ok
+test concurrent_attempts_are_isolated_when_the_first_failed ... ok
+test chat_request_shape_prompted ... ok
+test concurrent_attempts_are_isolated_when_the_first_is_incomplete ... ok
+test key_echo_cut_and_escaped_in_the_status ... ok
+test key_echo_cut_in_the_incomplete_reason ... ok
+test key_echo_escaped_in_the_incomplete_reason ... ok
+test key_echo_in_the_response_status ... ok
+test key_echo_in_the_chat_finish_reason ... ok
+test nonanswer_chat_finish_reason_content_filter_native ... ok
+test key_echo_in_an_unread_member_is_returned ... ok
+test nonanswer_chat_finish_reason_content_filter_prompted ... ok
+test key_never_printed_in_the_retry_line_for_a_key_in_the_base_url ... ok
+test nonanswer_chat_finish_reason_function_call_native ... ok
+test nonanswer_chat_finish_reason_function_call_prompted ... ok
+test nonanswer_chat_finish_reason_length_native ... ok
+test nonanswer_chat_finish_reason_length_prompted ... ok
+test nonanswer_chat_finish_reason_stop_native ... ok
+test nonanswer_chat_finish_reason_stop_prompted ... ok
+test nonanswer_chat_finish_reason_none_native ... ok
+test nonanswer_chat_finish_reason_none_prompted ... ok
+test nonanswer_chat_finish_reason_tool_calls_native ... ok
+test nonanswer_chat_finish_reason_tool_calls_prompted ... ok
+test nonanswer_chat_finish_reason_unknown_native ... ok
+test nonanswer_chat_finish_reason_unknown_prompted ... ok
+test nonanswer_responses_refusal_after_valid_text_native ... ok
+test nonanswer_responses_refusal_after_valid_text_prompted ... ok
+test nonanswer_responses_refusal_alone_native ... ok
+test nonanswer_responses_refusal_alone_prompted ... ok
+test prompt_bytes_context_probe_discrete ... ok
+test prompt_bytes_context_probe_probabilities ... ok
+test prompt_bytes_reference_shape_discrete ... ok
+test prompt_bytes_reference_shape_probabilities ... ok
+test redirect_not_followed_and_reported_as_an_api_error ... ok
+test retry_budget_of_one_sends_two_requests ... ok
+test retry_budget_of_zero_sends_one_request ... ok
+test usage_case_missing_input_chat_native ... ok
+test usage_case_missing_input_chat_prompted ... ok
+test usage_case_missing_input_responses_native ... ok
+test usage_case_missing_input_responses_prompted ... ok
+test key_never_printed_in_an_error_display ... ok
+test key_never_printed_in_a_serialized_trace ... ok
+test usage_case_missing_output_chat_native ... ok
+test key_never_printed_in_an_error_debug_or_any_other_debug ... ok
+test usage_case_missing_output_chat_prompted ... ok
+test usage_case_missing_output_responses_prompted ... ok
+test usage_case_null_chat_native ... ok
+test usage_case_missing_output_responses_native ... ok
+test usage_case_null_chat_prompted ... ok
+test usage_case_null_input_chat_native ... ok
+test usage_case_null_input_chat_prompted ... ok
+test openai_transport_preserves_corrections_and_usage ... ok
+test usage_case_null_input_responses_native ... ok
+test usage_case_null_input_responses_prompted ... ok
+test usage_case_null_output_chat_native ... ok
+test usage_case_null_output_chat_prompted ... ok
+test usage_case_null_output_responses_native ... ok
+test usage_case_null_output_responses_prompted ... ok
+test usage_case_null_responses_native ... ok
+test key_never_printed_in_the_events_of_any_target ... ok
+test usage_case_null_responses_prompted ... ok
+test usage_case_omitted_chat_native ... ok
+test usage_case_omitted_chat_prompted ... ok
+test usage_case_omitted_responses_native ... ok
+test usage_case_omitted_responses_prompted ... ok
+test usage_case_present_chat_native ... ok
+test usage_case_present_chat_prompted ... ok
+test usage_case_present_responses_native ... ok
+test usage_case_present_responses_prompted ... ok
+test usage_case_zero_chat_prompted ... ok
+test usage_case_zero_responses_native ... ok
+test usage_case_zero_chat_native ... ok
+test usage_case_zero_responses_prompted ... ok
+test user_data_not_printed_by_an_error_a_response_or_an_event ... ok
+
+test result: ok. 89 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/typed.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/typed-4dc0d14dfa2f983e)
+
+running 2 tests
+test typed_round_trip_discrete ... ok
+test typed_round_trip_probabilities ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/decision_model_sdk-d6292c4cee5d265c)
+
+running 429 tests
+test client::tests::a_builder_does_not_print_a_base_url_that_failed_its_checks ... ok
+test client::tests::a_builder_prints_its_user_agent_product_escaped_and_a_runtime_header_switched_off ... ok
+test client::tests::a_builder_prints_what_was_set_and_nothing_secret ... ok
+test client::tests::a_default_header_that_cannot_be_sent_is_refused_without_its_value ... ok
+test client::tests::a_user_agent_product_that_is_not_a_token_fails_either_way_of_building ... ok
+test client::tests::a_zero_connect_timeout_is_refused ... ok
+test client::tests::client_builder_new_is_client_builder ... ok
+test client::tests::log_endpoint_host_false_prints_the_api_path_alone_over_a_custom_service ... ok
+test codec::backend::tests::a_display_that_fails_panics_as_it_does_in_the_engine_itself ... ok
+test codec::backend::tests::a_raw_value_in_a_newtype_a_tuple_struct_or_a_split_map_entry_is_written_as_serde_json_writes_it ... ok
+test codec::backend::tests::a_raw_value_map_key_is_refused_by_both_engines ... ok
+test codec::backend::tests::a_raw_value_nested_anywhere_is_written_as_serde_json_writes_it ... ok
+test codec::backend::tests::a_raw_value_number_keeps_its_spelling_with_either_number_mode ... ok
+test codec::backend::tests::a_raw_value_of_every_kind_is_written_as_serde_json_writes_it ... ok
+test codec::backend::tests::a_sonic_lazy_value_is_raw_with_sonic_and_an_object_by_default ... ok
+test codec::backend::tests::a_struct_that_only_resembles_the_raw_value_protocol_is_an_ordinary_object ... ok
+test codec::backend::tests::a_value_without_a_raw_value_is_written_as_the_engine_itself_writes_it ... ok
+test client::tests::a_clone_shares_one_client ... ok
+test client::tests::a_client_prints_its_settings_and_transport_and_nothing_secret ... ok
+test codec::tests::a_data_error_without_a_path_says_so_rather_than_printing_an_empty_one ... ok
+test codec::backend::tests::spacing_outside_the_value_is_dropped_when_the_raw_value_is_built ... ok
+test codec::tests::a_deserializer_that_ignores_the_request_still_yields_the_value ... ok
+test codec::tests::a_decode_error_never_carries_the_input ... ok
+test client::tests::a_later_default_header_of_a_name_replaces_an_earlier_one ... ok
+test codec::tests::a_document_that_is_utf8_decodes ... ok
+test codec::tests::a_document_too_deep_to_render_is_refused_by_the_other_codec_path ... ok
+test codec::tests::a_failure_in_the_other_codec_is_reported_and_carries_no_input ... ok
+test codec::tests::a_hundred_thousand_levels_are_rejected_before_the_parser_sees_them ... ok
+test client::tests::a_custom_transport_refuses_the_settings_only_the_default_one_has ... ok
+test codec::tests::a_literal_negative_zero_loses_its_sign_with_sonic ... ok
+test codec::tests::a_key_spelling_an_escape_renders_apart_from_a_key_holding_the_character ... ok
+test codec::tests::a_negative_zero_on_the_transcode_path_is_written_as_the_backend_reads_it ... ok
+test codec::tests::a_key_the_document_chose_is_kept_in_the_path ... ok
+test codec::tests::a_non_finite_float_encodes_as_null_exactly_as_the_reference_codec_does ... ok
+test codec::tests::a_number_token_map_is_read_as_its_number ... ok
+test codec::tests::a_panicking_closure_does_not_poison_later_calls ... ok
+test codec::tests::a_padded_document_is_verbatim_inside_the_sdk_and_re_rendered_through_another_codec ... ok
+test codec::tests::a_path_of_many_long_keys_is_cut_at_the_path_cap ... ok
+test codec::tests::a_raw_value_round_trips_through_another_codec_with_the_same_data ... ok
+test codec::tests::a_raw_capture_past_the_depth_cap_is_refused ... ok
+test codec::tests::a_repeated_body_reuses_the_retained_scratch ... ok
+test client::tests::settings_the_builder_leaves_unset_come_from_the_environment ... ok
+test codec::tests::a_seed_carries_its_state_into_the_decode_and_into_the_failure_pass ... ok
+test codec::tests::a_seeded_decode_accepts_and_refuses_exactly_what_decode_does ... ok
+test codec::tests::a_success_body_with_a_legend_object_that_is_not_utf8_is_a_validation_error ... ok
+test codec::tests::a_syntax_error_keeps_its_position ... ok
+test codec::tests::a_value_too_deep_to_transcode_is_refused_rather_than_aborting ... ok
+test codec::tests::a_wrapper_around_this_codec_forwards_the_splice ... ok
+test codec::tests::an_encode_error_is_a_key_the_writer_cannot_spell_or_a_value_that_refuses ... ok
+test codec::tests::an_error_body_that_is_not_utf8_becomes_its_own_lossy_message ... ok
+test codec::tests::an_ordinary_path_renders_exactly_as_serde_path_to_error_prints_it ... ok
+test codec::backend::tests::any_document_spliced_in_raw_is_written_as_serde_json_writes_it ... ok
+test codec::tests::an_unterminated_string_cannot_hide_a_bracket_run ... ok
+test codec::tests::another_codec_gets_json_data_and_never_the_splice_token ... ok
+test codec::tests::awkward_characters_encode_to_text_another_codec_reads_back ... ok
+test codec::tests::brackets_and_escapes_inside_strings_do_not_count_as_nesting ... ok
+test codec::tests::bytes_after_the_value_are_a_syntax_error_at_the_byte_that_follows_it ... ok
+test codec::tests::bytes_that_are_not_utf8_are_a_syntax_error_at_the_first_of_them ... ok
+test codec::tests::control_and_format_characters_in_a_key_are_escaped ... ok
+test codec::tests::debug_escapes_text_hiding_characters_that_display_keeps ... ok
+test codec::tests::depth_at_the_limit_is_accepted_and_one_more_is_not ... ok
+test codec::tests::encode_body_returns_exactly_the_bytes_the_closure_wrote ... ok
+test codec::tests::encode_body_survives_a_nested_call ... ok
+test codec::tests::encode_into_appends_instead_of_clearing ... ok
+test codec::tests::encode_writes_the_bytes_the_other_engine_writes ... ok
+test codec::tests::a_long_key_is_cut_at_the_segment_cap_without_splitting_a_character ... ok
+test codec::tests::map_keys_the_doc_lists_encode ... ok
+test codec::tests::numbers_keep_their_value_across_the_transcode ... ok
+test codec::tests::raw_json_applies_the_depth_limit_when_it_is_read_back ... ok
+test codec::tests::raw_json_keeps_the_text_it_was_given ... ok
+test codec::tests::raw_json_reads_back_through_from_reader_from_value_and_a_token_keyed_map ... ok
+test codec::tests::raw_json_round_trips_through_a_value ... ok
+test codec::tests::text_that_is_not_one_json_value_never_becomes_raw_json ... ok
+test codec::tests::the_backend_is_the_one_the_sonic_feature_names ... ok
+test codec::tests::the_check_leaves_the_borrow_on_the_sdk_decode_path ... ok
+test codec::tests::the_same_value_splices_verbatim_through_this_codec ... ok
+test codec::tests::the_skip_path_holds_at_the_depth_limit_on_a_worker_stack ... ok
+test codec::tests::the_utf8_check_comes_before_the_depth_check ... ok
+test config::tests::a_base_url_of_slashes_only_is_not_a_url ... ok
+test config::tests::a_deadline_or_no_deadline_is_kept_as_set ... ok
+test config::tests::a_key_of_printable_ascii_is_sent_byte_for_byte ... ok
+test config::tests::a_key_outside_printable_ascii_is_refused_without_repeating_it ... ok
+test config::tests::a_missing_or_blank_base_url_is_a_config_error_naming_the_method_and_the_variable ... ok
+test config::tests::a_missing_or_blank_environment_key_is_the_upstream_error ... ok
+test config::tests::a_padded_key_is_trimmed_as_python_strips_it_from_either_source ... ok
+test config::tests::a_padded_non_blank_explicit_model_is_kept_byte_for_byte ... ok
+test config::tests::a_product_token_goes_in_front_of_the_sdk_identifier ... ok
+test config::tests::a_user_agent_product_that_is_not_a_product_token_is_a_config_error_naming_the_rule ... ok
+test config::tests::a_variable_that_is_not_utf8_is_a_config_error_naming_the_variable ... ok
+test config::tests::a_zero_timeout_is_the_upstream_error_and_any_positive_one_is_kept ... ok
+test config::tests::an_explicit_blank_default_model_is_a_config_error_even_with_one_in_the_environment ... ok
+test config::tests::an_explicit_blank_key_is_the_missing_key_error_and_the_environment_is_not_read ... ok
+test config::tests::an_invalid_explicit_key_does_not_fall_back_to_the_environment ... ok
+test config::tests::an_unsendable_environment_key_is_refused_without_repeating_it ... ok
+test config::tests::an_unusable_base_url_is_a_config_error_that_does_not_repeat_it ... ok
+test config::tests::an_unusable_environment_base_url_fails_the_same_way ... ok
+test config::tests::blank_environment_values_count_as_unset_and_the_log_level_is_never_read ... ok
+test config::tests::debug_prints_neither_the_key_nor_any_default_header_value ... ok
+test config::tests::debug_prints_the_user_agent_and_the_runtime_switch_only_when_they_are_not_the_default ... ok
+test config::tests::default_headers_are_kept_as_given_including_repeated_names ... ok
+test config::tests::defaults_apply_when_neither_the_caller_nor_the_environment_sets_anything ... ok
+test config::tests::each_setting_comes_from_the_caller_then_the_environment_then_the_default ... ok
+test config::tests::endpoints_join_the_api_paths_onto_any_usable_base_url ... ok
+test config::tests::environment_values_are_trimmed_as_python_trims_them ... ok
+test config::tests::explicit_settings_are_used_without_consulting_the_environment ... ok
+test config::tests::the_authorization_value_is_flagged_sensitive ... ok
+test config::tests::the_response_limit_is_the_default_or_what_the_caller_set_and_never_zero ... ok
+test config::tests::the_variables_of_the_earlier_name_are_ignored ... ok
+test config::tests::trailing_slashes_are_stripped_and_a_path_prefix_is_kept ... ok
+test config::tests::without_a_product_the_user_agent_is_the_sdk_identifier_and_the_runtime_header_is_sent ... ok
+test constants::tests::api_paths_are_rooted_and_carry_no_trailing_slash ... ok
+test constants::tests::defaults_match_the_python_sdk_and_the_documented_cap ... ok
+test constants::tests::environment_variable_names_carry_the_decision_model_prefix ... ok
+test constants::tests::header_names_are_the_python_sdk_names_lower_cased ... ok
+test constants::tests::runtime_identifier_names_rust_and_the_compiled_target ... ok
+test constants::tests::sdk_identifier_names_this_port_and_its_version ... ok
+test content::tests::a_converted_string_round_trips_through_both_codecs ... ok
+test content::tests::a_raw_value_is_spliced_in_rather_than_re_rendered ... ok
+test content::tests::a_serde_json_raw_value_becomes_the_content_it_holds_with_either_backend ... ok
+test content::tests::a_string_decodes_as_text_and_borrows_the_input ... ok
+test content::tests::a_struct_of_content_fields_carries_the_same_data_through_both_codecs ... ok
+test content::tests::a_structured_value_becomes_raw_json ... ok
+test content::tests::a_value_that_encodes_to_a_string_is_text ... ok
+test content::tests::an_escaped_string_decodes_to_its_value ... ok
+test content::tests::an_object_and_an_array_keep_their_text ... ok
+test content::tests::borrowed_text_can_be_detached_from_its_input ... ok
+test content::tests::content_stays_small ... ok
+test content::tests::every_shape_re_encodes_to_what_it_came_from ... ok
+test content::tests::every_shape_round_trips_through_another_codec ... ok
+test content::tests::numbers_booleans_and_null_are_refused ... ok
+test content::tests::text_converts_into_the_text_shape_and_keeps_its_borrow ... ok
+test content::tests::text_is_escaped_on_the_way_out ... ok
+test content::tests::text_that_is_not_one_json_value_never_becomes_content ... ok
+test de::tests::a_body_that_is_not_an_object_fails_at_the_root ... ok
+test codec::tests::encoded_strings_reparse_identically ... ok
+test codec::tests::an_outlier_body_stops_pinning_the_scratch ... ok
+test de::tests::a_failure_without_an_endpoint_leaves_it_out ... ok
+test de::tests::a_body_that_is_not_json_or_too_deep_fails_without_a_path ... ok
+test de::tests::a_future_answer_type_is_skipped_rather_than_raised ... ok
+test de::tests::a_float_answer_and_a_score_decode_under_arbitrary_precision ... ok
+test de::tests::a_future_type_named_first_is_skipped_whatever_its_members_look_like ... ok
+test de::tests::a_level_list_takes_the_hinted_capacity_only_once_it_has_an_entry ... ok
+test de::tests::a_future_type_may_reuse_a_member_name_with_another_shape_before_naming_itself ... ok
+test de::tests::a_level_named_twice_keeps_both_in_the_order_received ... ok
+test de::tests::a_missing_noul_fails_at_its_full_path ... ok
+test de::tests::a_held_member_of_the_wrong_shape_fails_at_its_answer ... ok
+test de::tests::a_malformed_response_fails_where_the_python_sdk_says_it_does ... ok
+test de::tests::a_repeated_member_keeps_its_last_value ... ok
+test de::tests::a_question_count_larger_than_the_body_can_answer_reserves_nothing_more ... ok
+test de::tests::a_repeated_question_name_keeps_both_answers_and_finds_the_first ... ok
+test de::tests::a_response_without_answers_is_empty_for_a_map_and_missing_answers_for_a_struct ... ok
+test de::tests::a_score_level_given_as_a_number_is_read_as_one ... ok
+test de::tests::a_repeated_question_gives_the_first_answer_to_both_kinds_of_answer_set ... ok
+test de::tests::a_shuffled_document_yields_the_same_answers_by_name ... ok
+test de::tests::a_score_level_that_is_not_a_non_negative_integer_fails_at_its_key ... ok
+test de::tests::a_standalone_answer_of_the_wrong_or_an_unknown_type_is_an_error ... ok
+test de::tests::a_struct_answer_set_decodes_each_answer_into_its_field ... ok
+test de::tests::a_struct_answer_set_keeps_the_answer_set_contract ... ok
+test de::tests::a_structured_legend_description_is_kept_as_the_json_it_arrived_as ... ok
+test de::tests::a_struct_answer_set_reports_a_missing_or_mistyped_answer_by_name ... ok
+test de::tests::a_typed_answer_that_names_two_types_is_refused_and_one_named_twice_is_not ... ok
+test de::tests::an_answer_may_name_its_type_after_the_members_it_governs ... ok
+test de::tests::an_answer_of_an_unknown_type_is_dropped_and_stays_in_the_raw_body ... ok
+test de::tests::an_answer_that_names_the_same_type_twice_is_read_as_that_type ... ok
+test de::tests::an_answer_without_a_usable_type_fails_at_its_type ... ok
+test de::tests::an_empty_answer_object_and_empty_usage_decode ... ok
+test de::tests::an_answer_that_names_two_different_types_is_refused_at_its_type ... ok
+test de::tests::each_answer_type_reads_its_own_object_through_any_codec ... ok
+test de::tests::foreign_size_hint::a_declared_length_reserves_no_more_than_the_small_caps ... ok
+test de::tests::foreign_size_hint::a_declared_length_with_a_bad_entry_is_an_error_not_a_panic ... ok
+test de::tests::legend_levels_and_choice_options_go_through_the_same_rendering ... ok
+test de::tests::members_held_before_the_type_decode_as_that_type ... ok
+test de::tests::members_that_belong_to_another_kind_are_ignored ... ok
+test de::tests::members_this_version_does_not_know_are_ignored ... ok
+test de::tests::model_and_usage_are_required_and_answers_are_not ... ok
+test de::tests::score_levels_are_integers_sorted_whatever_the_wire_order ... ok
+test de::tests::foreign_size_hint::a_declared_length_does_not_size_a_choice_or_a_score_read_through_the_public_impls ... ok
+test de::tests::the_expectations_name_what_was_wanted ... ok
+test de::tests::the_answer_storage_is_sized_from_the_question_count ... ok
+test de::tests::the_level_hint_is_bounded_where_it_enters ... ok
+test de::tests::the_question_count_reaches_the_answer_set_as_an_argument_of_its_own_decode ... ok
+test de::tests::the_expected_answer_count_never_changes_the_result ... ok
+test de::tests::the_question_count_reaches_the_failure_pass_too ... ok
+test de::tests::a_question_name_the_server_chose_is_echoed_but_made_safe_to_print ... ok
+test de::tests::the_result_fixture_decodes_to_one_answer_of_each_kind ... ok
+test de::tests::warning::a_skipped_answer_cannot_forge_or_disfigure_the_log_line_it_is_warned_on ... ok
+test de::tests::warning::a_skipped_answer_is_warned_about_by_question_and_type_and_nothing_else ... ok
+test error::tests::a_body_nested_deeper_than_the_codec_reads_is_never_parsed ... ok
+test codec::tests::a_scratch_under_the_ceiling_is_kept ... ok
+test error::tests::a_body_that_is_not_json_is_reported_as_the_text_it_is ... ok
+test error::tests::a_body_is_compacted_but_not_re_encoded_when_it_becomes_the_message ... ok
+test error::tests::a_caller_supplied_message_replaces_the_one_in_the_body ... ok
+test error::tests::a_failure_renders_as_the_endpoint_the_status_the_message_and_the_request_id ... ok
+test error::tests::a_body_the_rules_do_not_recognize_becomes_the_message_itself ... ok
+test error::tests::a_json_string_body_is_its_own_message_and_an_empty_one_leaves_the_status_alone ... ok
+test error::tests::a_long_body_used_as_its_own_message_is_cut_and_marked ... ok
+test error::tests::a_member_of_the_wrong_type_is_skipped_rather_than_taken ... ok
+test error::tests::a_response_too_large_names_its_limit_and_has_no_cause ... ok
+test error::tests::a_response_that_does_not_fit_names_the_field_and_keeps_the_body ... ok
+test error::tests::a_wait_is_truncated_to_whole_milliseconds_and_saturates_rather_than_wrapping ... ok
+test error::tests::an_endpoint_drops_the_credentials_the_query_and_the_default_port ... ok
+test error::tests::each_kind_renders_and_chains_the_way_its_caller_will_read_it ... ok
+test de::tests::where_a_typed_field_reports_a_wrong_kind_depends_on_what_comes_first ... ok
+test error::tests::a_detail_list_joins_its_entries_and_drops_the_body_segment ... ok
+test error::tests::every_status_lands_in_the_class_the_python_sdk_puts_it_in ... ok
+test error::tests::is_authentication_holds_for_401_and_for_an_authentication_error_type_at_any_status ... ok
+test error::tests::nothing_that_could_be_a_secret_reaches_a_debug_rendering ... ok
+test error::tests::retry_after_is_read_for_any_status_that_carries_it ... ok
+test error::tests::retry_after_reads_an_http_date_against_the_instant_it_is_given ... ok
+test error::tests::every_message_read_from_a_body_is_escaped_wherever_it_came_from ... ok
+test error::tests::seam_connection ... ok
+test error::tests::retry_after_reproduces_every_case_the_python_sdk_pins ... ok
+test error::tests::seam_connection_debug ... ok
+test error::tests::seam_response_too_large ... ok
+test error::tests::seam_timeout ... ok
+test error::tests::summary_is_one_fixed_sentence_per_kind_and_never_the_message ... ok
+test error::tests::seam_from_response ... ok
+test error::tests::the_body_is_reachable_as_bytes_as_text_and_as_json ... ok
+test error::tests::the_live_403_body_says_which_failure_it_is ... ok
+test error::tests::the_error_type_is_read_raw_and_shown_escaped_and_cut ... ok
+test error::tests::vendor_error_body_anthropic ... ok
+test error::tests::the_message_is_read_from_the_first_place_that_holds_a_string ... ok
+test error::tests::vendor_error_body_gemini ... ok
+test error::tests::vendor_error_body_openai ... ok
+test error::tests::vendor_error_body_retry_after ... ok
+test models::tests::a_missing_member_of_a_later_card_is_named_with_its_index ... ok
+test error::tests::the_request_id_is_escaped_and_cut_where_it_is_shown_and_raw_where_it_is_read ... ok
+test models::tests::a_models_response_decodes_to_its_cards ... ok
+test models::tests::members_a_card_does_not_model_are_dropped_but_stay_in_the_raw_body ... ok
+test models::tests::a_models_body_of_the_wrong_shape_is_a_validation_error_at_the_offending_field ... ok
+test models::tests::serializing_a_models_response_writes_the_payload_and_not_the_http_metadata ... ok
+test models::tests::the_readers_say_what_they_expected ... ok
+test name::tests::a_name_holds_the_text_it_was_made_from_whatever_it_was_made_from ... ok
+test name::tests::a_name_decodes_from_a_json_string_escaped_or_not ... ok
+test name::tests::a_name_prints_and_serializes_as_the_string_it_replaced ... ok
+test question::tests::a_compiled_set_equals_the_prepared_one ... ok
+test question::tests::a_null_inside_content_survives ... ok
+test question::tests::a_prepared_set_is_shared_not_copied ... ok
+test question::tests::a_prepared_set_knows_its_names_in_order ... ok
+test question::tests::a_raw_field_that_cannot_be_encoded_is_reported_by_prepare ... ok
+test question::tests::a_raw_question_keeps_an_explicit_null ... ok
+test question::tests::a_raw_question_needs_a_nonempty_string_type_and_criteria_where_upstream_does ... ok
+test question::tests::a_repeated_name_replaces_in_place ... ok
+test question::tests::a_score_without_levels_is_rejected_typed_or_raw ... ok
+test question::tests::an_empty_set_is_rejected ... ok
+test name::tests::a_value_that_is_not_a_string_is_refused_as_a_string_refuses_it ... ok
+test question::tests::an_escaped_type_is_read_as_the_string_it_spells ... ok
+test question::tests::array_content_is_accepted_everywhere_content_is ... ok
+test question::tests::builders_take_any_iterator ... ok
+test question::tests::compiled_sets_compare_their_name_boundaries ... ok
+test question::tests::debug_shows_the_content ... ok
+test question::tests::each_builder_writes_its_own_type_tag ... ok
+test question::tests::from_static_refuses_a_layout_that_does_not_hold ... ok
+test question::tests::names_and_text_are_escaped_on_the_wire_and_not_in_names ... ok
+test question::tests::noul_criteria_carry_either_outcome_or_both ... ok
+test question::tests::object_content_is_spliced_in_unchanged ... ok
+test question::tests::owned_and_borrowed_text_encode_alike ... ok
+test question::tests::question_and_the_kind_methods_are_the_same ... ok
+test question::tests::raw_json_content_keeps_its_spelling ... ok
+test question::tests::raw_noul_criteria_pass_through_as_given ... ok
+test question::tests::raw_question_schema_is_left_to_the_api ... ok
+test question::tests::raw_questions_pass_through_beside_typed_ones ... ok
+test question::tests::raw_score_criteria_are_empty_exactly_when_python_would_say_so ... ok
+test question::tests::seam_as_json ... ok
+test question::tests::setting_a_member_again_replaces_it ... ok
+test question::tests::the_falsy_scan_reads_only_the_shape ... ok
+test question::tests::the_first_failing_question_is_reported ... ok
+test question::tests::the_prepared_bytes_are_compact_and_in_caller_order ... ok
+test question::tests::the_size_bound_covers_the_worst_case_escape ... ok
+test question::tests::typed_questions_encode_to_the_upstream_wire_form ... ok
+test question::tests::typed_raw_and_mixed_forms_agree ... ok
+test question::tests::unset_members_are_left_off_the_wire ... ok
+test redact::tests::a_chain_longer_than_the_scan_limit_is_always_replaced ... ok
+test redact::tests::a_chain_without_a_credential_is_kept_as_it_is ... ok
+test redact::tests::a_credential_with_whitespace_around_it_is_also_found_without_it ... ok
+test redact::tests::a_redacted_link_prints_its_redacted_debug_and_keeps_the_chain_order ... ok
+test redact::tests::a_value_of_only_spaces_and_tabs_is_not_a_credential ... ok
+test redact::tests::a_whitespace_only_secret_header_leaves_the_message_and_cause_alone ... ok
+test redact::tests::every_escaped_form_of_a_credential_is_replaced ... ok
+test redact::tests::only_secret_or_sensitive_headers_are_credentials ... ok
+test redact::tests::the_credential_after_the_scheme_is_redacted_on_its_own ... ok
+test redact::tests::the_json_escape_matches_serde_json ... ok
+test redact::tests::the_longest_variant_wins_where_two_overlap ... ok
+test request::tests::a_deadline_is_the_clients_a_calls_or_none_and_never_zero ... ok
+test name::tests::only_this_module_names_the_small_string_crate ... ok
+test codec::tests::a_scratch_past_the_ceiling_is_not_kept ... ok
+test question::tests::ask_is_system_one_with_the_sets_questions ... ok
+test request::tests::a_request_prints_its_settings_and_none_of_the_callers_data ... ok
+test request::tests::a_state_that_is_not_text_an_object_or_an_array_is_refused ... ok
+test response::tests::a_decoded_level_list_equals_the_list_built_by_sorted_insertion ... ok
+test request::tests::a_value_that_cannot_be_encoded_fails_before_anything_is_sent ... ok
+test response::tests::a_repeated_level_keeps_its_entries_in_arrival_order ... ok
+test response::tests::a_request_id_that_is_absent_or_not_text_is_none ... ok
+test response::tests::a_response_gives_up_its_answers_and_compares_whole ... ok
+test response::tests::a_score_built_by_hand_is_sorted_by_level ... ok
+test response::tests::a_structured_legend_description_serializes_as_data ... ok
+test response::tests::answers_are_looked_up_by_name_and_filtered_by_kind_without_copying ... ok
+test response::tests::a_level_list_sorted_once_equals_the_list_built_by_sorted_insertion ... ok
+test response::tests::each_answer_serializes_with_its_type ... ok
+test response::tests::long_multi_byte_and_escaped_names_decode_serialize_and_print_as_text ... ok
+test response::tests::serializing_a_response_writes_the_payload_and_not_the_http_metadata ... ok
+test response::tests::the_meta_keeps_the_http_response_and_prints_none_of_its_contents ... ok
+test response::tests::usage_counts_are_optional_and_serialize_as_null_when_absent ... ok
+test error::tests::every_message_read_from_a_body_is_cut_after_escaping_and_the_body_is_kept ... ok
+test client::tests::the_default_version_is_http2_only_for_https_and_auto_for_http_and_a_choice_wins ... ok
+test request::tests::extra_members_merge_last_write_wins_and_replace_a_built_in_in_place ... ok
+test client::tests::a_later_user_agent_product_or_runtime_switch_replaces_an_earlier_one ... ok
+test request::tests::the_body_is_state_model_and_questions_in_that_order ... ok
+test retry::tests::a_full_draw_removes_the_whole_jitter_share_as_upstream ... ok
+test retry::tests::a_jitter_outside_zero_to_one_is_refused_as_upstream_test_invalid_backoff_jitter ... ok
+test retry::tests::a_calls_count_replaces_the_clients_as_upstream_test_retry_policy_per_call_override ... ok
+test retry::tests::a_calls_budget_replaces_the_clients_as_upstream_test_retry_policy_timeout_override ... ok
+test retry::tests::a_failure_before_sending_is_retried_as_upstream_test_connection_retry_recovers ... ok
+test retry::tests::a_wait_that_reaches_the_budget_exactly_ends_the_retrying ... ok
+test retry::tests::a_zero_budget_is_refused_as_upstream_test_retry_policy_invalid_timeout ... ok
+test retry::tests::attempt_zero_follows_the_formula_and_gives_half_the_initial_delay ... ok
+test retry::tests::attempts_beyond_i32_max_reach_the_cap_without_overflow ... ok
+test retry::tests::a_calls_policy_replaces_the_clients_as_upstream_test_system_one_retry_override ... ok
+test retry::tests::a_predicate_opts_a_failure_in_as_upstream_test_retry_policy_exceptions_and_predicate ... ok
+test retry::tests::concurrent_calls_count_their_own_retries_as_upstream_test_async_concurrent_retry_state ... ok
+test retry::tests::default_schedule_doubles_then_caps_as_upstream_test_backoff_dates_cap_and_jitter ... ok
+test retry::tests::delays_follow_upstream_test_backoff_dates_cap_and_jitter ... ok
+test retry::tests::doubling_matches_cpython_ldexp_near_and_at_the_cap ... ok
+test retry::tests::concurrent_calls_keep_their_own_policies_as_upstream_test_concurrent_system_one_overrides ... ok
+test retry::tests::dropping_the_call_future_cancels_the_attempt_and_nothing_follows ... ok
+test retry::tests::every_attempt_sends_the_same_bytes_of_one_encoded_body ... ok
+test retry::tests::extreme_durations_come_through_the_policy_as_upstream_test_backoff_extreme_values ... ok
+test retry::tests::extreme_ranges_stay_finite_monotonic_and_exact_through_every_doubling ... ok
+test retry::tests::extreme_values_match_upstream_test_backoff_extreme_values ... ok
+test retry::tests::inputs_a_policy_rejects_do_not_panic ... ok
+test retry::tests::jitter_never_raises_the_delay_above_the_exponential ... ok
+test retry::tests::a_transport_failure_is_retried_as_upstream_test_connection_retry_recovers ... ok
+test retry::tests::none_makes_one_attempt_whatever_fails ... ok
+test retry::tests::none_with_a_per_attempt_deadline_times_out_after_exactly_one_call ... ok
+test retry::tests::only_timeouts_connections_and_listed_statuses_are_retried_on_their_own ... ok
+test retry::tests::round_to_millis_matches_cpython_round ... ok
+test retry::tests::rounding_is_python_round_half_even_on_the_exact_value_not_scaled_rounding ... ok
+test retry::tests::scalbn_matches_cpython_ldexp ... ok
+test retry::tests::seam_run_future_is_send ... ok
+test retry::tests::seam_run_matches_private_run ... ok
+test retry::tests::seconds_to_duration_saturates_and_maps_nan_and_negatives_to_zero ... ok
+test retry::tests::dropping_a_waiting_call_cancels_its_retry_as_upstream_test_cancel_pending_retry ... ok
+test retry::tests::the_default_policy_runs_on_the_real_clock ... ok
+test retry::tests::the_default_schedule_never_decreases_and_settles_at_the_cap ... ok
+test retry::tests::custom_statuses_replace_the_default_as_upstream_test_retry_policy_custom_statuses ... ok
+test retry::tests::the_delay_follows_the_wait_options_as_upstream_test_retry_policy_wait_options ... ok
+test retry::tests::the_draw_and_jitter_bounds_match_cpython ... ok
+test retry::tests::the_largest_backoff_degrades_as_upstream_test_invalid_backoff ... ok
+test retry::tests::max_retries_counts_attempts_as_upstream_test_retry_policy_max_retries ... ok
+test retry::tests::the_largest_retry_count_is_accepted_as_upstream_test_invalid_max_retries ... ok
+test retry::tests::a_timeout_is_retried_as_upstream_test_connection_retry_recovers ... ok
+test retry::tests::the_last_api_error_is_returned_whole_as_upstream_test_exhausted_retry_preserves_final_http_error ... ok
+test retry::tests::the_predicate_is_asked_before_the_count_and_the_budget ... ok
+test retry::tests::a_call_recovers_with_its_overrides_as_upstream_test_system_one_retry_recovers_with_overrides ... ok
+test retry::tests::the_last_connection_failure_is_returned_as_upstream_test_exhausted_transport_retry ... ok
+test retry::tests::zero_initial_or_max_disables_backoff_with_a_positive_zero ... ok
+test telemetry::tests::a_real_looking_key_leaves_no_trace_in_the_rendering ... ok
+test telemetry::tests::a_value_flagged_sensitive_is_redacted_under_any_name ... ok
+test telemetry::tests::a_value_with_a_byte_above_ascii_is_escaped ... ok
+test telemetry::tests::an_empty_map_renders_as_empty_braces ... ok
+test telemetry::tests::every_upstream_secret_header_is_redacted_and_its_neighbour_is_not ... ok
+test telemetry::tests::every_value_of_a_repeated_name_is_rendered_and_redacted ... ok
+test telemetry::tests::the_substring_rule_is_token_and_secret_only ... ok
+test telemetry::tests::the_view_is_a_copyable_borrow ... ok
+test text::tests::a_backslash_is_doubled_or_kept_as_asked ... ok
+test text::tests::a_cut_counts_escapes_whole_and_is_marked ... ok
+test text::tests::a_display_streams_through_the_writer_and_stops_at_the_limit ... ok
+test text::tests::a_prefix_is_kept_and_not_counted ... ok
+test text::tests::control_and_format_characters_are_escaped_and_printable_text_is_kept ... ok
+test transport::gate::tests::a_bound_fails_only_the_requests_that_waited_before_its_deadline ... ok
+test retry::tests::the_servers_delay_is_waited_as_upstream_test_server_delay_through_tenacity ... ok
+test transport::gate::tests::a_bound_too_long_for_an_instant_never_passes ... ok
+test retry::tests::zero_backoff_retries_at_once_as_upstream_test_zero_backoff_retries ... ok
+test transport::gate::tests::a_connect_that_begins_makes_the_gate_cold ... ok
+test transport::gate::tests::a_connect_that_begins_through_the_connector_makes_the_gate_cold ... ok
+test retry::tests::the_last_timeout_is_returned_as_upstream_test_exhausted_transport_retry ... ok
+test transport::gate::tests::a_failed_connect_fails_every_waiting_request_and_not_one_that_comes_after ... ok
+test transport::gate::tests::a_failed_http2_handshake_fails_every_waiting_request ... ok
+test retry::tests::the_budget_stops_retrying_as_upstream_test_retry_policy_timeout_budget ... ok
+test transport::gate::tests::a_starter_whose_connect_task_the_runtime_dropped_fails_as_given_up ... ok
+test transport::gate::tests::a_warm_gate_lets_every_request_through_without_a_turn ... ok
+test transport::gate::tests::an_opener_dropped_before_a_connection_fails_every_waiting_request ... ok
+test transport::gate::tests::an_opener_given_a_connection_fails_no_one ... ok
+test transport::gate::tests::every_waiter_is_released_by_one_release ... ok
+test retry::tests::the_default_statuses_are_retried_as_upstream_test_default_retry_statuses ... ok
+test codec::tests::a_printable_path_is_unchanged_by_the_rendering ... ok
+test response::tests::levels_in_descending_order_decode_in_n_log_n_time ... ok
+test transport::gate::tests::the_connect_ends_when_the_connection_is_reported_not_at_the_response ... ok
+test transport::gate::tests::the_connect_outlives_the_request_that_started_it_and_serves_a_later_one ... ok
+test transport::gate::tests::the_gate_is_warm_only_with_a_pooled_connection_and_an_open_stream ... ok
+test transport::gate::tests::the_probe_is_a_connect_to_the_authority_that_declares_a_body_it_does_not_send ... ok
+test transport::gate::tests::without_a_bound_the_connect_ends_with_the_request_that_started_it ... ok
+test transport::gate::tests::a_connect_is_given_up_once_its_starter_is_gone_and_the_bound_has_passed ... ok
+test transport::hyper::tests::a_body_cut_short_fails_with_hyper_error_as_the_boxed_cause ... ok
+test transport::hyper::tests::a_root_that_is_not_a_certificate_is_a_config_error ... ok
+test transport::hyper::tests::a_timed_out_connect_is_the_connect_timeout ... ok
+test transport::hyper::tests::a_response_body_without_a_declared_length_reports_none_and_streams ... ok
+test transport::gate::tests::a_connect_past_the_connect_timeout_fails_its_waiter_with_that_timeout ... ok
+test transport::tests::a_body_is_one_frame_of_an_exact_length ... ok
+test transport::tests::a_body_prints_its_length_and_never_its_bytes ... ok
+test transport::tests::a_call_header_is_dropped_when_the_sdk_owns_it_and_the_last_of_a_name_wins ... ok
+test transport::tests::a_call_header_never_reaches_user_agent_or_x_typesafe_runtime ... ok
+test transport::tests::a_call_header_that_cannot_be_sent_is_refused_without_its_value ... ok
+test transport::hyper::tests::the_response_body_forwards_the_declared_length_the_frames_and_the_end ... ok
+test transport::tests::a_causeless_message_whose_debug_completes_a_credential_is_withheld ... ok
+test transport::tests::a_causeless_message_whose_debug_only_holds_a_backslash_is_kept ... ok
+test transport::tests::a_causeless_message_whose_debug_spells_a_credential_with_a_backslash_is_withheld ... ok
+test transport::tests::a_causeless_message_with_both_spellings_is_withheld ... ok
+test transport::tests::a_chain_longer_than_eight_links_is_cut ... ok
+test transport::tests::a_connection_error_with_a_cause_from_a_service_is_redacted_as_before ... ok
+test transport::tests::a_long_causeless_message_with_a_credential_is_neither_escaped_nor_cut ... ok
+test transport::tests::a_message_with_a_cause_whose_debug_spells_a_credential_is_withheld ... ok
+test transport::tests::a_causeless_connection_error_from_a_service_has_its_credentials_replaced ... ok
+test transport::tests::a_secret_with_spaces_in_front_is_not_spelled_by_an_indented_debug ... ok
+test transport::tests::a_transport_failure_reads_as_its_chain_of_messages ... ok
+test transport::tests::a_user_agent_product_goes_in_front_of_the_sdk_identifier_and_leaves_x_typesafe_sdk_alone ... ok
+test transport::tests::an_empty_body_ends_before_its_first_frame ... ok
+test transport::tests::a_redacted_connection_error_is_retried_as_any_connection_error_is ... ok
+test transport::tests::an_sdk_error_of_another_kind_from_a_service_is_kept_unsearched ... ok
+test transport::tests::text_a_transport_chose_is_escaped_and_cut_and_its_error_kept_whole ... ok
+test transport::tests::the_sdk_headers_win_over_every_client_default ... ok
+test transport::tests::with_the_runtime_header_off_none_is_built_and_the_other_sdk_headers_are ... ok
+test transport::gate::tests::a_connect_that_ran_out_of_the_connect_timeout_ends_as_that_bound ... ok
+test transport::tests::the_retry_count_is_sent_from_the_second_attempt_on_and_never_taken_from_a_caller ... ok
+test transport::hyper::tests::the_transport_prints_its_settings_and_counts_its_roots ... ok
+test transport::gate::tests::a_starter_that_gives_up_fails_no_one_before_the_bound ... ok
+test transport::gate::tests::only_a_connect_that_timed_out_ends_as_the_connect_timeout_bound ... ok
+test transport::gate::tests::the_bound_counts_from_the_connects_start_not_from_the_starters_drop ... ok
+test transport::gate::tests::the_bound_passing_while_the_starter_waits_does_not_end_the_connect ... ok
+
+test result: ok. 429 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running tests/alloc_call.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/alloc_call-07f7c0373dec283c)
+
+running 1 test
+test a_whole_call_costs_its_own_steps_and_nothing_else ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/alloc_decode.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/alloc_decode-9421e20f3e4f5ab5)
+
+running 1 test
+test decoding_the_three_answer_fixture_stays_within_its_budget ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/alloc_derive.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/alloc_derive-7a17f1abe935e1d6)
+
+running 1 test
+test a_derived_set_allocates_nothing_to_ask_and_less_to_decode ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/alloc_encode.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/alloc_encode-6031793559cbeef7)
+
+running 1 test
+test a_repeated_request_body_costs_one_block ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/alloc_level_hint.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/alloc_level_hint-c267ec3f3f8760d0)
+
+running 1 test
+test a_large_score_asked_does_not_multiply_what_small_answers_keep ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/client.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/client-51de46ac8b56e84e)
+
+running 34 tests
+test a_custom_transport_carries_every_request_with_the_sdk_headers ... ok
+test a_streamed_response_over_the_limit_is_refused_as_it_arrives ... ok
+test a_declared_length_over_the_limit_is_refused_whatever_follows_it ... ok
+test a_caller_header_cannot_stand_in_for_either_setting ... ok
+test a_request_naming_no_model_fails_before_any_io_when_the_client_has_none ... ok
+test an_application_product_is_received_in_front_of_the_sdk_identifier ... ok
+test dropping_a_call_in_flight_cancels_it ... ok
+test extra_body_shallow_override ... ok
+test a_response_over_the_limit_is_refused ... ok
+test headers_timeout_and_logging ... ok
+test framing_and_connection_headers_are_dropped_and_host_is_sent ... ok
+test error_messages ... ok
+test logging::log_endpoint_host_false_prints_the_path_alone ... ok
+test logging::every_attempt_gets_one_info_line_and_no_body_reaches_info_or_debug ... ok
+test logging::no_credential_reaches_an_event_and_the_body_waits_for_trace ... ok
+test logging::transport_errors_never_log_a_credential ... ok
+test raw_question_passthrough ... ok
+test rich_descriptions ... ok
+test question_schema_validation_is_left_to_api ... ok
+test an_attempt_past_its_deadline_is_a_timeout_with_that_deadline ... ok
+test the_last_clone_of_a_client_drops_its_transport ... ok
+test the_upstream_base_url_with_a_prefix_and_trailing_slashes ... ok
+test round_trip_sends_the_body_and_decodes_every_answer_kind ... ok
+test logging::every_secret_header_spelling_is_redacted_both_ways ... ok
+test transport_errors_never_expose_a_credential ... ok
+test validation_before_network ... ok
+test unserializable_request_body_raises_before_the_network ... ok
+test with_the_runtime_header_off_the_server_receives_none ... ok
+test server_text_in_an_api_error_is_escaped_and_cut ... ok
+test error_mapping ... ok
+test system_one_timeout_override ... ok
+test an_untrusted_certificate_is_a_connection_error_naming_the_certificate ... ok
+test a_transport_error_of_any_text_is_escaped_and_cut_in_the_message ... ok
+test transport_errors_are_connection_errors_with_their_cause ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.49s
+
+     Running tests/connection_reuse.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/connection_reuse-992180ccd552cdbf)
+
+running 20 tests
+test a_burst_at_a_refusing_port_fails_every_call_and_ends ... ok
+test a_client_under_auto_speaks_http2_to_a_tls_server_that_offers_it ... ok
+test a_burst_after_the_server_closed_the_connection_opens_one_more ... ok
+test a_cold_burst_sends_the_server_nothing_but_its_calls ... ok
+test a_cold_burst_of_64_enters_the_pool_once ... ok
+test a_burst_after_the_server_closed_the_connection_enters_the_pool_once ... ok
+test a_cold_burst_without_retries_succeeds_on_one_connection ... ok
+test a_cold_fan_out_opens_one_connection ... ok
+test after_warm_up_a_fan_out_opens_no_new_connection ... ok
+test sequential_then_concurrent_calls_share_one_connection ... ok
+test the_pool_is_warm_after_a_call_and_not_once_its_stream_is_gone ... ok
+test the_waiting_requests_go_once_the_connection_exists_not_after_the_response ... ok
+test two_calls_under_auto_at_a_server_that_never_answers_both_connect ... ok
+test a_burst_whose_one_connect_fails_slowly_fails_with_it_at_once ... ok
+test calls_cancelled_by_their_callers_leave_the_connect_to_the_calls_after_them ... ok
+test a_waiting_call_fails_with_the_bound_of_a_connect_its_starter_left ... ok
+test a_call_deadline_above_the_client_deadline_keeps_the_connect_it_started ... ok
+test a_slow_handshake_serves_the_retries_of_the_calls_that_gave_up_on_one_connection ... ok
+test a_waiting_call_outlives_the_call_that_opened_and_ends_at_its_own_deadline ... ok
+test a_call_after_a_bound_that_passed_unpolled_opens_a_new_connect ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+     Running tests/derive.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/derive-68ec20f9fa920b4a)
+
+running 14 tests
+test every_byte_changing_corner_matches_the_runtime ... ok
+test a_question_set_is_a_bound_like_any_other ... ok
+test answers_decode_in_any_order ... ok
+test prepared_is_one_static_set ... ok
+test a_key_written_with_an_escape_is_matched ... ok
+test the_derived_ticket_is_the_runtime_questions_byte_for_byte ... ok
+test extra_answers_are_skipped_and_the_first_answer_of_a_name_wins ... ok
+test ask_sends_the_compiled_questions_and_decodes_into_the_struct ... ok
+test an_asked_request_is_retried_by_the_policy_that_applies_to_it ... ok
+test a_renamed_question_is_answered_under_its_wire_name ... ok
+test strict::a_set_derived_under_every_lint_decodes ... ok
+    Checking decision-model-sdk-tests v0.0.0 (/tmp/hiero-sdk-audit-20261005/target/tests/trybuild/decision-model-sdk)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+test a_missing_or_wrong_answer_fails_at_its_field ... ok
+test the_expansion_works_wherever_it_lands ... ok
+
+
+test tests/ui/crate_path.rs ... ok
+test tests/ui/crate_path_unresolved.rs ... ok
+test tests/ui/field_questions.rs ... ok
+test tests/ui/field_types.rs ... ok
+test tests/ui/generic.rs ... ok
+test tests/ui/grammar.rs ... ok
+test tests/ui/names.rs ... ok
+test tests/ui/not_a_question_set.rs ... ok
+test tests/ui/not_a_struct.rs ... ok
+test tests/ui/not_an_answer_set.rs ... ok
+test tests/ui/other_answer_type.rs ... ok
+test tests/ui/reserved_names.rs ... ok
+test tests/ui/runtime_rejections.rs ... ok
+test tests/ui/struct_shape.rs ... ok
+
+
+test misuse_is_refused_at_compile_time ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/differential.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/differential-b9b3b0b98af9a3f5)
+
+running 5 tests
+test a_one_sided_refusal_is_accepted_only_for_the_cause_its_error_names ... ok
+test only_negative_zero_and_nesting_depth_divergences_occur ... ok
+test every_fixture_decodes_the_same_through_both_codecs ... ok
+test generated_documents_decode_the_same_or_diverge_only_as_listed ... ok
+test generated_states_encode_to_json_that_reads_back_as_the_same_value ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.28s
+
+     Running tests/foreign_deserializer.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/foreign_deserializer-e858a1a2a55df03d)
+
+running 1 test
+test a_derived_set_decodes_from_a_callers_serde_json_deserializer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/malformed_body.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/malformed_body-09d401de14c9e850)
+
+running 3 tests
+test a_failure_status_with_a_body_that_is_not_utf8_is_an_api_error ... ok
+test a_success_status_with_a_body_that_is_not_utf8_is_a_validation_error ... ok
+test a_models_list_that_is_not_utf8_is_a_validation_error ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/models.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/models-1519410c93170aa2)
+
+running 5 tests
+test a_models_call_takes_headers_of_its_own ... ok
+test models_ignore_unknown_fields ... ok
+test warm_up_lists_the_models_and_reports_a_refused_key ... ok
+test models_shape ... ok
+test invalid_models_response ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/retry.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/retry-3d2ae93e9fdcd617)
+
+running 13 tests
+test a_status_set_holds_0_to_639_and_prints_runs_as_ranges ... ok
+test a_policy_is_printed_where_it_was_set ... ok
+test a_client_without_a_policy_retries_as_upstream_does ... ok
+test a_response_too_large_is_retried_only_when_the_predicate_asks ... ok
+test a_response_that_does_not_decode_is_retried_only_when_the_predicate_asks ... ok
+test the_default_policy_is_upstreams_and_prints_every_setting ... ok
+test a_body_is_encoded_once_whatever_the_number_of_attempts ... ok
+test a_callers_retry_count_is_dropped_on_every_attempt ... ok
+test a_success_status_in_the_set_does_not_retry_a_response_that_does_not_decode ... ok
+test logging::a_retry_is_announced_at_info_before_it_is_sent ... ok
+test a_calls_policy_beats_the_clients ... ok
+test concurrent_calls_on_several_threads_keep_their_own_policies ... ok
+test an_attempt_past_its_deadline_is_retried_on_the_real_clock ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/static_assertions.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/static_assertions-17ebd62a63da051e)
+
+running 2 tests
+test the_future_of_every_call_is_send ... ok
+test the_future_of_every_call_stays_small ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/decision_model_sdk_macros-31e6c61b75af5797)
+
+running 37 tests
+test json::tests::a_choice_without_options_has_empty_criteria ... ok
+test json::tests::names_are_escaped_in_the_json_and_raw_after_it ... ok
+test expand::tests::a_refused_input_is_an_error_not_code ... ok
+test json::tests::a_set_is_the_runtime_bytes_then_the_names ... ok
+test json::tests::noul_criteria_are_written_as_the_runtime_writes_them ... ok
+test json::tests::the_escapes_are_the_short_ones_where_json_has_them ... ok
+test json::tests::every_ascii_character_escapes_as_the_codec_does ... ok
+test parse::tests::a_choice_needs_options_and_a_score_needs_levels ... ok
+test expand::tests::names_reach_the_key_matcher_unescaped ... ok
+test parse::tests::a_key_is_given_once ... ok
+test parse::tests::a_question_set_cannot_be_generic ... ok
+test parse::tests::a_score_without_levels_is_refused_with_the_runtime_message ... ok
+test parse::tests::an_option_is_listed_once ... ok
+test parse::tests::answer_types_are_matched_by_their_last_segment ... ok
+test parse::tests::a_struct_cannot_be_named_like_a_helper_of_the_expansion ... ok
+test parse::tests::an_optional_field_is_refused_with_the_reason ... ok
+test expand::tests::the_crate_path_is_named_once_and_everything_goes_through_it ... ok
+test parse::tests::every_problem_is_reported_at_once ... ok
+test parse::tests::every_field_asks_exactly_one_question ... ok
+test parse::tests::malformed_attributes_say_what_is_expected ... ok
+test parse::tests::names_come_from_the_field_or_the_question_attribute ... ok
+test parse::tests::only_a_struct_with_named_fields_is_a_question_set ... ok
+test parse::tests::the_crate_path_can_be_overridden ... ok
+test parse::tests::the_container_attribute_takes_only_one_crate_path ... ok
+test parse::tests::a_name_is_used_once ... ok
+test parse::tests::optional_keys_order_and_escapes ... ok
+test parse::tests::the_crate_path_is_a_path ... ok
+test parse::tests::the_documented_example_reads_as_three_questions ... ok
+test parse::tests::the_reserved_names_are_documented ... ok
+test parse::tests::the_question_attribute_gives_one_name ... ok
+test parse::tests::the_field_type_is_the_answer_type_of_its_question ... ok
+test parse::tests::unknown_keys_name_the_keys_there_are ... ok
+test parse::tests::values_are_string_literals ... ok
+test expand::tests::the_ticket_expansion_is_the_reviewed_one ... ok
+test parse::tests::no_option_or_level_count_is_limited ... ok
+test json::tests::the_escaper_matches_the_codec_on_arbitrary_strings ... ok
+test json::tests::the_escaper_matches_the_codec_on_escape_heavy_strings ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.23s
+
+     Running unittests src/lib.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/test_support-bf16953bacea3484)
+
+running 21 tests
+test tests::a_raw_server_answers_every_connection_with_its_bytes ... ok
+test tests::a_counted_handler_is_told_which_request_it_answers ... ok
+test tests::a_plaintext_request_at_a_tls_port_is_recorded_with_its_first_bytes ... ok
+test tests::an_address_that_accepts_is_not_a_refusing_port ... ok
+test tests::close_connections_ends_every_held_connection_and_keeps_listening ... ok
+test tests::a_handshake_the_client_rejects_is_recorded_with_its_client_hello ... ok
+test tests::dropping_a_closing_server_closes_what_it_holds_at_once ... ok
+test tests::every_protocol_starts_a_server_of_its_scheme ... ok
+test tests::a_tls_connection_is_recorded_with_its_alpn_and_its_requests ... ok
+test tests::h2c_multiplexes_fifty_requests_over_one_connection ... ok
+test tests::http1_round_trip_is_recorded ... ok
+test tests::the_refusing_port_is_port_one_and_refuses ... ok
+test tests::tls_client_that_trusts_the_certificate_negotiates_http2 ... ok
+test tests::tls_client_without_the_certificate_fails_the_handshake ... ok
+test tests::dropping_the_server_releases_the_port ... ok
+test tests::handler_can_be_stateful_and_can_delay ... ok
+test tests::a_closing_server_closes_each_connection_after_its_delay_without_a_word ... ok
+test tests::a_silent_server_accepts_and_never_answers ... ok
+test tests::a_first_silent_server_holds_its_first_connection_and_serves_the_next ... ok
+test tests::a_tls_handshake_with_a_closing_server_fails_after_its_delay ... ok
+test tests::a_slow_server_starts_the_tls_handshake_only_after_its_delay ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+   Doc-tests decision_model_adapter
+
+running 3 tests
+test crates/adapter/src/../README.md - (line 343) - compile ... ok
+test crates/adapter/src/../README.md - (line 114) - compile ... ok
+test crates/adapter/src/../README.md - (line 69) - compile ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.13s; merged doctests compilation took 0.13s
+   Doc-tests decision_model_sdk
+
+running 29 tests
+test crates/sdk/src/error.rs - error::Error::response_too_large (line 262) ... ok
+test crates/sdk/src/content.rs - content::Content (line 53) ... ok
+test crates/sdk/src/de.rs - de::AnswerSet (line 200) ... ok
+test crates/sdk/src/error.rs - error::Error::connection (line 195) ... ok
+test crates/sdk/src/error.rs - error::ApiError::from_response (line 420) ... ok
+test crates/sdk/src/error.rs - error::Error::timeout (line 236) ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 293) - compile ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 369) - compile ... ok
+test crates/sdk/src/lib.rs - QuestionSet (line 130) ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 403) ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 336) ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 512) ... ok
+test crates/sdk/src/question.rs - question::Choice (line 106) ... ok
+test crates/sdk/src/question.rs - question (line 13) ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 451) ... ok
+test crates/sdk/src/question.rs - question::PreparedQuestions::as_json (line 579) ... ok
+test crates/sdk/src/question.rs - question::Noul (line 53) ... ok
+test crates/sdk/src/question.rs - question::RawQuestion (line 211) ... ok
+test crates/sdk/src/lib.rs - ReadmeDoctests (line 628) ... ok
+test crates/sdk/src/question.rs - question::QuestionSet (line 612) ... ok
+test crates/sdk/src/question.rs - question::Score (line 167) ... ok
+test crates/sdk/src/retry.rs - retry::StatusSet (line 500) ... ok
+test crates/sdk/src/retry.rs - retry::RetryPolicy::run (line 324) ... ok
+test crates/sdk/src/retry.rs - retry::RetryPolicy (line 92) ... ok
+test crates/sdk/src/client.rs - client::ClientBuilder::send_runtime_header (line 478) ... ok
+test crates/sdk/src/client.rs - client::ClientBuilder::log_endpoint_host (line 515) ... ok
+test crates/sdk/src/question.rs - question::Client<S>::ask (line 670) ... ok
+test crates/sdk/src/client.rs - client::ClientBuilder::user_agent_product (line 440) ... ok
+test crates/sdk/src/lib.rs - (line 17) ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 1 test
+test crates/sdk/src/de.rs - de::AnswerSet (line 188) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+all doctests ran in 0.87s; merged doctests compilation took 0.79s
+   Doc-tests decision_model_sdk_macros
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests test_support
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

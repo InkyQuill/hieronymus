@@ -51,6 +51,25 @@ impl HttpError {
 /// The outbound transport seam. Implementations must honor `timeout` as a
 /// whole-request deadline and must never buffer more than a bounded body.
 pub trait ProviderTransport: Send + Sync {
+    /// Apply a caller-specific response cap. Production overrides this to bound
+    /// socket reads; injected transports are checked before parsing.
+    fn post_json_bounded(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        payload: &Value,
+        timeout: Duration,
+        max_response_bytes: usize,
+    ) -> Result<HttpResponse, HttpError> {
+        let response = self.post_json(url, headers, payload, timeout)?;
+        if response.body.len() > max_response_bytes {
+            return Err(HttpError::TooLarge {
+                limit: max_response_bytes,
+            });
+        }
+        Ok(response)
+    }
+
     fn post_json(
         &self,
         url: &str,
@@ -145,6 +164,28 @@ impl Connection {
 }
 
 impl ProviderTransport for BlockingHttpTransport {
+    fn post_json_bounded(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        payload: &Value,
+        timeout: Duration,
+        max_response_bytes: usize,
+    ) -> Result<HttpResponse, HttpError> {
+        let body_limit = self.max_response_bytes.min(max_response_bytes);
+        // Bound wire overhead separately from decoded JSON: HTTP headers and
+        // chunk framing must not consume the caller's advertised body allowance.
+        let response = Self {
+            max_response_bytes: body_limit.saturating_mul(2).saturating_add(16_384),
+            tls_roots: self.tls_roots.clone(),
+        }
+        .post_json(url, headers, payload, timeout)?;
+        if response.body.len() > body_limit {
+            return Err(HttpError::TooLarge { limit: body_limit });
+        }
+        Ok(response)
+    }
+
     fn post_json(
         &self,
         url: &str,
@@ -261,7 +302,10 @@ impl BlockingHttpTransport {
         loop {
             let remaining = remaining(deadline, timeout)?;
             stream.set_read_timeout(Some(remaining.min(Duration::from_millis(500))));
-            match stream.read(&mut buffer) {
+            let read_limit = buffer
+                .len()
+                .min(limit.saturating_sub(raw.len()).saturating_add(1));
+            match stream.read(&mut buffer[..read_limit]) {
                 Ok(0) => return Ok(raw),
                 Ok(count) => {
                     raw.extend_from_slice(&buffer[..count]);

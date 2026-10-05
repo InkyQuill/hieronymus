@@ -532,6 +532,22 @@ struct DeadlineTransport {
     deadline: Instant,
 }
 impl ProviderTransport for DeadlineTransport {
+    fn post_json_bounded(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &Value,
+        timeout: Duration,
+        max_response_bytes: usize,
+    ) -> Result<crate::provider_http::HttpResponse, crate::provider_http::HttpError> {
+        let left = timeout.min(self.deadline.saturating_duration_since(Instant::now()));
+        if left.is_zero() {
+            return Err(crate::provider_http::HttpError::Timeout { millis: 0 });
+        }
+        self.inner
+            .post_json_bounded(url, headers, body, left, max_response_bytes)
+    }
+
     fn get_json(
         &self,
         url: &str,

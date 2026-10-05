@@ -1,0 +1,43 @@
+   Compiling decision-model-sdk v0.1.0 (/tmp/hiero-sdk-audit-20261005/zchee/crates/sdk)
+warning: missing documentation for the crate
+  --> crates/sdk/tests/hiero_audit.rs:2:1
+   |
+ 2 | / use std::{io::{Read, Write}, net::TcpListener, sync::{Arc,atomic::{AtomicUsize,Ordering}},time::{Duration,Instant}};
+ 3 | | fn server(status: u16, body: String) -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
+ 4 | |  let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+ 5 | |  let origin=format!("http://{}",listener.local_addr().unwrap());
+...  |
+73 | |  c.system_one("fixture",&q).timeout(Duration::from_millis(300)).send().await.map(|_|()).map_err(|e|format!("{e:?}"))
+74 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-docs`
+
+warning: `decision-model-sdk` (test "hiero_audit") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/hiero_audit.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/hiero_audit-ab560ae50fbd9bf1)
+
+running 7 tests
+test audit_accepts_named_noul ... ok
+test audit_does_not_follow_redirects ... ok
+test audit_no_retry_on_429 ... ok
+test audit_one_bad_answer_rejects_typed_batch ... ok
+test audit_rejects_invalid_json ... ok
+test audit_rejects_out_of_range_noul ... FAILED
+test audit_rejects_oversized_response ... ok
+
+failures:
+
+---- audit_rejects_out_of_range_noul stdout ----
+
+thread 'audit_rejects_out_of_range_noul' (1091043) panicked at crates/sdk/tests/hiero_audit.rs:34:2:
+accepted probability 1.5; domain validation required
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    audit_rejects_out_of_range_noul
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.57s
+
+error: test failed, to rerun pass `-p decision-model-sdk --test hiero_audit`
