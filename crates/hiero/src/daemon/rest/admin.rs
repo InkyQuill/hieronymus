@@ -183,6 +183,7 @@ pub(super) fn dashboard(_request: &Request, runtime: &DaemonRuntime) -> Response
         "config_editor": config_editor_payload(config),
         "readiness": runtime.dream.readiness().snapshot_with_semantic(&runtime.semantic.snapshot().state),
     });
+    payload["memory_indexing"] = super::status::memory_indexing_payload(runtime);
     for (key, value) in dashboard_status_payload(config) {
         payload[key] = value;
     }

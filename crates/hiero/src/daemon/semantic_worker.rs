@@ -441,6 +441,7 @@ const WORKER_POLL: Duration = Duration::from_millis(500);
 const REARM_POLL: Duration = Duration::from_secs(5);
 
 struct ControllerInner {
+    memory_indexing: Mutex<MemoryIndexingStatus>,
     config: HieronymusConfig,
     identity: Mutex<EmbeddingIdentity>,
     state: Mutex<ConfigurationAcknowledgement>,
@@ -459,6 +460,23 @@ pub struct ConfigurationAcknowledgement {
     pub identity: Option<EmbeddingIdentity>,
     pub state: RequiredSemanticState,
     pub configuration_revision: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct MemoryIndexingStatus {
+    pub state: &'static str,
+    #[serde(flatten)]
+    pub progress: hieronymus::memory_semantics::IndexProgress,
+    pub detail: Option<String>,
+}
+impl Default for MemoryIndexingStatus {
+    fn default() -> Self {
+        Self {
+            state: "waiting",
+            progress: Default::default(),
+            detail: None,
+        }
+    }
 }
 
 struct ReloadRequest {
@@ -522,6 +540,7 @@ impl SemanticController {
         };
         let (wake, wake_rx) = std::sync::mpsc::channel::<()>();
         let inner = Arc::new(ControllerInner {
+            memory_indexing: Mutex::new(MemoryIndexingStatus::default()),
             reload: Mutex::new(None),
             configuration_lock: Mutex::new(()),
             readiness_epoch: Mutex::new(0),
@@ -636,6 +655,26 @@ impl SemanticController {
     }
 
     /// The state `/status` serves and strict readiness gates consume.
+    pub fn memory_indexing(&self) -> MemoryIndexingStatus {
+        let mut status = self
+            .inner
+            .memory_indexing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        match self.state() {
+            RequiredSemanticState::Failed(reason) => {
+                status.state = "failed";
+                status.detail = Some(reason);
+            }
+            RequiredSemanticState::Acquiring => {
+                status.state = "waiting";
+            }
+            _ => {}
+        }
+        status
+    }
+
     pub fn state(&self) -> RequiredSemanticState {
         self.snapshot().state
     }
@@ -733,6 +772,7 @@ fn run_worker(
     // lane armed and was accepted. The two are set together and cleared
     // together, so a published `Ready` can never outlive the lane that has to
     // answer for it.
+    let mut memory_deadline = std::time::Instant::now();
     let mut pair: Option<ArmedPair> = None;
     let mut query_installed = false;
     // The actionable cause behind the current non-ready verdict, carried
@@ -799,6 +839,7 @@ fn run_worker(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = context.arm.identity();
                 pair = None;
+                memory_deadline = std::time::Instant::now();
                 query_installed = false;
                 failure_detail = None;
                 recovery_attempted = false;
@@ -1033,6 +1074,78 @@ fn run_worker(
             }
         }
 
+        if memory_deadline <= std::time::Instant::now()
+            && let Some(armed) = pair.as_mut()
+        {
+            let result = (|| {
+                let before = hieronymus::memory_semantics::progress(
+                    &context.inner.config,
+                    armed.provider.as_ref(),
+                )?;
+                *context
+                    .inner
+                    .memory_indexing
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = MemoryIndexingStatus {
+                    state: if before.pending > 0 {
+                        "indexing"
+                    } else {
+                        "ready"
+                    },
+                    progress: before,
+                    detail: None,
+                };
+                hieronymus::memory_semantics::maintain(
+                    &context.inner.config,
+                    armed.provider.as_mut(),
+                    armed.tokenizer.as_mut(),
+                    &stop,
+                )?;
+                hieronymus::memory_semantics::progress(
+                    &context.inner.config,
+                    armed.provider.as_ref(),
+                )
+            })();
+            let mut status = context
+                .inner
+                .memory_indexing
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match result {
+                Ok(progress) => {
+                    *status = MemoryIndexingStatus {
+                        state: if progress.pending > 0 {
+                            "indexing"
+                        } else {
+                            "ready"
+                        },
+                        progress,
+                        detail: None,
+                    }
+                }
+                Err(reason) => {
+                    if status.detail.as_ref() != Some(&reason) {
+                        eprintln!("memory indexing failed: {reason}");
+                    }
+                    status.state = "failed";
+                    status.detail = Some(reason);
+                }
+            }
+            let continuing = status.state == "indexing";
+            memory_deadline = std::time::Instant::now()
+                + if continuing {
+                    Duration::ZERO
+                } else {
+                    Duration::from_secs(10)
+                };
+            drop(status);
+            if continuing {
+                // Yield between bounded batches, while source-index work and
+                // configuration reloads retain priority on the next tick.
+                let _ = context.wake_rx.recv_timeout(Duration::from_millis(100));
+                continue;
+            }
+        }
         wait_for_wakeup(&context, &stop);
     }
 }

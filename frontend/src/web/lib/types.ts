@@ -113,6 +113,13 @@ export type AdminDashboard = {
   command_options?: AdminCommand[];
   short_term_status: Record<string, unknown>;
   dream_status: Record<string, unknown>;
+  memory_indexing?: {
+    state: "waiting" | "indexing" | "ready" | "failed";
+    total: number;
+    indexed: number;
+    pending: number;
+    detail: string | null;
+  };
   /// Added by current daemons. Kept unknown until the presentation-boundary
   /// parser verifies the complete unversioned DTO shape.
   readiness?: unknown;

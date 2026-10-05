@@ -1,11 +1,11 @@
 # Semantic validation
 
-[PR #119](https://github.com/InkyQuill/hieronymus/pull/119) replaces LanceDB with
-SQLite and exact cosine ranking in Rust; main retains LanceDB until it lands. The model,
+Semantic retrieval uses SQLite and exact cosine ranking in Rust, replacing
+LanceDB ([PR #119](https://github.com/InkyQuill/hieronymus/pull/119)). The model,
 tokenizer and ONNX stack are unchanged. See [ADR 0013](adr/0013-semantic-index-and-platform-support.md)
 and the [SQLite decision and checks](https://github.com/InkyQuill/hieronymus/blob/87a74f9029389ad670a950468aa66488554f7c47/docs/research/2026-10-02-sqlite-vector-decision.md).
 
-The SQLite branch focused tests cover exact ranking, series isolation, full embedding identity,
+The focused SQLite tests cover exact ranking, series isolation, full embedding identity,
 transaction rollback, generation publication, corrupt/missing-index recovery and
 preservation of old Lance artifacts. These tests establish storage behavior, not
 real-model relevance or native agent-host acceptance.

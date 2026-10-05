@@ -58,7 +58,7 @@ impl<'a> From<&'a DecisionRequestV1> for EvidenceContext<'a> {
         }
     }
 }
-pub(crate) fn validate_context(db: &Connection, r: &EvidenceContext<'_>) -> Result<(), Error> {
+pub(crate) fn validate_scope(db: &Connection, r: &EvidenceContext<'_>) -> Result<(), Error> {
     if r.applicability.series_id != r.series_id {
         return Err(Error::ApplicabilityConflict);
     }
@@ -70,7 +70,22 @@ pub(crate) fn validate_context(db: &Connection, r: &EvidenceContext<'_>) -> Resu
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let (source, target) = languages.ok_or(Error::UnknownTarget)?;
+    languages.ok_or(Error::UnknownTarget)?;
+    if let Some(concept) = r.concept_id {
+        let valid:bool=db.query_row("select exists(select 1 from concepts c join series s on s.id=?2 where c.id=?1 and (c.scope_type='global' or (c.scope_type='series' and c.scope_key='series:'||s.slug)))",rusqlite::params![concept,r.series_id],|r|r.get(0))?;
+        if !valid {
+            return Err(Error::UnknownTarget);
+        }
+    }
+    Ok(())
+}
+pub(crate) fn validate_context(db: &Connection, r: &EvidenceContext<'_>) -> Result<(), Error> {
+    validate_scope(db, r)?;
+    let (source, target): (String, String) = db.query_row(
+        "select default_source_language,default_target_language from series where id=?",
+        [r.series_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
     for language in std::iter::once(r.source_language).chain(r.target_language.as_deref()) {
         let registered:bool=db.query_row("select exists(select 1 from series_language_tags where series_id=?1 and language_tag=?2)",rusqlite::params![r.series_id,language],|r|r.get(0))?;
         if language.is_empty()
@@ -80,12 +95,6 @@ pub(crate) fn validate_context(db: &Connection, r: &EvidenceContext<'_>) -> Resu
                 || language == target.trim().to_lowercase())
         {
             return Err(Error::LanguageMismatch);
-        }
-    }
-    if let Some(concept) = r.concept_id {
-        let valid:bool=db.query_row("select exists(select 1 from concepts c join series s on s.id=?2 where c.id=?1 and (c.scope_type='global' or (c.scope_type='series' and c.scope_key='series:'||s.slug)))",rusqlite::params![concept,r.series_id],|r|r.get(0))?;
-        if !valid {
-            return Err(Error::UnknownTarget);
         }
     }
     Ok(())

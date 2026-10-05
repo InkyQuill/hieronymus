@@ -497,14 +497,38 @@ fn snapshot_event(status: &serde_json::Value) -> Event {
     else {
         return Event::ProbeTimeout;
     };
-    if summary.level == crate::readiness::ReadinessLevel::Ready
-        && status
+    let indexing = status
+        .pointer("/memory_indexing/state")
+        .and_then(serde_json::Value::as_str);
+    if indexing == Some("failed") {
+        summary.level = crate::readiness::ReadinessLevel::Degraded;
+        summary
+            .reasons
+            .push("Memory indexing needs attention; open Overview".into());
+    } else if summary.level == crate::readiness::ReadinessLevel::Ready {
+        let dreaming = status
             .pointer("/dreaming/cycle_active")
             .and_then(serde_json::Value::as_bool)
-            == Some(true)
-    {
-        summary.level = crate::readiness::ReadinessLevel::Starting;
-        summary.reasons.push("Consolidating memories".into());
+            == Some(true);
+        if dreaming {
+            summary.reasons.push("Consolidating memories".into());
+        }
+        if indexing == Some("indexing") {
+            let completed = status
+                .pointer("/memory_indexing/indexed")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let total = status
+                .pointer("/memory_indexing/total")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            summary
+                .reasons
+                .push(format!("Indexing memories: {completed} / {total}"));
+        }
+        if dreaming || indexing == Some("indexing") {
+            summary.level = crate::readiness::ReadinessLevel::Starting;
+        }
     }
     Event::VersionedSnapshot {
         summary,
@@ -547,6 +571,25 @@ mod tests {
                 !view.busy,
                 "background work must not block desktop commands"
             );
+        }
+    }
+    #[test]
+    fn indexing_uses_the_work_icon_and_keeps_errors_visible() {
+        for (state, accent) in [
+            ("indexing", Accent::Blue),
+            ("ready", Accent::Green),
+            ("failed", Accent::Amber),
+        ] {
+            let event = snapshot_event(
+                &serde_json::json!({"readiness":{"level":"ready","reasons":[],"providers":[]},"memory_indexing":{"state":state,"indexed":32,"total":100},"dreaming":{"cycle_active":false}}),
+            );
+            let mut desktop = DesktopState::new();
+            let view = desktop.apply(event);
+            assert_eq!(view.accent, accent);
+            assert!(!view.busy);
+            if state == "indexing" {
+                assert!(view.reason.contains("32 / 100"), "{}", view.reason);
+            }
         }
     }
     #[test]
