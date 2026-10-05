@@ -70,17 +70,27 @@ pub(crate) fn validate_correction(
                 });
             }
             let base = applicability::load(db, app)?.ok_or(Error::ApplicabilityConflict)?;
-            effect.effective_applicability =
+            // The author identifies this exact assertion, even if its legacy
+            // metadata has no concept or resolved chronology. Partial-region
+            // corrections still require unambiguous scope and identity.
+            let whole_claim =
+                request.actor_kind == ActorKind::ExplicitUser && request.applicability == base;
+            effect.effective_applicability = if whole_claim {
+                base
+            } else {
                 applicability::intersection(db, &base, &request.applicability)?
-                    .ok_or(Error::ApplicabilityConflict)?;
-            if concept.is_none() {
-                reasons.push(TentativeReason::AmbiguousIdentity);
-            }
-            if effect.effective_applicability.metadata_state != MetadataState::Resolved
-                || effect.effective_applicability.timeline_id.is_none()
-                || effect.effective_applicability.knowledge_gates.is_empty()
-            {
-                reasons.push(TentativeReason::UnknownOrder);
+                    .ok_or(Error::ApplicabilityConflict)?
+            };
+            if !whole_claim {
+                if concept.is_none() {
+                    reasons.push(TentativeReason::AmbiguousIdentity);
+                }
+                if effect.effective_applicability.metadata_state != MetadataState::Resolved
+                    || effect.effective_applicability.timeline_id.is_none()
+                    || effect.effective_applicability.knowledge_gates.is_empty()
+                {
+                    reasons.push(TentativeReason::UnknownOrder);
+                }
             }
             if request.actor_kind != ActorKind::ExplicitUser {
                 // Learned corrections cannot reverse any overlapping explicit effect.

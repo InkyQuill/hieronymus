@@ -1,7 +1,7 @@
 <script lang="ts">
   import TechnicalDetails from "./TechnicalDetails.svelte";
   import { onMount, untrack } from "svelte";
-  import { correctionOptions, correctionSelection, submitCorrection, type ClaimTarget, type CorrectionOptions, type Selection } from "../lib/authority";
+  import { correctionOptions, correctionSelection, submitCorrection, AuthorityError, type ClaimTarget, type CorrectionOptions, type Selection } from "../lib/authority";
   let { target, onclose }: { target?: ClaimTarget; onclose: () => void } = $props();
   let options = $state<CorrectionOptions>({ series: [], sources: [] });
   let series = $state(0), source = $state(0), rule = $state(0), claim = $state(0);
@@ -17,6 +17,7 @@
     return firstSentence.length > 180 ? `${firstSentence.slice(0, 180)}…` : firstSentence;
   }
   let busy = $state(false), error = $state(""), notice = $state(""), applied = $state(false);
+  let refreshable = $state(false);
   let savedRequest: Record<string, unknown> | null = null;
   let sequence = 0;
   const sources = $derived(options.sources.filter(s => s.series_id === series));
@@ -35,13 +36,13 @@
     try {
       const next = await correctionSelection({ series_id: series, ...(mode === "rendering" ? { source_evidence_id: source, ...(rule ? { rule_id: rule } : {}) } : { target }) });
       if (current === sequence) selection = next;
-    } catch (reason) { if (current === sequence) error = reason instanceof Error ? reason.message : String(reason); }
+    } catch (reason) { if (current === sequence) error = reason instanceof Error ? reason.message : String(reason); refreshable = !(reason instanceof AuthorityError) || reason.refreshable; }
     finally { if (current === sequence) busy = false; }
   }
   async function initialize() {
     busy = true; error = "";
     try { options = await correctionOptions(target); if (options.series.length === 1) series = options.series[0].id; }
-    catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
+    catch (reason) { error = reason instanceof Error ? reason.message : String(reason); refreshable = !(reason instanceof AuthorityError) || reason.refreshable; }
     finally { busy = false; }
     if (target && series) await inspect();
   }
@@ -60,7 +61,7 @@
         applied = true;
         notice = mode === "rendering" ? `Correction applied. Current rendering: ${value}` : mode === "invalidate" ? "Correction applied. This claim is now marked incorrect." : `Correction applied. Qualification: ${value}`;
       } else notice = `Not applied: ${(result.Tentative?.reasons ?? result.reasons ?? [result.detail ?? "Selection could not be resolved"]).join(", ")}. Review the selection before trying again.`;
-    } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
+    } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); refreshable = !(reason instanceof AuthorityError) || reason.refreshable; }
     finally { busy = false; }
   }
 </script>
@@ -91,7 +92,7 @@
   {#if target && chosenClaim}<label>Correction<select class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value={mode} disabled={busy || applied} onchange={edited}><option value="invalidate">This is wrong or outdated</option><option value="qualify">Add a pointer or context</option></select></label>{/if}
   {#if mode !== "invalidate" && (!target || chosenClaim)}<label>{mode === "rendering" ? "Correct rendering" : "Pointer or context for your agent"}<textarea class="mt-1 block w-full rounded border border-default bg-surface p-2" bind:value disabled={busy || applied} oninput={edited}></textarea></label>{/if}
   {#if !busy && options.series.length === 0}<p>No bound book context is available for this record.</p>{/if}
-  {#if error}<p role="alert" class="text-danger">{error}</p><button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50" onclick={() => void (options.series.length ? inspect() : initialize())} disabled={busy}>Refresh selection</button>{/if}
+  {#if error}<p role="alert" class="text-danger">{error}</p>{#if refreshable}<button class="min-h-11 rounded-sm border border-default bg-surface px-4 py-2 text-primary hover:bg-raised disabled:opacity-50" onclick={() => void (options.series.length ? inspect() : initialize())} disabled={busy}>Refresh selection</button>{/if}{/if}
   {#if notice}<p role="status" class="text-body-sm">{notice}</p>{/if}
   <TechnicalDetails data={{ selectedClaim: chosenClaim, expectedRevision: selection?.expected_revision, target }} label="Technical correction selection" />
   <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 font-medium text-accent-text disabled:opacity-50" disabled={!ready} onclick={apply}>{busy ? "Working…" : "Apply correction"}</button>

@@ -39,6 +39,9 @@ export type Selection = {
   rule: Rule | null;
 };
 export class AuthorityError extends Error {
+  get refreshable() {
+    return typeof this.detail === "object" && this.detail !== null && "RevisionConflict" in this.detail;
+  }
   constructor(
     public status: number,
     public detail: unknown,
@@ -48,8 +51,10 @@ export class AuthorityError extends Error {
         detail !== null &&
         "RevisionConflict" in detail
         ? "This selection changed. Refresh the selection and review your correction."
+        : detail === "LanguageMismatch"
+          ? "The source and translation languages do not match. Choose a source occurrence and translation with the same language pair."
         : typeof detail === "string"
-          ? detail
+          ? ({ UnknownTarget: "This memory is no longer available. Reopen the memory list.", OriginMismatch: "This selection belongs to a different book. Reopen the memory in its book.", EvidenceMismatch: "The source passage changed. Reopen it before correcting the translation." } as Record<string, string>)[detail] ?? "The correction could not be applied. See technical details for the reported error."
           : "The correction could not be applied.",
     );
   }

@@ -294,3 +294,10 @@ test("large crystals offer searchable paged previews and show full text only for
     }),
   );
 });
+
+test("language conflict explains the problem without a useless refresh", async () => {
+  vi.mocked(correctionSelection).mockRejectedValue(new AuthorityError(409, "LanguageMismatch"));
+  render(CorrectionForm, { props: { target: { source: "short_term", id: 4 }, onclose: vi.fn() } });
+  await screen.findByText(/source and translation languages do not match/);
+  expect(screen.queryByRole("button", { name: "Refresh selection" })).toBeNull();
+});
