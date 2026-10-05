@@ -176,6 +176,7 @@ fn archive(extra: Option<(&str, tar::EntryType, &str)>) -> Vec<u8> {
     };
     add("hiero", tar::EntryType::Regular, "");
     for name in [
+        "licenses/new-library/COPYING",
         "licenses/hiero-decision/LICENSE",
         "licenses/hiero-decision/LICENSE-THIRD-PARTY",
     ] {

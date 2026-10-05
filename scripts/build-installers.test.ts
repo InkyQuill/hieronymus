@@ -65,9 +65,6 @@ test("standalone entries embed validated metadata and pin one release", () => {
     expect(text).not.toContain("git clone");
     expect(text).toContain("releases/download/v0.9.0/");
   }
-  expect(files["install-hieronymus.sh"]).toContain("function fail()");
-  expect(files["Install-Hieronymus.ps1"]).toContain("#requires -Version 5.1");
-  expect(files["Install-Hieronymus.ps1"]).not.toContain("Text.Json");
 });
 test("mixed releases, duplicate targets and shell-injection metadata are rejected", () => {
   const mixed = releases();

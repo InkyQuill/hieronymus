@@ -63,3 +63,11 @@ Current product contracts and accepted ADR amendments govern product behavior; s
 - Use the operating system's standard configuration directory by default: `$XDG_CONFIG_HOME/hieronymus` (fallback `~/.config/hieronymus`) on Linux, `~/Library/Application Support/Hieronymus` on macOS, and `%APPDATA%/Hieronymus` on Windows.
 - `--data-root` overrides `HIERONYMUS_DATA_ROOT`, which overrides the platform default. Keep the CLI, installers, desktop launchers, and service registrations consistent. Never persist development or temporary fixture paths into a user's real service registration.
 - Tests that install services or desktop registrations must use disposable configuration, data, and registration directories and must not contact the real user service manager.
+
+## Simplicity and useful verification
+
+- Tests must verify product behavior, business logic, or a real edge case. Remove tests that merely mirror implementation details, private helper structure, or source spelling.
+- File-presence checks must serve startup, artifact integrity, data safety, or required distribution behavior. Do not gate runtime or publication on optional documentation, diagnostics, or a fixed inventory of licenses.
+- Avoid duplicate handwritten inventories. Discover ancillary package documents during packaging; authenticate downloaded archives and validate safe extraction and critical executable/model/runtime inputs.
+- Recoverable ancillary workflow failures must remain warnings and must not roll back working artifacts or user data. Preserve and report diagnostics; do not mark failed checks as passed.
+- Favor a simple author-facing tool and a small development/release workflow over additional qualification layers.
