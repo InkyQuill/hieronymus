@@ -229,7 +229,7 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
         }
         hashes.insert(name, serde_json::json!(digest));
     }
-    for file in if cfg!(windows) {
+    for file in (if cfg!(windows) {
         &["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"][..]
     } else {
         if cfg!(target_os = "macos") {
@@ -242,14 +242,17 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
         } else {
             &["hiero", "hiero-desktop"][..]
         }
-    } {
+    })
+    .iter()
+    .chain(crate::release_archive::DECISION_LICENSE_MEMBERS.iter())
+    {
         let path = root.join(file);
         if path.try_exists().map_err(|e| e.to_string())? {
             if !std::fs::symlink_metadata(&path)
                 .map_err(|e| e.to_string())?
                 .is_file()
             {
-                return Err(format!("executable asset must be regular: {file}"));
+                return Err(format!("release asset must be regular: {file}"));
             }
             hashes.insert(
                 (*file).into(),
