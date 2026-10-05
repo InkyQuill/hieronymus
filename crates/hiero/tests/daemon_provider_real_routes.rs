@@ -2,7 +2,7 @@
 //! profile — a `.invalid` host included — is probed through the real provider
 //! client over the blocking transport. The old `source: "fixture"` shortcut
 //! for `*.invalid` hosts was removed per Astra finding 12 / plan W3; the
-//! reconciled contract is `compatibility/rust/provider-checks.json`.
+//! reconciled contract is the current provider route tests.
 //! Task-4 slice; the frozen contracts themselves live in
 //! `daemon_rest_routes.rs`. All traffic here stays on loopback (ADR 0012).
 
@@ -308,7 +308,7 @@ fn a_dot_invalid_profile_is_probed_for_real_never_faked() {
     // `{"source": "fixture", "models": ["synthetic-model"]}` was removed.
     // `provider.invalid` can never resolve, so the real probe now returns a
     // genuine transport failure. The reconciled contract per ADR 0012 /
-    // Astra 12 is recorded in `compatibility/rust/provider-checks.json`; the
+    // Astra 12 is recorded in the current provider route tests; the
     // frozen fixture bytes are untouched.
     let (fixture, _root, _daemon) = start_daemon_with_browser_session();
     let saved = save_profile(

@@ -419,7 +419,7 @@ fn deleted_implicit_cwd_returns_safe_json_and_human_envelopes() {
 #[test]
 fn actionable_translation_fixtures_project_the_existing_envelope() {
     let fixtures: Value = serde_json::from_str(include_str!(
-        "../../../compatibility/rust/cws-project-v1.json"
+        "../../hieronymus/tests/fixtures/cws-project-v1.json"
     ))
     .unwrap();
     for case in fixtures["cases"].as_array().unwrap() {
@@ -470,7 +470,7 @@ fn actionable_translation_fixtures_project_the_existing_envelope() {
 #[test]
 fn series_documents_without_volume_metadata_project_actionable_context() {
     let fixtures: Value = serde_json::from_str(include_str!(
-        "../../../compatibility/rust/cws-project-v1.json"
+        "../../hieronymus/tests/fixtures/cws-project-v1.json"
     ))
     .unwrap();
     let case = fixtures["cases"]
@@ -525,7 +525,7 @@ fn relative_cwd_selects_the_same_direction_as_an_absolute_path() {
     let project = fixture.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let cases: Value = serde_json::from_str(include_str!(
-        "../../../compatibility/rust/cws-project-v1.json"
+        "../../hieronymus/tests/fixtures/cws-project-v1.json"
     ))
     .unwrap();
     let case = cases["cases"]

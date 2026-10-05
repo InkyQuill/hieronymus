@@ -31,7 +31,7 @@ work; completed work belongs in Git history and release notes.
 | Build, packaging and publication | [Distribution](distribution.md), [automatic releases](automatic-releases.md), [CI checks](ci-checks.md) |
 | Desktop behavior | [Tray and registration](desktop-tray.md), [Linux](desktop-linux.md), [macOS](desktop-macos.md), [Windows](desktop-windows.md) |
 | Native packaging and evidence | [Platform artifacts](desktop-platforms.md), [desktop checks](desktop-qualification.md), [filesystem guarantees](desktop-filesystem-qualification.md), [agent-host checks](agent-host-acceptance.md) |
-| Compatibility inputs | [Protocol definitions and fixtures](../compatibility/README.md), [qualification assets](../qualification/README.md) |
+| Protocol definitions and test data | Embedded schemas in `crates/hiero/resources/mcp/`; daemon fixtures in `crates/hiero/tests/fixtures/`; [CWS fixture provenance](../crates/hieronymus/tests/fixtures/cws-project-v1.md) |
 
 ## Why these rules exist
 
@@ -66,6 +66,14 @@ migration tooling.
 
 Local originals, drafts and audit reports live under ignored `docs/.local/`.
 They are not shared product requirements. CHANGELOG.md is release history;
-Markdown in `crates/hiero/resources/` is embedded agent input; component
+Markdown in `crates/hiero/resources/` is embedded agent input;
+JSON in its `mcp/` subdirectory defines the live tool registry and schema extensions; component
 provenance and icon notices stay beside their assets. Personal `.remember/`
 notes and ignored `.agents/` skills remain outside the public documentation.
+
+Release acquisition caches verified models under ignored `target/acquired-assets/models/`.
+Optional native desktop records live under `evidence/desktop/` in an explicitly
+supplied evidence commit; see [desktop checks](desktop-qualification.md).
+The former `compatibility/` and `qualification/` trees are archived in Git and
+local `docs/.local/`; unused snapshots and standalone rewrite harnesses are no
+longer part of the active repository. Retained fixtures keep their original bytes.

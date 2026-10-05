@@ -1,7 +1,0 @@
-Usage: hiero install [OPTIONS] [APP]
-
-Options:
-  --dry-run
-  --force
-  --json
-  --help     Show this message and exit.

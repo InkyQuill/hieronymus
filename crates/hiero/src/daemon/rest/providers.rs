@@ -9,7 +9,7 @@
 //! DNS/connection error and `{"ok": false, "error": "...", "source":
 //! "defaults"}` — never a synthetic success. The old `source: "fixture"`
 //! short-circuit for `*.invalid` hosts was removed per Astra finding 12; the
-//! reconciled Rust contract is `compatibility/rust/provider-checks.json`.
+//! reconciled Rust contract is the current provider route tests.
 //! Tests inject a mock `ProviderTransport` through
 //! [`DaemonProviderClient::new`] to exercise both outcomes.
 

@@ -44,10 +44,8 @@ fn valid_binding() -> Value {
 
 #[test]
 fn pinned_public_fixtures_are_executable_without_cws() {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../compatibility/rust/cws-project-v1.json"
-    ))
-    .unwrap();
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/cws-project-v1.json")).unwrap();
     assert_eq!(fixture["contract_version"], 1);
     for case in fixture["cases"].as_array().unwrap() {
         let dir = tempfile::tempdir().unwrap();
@@ -457,10 +455,8 @@ fn schema_two_discovery_and_binding_are_independent_of_direction_selection() {
 fn actionable_selection_retains_editions_sources_and_producer_hashes() {
     use hieronymus::cws_project::select_direction;
     use sha2::{Digest, Sha256};
-    let fixtures: Value = serde_json::from_str(include_str!(
-        "../../../compatibility/rust/cws-project-v1.json"
-    ))
-    .unwrap();
+    let fixtures: Value =
+        serde_json::from_str(include_str!("fixtures/cws-project-v1.json")).unwrap();
     for case in fixtures["cases"].as_array().unwrap() {
         let Some(selections) = case["expect"]["selections"].as_array() else {
             continue;
@@ -530,10 +526,8 @@ fn actionable_selection_retains_editions_sources_and_producer_hashes() {
 }
 
 fn translation_fixture(name: &str) -> tempfile::TempDir {
-    let fixtures: Value = serde_json::from_str(include_str!(
-        "../../../compatibility/rust/cws-project-v1.json"
-    ))
-    .unwrap();
+    let fixtures: Value =
+        serde_json::from_str(include_str!("fixtures/cws-project-v1.json")).unwrap();
     let case = fixtures["cases"]
         .as_array()
         .unwrap()

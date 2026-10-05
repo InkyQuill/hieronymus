@@ -1,5 +1,0 @@
-Usage: hieronymus-agent-hook session-end [OPTIONS]
-
-Options:
-  --json
-  --help  Show this message and exit.

@@ -1,8 +1,0 @@
-Usage: hieronymus rag [OPTIONS] COMMAND [ARGS]...
-
-Options:
-  --help  Show this message and exit.
-
-Commands:
-  import
-  search

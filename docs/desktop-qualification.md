@@ -73,14 +73,14 @@ Create a template from reviewed source, using the actual target/session:
 
 ```sh
 bun scripts/new-desktop-evidence.ts candidate FULL_CANDIDATE_SHA kde wayland \
-  qualification/desktop-evidence/kde-wayland.json
+  evidence/desktop/kde-wayland.json
 ```
 
 A template is not passing evidence. Fill actual observations and digests, then:
 
 ```sh
 bun scripts/check-desktop-evidence.ts --release-dir candidate \
-  --evidence-dir qualification/desktop-evidence --commit FULL_CANDIDATE_SHA
+  --evidence-dir evidence/desktop --commit FULL_CANDIDATE_SHA
 ```
 
 Use a separate immutable evidence data commit with `desktop-evidence.yml` and its

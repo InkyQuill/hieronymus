@@ -1,9 +1,0 @@
-{
-  "params": {
-    "arguments": {},
-    "name": "hieronymus_session_complete"
-  },
-  "setup": {
-    "validation": "invalid"
-  }
-}

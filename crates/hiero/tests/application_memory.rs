@@ -4,7 +4,7 @@
 //! (ADR 0011).
 //!
 //! Coverage: the step-1 recall DTO regression, the versioned
-//! `compatibility/rust/recall-v2.json` expectation, contract serialization
+//! `crates/hiero/tests/fixtures/recall-v2.json` expectation, contract serialization
 //! with a store-seeded approved rule, batch atomic rejection, session
 //! ownership and override mismatches, oversize input, unsupported RAG import
 //! types, repeated-recall working-copy dedup with activation ids, legacy
@@ -21,7 +21,7 @@ use hieronymus::workspace::WorkspaceStore;
 use serde_json::{Value, json};
 
 const ACTOR: &str = "local-user";
-const RECALL_V2_FIXTURE: &str = include_str!("../../../compatibility/rust/recall-v2.json");
+const RECALL_V2_FIXTURE: &str = include_str!("fixtures/recall-v2.json");
 
 fn test_application() -> (tempfile::TempDir, Application) {
     let root = tempfile::tempdir().unwrap();
@@ -836,7 +836,7 @@ fn rag_import_persists_chunks_and_rejects_unsupported_types() {
 /// The positive path (a ready service serving fused hybrid rows with semantic
 /// provenance and series isolation) needs a real semantic service, so it
 /// lives in `semantic_execution.rs` against the pinned
-/// `compatibility/rust/rag-search-v2.json` expectations.
+/// `crates/hiero/tests/fixtures/rag-search-v2.json` expectations.
 #[test]
 fn rag_search_refuses_an_unavailable_required_semantic_service() {
     let (root, app) = test_application();

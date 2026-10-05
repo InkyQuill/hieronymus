@@ -5,7 +5,7 @@
 //! `hieronymus_session_complete`.
 //!
 //! Argument structs decode exactly the frozen `input_schema` rules from
-//! `compatibility/snapshots/mcp.json` (required fields, defaults, and null
+//! `crates/hiero/resources/mcp/registry.json` (required fields, defaults, and null
 //! rules); decoding failures are [`AppError::Invalid`]. Store rejections are
 //! [`AppError::Domain`]. All database work stays in the `hieronymus` store
 //! APIs — no SQL lives here.

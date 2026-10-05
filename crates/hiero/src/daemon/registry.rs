@@ -1,6 +1,6 @@
 //! The MCP tool registry. `tools/list` serves the frozen registry snapshot
 //! (the machine-readable port of the Python `mcp_server.py` registry, owned
-//! by `compatibility/snapshots/mcp.json`); `tools/call` wraps results in MCP
+//! by `crates/hiero/resources/mcp/registry.json`); `tools/call` wraps results in MCP
 //! content/structuredContent envelopes centrally: the frozen
 //! `hieronymus_status` contract stays registry-backed, ported tools run
 //! through the [`Application`] dispatcher, and everything else reports a
@@ -14,7 +14,7 @@ use crate::application::{AppError, Application};
 /// The exact MCP protocol revision served by this registry (ADR 0015).
 pub const PROTOCOL_REVISION: &str = "2026-07-28";
 
-const EMBEDDED_SNAPSHOT: &str = include_str!("../../../../compatibility/snapshots/mcp.json");
+const EMBEDDED_SNAPSHOT: &str = include_str!("../../resources/mcp/registry.json");
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ToolDefinition {
@@ -103,7 +103,7 @@ impl McpRegistry {
             .tools
             .retain(|tool| tool.name != "hieronymus_concept_proposals_list");
         let extension: Value = serde_json::from_str(include_str!(
-            "../../../../compatibility/rust/authority-context-v1.json"
+            "../../resources/mcp/authority-context-v1.json"
         ))
         .expect("Rust authority context schema is valid");
         for tool in &mut registry.tools {
@@ -134,7 +134,7 @@ impl McpRegistry {
             }
         }
         let authority: Value = serde_json::from_str(include_str!(
-            "../../../../compatibility/rust/authority-ingress-v1.json"
+            "../../resources/mcp/authority-ingress-v1.json"
         ))
         .expect("authority ingress schema");
         if let Some(feedback) = registry
@@ -304,10 +304,8 @@ mod tests {
                 "local-user",
             )
             .unwrap();
-        let protocol: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../compatibility/fixtures/mcp/protocol.json"
-        ))
-        .unwrap();
+        let protocol: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/mcp/protocol.json")).unwrap();
         assert_eq!(
             result,
             protocol["target"]["tools_call"]["response"]["result"]
@@ -356,10 +354,8 @@ mod tests {
     fn skeleton_calls_serve_only_the_frozen_status_contract() {
         let registry = McpRegistry::embedded();
         let result = registry.call_skeleton("hieronymus_status").unwrap();
-        let protocol: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../compatibility/fixtures/mcp/protocol.json"
-        ))
-        .unwrap();
+        let protocol: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/mcp/protocol.json")).unwrap();
         assert_eq!(
             result,
             protocol["target"]["tools_call"]["response"]["result"]

@@ -1,4 +1,0 @@
-Usage: hiero session-complete [OPTIONS] SESSION_ID
-Try 'hiero session-complete --help' for help.
-
-Error: Missing argument 'SESSION_ID'.

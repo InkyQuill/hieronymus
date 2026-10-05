@@ -1,7 +1,7 @@
 //! Durable semantic rebuild jobs: SQLite job records, transactional batch
 //! leases, cancellation, and crash recovery driving Task 7's generation
 //! lifecycle. Shapes are lifted from the qualified harness's scenario runner
-//! (`qualification/harnesses/semantic-native`): SQLite is the only recovery
+//! (the production semantic tests): SQLite is the only recovery
 //! state, every write transaction is short, and native I/O (inference and
 //! derived vector index) never runs inside one.
 //!

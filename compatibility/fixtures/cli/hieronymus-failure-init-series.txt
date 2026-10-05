@@ -1,4 +1,0 @@
-Usage: hieronymus init-series [OPTIONS] SLUG
-Try 'hieronymus init-series --help' for help.
-
-Error: Missing argument 'SLUG'.
