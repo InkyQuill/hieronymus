@@ -65,7 +65,7 @@ pub fn fixture(relative: &str) -> Value {
 }
 
 pub fn mcp_protocol() -> Value {
-    fixture("compatibility/fixtures/mcp/protocol.json")
+    fixture("crates/hiero/tests/fixtures/mcp/protocol.json")
 }
 
 pub fn route_target(route_id: &str) -> Value {
@@ -108,7 +108,7 @@ fn retire_proposal_contract(value: &mut Value) {
 }
 
 pub fn route_cases() -> Value {
-    fixture("compatibility/fixtures/http/route-cases.json")
+    fixture("crates/hiero/tests/fixtures/http/route-cases.json")
 }
 
 /// Replace fixture placeholders: `<PORT>` with the daemon's bound port and

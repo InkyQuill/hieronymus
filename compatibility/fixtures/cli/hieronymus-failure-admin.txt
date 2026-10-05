@@ -1,4 +1,0 @@
-Usage: hieronymus admin [OPTIONS]
-Try 'hieronymus admin --help' for help.
-
-Error: No such option: --compat-invalid-option

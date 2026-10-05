@@ -1,6 +1,0 @@
-{
-  "decision": "Issue #47: agents operate autonomously; no human proposal approval queue",
-  "removed": ["hieronymus_concept_proposals_list", "Proposals admin view", "approve_proposal", "reject_proposal", "concept_proposals dream producer"],
-  "existing_data": "Pending records become archived on first current-schema open. Payloads, approved/rejected records and audit history are preserved. No proposal is promoted into a strict term or active authority.",
-  "replacement": "Existing direct concept/facet/claim operations and corrections"
-}

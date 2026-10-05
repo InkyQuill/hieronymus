@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       evidence_commit:
-        description: Full commit SHA containing qualification/desktop-evidence data only
+        description: Full commit SHA containing evidence/desktop data only
         required: true
         type: string
 permissions:
@@ -43,9 +43,9 @@ jobs:
           ref: ${{ inputs.evidence_commit }}
           path: evidence-source
           persist-credentials: false
-          sparse-checkout: qualification/desktop-evidence
+          sparse-checkout: evidence/desktop
       - name: Validate and copy only bounded evidence data
-        run: bun scripts/package-desktop-evidence.ts target/candidate evidence-source/qualification/desktop-evidence target/evidence "$GITHUB_SHA" "$CANDIDATE_RUN" "$EVIDENCE_COMMIT"
+        run: bun scripts/package-desktop-evidence.ts target/candidate evidence-source/evidence/desktop target/evidence "$GITHUB_SHA" "$CANDIDATE_RUN" "$EVIDENCE_COMMIT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-evidence

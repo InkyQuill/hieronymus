@@ -50,5 +50,5 @@ invalidation use the separate authority path.
 The app can maintain memory autonomously while preserving predictable translation
 constraints. Ranking and source evidence stay flexible; authority changes are
 explicit and explainable. [Business logic](../business-logic.md) explains the
-user-visible behavior; [authority ingress](../authority-ingress.md) explains the
-public operations and links their current schemas.
+user-visible behavior; live MCP schemas are in `crates/hiero/resources/mcp/`,
+and [authority ingress](../authority-ingress.md) explains the public operations.

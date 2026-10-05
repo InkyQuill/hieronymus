@@ -1,5 +1,0 @@
-Usage: hieronymus session-complete [OPTIONS] SESSION_ID
-
-Options:
-  --json
-  --help  Show this message and exit.

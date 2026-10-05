@@ -1,8 +1,0 @@
-Usage: hieronymus-agent-hook [OPTIONS] COMMAND [ARGS]...
-
-Options:
-  --help  Show this message and exit.
-
-Commands:
-  session-end
-  session-start

@@ -1,4 +1,0 @@
-Usage: hieronymus stop [OPTIONS]
-Try 'hieronymus stop --help' for help.
-
-Error: No such option: --compat-invalid-option

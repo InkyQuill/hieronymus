@@ -1,4 +1,0 @@
-Usage: hiero recall [OPTIONS] SESSION_ID
-Try 'hiero recall --help' for help.
-
-Error: Missing argument 'SESSION_ID'.

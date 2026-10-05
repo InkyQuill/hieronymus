@@ -5,7 +5,7 @@
 //! feedback) can never deactivate or activate the authority.
 //!
 //! Coverage: the step-1 propose/approve/contract regression, the versioned
-//! `compatibility/rust/rule-lifecycle-v2.json` expectation, revision
+//! `crates/hiero/tests/fixtures/rule-lifecycle-v2.json` expectation, revision
 //! conflicts, idempotency replay and conflicts, transactional rollback of
 //! projection-coupled archive (the crash-before-commit proxy), replacement
 //! semantics, active rules surviving feedback/decay, dream-generated
@@ -22,8 +22,7 @@ use hieronymus::terminology::{ProposeFields, RuleAction, RuleActionRequest, Term
 use serde_json::{Value, json};
 
 const ACTOR: &str = "local-user";
-const LIFECYCLE_V2_FIXTURE: &str =
-    include_str!("../../../compatibility/rust/rule-lifecycle-v2.json");
+const LIFECYCLE_V2_FIXTURE: &str = include_str!("fixtures/rule-lifecycle-v2.json");
 
 fn test_application() -> (tempfile::TempDir, Application) {
     let root = tempfile::tempdir().unwrap();
