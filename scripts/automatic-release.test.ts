@@ -3,12 +3,14 @@ import {synchronizeVersion,selectedRun,buildAndPromote} from "./automatic-releas
 
 test("workspace bump changes only owned versions and fails incomplete lockfiles",()=>{
  const manifest='[workspace.package]\nversion = "0.9.3"\n[dependencies]\nversion = "keep"\n';
- const lock=['hiero','hieronymus','hiero-desktop','foreign'].map(name=>`[[package]]\nname = "${name}"\nversion = "0.9.3"\n`).join('\n');
+ const lock=['hiero','hieronymus','hiero-desktop','hiero-decision','foreign'].map(name=>`[[package]]\nname = "${name}"\nversion = "0.9.3"\n`).join('\n');
  const next=synchronizeVersion('0.10.0',manifest,lock);
  expect(next.cargo).toContain('version = "0.10.0"');
  expect(next.cargo).toContain('version = "keep"');
  expect(next.cargoLock).toContain('name = "foreign"\nversion = "0.9.3"');
- expect(next.cargoLock.match(/version = "0.10.0"/g)).toHaveLength(3);
+ expect(next.cargoLock.match(/version = "0.10.0"/g)).toHaveLength(4);
+ expect(next.cargoLock).toContain('name = "hiero-decision"\nversion = "0.10.0"');
+ expect(()=>synchronizeVersion('0.10.0',manifest,lock.replace(/\[\[package\]\]\nname = "hiero-decision"\nversion = "0.9.3"\n/,''))).toThrow();
  expect(()=>synchronizeVersion('invalid',manifest,lock)).toThrow();
  expect(()=>synchronizeVersion('0.10.0',manifest,'')).toThrow();
 });

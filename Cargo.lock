@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "hiero-decision"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
