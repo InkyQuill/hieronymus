@@ -81,10 +81,13 @@ pub trait ModelTransport: Send + Sync {
 /// Production transport: one blocking streaming HTTP/1.1 GET per call
 /// (`http://` plain, `https://` over rustls with the configured roots),
 /// read-bounded by `max_bytes`.
+pub type DownloadProgress = std::sync::Arc<dyn Fn(&str, u64, Option<u64>) + Send + Sync>;
+
 pub struct HttpModelTransport {
     timeout: Duration,
     tls_roots: TlsRoots,
     https_redirects: usize,
+    progress: Option<DownloadProgress>,
 }
 
 impl HttpModelTransport {
@@ -93,6 +96,7 @@ impl HttpModelTransport {
             timeout,
             tls_roots: TlsRoots::default(),
             https_redirects: 0,
+            progress: None,
         }
     }
 
@@ -100,6 +104,11 @@ impl HttpModelTransport {
     /// keeps its existing no-redirect policy unless explicitly enabled.
     pub fn with_https_redirects(mut self, maximum: usize) -> Self {
         self.https_redirects = maximum;
+        self
+    }
+
+    pub fn with_progress(mut self, progress: Option<DownloadProgress>) -> Self {
+        self.progress = progress;
         self
     }
 
@@ -118,6 +127,12 @@ impl ModelTransport for HttpModelTransport {
         destination: &Path,
         max_bytes: u64,
     ) -> Result<u64, SemanticError> {
+        let progress = |bytes, total| {
+            if let Some(report) = &self.progress {
+                report(url, bytes, total);
+            }
+        };
+        progress(0, None);
         let mut current = url.to_owned();
         for hop in 0..=self.https_redirects {
             let parsed =
@@ -166,7 +181,13 @@ impl ModelTransport for HttpModelTransport {
                 )));
             }
             if head.chunked {
-                return stream_chunked_body(&mut stream, destination, &head.buffered, max_bytes);
+                return stream_chunked_body_with_progress(
+                    &mut stream,
+                    destination,
+                    &head.buffered,
+                    max_bytes,
+                    &progress,
+                );
             }
             return stream_body(
                 &mut stream,
@@ -174,6 +195,7 @@ impl ModelTransport for HttpModelTransport {
                 &head.buffered,
                 head.content_length,
                 max_bytes,
+                &progress,
             );
         }
         unreachable!("bounded redirect loop always returns")
@@ -313,7 +335,9 @@ fn stream_body(
     buffered: &[u8],
     content_length: Option<u64>,
     max_bytes: u64,
+    progress: &dyn Fn(u64, Option<u64>),
 ) -> Result<u64, SemanticError> {
+    progress(0, content_length);
     let mut file = std::io::BufWriter::new(std::fs::File::create(destination)?);
     let mut buffer = vec![0_u8; STREAM_BUFFER_BYTES];
     let mut written: u64 = 0;
@@ -347,6 +371,7 @@ fn stream_body(
             )));
         }
         file.write_all(&buffer[..count])?;
+        progress(written, content_length);
     }
     file.flush()?;
     if let Some(content_length) = content_length
@@ -359,11 +384,22 @@ fn stream_body(
     Ok(written)
 }
 
+#[cfg(test)]
 fn stream_chunked_body(
     stream: &mut impl Read,
     destination: &Path,
     buffered: &[u8],
     max_bytes: u64,
+) -> Result<u64, SemanticError> {
+    stream_chunked_body_with_progress(stream, destination, buffered, max_bytes, &|_, _| {})
+}
+
+fn stream_chunked_body_with_progress(
+    stream: &mut impl Read,
+    destination: &Path,
+    buffered: &[u8],
+    max_bytes: u64,
+    progress: &dyn Fn(u64, Option<u64>),
 ) -> Result<u64, SemanticError> {
     use std::io::BufRead;
     let mut input = std::io::BufReader::new(std::io::Cursor::new(buffered).chain(stream));
@@ -408,6 +444,7 @@ fn stream_chunked_body(
         let copied = std::io::copy(&mut input.by_ref().take(size), &mut output)?;
         let mut separator = [0; 2];
         input.read_exact(&mut separator)?;
+        progress(total, None);
         if copied != size || separator != *b"\r\n" {
             return Err(SemanticError::Download("truncated chunked download".into()));
         }
@@ -438,6 +475,26 @@ pub fn sha256_file(path: &Path) -> Result<String, SemanticError> {
 #[cfg(test)]
 mod chunk_tests {
     use super::*;
+    #[test]
+    fn download_progress_tracks_the_bytes_written_and_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let observations = std::cell::RefCell::new(Vec::new());
+        let body = vec![42; STREAM_BUFFER_BYTES * 2 + 7];
+        let bytes = stream_body(
+            &mut std::io::Cursor::new(&body),
+            &dir.path().join("body"),
+            &[],
+            Some(body.len() as u64),
+            body.len() as u64,
+            &|n, total| observations.borrow_mut().push((n, total)),
+        )
+        .unwrap();
+        assert_eq!(bytes, body.len() as u64);
+        assert_eq!(observations.borrow().first(), Some(&(0, Some(bytes))));
+        assert_eq!(observations.borrow().last(), Some(&(bytes, Some(bytes))));
+        assert!(observations.borrow().windows(2).all(|w| w[0].0 < w[1].0));
+        assert_eq!(std::fs::read(dir.path().join("body")).unwrap(), body);
+    }
     #[test]
     fn chunked_response_requires_complete_trailers() {
         let dir = tempfile::tempdir().unwrap();

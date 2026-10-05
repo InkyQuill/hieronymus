@@ -103,14 +103,9 @@ impl Drop for TraySingleton {
 pub(crate) fn trusted_session() -> io::Result<String> {
     // Audit identity alone can belong to a TTY or SSH login. The supervisor
     // and helper both resolve only a validated local graphical login.
-    if let Ok(session) = logind_session().or_else(|_| graphical_user_session()) {
-        return Ok(session);
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "Could not identify this desktop login session; run the helper inside a logind graphical login with /usr/bin/busctl available",
-    ))
+    logind_session().or_else(|direct| graphical_user_session().map_err(|fallback| {
+        io::Error::new(io::ErrorKind::Unsupported, format!("Could not identify this desktop login session; run the helper inside a logind graphical login with /usr/bin/busctl available. Direct lookup: {direct}; graphical lookup: {fallback}"))
+    }))
 }
 #[cfg(target_os = "linux")]
 fn logind_session() -> io::Result<String> {
@@ -151,7 +146,7 @@ fn session_output(mut command: std::process::Command, limit: u64) -> io::Result<
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()?;
     let result = (|| {
         let mut stdout = child
@@ -160,28 +155,45 @@ fn session_output(mut command: std::process::Command, limit: u64) -> io::Result<
             .ok_or_else(|| io::Error::other("Session lookup had no output"))?;
         let flags = rustix::fs::fcntl_getfl(&stdout)?;
         rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK)?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("Session lookup had no diagnostics"))?;
+        let flags = rustix::fs::fcntl_getfl(&stderr)?;
+        rustix::fs::fcntl_setfl(&stderr, flags | rustix::fs::OFlags::NONBLOCK)?;
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut output = Vec::new();
+        let mut diagnostics = Vec::new();
         let mut status = None;
         loop {
             let mut buffer = [0_u8; 4096];
-            loop {
-                match stdout.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(count) => {
-                        output.extend_from_slice(&buffer[..count]);
-                        if output.len() as u64 > limit {
-                            return Err(io::Error::other("Desktop session response exceeds bound"));
+            for (pipe, bytes) in [
+                (&mut stdout as &mut dyn Read, &mut output),
+                (&mut stderr as &mut dyn Read, &mut diagnostics),
+            ] {
+                loop {
+                    match pipe.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(count) => {
+                            bytes.extend_from_slice(&buffer[..count]);
+                            if bytes.len() as u64 > limit {
+                                return Err(io::Error::other(
+                                    "Desktop session response exceeds bound",
+                                ));
+                            }
                         }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(error) => return Err(error),
                     }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                    Err(error) => return Err(error),
                 }
             }
             // Drain once more after observing exit, including its last write.
             if let Some(status) = status {
                 if !std::process::ExitStatus::success(&status) {
-                    return Err(io::Error::other("Desktop session query failed"));
+                    return Err(io::Error::other(format!(
+                        "Desktop session query failed: {}",
+                        String::from_utf8_lossy(&diagnostics).trim()
+                    )));
                 }
                 return String::from_utf8(output).map_err(io::Error::other);
             }
@@ -366,6 +378,14 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("exceeds bound")
+        );
+        let mut failed = std::process::Command::new("/usr/bin/sh");
+        failed.args(["-c", "echo 'session unavailable' >&2; exit 1"]);
+        assert!(
+            session_output(failed, 1024)
+                .unwrap_err()
+                .to_string()
+                .contains("session unavailable")
         );
     }
     #[cfg(target_os = "linux")]
