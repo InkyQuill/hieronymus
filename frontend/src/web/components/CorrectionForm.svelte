@@ -36,7 +36,7 @@
     try {
       const next = await correctionSelection({ series_id: series, ...(mode === "rendering" ? { source_evidence_id: source, ...(rule ? { rule_id: rule } : {}) } : { target }) });
       if (current === sequence) selection = next;
-    } catch (reason) { if (current === sequence) error = reason instanceof Error ? reason.message : String(reason); refreshable = !(reason instanceof AuthorityError) || reason.refreshable; }
+    } catch (reason) { if (current === sequence) { error = reason instanceof Error ? reason.message : String(reason); refreshable = !(reason instanceof AuthorityError) || reason.refreshable; } }
     finally { if (current === sequence) busy = false; }
   }
   async function initialize() {
