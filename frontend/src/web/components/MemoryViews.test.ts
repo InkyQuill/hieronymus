@@ -26,6 +26,7 @@ vi.mock("../lib/api", () => ({
 
 const loadSnapshotMock = vi.mocked(loadAdminSnapshot);
 const runActionMock = vi.mocked(runAdminAction);
+const sourceSnapshots = [{ id: 7, record: { text: "Original memory" } }];
 
 const command = (
   id: string,
@@ -118,7 +119,7 @@ beforeEach(() => {
   vi.mocked(prepareMergePreview).mockReset().mockResolvedValue({
     title: "Combined memory",
     text: "Suggested combined evidence",
-    source_snapshots: [],
+    source_snapshots: sourceSnapshots,
   });
   loadSnapshotMock
     .mockResolvedValueOnce(listSnapshot)
@@ -430,7 +431,7 @@ test("merge uses two explicitly checked records and clears selection after compl
     text: "Combined evidence",
     title: "Combined memory",
     confirmed: true,
-    source_snapshots: [],
+    source_snapshots: sourceSnapshots,
   });
   await waitFor(() =>
     expect(

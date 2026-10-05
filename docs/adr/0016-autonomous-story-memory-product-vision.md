@@ -84,7 +84,9 @@ handles; this change does not migrate or delete source history.
 Manual combining is optional author maintenance. It first sends all selected
 compatible crystals to the knowledge Dreaming model and offers an editable title
 and memory text. Preview does not alter records; a confirmed merge checks source
-snapshots, preserves lineage and archives the originals in one transaction.
+snapshots when supplied, preserves lineage and archives the originals in one
+transaction. The web preview flow supplies snapshots; direct crystal merges
+without them remain accepted without the stale-source check.
 Model failure leaves the selection intact and offers retry. This avoids asking
 authors to write the combined memory from an empty form. Concept identity merging
 remains a separate direct operation into the first selected concept.

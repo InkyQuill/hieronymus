@@ -6,11 +6,12 @@ import ActionDialog from "./ActionDialog.svelte";
 import { prepareMergePreview } from "../lib/api";
 vi.mock("../lib/api", () => ({ prepareMergePreview: vi.fn() }));
 const prepareMergeMock = vi.mocked(prepareMergePreview);
+const sourceSnapshots = [{ id: 7, record: { text: "Original memory" } }];
 beforeEach(() => {
   prepareMergeMock.mockReset().mockResolvedValue({
     title: "Combined memory",
     text: "Suggested combined memory.",
-    source_snapshots: [],
+    source_snapshots: sourceSnapshots,
   });
 });
 
@@ -316,7 +317,7 @@ test("merge_selected prepares an editable proposal and commits only after confir
     text: "The hero is Alto; the city is Verel.",
     title: "Combined memory",
     confirmed: true,
-    source_snapshots: [],
+    source_snapshots: sourceSnapshots,
   });
 });
 
@@ -454,7 +455,7 @@ test("a regenerated merge suggestion requires a new confirmation", async () => {
   finish?.({
     title: "Revised suggestion",
     text: "Revised combined memory.",
-    source_snapshots: [],
+    source_snapshots: sourceSnapshots,
   });
   await waitFor(() =>
     expect(

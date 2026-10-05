@@ -19,7 +19,9 @@ Invalidated memories are not reactivated. A RAG-only read does not create those 
 
 Each provider batch selects pending observations from one project/language scope
 across sessions, including active tasks, with a restart-safe rotating observation
-cursor. A deferred old observation cannot indefinitely starve newer work. Model
+cursor. Rotation is recorded before provider processing, independently of its
+success or persistence, allowing other bounded batches to be selected while
+failed and deferred inputs remain pending. Model
 budgets split large queues into further batches. Every observation carries its own
 source/task/story context; session IDs are absent from model prompts. Larger
 observation IDs indicate later capture, not higher authority or later story time.
