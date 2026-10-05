@@ -6,7 +6,7 @@ default-members = ["crates/hieronymus", "crates/hiero", "crates/hiero-decision"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.98"
-version = "0.13.5-dev.1"
+version = "0.13.4"
 license = "MIT"
 
 [workspace.dependencies]
