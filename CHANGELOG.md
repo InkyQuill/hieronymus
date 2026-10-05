@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## [0.13.3](https://github.com/InkyQuill/hieronymus/compare/v0.13.2...v0.13.3) (2026-10-05)
+
+
+### Bug Fixes
+
+* **release:** hash bundled licenses in installed assets ([4060c8c](https://github.com/InkyQuill/hieronymus/commit/4060c8ca3d89f2d5aff25721bb3d1d5bf60c5a8a))
+* **release:** hash bundled licenses in installed assets ([66332dc](https://github.com/InkyQuill/hieronymus/commit/66332dc8a11cebb3761541e4ba8d170bf7d9a8fe))
+
+
+### Refactoring and Build Simplification
+
+* **release:** simplify ancillary checks and artifact inventories ([e171043](https://github.com/InkyQuill/hieronymus/commit/e171043fd67a49553371ef9319a36cc1a631c496))
+* **release:** simplify ancillary checks and artifact inventories ([3b9d08e](https://github.com/InkyQuill/hieronymus/commit/3b9d08e309721ed0cf1dce9423217a463e778c23))
+
 ## [0.13.2](https://github.com/InkyQuill/hieronymus/compare/v0.13.1...v0.13.2) (2026-10-05)
 
 
