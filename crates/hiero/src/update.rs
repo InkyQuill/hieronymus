@@ -342,7 +342,16 @@ pub fn run_update_guarded(
     options: &UpdateOptions,
     operation: &LifecycleOperation,
 ) -> Result<UpdateReport, UpdateError> {
-    run_update_guarded_impl(options, None, operation, None)
+    run_update_guarded_impl(options, None, operation, None, &|_| {})
+}
+
+/// Live phase reporting for CLI callers; ordinary API callers remain silent.
+pub fn run_update_guarded_with_progress(
+    options: &UpdateOptions,
+    operation: &LifecycleOperation,
+    progress: &dyn Fn(&str),
+) -> Result<UpdateReport, UpdateError> {
+    run_update_guarded_impl(options, None, operation, None, progress)
 }
 
 /// Standalone bootstrap and updater share one guarded activation/registration rollback.
@@ -352,7 +361,7 @@ pub fn run_desktop_install(
 ) -> Result<UpdateReport, UpdateError> {
     let config = load_config(options.data_root.as_deref());
     let op = LifecycleOperation::acquire(&config)?;
-    run_update_guarded_impl(options, None, &op, Some(no_activate))
+    run_update_guarded_impl(options, None, &op, Some(no_activate), &|_| {})
 }
 
 #[cfg(all(test, unix))]
@@ -362,7 +371,7 @@ fn run_update_impl(
 ) -> Result<UpdateReport, UpdateError> {
     let config = load_config(options.data_root.as_deref());
     let operation = LifecycleOperation::acquire(&config)?;
-    run_update_guarded_impl(options, manager, &operation, None)
+    run_update_guarded_impl(options, manager, &operation, None, &|_| {})
 }
 
 struct LifecycleManager<'a> {
@@ -402,8 +411,15 @@ fn run_update_guarded_impl(
     manager_override: Option<&dyn ServiceManager>,
     operation: &LifecycleOperation,
     desktop_install: Option<bool>,
+    progress: &dyn Fn(&str),
 ) -> Result<UpdateReport, UpdateError> {
-    let mut report = run_update_core(options, manager_override, operation, desktop_install)?;
+    let mut report = run_update_core(
+        options,
+        manager_override,
+        operation,
+        desktop_install,
+        progress,
+    )?;
     #[cfg(unix)]
     {
         let root = options
@@ -437,6 +453,7 @@ fn run_update_core(
     manager_override: Option<&dyn ServiceManager>,
     operation: &LifecycleOperation,
     desktop_install: Option<bool>,
+    progress: &dyn Fn(&str),
 ) -> Result<UpdateReport, UpdateError> {
     let config = load_config(options.data_root.as_deref());
     operation.check(&config)?;
@@ -474,6 +491,7 @@ fn run_update_core(
     service::validate_unit_root_guarded(&service_options, operation)
         .map_err(|error| UpdateError::Refused(error.to_string()))?;
 
+    progress("Verifying release files…");
     let acquired = if options
         .release_dir
         .join(crate::release_manifest::metadata_name(TARGET_TRIPLE))
@@ -560,6 +578,7 @@ fn run_update_core(
         UpdateError::Refused(message)
     };
 
+    progress("Unpacking and checking the new installation…");
     if let Err(error) = if acquired.is_some() {
         crate::release_archive::extract_split_directory(release_directory, TARGET_TRIPLE, &staging)
             .map(|_| ())
@@ -755,6 +774,7 @@ fn run_update_core(
         .map_err(|e| refused(e.to_string()))?
         .is_live()
     {
+        progress("Stopping the server safely…");
         if let Err(error) = manager.stop() {
             retirement.allow_launch();
             return Err(activation_failed(
@@ -810,6 +830,7 @@ fn run_update_core(
     // control flow, not of reviewer diligence.
     let outcome = (|| -> Result<PostSwitch, String> {
         // Promote the staged directory and switch the stable links.
+        progress("Activating the new installation…");
         (|| -> std::io::Result<()> {
             if version_dir.try_exists()? { return Err(std::io::Error::other("immutable candidate version already exists; inspect the interrupted attempt before retrying")); }
             crate::platform::managed_files::promote(&staging, &version_dir)?;
@@ -860,6 +881,7 @@ fn run_update_core(
                 .map_err(|e| e.to_string())?
         {
             drop(ownership.take());
+            progress("Starting the server…");
             manager
                 .start()
                 .map_err(|error| format!("service start failed ({error})"))?;
@@ -928,6 +950,7 @@ fn run_update_core(
         // started daemon to authenticate is not activated.
         let mut index_pending = false;
         if daemon_started {
+            progress("Checking the running server…");
             poll_until_live(&config, Some(&release.version))
                 .map_err(|reason| format!("candidate readiness check failed ({reason})"))?;
             lines.push(

@@ -59,7 +59,18 @@ pub fn claim_disposition(
     };
     let eligible = evaluate_candidate(db, &app, query)?;
     match eligible {
-        Eligibility::Unknown => return Ok(ClaimDisposition::Unknown),
+        Eligibility::Unknown => {
+            // A whole-assertion invalidation suppresses an identified memory
+            // even when its original story coordinates remain unknown.
+            if let Some(effect) = effect_annotations(db, claim_id)?
+                .iter()
+                .find(|effect| effect.applicability == app && effect.exclusions.is_empty())
+                && effect.disposition == ClaimDisposition::Invalid
+            {
+                return Ok(ClaimDisposition::Invalid);
+            }
+            return Ok(ClaimDisposition::Unknown);
+        }
         Eligibility::Excluded | Eligibility::FutureOrOutsideViewpoint => {
             return Ok(ClaimDisposition::OutsideContext);
         }

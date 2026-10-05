@@ -356,10 +356,17 @@ fn validate_request_context(
     r: &DecisionRequestV1,
     origin_context: OriginContextV1,
 ) -> Result<OriginContextV1, Error> {
-    crate::authority_evidence::validate_context(
-        db,
-        &crate::authority_evidence::EvidenceContext::from(r),
-    )?;
+    let context = crate::authority_evidence::EvidenceContext::from(r);
+    if matches!(
+        r.operation,
+        OperationV1::Correct {
+            intent: CorrectionIntentV1::Fact { .. }
+        }
+    ) {
+        crate::authority_evidence::validate_scope(db, &context)?;
+    } else {
+        crate::authority_evidence::validate_context(db, &context)?;
+    }
     let revision: Option<i64> = db
         .query_row(
             "select revision from authority_state where series_id=?",

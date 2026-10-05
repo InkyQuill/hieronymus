@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use hieronymus::semantic_model::{HttpModelTransport, ModelTransport};
+use hieronymus::semantic_model::{DownloadProgress, HttpModelTransport, ModelTransport};
 use hieronymus::tls::{TlsRoots, parse_outbound_url};
 
 use crate::app::{LINK_NAMES, TARGET_TRIPLE};
@@ -139,7 +139,7 @@ pub fn stage_remote_cached_with_roots(
     cache: &Path,
     roots: TlsRoots,
 ) -> Result<PathBuf, String> {
-    stage_remote_layout(base_url, channel, destination, cache, roots, false)
+    stage_remote_layout(base_url, channel, destination, cache, roots, false, None)
 }
 
 /// Stage the flat asset layout published by the official GitHub repository.
@@ -150,7 +150,25 @@ pub fn stage_github_assets(
     cache: &Path,
     roots: TlsRoots,
 ) -> Result<PathBuf, String> {
-    stage_remote_layout(base_url, channel, destination, cache, roots, true)
+    stage_remote_layout(base_url, channel, destination, cache, roots, true, None)
+}
+
+pub fn stage_github_assets_with_progress(
+    base_url: &str,
+    channel: &str,
+    destination: &Path,
+    cache: &Path,
+    progress: Option<DownloadProgress>,
+) -> Result<PathBuf, String> {
+    stage_remote_layout(
+        base_url,
+        channel,
+        destination,
+        cache,
+        TlsRoots::default(),
+        true,
+        progress,
+    )
 }
 
 fn stage_remote_layout(
@@ -160,6 +178,7 @@ fn stage_remote_layout(
     cache: &Path,
     roots: TlsRoots,
     flat: bool,
+    progress: Option<DownloadProgress>,
 ) -> Result<PathBuf, String> {
     validate_base_url(base_url)?;
     validate_channel(channel)?;
@@ -176,7 +195,8 @@ fn stage_remote_layout(
         .map_err(|e| e.to_string())?;
     let transport = HttpModelTransport::new(Duration::from_secs(60))
         .with_tls_roots(roots)
-        .with_https_redirects(if flat { 5 } else { 0 });
+        .with_https_redirects(if flat { 5 } else { 0 })
+        .with_progress(progress);
     let base = if flat {
         base_url.trim_end_matches('/').to_owned()
     } else {

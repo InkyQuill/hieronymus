@@ -115,10 +115,12 @@ After native package rollback restores and validates registration, the outer tra
 ## Status and diagnostics
 
 The tray uses green for ready, blue for work in progress (including semantic
-index rebuilding and memory consolidation), amber for warnings, and red for
+index rebuilding, memory indexing and memory consolidation), amber for warnings, and red for
 failures. The first menu row shows the current reason; **Open console** shows
 readiness details on the dashboard. `hiero status --json` provides the same server
-diagnostics from the command line. Background activity does not disable desktop
+diagnostics from the command line. Memory indexing reports indexed/total counts
+in the tray reason and Overview, where failures and remaining work are visible.
+Background activity does not disable desktop
 actions; only a pending desktop command does.
 
 The helper writes stdout, startup and native desktop errors to

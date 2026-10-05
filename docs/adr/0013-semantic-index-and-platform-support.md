@@ -125,3 +125,15 @@ backend only. Current focused generation/recovery/recall tests qualify the new
 storage contract; native model/host qualification must be reported separately.
 Source builds no longer require system protoc for the application. Independently
 building the pinned ONNX runtime retains its own toolchain requirements.
+
+## Amendment — 2026-10-05: autonomous memory indexing
+
+The existing semantic worker maintains memory vectors in continuing bounded
+batches, independent of recall, throughout the server lifetime including after
+idle periods. Deleted or archived sources are normal: their derived vectors are
+removed and totals reflect current memory. Missing, changed or model-incompatible
+vectors form a durable backlog derived from authoritative rows; inference runs outside
+write transactions and publication rechecks the source. Overview and native
+status expose progress/failures; the tray uses the same work indication as
+Dreaming. Recall only reads memory vectors and distinguishes an indexing backlog
+from a bounded candidate scan. No additional scheduler or release gate is needed.

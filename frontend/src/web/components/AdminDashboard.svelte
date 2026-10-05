@@ -30,6 +30,7 @@
   ] as const;
   const currentPhase = $derived(String(dashboard.dream_status.current_phase ?? ""));
   const currentPhaseIndex = $derived(workflow.findIndex(([phase]) => phase === currentPhase));
+  const indexing = $derived(dashboard.memory_indexing);
   const readiness = $derived(formatReadiness(dashboard.readiness));
 
   function workflowState(index: number): "complete" | "active" | "pending" {
@@ -77,6 +78,15 @@
         {/if}
         <div class="mt-4 flex flex-wrap gap-4 text-body-sm"><a href="/config/dreaming" class="text-accent-text underline">Processing settings</a><a href="/admin/memory?view=Dream%20Runs" class="text-accent-text underline">View processing history</a></div>
     </section>
+    <section class="mt-4 rounded-md border border-default bg-surface p-5" aria-label="Memory indexing status">
+      <div class="flex flex-wrap items-baseline justify-between gap-4"><h3 class="text-h3">Memory indexing</h3><span class="text-body-sm text-secondary">{indexing?.state === "indexing" ? "Indexing in the background" : indexing?.state === "ready" ? "Up to date" : indexing?.state === "failed" ? "Needs attention" : indexing ? "Waiting for the search model" : "Status unavailable"}</span></div>
+      <p class="mt-3 max-w-[70ch] text-body-sm text-secondary">Indexing helps your agent find related memories across languages. It runs automatically while the server is open.</p>
+      {#if indexing && indexing.state !== "waiting"}
+        <p class="mt-3 text-body-sm tabular-nums">{indexing.indexed.toLocaleString()} / {indexing.total.toLocaleString()} memories indexed · {indexing.pending.toLocaleString()} remaining</p>
+        <progress class="mt-3 h-2 w-full accent-[var(--hiero-accent)]" aria-label="Memory indexing progress" max={Math.max(1, indexing.total)} value={indexing.indexed}></progress>
+      {/if}
+      {#if indexing?.detail}<p role="alert" class="mt-3 text-body-sm text-danger">{indexing.detail}</p><p class="mt-2 text-body-sm text-secondary">The server will retry automatically. Check the search model settings if this continues.</p>{/if}
+    </section>
     <section class="mt-4 rounded-md border border-default bg-surface p-5" aria-label="Local service status">
       <h3 class="mb-4 text-h3">Local service</h3>
       <p class="mb-4 max-w-[70ch] text-body-sm text-secondary">{readiness.level === "Ready" ? "The service reports that it is ready." : readiness.level === "Degraded" ? "Some memory features need attention. Review the reported problems below and check the AI connection or processing history." : readiness.level === "Starting" ? "The service is starting. Check this page again when startup finishes." : "The service has not reported its readiness. Open technical details to inspect the available status."}</p>
@@ -92,8 +102,8 @@
       {#if readiness.level === "Degraded"}<a href="/config" class="mt-4 inline-flex min-h-11 items-center text-body-sm text-accent-text underline">Check AI connections</a>{/if}
       <TechnicalDetails data={{ readiness: parseSummary(dashboard.readiness), dreaming: { state: dashboard.dream_status.state, current_phase: dashboard.dream_status.current_phase, progress: dashboard.dream_status.progress }, recent_memory: { pending_count: dashboard.short_term_status.pending_count } }} label="Technical service status" />
       {#if readiness.providers.length > 0}
-        <details class="mt-4"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">AI provider checks</summary>
-        <ul class="mt-4 grid gap-2" aria-label="Provider readiness">
+        <details class="mt-4"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Recent provider activity</summary>
+        <ul class="mt-4 grid gap-2" aria-label="Recent provider activity">
           {#each readiness.providers as provider (`${provider.provider}:${provider.model}`)}
             <li class="rounded-sm border border-default bg-raised px-3 py-2 text-body-sm">
               <span class="font-medium">{provider.provider} / {provider.model}</span>

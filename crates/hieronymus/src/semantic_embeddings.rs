@@ -448,8 +448,8 @@ impl OnnxEmbeddingProvider {
         }
 
         let norm = pooled.iter().map(|value| value * value).sum::<f32>().sqrt();
-        if norm <= f32::EPSILON {
-            return Err(SemanticError::Store(
+        if !norm.is_finite() || norm <= f32::EPSILON {
+            return Err(SemanticError::InvalidEmbedding(
                 "cannot normalize a zero embedding".to_string(),
             ));
         }

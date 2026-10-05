@@ -130,8 +130,13 @@ fn assert_frozen_contract(route_id: &str, fixture: &RouteFixture, fixup: impl Fn
 /// unauthenticated), so R5 adds them here. S2 adds the semantic readiness
 /// surface (`semantic.state`, the required-gate DTO). The frozen fixture
 /// file itself is untouched; this list is the recorded expectation change.
-const STATUS_RUST_ADDITIONS: [&str; 4] =
-    ["instance_id", "protocol_revision", "semantic", "readiness"];
+const STATUS_RUST_ADDITIONS: [&str; 5] = [
+    "instance_id",
+    "protocol_revision",
+    "semantic",
+    "readiness",
+    "memory_indexing",
+];
 
 #[test]
 fn status_route_matches_frozen_target() {
@@ -159,6 +164,7 @@ fn status_route_matches_frozen_target() {
         body["protocol_revision"] = json!(common::PROTOCOL_REVISION);
         body["semantic"] = semantic.clone();
         body["readiness"] = probe["readiness"].clone();
+        body["memory_indexing"] = probe["memory_indexing"].clone();
     });
 
     // Every frozen key survives, and the additions are exactly the declared
@@ -554,6 +560,9 @@ fn api_admin_dashboard_matches_frozen_target_shape() {
     );
     expected["snapshot"]["total_count"] = json!(1);
     expected["readiness"] = body["readiness"].clone();
+    expected["memory_indexing"] = body["memory_indexing"].clone();
+    assert!(body["memory_indexing"]["state"].is_string());
+    assert!(body["memory_indexing"]["pending"].is_number());
     assert!(body["readiness"]["level"].is_string());
 
     // Shape: the exact top-level key set of the frozen oracle.

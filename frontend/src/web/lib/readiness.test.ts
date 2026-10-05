@@ -60,8 +60,9 @@ describe("formatReadiness", () => {
         {
           provider: "primary",
           model: "translator-v1",
-          condition: "Untested",
-          reason: "External provider not yet verified",
+          condition: "No recent calls",
+          reason:
+            "No calls observed since the server started or provider settings changed. Previous Dreaming runs remain in processing history.",
         },
       ],
     });
@@ -101,4 +102,35 @@ test("dashboard renders only known readiness fields", () => {
 
   expect(screen.getByText("Ready")).toBeTruthy();
   expect(screen.queryByText(/SENTINEL/)).toBeNull();
+});
+
+test("memory indexing shows live progress and failures independently of service readiness", async () => {
+  const value = dashboard({ level: "ready", reasons: [], providers: [] });
+  value.memory_indexing = {
+    state: "indexing",
+    total: 100,
+    indexed: 32,
+    pending: 68,
+    detail: null,
+  };
+  const view = render(AdminDashboard, {
+    props: { dashboard: value, onDream: () => {} },
+  });
+  expect(screen.getByText("Indexing in the background")).toBeTruthy();
+  expect(screen.getByText(/32 \/ 100 memories indexed/)).toBeTruthy();
+  expect((screen.getByRole("progressbar") as HTMLProgressElement).value).toBe(
+    32,
+  );
+  await view.rerender({
+    dashboard: {
+      ...value,
+      memory_indexing: {
+        ...value.memory_indexing,
+        state: "failed",
+        detail: "Model unavailable",
+      },
+    },
+    onDream: () => {},
+  });
+  expect(screen.getByRole("alert").textContent).toBe("Model unavailable");
 });

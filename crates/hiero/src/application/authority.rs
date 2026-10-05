@@ -281,52 +281,10 @@ fn resolve_user(
     text: &str,
 ) -> Result<(DecisionDraftV1, Option<Value>), ResolveError> {
     let applicability = match &input.applicability {
-        Some(a) if a.metadata_state == MetadataState::Resolved => a.clone(),
+        Some(a) => a.clone(),
         _ => return uncertain(TentativeReason::UnknownOrder, "missing_or_unresolved_scope"),
     };
-    let source_language = match &input.source_language {
-        Some(v) if !v.is_empty() => v.clone(),
-        _ => {
-            return uncertain(
-                TentativeReason::AmbiguousIdentity,
-                "missing_source_language",
-            );
-        }
-    };
-    let languages: Option<(String, String)> = db
-        .query_row(
-            "select default_source_language,default_target_language from series where id=?",
-            [input.series_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    let Some((source, target)) = languages else {
-        return Err(ResolveError::Error(AppError::Authority(
-            DecisionErrorV1::UnknownTarget,
-        )));
-    };
-    if input
-        .target_language
-        .as_ref()
-        .is_some_and(|value| value.is_empty())
-    {
-        return uncertain(
-            TentativeReason::AmbiguousIdentity,
-            "missing_target_language",
-        );
-    }
-    for language in
-        std::iter::once(source_language.as_str()).chain(input.target_language.as_deref())
-    {
-        let registered:bool=db.query_row("select exists(select 1 from series_language_tags where series_id=? and language_tag=?)",params![input.series_id,language],|r|r.get(0))?;
-        if language != language.trim().to_lowercase()
-            || !(registered
-                || language == source.trim().to_lowercase()
-                || language == target.trim().to_lowercase())
-        {
-            return uncertain(TentativeReason::AmbiguousIntent, "unsupported_language");
-        }
-    }
+    let source_language = input.source_language.clone().unwrap_or_default();
     if applicability.series_id != input.series_id {
         return Err(ResolveError::Error(AppError::Authority(
             DecisionErrorV1::OriginMismatch,
@@ -496,6 +454,54 @@ fn resolve_user(
         )
     };
     if matches!(intent, CorrectionIntentV1::Rendering { .. })
+        && applicability.metadata_state != MetadataState::Resolved
+    {
+        return uncertain(TentativeReason::UnknownOrder, "missing_or_unresolved_scope");
+    }
+    // Claim corrections identify a statement and scope, not a language pair.
+    if matches!(intent, CorrectionIntentV1::Rendering { .. }) {
+        if source_language.is_empty() {
+            return uncertain(
+                TentativeReason::AmbiguousIdentity,
+                "missing_source_language",
+            );
+        }
+        let languages: Option<(String, String)> = db
+            .query_row(
+                "select default_source_language,default_target_language from series where id=?",
+                [input.series_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((source, target)) = languages else {
+            return Err(ResolveError::Error(AppError::Authority(
+                DecisionErrorV1::UnknownTarget,
+            )));
+        };
+        if input
+            .target_language
+            .as_ref()
+            .is_some_and(|value| value.is_empty())
+        {
+            return uncertain(
+                TentativeReason::AmbiguousIdentity,
+                "missing_target_language",
+            );
+        }
+        for language in
+            std::iter::once(source_language.as_str()).chain(input.target_language.as_deref())
+        {
+            let registered:bool=db.query_row("select exists(select 1 from series_language_tags where series_id=? and language_tag=?)",params![input.series_id,language],|r|r.get(0))?;
+            if language != language.trim().to_lowercase()
+                || !(registered
+                    || language == source.trim().to_lowercase()
+                    || language == target.trim().to_lowercase())
+            {
+                return uncertain(TentativeReason::AmbiguousIntent, "unsupported_language");
+            }
+        }
+    }
+    if matches!(intent, CorrectionIntentV1::Rendering { .. })
         && input.target_language.as_ref().is_none_or(|l| l.is_empty())
     {
         return uncertain(
@@ -552,18 +558,6 @@ pub(crate) fn user_selection(app: &Application, args: &Value) -> Result<Value, A
         )
         .map_err(domain)?;
     let mut languages: Option<(String, Option<String>)> = None;
-    if let Some(target) = input.target {
-        use hieronymus::claim_reads::ClaimTarget;
-        let pair = match target {
-            ClaimTarget::ShortTerm(id) => Some(tx.query_row("select t.source_language,t.target_language from short_term_memories m join task_sessions t on t.id=m.session_id where m.id=?",[id],|r|Ok((r.get::<_,String>(0)?,Some(r.get::<_,String>(1)?)))).map_err(domain)?),
-            ClaimTarget::Crystal(id) => Some(tx.query_row("select source_language,target_language from crystals where id=?",[id],|r|Ok((r.get::<_,String>(0)?,Some(r.get::<_,String>(1)?)))).map_err(domain)?),
-            ClaimTarget::Facet(id) => Some(tx.query_row("select language from concept_facets where id=?",[id],|r|Ok((r.get::<_,String>(0)?,None))).map_err(domain)?),
-            ClaimTarget::RagChunk(_) => None, // No language pair is stored on a RAG claim target.
-        };
-        if let Some((source, target)) = pair {
-            bind_selection_languages(&mut languages, source, target)?;
-        }
-    }
     let claims = if let Some(target) = input.target {
         let query = hieronymus::story_applicability::StoryQueryV1 {
             series_id: input.series_id,
@@ -571,7 +565,7 @@ pub(crate) fn user_selection(app: &Application, args: &Value) -> Result<Value, A
             position_id: None,
             viewpoint: hieronymus::story_applicability::Viewpoint::Unspecified,
             scope_predicates: vec![],
-            mode: hieronymus::story_applicability::QueryMode::Current,
+            mode: hieronymus::story_applicability::QueryMode::OmniscientResearch,
         };
         let annotation = hieronymus::claim_reads::read_annotation(&tx, target, &query)?;
         if annotation

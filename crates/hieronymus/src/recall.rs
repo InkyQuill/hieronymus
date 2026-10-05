@@ -497,10 +497,6 @@ impl RecallService {
         limit: usize,
         required_decision_id: Option<&str>,
     ) -> Result<RecallResponse, RecallError> {
-        let preparation_warning = self.semantic_lane.as_ref().and_then(|lane| {
-            lane.prepare_memories(&self.config, &context.series_slug)
-                .err()
-        });
         let observed = crate::coherent_reads::stable_read_with_publish(
             &self.config,
             &context.series_slug,
@@ -530,17 +526,6 @@ impl RecallService {
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut response.warnings);
         }
-        if let Some(reason) = preparation_warning
-            && !response
-                .warnings
-                .iter()
-                .any(|w| w.kind == "memory_semantic_unavailable")
-        {
-            response.warnings.push(RecallWarning {
-                kind: "memory_semantic_unavailable".into(),
-                reason,
-            });
-        }
         Ok(response)
     }
 
@@ -562,10 +547,6 @@ impl RecallService {
         limit: usize,
         required_decision_id: Option<&str>,
     ) -> Result<RecallResponse, RecallError> {
-        let preparation_warning = self.semantic_lane.as_ref().and_then(|lane| {
-            lane.prepare_memories(&self.config, &context.series_slug)
-                .err()
-        });
         let observed = crate::coherent_reads::stable_read(
             &self.config,
             &context.series_slug,
@@ -576,17 +557,6 @@ impl RecallService {
         response.resulting_revision = observed.resulting_revision;
         if let Some(lane) = &self.semantic_lane {
             lane.publish_repairs(&self.config, &mut response.warnings);
-        }
-        if let Some(reason) = preparation_warning
-            && !response
-                .warnings
-                .iter()
-                .any(|w| w.kind == "memory_semantic_unavailable")
-        {
-            response.warnings.push(RecallWarning {
-                kind: "memory_semantic_unavailable".into(),
-                reason,
-            });
         }
         Ok(response)
     }
@@ -774,8 +744,11 @@ impl RecallService {
                 limit.saturating_mul(4).min(200),
             ) {
                 Ok(candidates) => {
-                    if candidates.incomplete {
-                        memory_warnings.push(RecallWarning{kind:"memory_semantic_pending".into(),reason:"memory indexing or candidate scan is incomplete; bounded maintenance continues on subsequent recall".into()});
+                    if candidates.pending {
+                        memory_warnings.push(RecallWarning{kind:"memory_semantic_pending".into(),reason:"memory indexing is incomplete; background maintenance continues independently of recall".into()});
+                    }
+                    if candidates.scan_incomplete {
+                        memory_warnings.push(RecallWarning { kind: "memory_semantic_scan_limited".into(), reason: "the bounded candidate scan did not examine every eligible claim; this is a retrieval limit, not an indexing status".into() });
                     }
                     let key = |hit: &RecallHit| match hit {
                         RecallHit::ShortTerm { memory, .. } => {

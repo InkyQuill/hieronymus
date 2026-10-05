@@ -1700,6 +1700,27 @@ fn run_service(
 /// The `update` subcommand: the one-way cutover flow over a release feed
 /// directory. Refusals exit 2 (nothing changed), applied-but-rolled-back
 /// failures exit 1, success (including migration-pending) exits 0.
+fn update_download_progress() -> hieronymus::semantic_model::DownloadProgress {
+    let last = std::sync::Mutex::new((String::new(), std::time::Instant::now()));
+    std::sync::Arc::new(move |url, bytes, total| {
+        let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+        let name = url.rsplit('/').next().unwrap_or("release file");
+        if last.0 != url
+            || last.1.elapsed() >= std::time::Duration::from_secs(1)
+            || total == Some(bytes)
+        {
+            if bytes == 0 {
+                eprintln!("Downloading {name}…");
+            } else if let Some(total) = total {
+                eprintln!("Downloading {name}: {bytes} / {total} bytes");
+            } else {
+                eprintln!("Downloading {name}: {bytes} bytes");
+            }
+            *last = (url.to_owned(), std::time::Instant::now());
+        }
+    })
+}
+
 fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     if parsed.port.is_some() || parsed.start_daemon {
         return Err(format!(
@@ -1729,8 +1750,14 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
             hiero::app::AppLayout::detect_from_exe()
                 .unwrap_or_else(|_| hiero::app::default_app_dir())
         });
+    let progress = |message: &str| {
+        if !parsed.json {
+            eprintln!("{message}");
+        }
+    };
     let staging = tempfile::tempdir().map_err(|e| e.to_string())?;
     let remote = if parsed.release_dir.is_none() {
+        progress("Checking the latest release…");
         let base = hiero::release_source::official_release_base(&channel)?;
         let manifest = hiero::release_source::check_official_release(&base, &channel)?;
         let installed = hiero::app::AppLayout::new(app_dir.clone())
@@ -1759,17 +1786,22 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
     } else {
         None
     };
+    progress("Preparing the update…");
     let operation = lifecycle::operation::LifecycleOperation::acquire(&config)
         .map_err(|error| error.to_string())?;
     let release_dir = match (&parsed.release_dir, remote) {
         (Some(directory), _) => absolute_path(directory),
-        (None, Some(base)) => hiero::release_source::stage_github_assets(
+        (None, Some(base)) => hiero::release_source::stage_github_assets_with_progress(
             &base,
             &channel,
             &staging.path().join("verified"),
             &app_dir.join("cache/models"),
-            hieronymus::tls::TlsRoots::default(),
-        )?,
+            if parsed.json {
+                None
+            } else {
+                Some(update_download_progress())
+            },
+        ).map_err(|error| format!("{error}. The download was not activated; check your connection and retry `hiero update`."))?,
         _ => unreachable!("default source resolved above"),
     };
     let options = update::UpdateOptions {
@@ -1778,7 +1810,7 @@ fn run_update_command(parsed: &ParsedArguments) -> Result<ExitCode, String> {
         data_root: parsed.data_root.as_deref().map(absolute_path),
         unit_dir: parsed.unit_dir.as_deref().map(absolute_path),
     };
-    match update::run_update_guarded(&options, &operation) {
+    match update::run_update_guarded_with_progress(&options, &operation, &progress) {
         Ok(report) => {
             if parsed.json {
                 let text = serde_json::to_string_pretty(&report.to_json())

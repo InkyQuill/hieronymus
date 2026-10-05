@@ -295,12 +295,65 @@ fn console_selection_preserves_registered_nondefault_pair() {
     );
     assert_eq!(status, 200, "{claims}");
     assert_eq!(
-        claims["target_language"], "fr",
-        "claim target owns session pair"
+        claims["target_language"], "ru",
+        "claim corrections do not depend on the session language pair"
     );
     let (status, result) = post(&daemon, &headers, "/api/authority/correct", &event);
     assert_eq!(status, 200, "{result}");
     assert!(result.get("Applied").is_some(), "{result}");
+    // Legacy language metadata must not block correction of an identified claim.
+    db.execute(
+        "update task_sessions set source_language='',target_language=' FR ' where id=?",
+        [event["session_id"].as_i64().unwrap()],
+    )
+    .unwrap();
+    let (status, selection) = post(
+        &daemon,
+        &headers,
+        "/api/authority/selection",
+        &json!({"series_id":1,"target":{"source":"short_term","id":memory["memory_id"]}}),
+    );
+    assert_eq!(status, 200, "{selection}");
+    db.execute("update applicabilities set metadata_state='unspecified' where id in (select applicability_id from memory_claims where id in (select claim_id from claim_bindings where short_term_id=?))", [memory["memory_id"].as_i64().unwrap()]).unwrap();
+    db.execute("update memory_claims set concept_id=null where id in (select claim_id from claim_bindings where short_term_id=?)", [memory["memory_id"].as_i64().unwrap()]).unwrap();
+    for (index, structured) in [
+        json!({"kind":"qualify","qualification":"Author context"}),
+        json!({"kind":"invalidate"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, current) = post(
+            &daemon,
+            &headers,
+            "/api/authority/selection",
+            &json!({"series_id":1,"target":{"source":"short_term","id":memory["memory_id"]}}),
+        );
+        assert_eq!(status, 200, "{current}");
+        let claim = &current["claims"][0];
+        let correction = json!({"version":1,"decision_id":format!("22000000-0000-4000-8000-{:012}", index+100),"event_id":format!("claim-{index}"),"expected_revision":current["expected_revision"],"series_id":1,"applicability":claim["applicability"],"selected_claims":[{"id":claim["claim_id"],"revision":claim["revision"]}],"structured":structured});
+        let (status, result) = post(&daemon, &headers, "/api/authority/correct", &correction);
+        assert_eq!(status, 200, "{result}");
+        assert!(result.get("Applied").is_some(), "{result}");
+        let (_, after) = post(
+            &daemon,
+            &headers,
+            "/api/authority/selection",
+            &json!({"series_id":1,"target":{"source":"short_term","id":memory["memory_id"]}}),
+        );
+        if index == 0 {
+            assert_eq!(
+                after["claims"][0]["effects"][0]["disposition"]["qualifications"][0],
+                "Author context",
+                "{after}"
+            );
+        } else {
+            assert_eq!(
+                after["claims"][0]["effects"][0]["disposition"]["status"],
+                "invalid"
+            );
+        }
+    }
 }
 
 #[test]

@@ -70,6 +70,9 @@
   let notice = $state.raw<{ message: string; tone: "success" | "error" } | null>(null);
   let sectionRefresh: Promise<void> | null = null;
   let refreshQueued = false;
+  let dashboardRequestSequence = 0;
+  let dashboardPollError = $state("");
+  let dashboardPollPending = false;
   const themeToggle = createThemeToggle();
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
@@ -157,6 +160,8 @@
   }
 
   function refreshSection() {
+    dashboardRequestSequence += 1;
+    dashboardPollError = "";
     if (sectionRefresh) {
       refreshQueued = true;
       return sectionRefresh;
@@ -195,6 +200,8 @@
   }
 
   async function runDreaming() {
+    dashboardRequestSequence += 1;
+    dashboardPollError = "";
     busy = true;
     error = "";
     try {
@@ -211,7 +218,22 @@
   onMount(() => {
     void refreshSection();
     if (section !== "admin" && section !== "memory") return;
-    return connectAdminEvents(() => { void refreshSection(); });
+    const disconnect = connectAdminEvents(() => { void refreshSection(); });
+    // Autonomous indexing can progress without a Dreaming event or a recall.
+    const timer = section === "admin" ? setInterval(() => {
+      if (!busy && !sectionRefresh && !dashboardPollPending) {
+        const sequence = ++dashboardRequestSequence;
+        dashboardPollPending = true;
+        void loadAdminDashboard().then(value => {
+          if (sequence !== dashboardRequestSequence) return;
+          adminDashboard = value;
+          dashboardPollError = "";
+        }).catch(reason => {
+          if (sequence === dashboardRequestSequence) dashboardPollError = reason instanceof Error ? reason.message : String(reason);
+        }).finally(() => { dashboardPollPending = false; });
+      }
+    }, 2_000) : undefined;
+    return () => { dashboardRequestSequence += 1; disconnect(); if (timer !== undefined) clearInterval(timer); };
   });
 </script>
 
@@ -241,7 +263,7 @@
   </header>
   <section id="page-content" tabindex="-1" class="mx-auto w-full px-4 py-6 sm:px-8 lg:px-12">
     {#if ["providers", "dreaming", "ingest", "release"].includes(section)}<SettingsNavigation {section} />{/if}
-    {#if error && (section === "providers" || (["admin", "memory"].includes(section) && adminDashboard))}<div role="alert" class="mb-4 border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
+    {#if (error || dashboardPollError) && (section === "providers" || (["admin", "memory"].includes(section) && adminDashboard))}<div role="alert" class="mb-4 border border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger"><p>{error || dashboardPollError}</p><button class="mt-2 min-h-11 rounded-sm border border-danger px-4 py-2" disabled={busy} onclick={() => { void refreshSection(); }}>Try again</button></div>{/if}
     {#if section === "connect"}
       <ConnectAgent />
     {:else if section === "admin" && adminDashboard}
