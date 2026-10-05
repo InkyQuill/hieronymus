@@ -175,6 +175,12 @@ fn archive(extra: Option<(&str, tar::EntryType, &str)>) -> Vec<u8> {
         builder.append(&header, std::io::empty()).unwrap();
     };
     add("hiero", tar::EntryType::Regular, "");
+    for name in [
+        "licenses/hiero-decision/LICENSE",
+        "licenses/hiero-decision/LICENSE-THIRD-PARTY",
+    ] {
+        add(name, tar::EntryType::Regular, "");
+    }
     for name in ["hieronymus", "hieronymus-agent-hook", "hieronymus-mcp"] {
         add(name, tar::EntryType::Symlink, "hiero");
     }

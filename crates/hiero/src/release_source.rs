@@ -480,6 +480,7 @@ pub fn inspect_archive(path: &Path) -> Result<(), String> {
             "models/minilm",
             "licenses",
             "licenses/runtime",
+            crate::release_archive::DECISION_LICENSE_DIRECTORY,
         ];
         let regular = [
             "hiero",
@@ -501,7 +502,9 @@ pub fn inspect_archive(path: &Path) -> Result<(), String> {
                 return Err(format!("invalid command symlink: {name}"));
             }
         } else if !(kind.is_dir() && directory.contains(&name)
-            || kind.is_file() && regular.contains(&name))
+            || kind.is_file()
+                && (regular.contains(&name)
+                    || crate::release_archive::DECISION_LICENSE_MEMBERS.contains(&name)))
         {
             return Err(format!("unsafe archive entry: {name}"));
         }
