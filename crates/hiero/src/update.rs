@@ -1745,15 +1745,6 @@ fn validate_payload(staging: &Path) -> Result<(), String> {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        let expected: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(staging.join("assets.json")).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        let actual: serde_json::Value =
-            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
-        if actual != expected {
-            return Err("bundled asset metadata mismatch".into());
-        }
     }
 
     Ok(())

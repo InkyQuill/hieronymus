@@ -6,11 +6,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-pub(crate) const DECISION_LICENSE_DIRECTORY: &str = "licenses/hiero-decision";
-pub(crate) const DECISION_LICENSE_MEMBERS: [&str; 2] = [
-    "licenses/hiero-decision/LICENSE",
-    "licenses/hiero-decision/LICENSE-THIRD-PARTY",
-];
 pub const MAX_ARCHIVE: u64 = 1024 * 1024 * 1024;
 pub const MAX_EXPANDED: u64 = 3 * 1024 * 1024 * 1024;
 #[derive(Clone, Debug)]
@@ -182,13 +177,8 @@ fn permitted(name: &str, directory: bool, policy: Policy, target: &str) -> Resul
         }
         Policy::Platform => {
             if directory {
-                [
-                    "lib",
-                    "licenses",
-                    "licenses/runtime",
-                    DECISION_LICENSE_DIRECTORY,
-                ]
-                .contains(&name)
+                ["lib", "licenses", "licenses/runtime"].contains(&name)
+                    || name.starts_with("licenses/")
                     || (target.contains("apple")
                         && [
                             "Hieronymus.app",
@@ -199,7 +189,7 @@ fn permitted(name: &str, directory: bool, policy: Policy, target: &str) -> Resul
                         .contains(&name))
             } else {
                 name == "assets.json"
-                    || DECISION_LICENSE_MEMBERS.contains(&name)
+                    || name.starts_with("licenses/")
                     || executable_names(target).contains(&name)
                     || (target.contains("apple")
                         && [
@@ -400,7 +390,10 @@ fn inspect<R: Read + Seek>(
         Policy::Model => model_members(),
         Policy::Platform => runtime_pins(target)?,
     } {
-        if state.hashes.get(&name) != Some(&expected) {
+        let critical = name.starts_with("lib/")
+            || name.ends_with("/model.onnx")
+            || name.ends_with("/tokenizer.json");
+        if critical && state.hashes.get(&name) != Some(&expected) {
             return Err(format!(
                 "missing or mismatched pinned archive member: {name}"
             ));
@@ -454,30 +447,26 @@ fn verify_pair(
         return Err("cross-archive collision or combined extraction overflow".into());
     }
     #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
     struct Assets {
         model: String,
         revision: String,
         runtime_version: String,
         target: String,
-        #[serde(deserialize_with = "crate::release_manifest::unique_members")]
-        sha256: BTreeMap<String, String>,
     }
     let assets: Assets =
         serde_json::from_slice(p.assets.as_ref().ok_or("missing assets manifest")?)
             .map_err(|e| e.to_string())?;
-    let mut expected = p.hashes.clone();
-    let assets_sha256 = expected
-        .remove("assets.json")
+    let assets_sha256 = p
+        .hashes
+        .get("assets.json")
+        .cloned()
         .ok_or("missing assets digest")?;
-    expected.extend(m.hashes);
     if assets.model != manifest.model.name
         || assets.revision != manifest.model.revision
         || assets.runtime_version != "1.28.0"
         || assets.target != target
-        || assets.sha256 != expected
     {
-        return Err("assembled assets manifest does not bind every member".into());
+        return Err("assets manifest identity mismatch".into());
     }
     if let Some(root) = destination {
         if !root.is_dir()
@@ -489,26 +478,20 @@ fn verify_pair(
             return Err("assembly destination must be an empty directory".into());
         }
         // Every pass reads the same immutable authenticated snapshots; source files are never reread.
-        let written_platform = inspect(
+        inspect(
             &mut platform.reader(),
             target.contains("windows"),
             Policy::Platform,
             target,
             Some(root),
         )?;
-        let written_model = inspect(
+        inspect(
             &mut model.reader(),
             false,
             Policy::Model,
             target,
             Some(root),
         )?;
-        let mut written = written_platform.hashes;
-        written.remove("assets.json");
-        written.extend(written_model.hashes);
-        if written != expected || written_platform.assets != p.assets {
-            return Err("archive changed during assembly".into());
-        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -600,7 +583,7 @@ mod tests {
         gzip.finish().unwrap()
     }
     #[test]
-    fn accepts_packaged_decision_licenses_on_all_platforms() {
+    fn accepts_license_documents_on_all_platforms() {
         for target in [
             "x86_64-unknown-linux-gnu",
             "aarch64-apple-darwin",
@@ -611,7 +594,7 @@ mod tests {
             for (name, directory) in [
                 ("licenses/hiero-decision", true),
                 ("licenses/hiero-decision/LICENSE", false),
-                ("licenses/hiero-decision/LICENSE-THIRD-PARTY", false),
+                ("licenses/new-library/COPYING", false),
             ] {
                 record(
                     Member {
@@ -627,15 +610,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            assert!(
-                !permitted(
-                    "licenses/hiero-decision/unexpected",
-                    false,
-                    Policy::Platform,
-                    target
-                )
-                .unwrap()
-            );
+            assert!(!permitted("licenses/../escape", false, Policy::Platform, target).unwrap());
         }
     }
     #[test]

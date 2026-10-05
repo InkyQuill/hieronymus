@@ -26,6 +26,10 @@ skills:
         path: plugins/beagle-react/skills/tailwind-v4
         ref: a5919c1415f2a98780d9da56212d9af52324f88c
       fingerprint: 443d42610e06f7b52107d0fa960643dc59fd015a407641863aae798152c51ced
+    - name: typesafe-ai
+      source:
+        type: archive
+      fingerprint: 3797fe8c32dca4b28f6d142fd170d822705ecc83ced69aa18469e236e26eddc8
     - name: using-svelte-5
       source:
         type: archive

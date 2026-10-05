@@ -11,6 +11,7 @@ import {
   copyFileSync,
   lstatSync,
   existsSync,
+  readdirSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -327,11 +328,14 @@ export async function packageDesktop(o: Options) {
     }
     if (target.runtime.origin === "source-build-required")
       throw new Error("unpromoted runtime");
-    for (const name of ["LICENSE", "LICENSE-THIRD-PARTY"])
-      copy(
-        fileURLToPath(new URL(`../crates/hiero-decision/${name}`, import.meta.url)),
-        `licenses/hiero-decision/${name}`,
-      );
+    const crates = fileURLToPath(new URL("../crates/", import.meta.url));
+    for (const crate of readdirSync(crates, { withFileTypes: true })) {
+      if (!crate.isDirectory()) continue;
+      for (const entry of readdirSync(join(crates, crate.name), { withFileTypes: true })) {
+        if (entry.isFile() && /^(LICENSE|COPYING|NOTICE)(?:[.-].*)?$/.test(entry.name))
+          copy(join(crates, crate.name, entry.name), `licenses/${crate.name}/${entry.name}`);
+      }
+    }
     for (const name of Object.keys(target.runtime.members))
       copy(
         join(o.runtime, name),
@@ -365,7 +369,8 @@ export async function packageDesktop(o: Options) {
       names.push("Hieronymus.app/Contents/Resources/hieronymus.icns");
     }
     const sha256: Record<string, string> = { ...modelMembers() };
-    for (const name of names) sha256[name] = await digest(join(payload, name));
+    for (const name of names.filter((name) => !name.startsWith("licenses/")))
+      sha256[name] = await digest(join(payload, name));
     writeFileSync(
       join(payload, "assets.json"),
       JSON.stringify(
