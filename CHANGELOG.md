@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## [0.13.4](https://github.com/InkyQuill/hieronymus/compare/v0.13.3...v0.13.4) (2026-10-05)
+
+
+### Bug Fixes
+
+* allow claim corrections independently of language metadata ([505feca](https://github.com/InkyQuill/hieronymus/commit/505feca90a56e6e60681f6e179da094a700d1b8a)), closes [#172](https://github.com/InkyQuill/hieronymus/issues/172)
+* describe provider status as recent activity ([c13f022](https://github.com/InkyQuill/hieronymus/commit/c13f022d931f72a022ca2b544f1a0d6e031d8489)), closes [#175](https://github.com/InkyQuill/hieronymus/issues/175)
+* ignore stale console request results ([dcdc086](https://github.com/InkyQuill/hieronymus/commit/dcdc086fa9e7ebb3b12d344ec7b9854e275b6109))
+* index memories in the background and expose progress ([f671689](https://github.com/InkyQuill/hieronymus/commit/f671689499564f762d301c76644bafd103ca38a5)), closes [#174](https://github.com/InkyQuill/hieronymus/issues/174)
+* keep indexing moving after invalid memory embeddings ([1a35f09](https://github.com/InkyQuill/hieronymus/commit/1a35f09945e1ba3d1596f66216c77c0ac633dc51))
+* report live update phases and download progress ([682c7ee](https://github.com/InkyQuill/hieronymus/commit/682c7ee09fb5fa5675f7ac14bf51c862608068a9)), closes [#173](https://github.com/InkyQuill/hieronymus/issues/173)
+* stream progress within large download chunks ([f1203cb](https://github.com/InkyQuill/hieronymus/commit/f1203cb7742d2a49723698022aee48f0a21e1308))
+
+
+### Refactoring and Build Simplification
+
+* consolidate active schemas and fixtures and archive rewrite artifacts ([208be86](https://github.com/InkyQuill/hieronymus/commit/208be86706636447a0ef5b9eba0451d09698f975))
+* consolidate active schemas and fixtures, remove rewrite artifacts ([06b1a59](https://github.com/InkyQuill/hieronymus/commit/06b1a591b1e7653651cba2b37097283b5e8d9418))
+
 ## [0.13.3](https://github.com/InkyQuill/hieronymus/compare/v0.13.2...v0.13.3) (2026-10-05)
 
 
