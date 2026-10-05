@@ -598,6 +598,29 @@ impl CrystalStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<(CrystalRecord, f64)>, CrystalError> {
+        self.search_scored_selected_with_connection(
+            connection,
+            current,
+            context,
+            query,
+            crate::recall_selection::RecallOptions {
+                limit,
+                required_decision_id: None,
+                memory_types: None,
+            },
+        )
+    }
+
+    pub(crate) fn search_scored_selected_with_connection(
+        &self,
+        connection: &Connection,
+        current: Option<&crate::story_applicability::StoryQueryV1>,
+        context: &TranslationContext,
+        query: &str,
+        options: crate::recall_selection::RecallOptions<'_>,
+    ) -> Result<Vec<(CrystalRecord, f64)>, CrystalError> {
+        let limit = options.limit;
+        let crystal_types = options.crystal_types_json();
         if limit == 0 {
             return Err(CrystalError::LimitTooSmall);
         }
@@ -623,6 +646,7 @@ impl CrystalStore {
                )
                and (crystals.source_language = ?3 or crystals.source_language = '')
                and (crystals.target_language = ?4 or crystals.target_language = '')
+               and (?6 is null or crystals.crystal_type in (select value from json_each(?6)))
              order by bm25(crystals_fts), crystals.id limit ?5",
         )?;
         let scored: Vec<(i64, f64)> = statement
@@ -632,7 +656,8 @@ impl CrystalStore {
                     context.scope_key(),
                     context.source_language,
                     context.target_language,
-                    bounded_limit
+                    bounded_limit,
+                    crystal_types.as_deref()
                 ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?
@@ -749,9 +774,21 @@ impl CrystalStore {
         limit: usize,
         metadata: Option<(&[String], &[String])>,
     ) -> Result<Vec<CrystalRecord>, CrystalError> {
+        self.list_selected_candidates_with_connection(connection, current, limit, metadata, None)
+    }
+
+    pub(crate) fn list_selected_candidates_with_connection(
+        &self,
+        connection: &Connection,
+        current: Option<&crate::story_applicability::StoryQueryV1>,
+        limit: usize,
+        metadata: Option<(&[String], &[String])>,
+        crystal_types: Option<&str>,
+    ) -> Result<Vec<CrystalRecord>, CrystalError> {
         let ids: Vec<i64> = {
             let mut statement = connection.prepare("select id from crystals
                  where status in ('active', 'candidate')
+                   and (?5 is null or crystal_type in (select value from json_each(?5)))
                    and (?2 is null or scope_type='global' or scope_key=(select 'series:'||slug from series where id=?2))
                    and (?3 is null
                      or exists(select 1 from crystal_story_scopes cs where cs.crystal_id=crystals.id and cs.scope in(select value from json_each(?3)))
@@ -770,7 +807,8 @@ impl CrystalStore {
                         .transpose()?,
                     metadata
                         .map(|(_, tags)| serde_json::to_string(tags))
-                        .transpose()?
+                        .transpose()?,
+                    crystal_types
                 ],
                 |row| row.get(0),
             )?;

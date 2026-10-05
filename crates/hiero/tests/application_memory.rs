@@ -1049,3 +1049,23 @@ fn agent_recall_gets_one_file_reference_with_exact_ranges_instead_of_repeated_so
         6
     );
 }
+
+#[test]
+fn recall_category_request_preserves_terms_and_rejects_invalid_selection() {
+    let (root, app) = test_application();
+    create_series(&app, "book", "ja", "ru");
+    let session_id = start_session(&app, "book");
+    seed_approved_rule(&HieronymusConfig::new(root.path()), "猫", "кот");
+    for category in ["terms", "concepts", "lessons", "knowledge"] {
+        let result = app.call("hieronymus_recall", &json!({"session_id":session_id,"series_slug":"book","query":"猫","memory_types":[category]}), ACTOR).unwrap();
+        assert_eq!(
+            result["deterministic_contract"][0]["canonical_translation"],
+            "кот"
+        );
+        assert!(result["results"].as_array().unwrap().is_empty());
+        assert!(result["non_current"].as_array().unwrap().is_empty());
+    }
+    for selection in [json!([]), json!(["typo"]), json!("lessons")] {
+        assert!(app.call("hieronymus_recall", &json!({"session_id":session_id,"series_slug":"book","query":"猫","memory_types":selection}), ACTOR).is_err());
+    }
+}

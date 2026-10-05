@@ -772,3 +772,139 @@ fn sessionless_short_term_refills_invalid_and_unknown_candidates() {
         0
     );
 }
+
+#[test]
+fn category_recall_selects_before_limits_and_excludes_other_lanes_and_neighbors() {
+    use hieronymus::recall_selection::{MemoryType, RecallOptions};
+    let fixture = fixture("demo");
+    let context = current_story::context("demo", "ja", "en", "translation");
+    let store = CrystalStore::open(&fixture.config).unwrap();
+    let lesson = store
+        .add_crystal(
+            &context,
+            "lesson",
+            &current_story::crystal(&fixture.config, "lesson", "Chalk binding lesson"),
+        )
+        .unwrap();
+    let mut other = 0;
+    for _ in 0..55 {
+        other = store
+            .add_crystal(
+                &context,
+                "concept",
+                &current_story::crystal(&fixture.config, "concept", "Chalk binding concept"),
+            )
+            .unwrap();
+    }
+    WorkspaceStore::open(&fixture.config)
+        .unwrap()
+        .add_short_term_memory(
+            fixture.session_id,
+            &current_story::memory(&fixture.config, "note", "Chalk binding fresh observation"),
+        )
+        .unwrap();
+    let db = hieronymus::db::open_migrated(&fixture.config.database_path()).unwrap();
+    db.execute(
+        "insert into crystal_links values(?1,?2,'related',1)",
+        [lesson, other],
+    )
+    .unwrap();
+    let service = RecallService::open(&fixture.config).unwrap();
+    let result = service
+        .recall_selected(
+            fixture.session_id,
+            &context,
+            "chalk binding",
+            RecallOptions {
+                limit: 1,
+                required_decision_id: None,
+                memory_types: Some(&[MemoryType::Lessons]),
+            },
+        )
+        .unwrap();
+    assert_eq!(result.hits.len(), 1);
+    assert_eq!(result.hits[0].item_id(), lesson);
+    assert!(result.non_current.is_empty());
+    let result = service
+        .recall_selected(
+            fixture.session_id,
+            &context,
+            "chalk binding",
+            RecallOptions {
+                limit: 100,
+                required_decision_id: None,
+                memory_types: Some(&[MemoryType::Lessons, MemoryType::Concepts]),
+            },
+        )
+        .unwrap();
+    assert!(result.hits.iter().any(|hit| hit.item_id() == lesson));
+    assert!(result.hits.iter().any(|hit| matches!(hit, RecallHit::LongTerm { crystal, .. } if crystal.crystal_type == "concept")));
+    assert!(result.hits.iter().all(|hit| matches!(hit, RecallHit::LongTerm {crystal,..} if ["lesson","concept"].contains(&crystal.crystal_type.as_str()))));
+    let result = service
+        .recall_selected(
+            fixture.session_id,
+            &context,
+            "chalk binding",
+            RecallOptions {
+                limit: 10,
+                required_decision_id: None,
+                memory_types: Some(&[MemoryType::Terms]),
+            },
+        )
+        .unwrap();
+    assert!(result.hits.is_empty());
+    assert!(result.non_current.is_empty());
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn selected_research_memory_retains_non_current_disposition() {
+    use hieronymus::recall_selection::{MemoryType, RecallOptions};
+    let fixture = fixture("demo");
+    let mut context = current_story::context("demo", "ja", "en", "translation");
+    context.story_query_mode = hieronymus::story_applicability::QueryMode::OmniscientResearch;
+    let store = CrystalStore::open(&fixture.config).unwrap();
+    let lesson = store
+        .add_crystal(
+            &context,
+            "lesson",
+            &NewCrystal::new("lesson", "Sapphire unknown lesson"),
+        )
+        .unwrap();
+    store
+        .add_crystal(
+            &context,
+            "concept",
+            &NewCrystal::new("concept", "Sapphire unknown concept"),
+        )
+        .unwrap();
+    let result = RecallService::open(&fixture.config)
+        .unwrap()
+        .recall_selected(
+            fixture.session_id,
+            &context,
+            "sapphire",
+            RecallOptions {
+                limit: 10,
+                required_decision_id: None,
+                memory_types: Some(&[MemoryType::Lessons]),
+            },
+        )
+        .unwrap();
+    assert!(result.hits.is_empty());
+    assert_eq!(result.non_current.len(), 1);
+    assert_eq!(result.non_current[0].item_id(), lesson);
+    let baseline = RecallService::open(&fixture.config)
+        .unwrap()
+        .recall(fixture.session_id, &context, "sapphire", 10)
+        .unwrap();
+    let original = baseline
+        .non_current
+        .iter()
+        .find(|hit| hit.item_id() == lesson)
+        .unwrap();
+    assert_eq!(
+        result.non_current[0].claim_annotation().disposition,
+        original.claim_annotation().disposition
+    );
+}

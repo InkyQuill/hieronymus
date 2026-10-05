@@ -22,6 +22,20 @@ such as `user`, high credibility or rule intent does not establish explicit-user
 authority. Learned input stays subject to evidence and applicability validation.
 Dreaming creates durable memory from observations across sessions.
 
+For focused recall, pass `memory_types` to `hieronymus_recall`: `terms` reads
+the deterministic terminology contract, `concepts` selects concept/concept-note
+crystals, `lessons` selects lessons, and `knowledge` selects other durable
+rules, thoughts, observations and erudition. Combine categories in one array;
+omit the filter for mixed recall including recent observations and source
+chunks. Source-only retrieval uses `hieronymus_rag_search`.
+
+Categories are selected before retrieval budgets and ranking. They do not
+change approval, claim disposition or story applicability. The deterministic
+terminology contract remains separate and is always returned. Ordinary recall
+uses research mode: inspect `results` and `non_current` with their annotations.
+Use `story_query_mode: "Current"` with resolved story context when the task needs
+current-scene truth; an unknown or historical claim is not an approved rule.
+
 Reuse a compatible session owned by the leading workflow. If this task starts
 its own session, retain the actual returned ID and complete it when the task ends.
 Nested skills must not complete their caller's session. See

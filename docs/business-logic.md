@@ -53,6 +53,14 @@ non-current evidence with labels. It is useful for research, not a declaration
 that every returned statement is true in the current scene. Read `non_current`
 as well as `results`. Explicit `Current` mode applies strict scene filtering.
 
+Agents may select durable-memory categories with `memory_types`: terms,
+concepts, lessons or knowledge, including combinations. Omission preserves
+mixed recall; explicit categories exclude raw observations and source chunks.
+Filtering precedes lexical, semantic, metadata and graph candidate budgets.
+Category selection does not change applicability or make a claim approved.
+The terminology contract is always returned separately. See the
+[agent workflow](skills/read-learn-remember.md) for category meanings.
+
 Story labels such as book/chapter can boost relevance. Resolved applicability,
 ordered positions and knowledge gates govern current truth separately. Chapter
 numbers alone do not establish chronology. A narrator's knowledge does not imply

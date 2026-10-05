@@ -235,19 +235,21 @@ impl SemanticLane {
         context: &TranslationContext,
         query: &str,
         limit: usize,
+        crystal_types: Option<&str>,
     ) -> Result<crate::memory_semantics::Candidates, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let LaneInner {
             provider,
             tokenizer,
         } = &mut *inner;
-        crate::memory_semantics::search(
+        crate::memory_semantics::search_selected(
             db,
             context,
             query,
             provider.as_mut(),
             tokenizer.as_mut(),
             limit,
+            crystal_types,
         )
     }
 

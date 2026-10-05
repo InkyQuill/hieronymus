@@ -25,6 +25,16 @@ Validation evaluates that contract before advisory findings. RAG is evidence;
 conflicting renderings remain inspectable with rule-conflict markers and cannot
 suppress, rewrite or satisfy the contract.
 
+Recall accepts an optional `memory_types` category selection: terms, concepts,
+lessons and knowledge. Omission keeps mixed recall including observations and
+source passages; selection restricts durable-memory candidates before lexical,
+semantic, metadata and graph budgets. It never hides the deterministic contract
+or changes claim disposition, authority, chronology or viewpoint. Terms-only
+recall requires no semantic lane. This lets agents request the material needed
+for a task without treating broad research output as current approved knowledge.
+Tests establish filtering and contract preservation, not literary relevance or
+live-model accuracy.
+
 Active rules remain enforceable until a validated authority operation changes
 them. Agent/Dream learned decisions are permitted under ADR 0016's evidence and
 scope policy. Explicit-user direction takes priority within scope. Revision checks,

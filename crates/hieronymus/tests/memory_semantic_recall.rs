@@ -483,3 +483,42 @@ fn invalid_memories_do_not_starve_later_batches_and_can_recover() {
         0
     );
 }
+
+#[test]
+fn selected_semantic_memory_cannot_leak_other_categories_or_observations() {
+    use hieronymus::recall_selection::{MemoryType, RecallOptions};
+    let (_root, config, context) = setup();
+    let ws = WorkspaceStore::open(&config).unwrap();
+    let session = ws.start_session(&context).unwrap();
+    let store = CrystalStore::open(&config).unwrap();
+    let lesson = store
+        .add_crystal(
+            &context,
+            "lesson",
+            &claimed(&config, "book", "Mira drinks green tea at dawn."),
+        )
+        .unwrap();
+    let mut concept = claimed(&config, "book", "Ren drinks tea at dawn.");
+    concept.crystal_type = "concept".into();
+    store.add_crystal(&context, "concept", &concept).unwrap();
+    let text = "Fresh tea note";
+    let mut input = ShortTermMemoryInput::new("note", text);
+    input.claims = vec![current_story::claim(&config, "book", text)];
+    ws.add_short_term_memory(session.id, &input).unwrap();
+    let recall = service(&config);
+    let result = recall
+        .recall_selected(
+            session.id,
+            &context,
+            "朝のお茶",
+            RecallOptions {
+                limit: 10,
+                required_decision_id: None,
+                memory_types: Some(&[MemoryType::Lessons]),
+            },
+        )
+        .unwrap();
+    assert_eq!(result.hits.len(), 1);
+    assert_eq!(result.hits[0].item_id(), lesson);
+    assert!(result.non_current.is_empty());
+}
