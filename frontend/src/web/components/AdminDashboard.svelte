@@ -102,8 +102,8 @@
       {#if readiness.level === "Degraded"}<a href="/config" class="mt-4 inline-flex min-h-11 items-center text-body-sm text-accent-text underline">Check AI connections</a>{/if}
       <TechnicalDetails data={{ readiness: parseSummary(dashboard.readiness), dreaming: { state: dashboard.dream_status.state, current_phase: dashboard.dream_status.current_phase, progress: dashboard.dream_status.progress }, recent_memory: { pending_count: dashboard.short_term_status.pending_count } }} label="Technical service status" />
       {#if readiness.providers.length > 0}
-        <details class="mt-4"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">AI provider checks</summary>
-        <ul class="mt-4 grid gap-2" aria-label="Provider readiness">
+        <details class="mt-4"><summary class="min-h-11 cursor-pointer py-3 text-body-sm text-secondary">Recent provider activity</summary>
+        <ul class="mt-4 grid gap-2" aria-label="Recent provider activity">
           {#each readiness.providers as provider (`${provider.provider}:${provider.model}`)}
             <li class="rounded-sm border border-default bg-raised px-3 py-2 text-body-sm">
               <span class="font-medium">{provider.provider} / {provider.model}</span>

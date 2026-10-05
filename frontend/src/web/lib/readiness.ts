@@ -11,7 +11,7 @@ export type ReadinessView = {
   providers: Array<{
     provider: string;
     model: string;
-    condition: "Untested" | "Healthy" | "Failed";
+    condition: "No recent calls" | "Last call succeeded" | "Last call failed";
     reason: string | null;
   }>;
 };
@@ -32,9 +32,9 @@ const conditionLabels: Record<
   ProviderCondition,
   ReadinessView["providers"][number]["condition"]
 > = {
-  untested: "Untested",
-  healthy: "Healthy",
-  failed: "Failed",
+  untested: "No recent calls",
+  healthy: "Last call succeeded",
+  failed: "Last call failed",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,7 +113,9 @@ export function formatReadiness(value: unknown): ReadinessView {
       provider: provider.provider,
       model: provider.model,
       condition: conditionLabels[provider.condition],
-      reason: provider.reason,
+      reason: provider.condition === "untested"
+        ? "No calls observed since the server started or provider settings changed. Previous Dreaming runs remain in processing history."
+        : provider.reason,
     })),
   };
 }

@@ -60,8 +60,8 @@ describe("formatReadiness", () => {
         {
           provider: "primary",
           model: "translator-v1",
-          condition: "Untested",
-          reason: "External provider not yet verified",
+          condition: "No recent calls",
+          reason: "No calls observed since the server started or provider settings changed. Previous Dreaming runs remain in processing history.",
         },
       ],
     });
