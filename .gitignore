@@ -56,5 +56,8 @@ temp/
 qualification/.artifacts/
 qualification/harnesses/*/target/
 
+# Local documentation history, drafts and audit reports
+/docs/.local/
+
 # Rust
 /target/

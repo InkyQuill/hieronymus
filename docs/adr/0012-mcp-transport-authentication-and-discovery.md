@@ -1,98 +1,61 @@
-# Authenticate All Local Service Transports And Publish Discovery State
+# 0012 — Local authentication and discovery
 
-## Status
-
-Accepted on 2026-08-31. This ADR supersedes the “no authentication,
-authorization, TLS, or remote-deployment security layer” non-goal in
-[historical document](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/superpowers/specs/2026-07-18-remediation-and-semantic-rag-design.md) for
-the local daemon. Remote deployment and TLS remain non-goals.
-
-> **Amendment (2026-09-03, owner):** local-first light authentication. The
-> threat model for a local single-user tool is drive-by browser traffic against
-> loopback (DNS rebinding) and accidental cross-process access — not
-> authenticated adversaries. Kept: loopback-only bind; one static
-> per-installation bearer token (CSPRNG, 0600) required by every non-static
-> endpoint (`/mcp`, REST, WebSocket upgrade, shutdown) except a minimal
-> unauthenticated `/health`; `Host`/`Origin` validation; `Secret<T>` redaction;
-> the atomic non-secret discovery record. Simplified: token rotation rewrites
-> the token and returns 401 to existing clients (reconnect and reread); no
-> `credentials_rotated` ceremony and no idempotency-key retry policy attached
-> to authentication. Browser console: one-time launch grant exchanged for a
-> SameSite=Strict HttpOnly session cookie; mutating browser requests require a
-> valid `Origin`/`Host` — the separate CSRF token layer is waived. WebSocket
-> authentication is the session cookie checked at upgrade. `hiero mcp` reads
-> the local token file directly; no credential-negotiation protocol.
-
-> **Narrow authority amendment (2026-09-07, ADR0016):** ordinary MCP credentials
-> establish agent authority only. Console launch grants now require the separate
-> local `console.token`; `/authority/host-event` requires `host-event.token`.
-> Both credentials reuse CSPRNG, atomic storage, 0600 permissions and redaction;
-> neither is returned by MCP/status or embedded in generated bundles. Console
-> fragment bootstrap, single-use grants, process-lifetime cookies and exact
-> mutation Host/Origin checks remain. Same-account local shell access is trusted;
-> this separation protects MCP authorship and context binding without a broker
-> or claims against direct local credential access/database edits.
-
-## Owner amendment — 2026-09-12
-
-Browser authentication is optional and disabled by default for the local desktop deployment. Set `authentication_required = true` in the installation config root's `web.conf` to require the existing launch-grant/session-cookie flow. Host and Origin checks remain active in either mode. MCP and native trusted-ingress credentials remain required. Default browser corrections are attributed to the local desktop console, not to an authenticated individual.
-
-See [the release product direction](https://github.com/InkyQuill/hieronymus/blob/6d1bc393c86a243b99742779b2c37f4591b2aa27/docs/maintenance/v0.9.0/product-direction.md).
+Status: accepted 2026-08-31; private-ingress separation and optional browser
+authentication amended 2026-09. Consolidated 2026-10-05.
 
 ## Context
 
-Loopback binding reduces exposure but does not authenticate local processes or
-protect mutating browser endpoints by itself. `Host` and `Origin` validation
-mitigate browser attacks but are not credentials. The Rust proposal mentions a
-token file without defining how browser, MCP, WebSocket, shutdown, and stdio
-clients use it.
+Loopback binding does not authenticate local processes or prevent browser-origin
+attacks. Discovery metadata, credentials and explicit-user correction origins
+serve different purposes and must not be interchangeable.
 
 ## Decision
 
-The daemon binds to loopback only by default. MCP, native status and shutdown
-require their installation credentials. Browser REST and WebSocket access
-follow `authentication_required` in `web.conf`: false by default permits the
-local desktop console without a cookie; true requires a valid console session.
-Both modes enforce Host and Origin validation. `/health` may return only a
-minimal unauthenticated liveness response with no paths, versions, or user data.
+The daemon binds loopback by default. Discovery contains protocol/endpoint/process
+identity, never credentials. Credential files are separate, atomically written,
+owner-private and excluded from generated bundles, status, logs and grants.
+Stale discovery requires authenticated probing and instance checks, not PID alone.
 
-The token is generated with a cryptographically secure RNG, stored separately
-from discovery metadata, and written atomically with user-only permissions.
-All secret-bearing domain values use a single `Secret<T>` newtype whose
-`Debug`, `Display`, tracing-value, and serialization behavior is redacted by
-default. Only the credential loader and outbound provider/auth header builders
-may call an explicit `expose_secret()` method. Public API DTOs cannot contain
-`Secret<T>` and must be constructed through redacting projection functions.
+Ordinary MCP/native access uses the daemon credential. Console launch grants and
+host-event ingress use separate credentials, not the MCP token. This protects
+ordinary tool access from minting user origin; it is not isolation against another
+process with the same OS-user filesystem/credential access. Agents must not
+manufacture host events from quoted user text.
 
-Token rotation replaces the credential; clients receiving 401 reread it and
-reconnect. The 2026-09-03 amendment waives a separate `credentials_rotated`
-ceremony and authentication-specific idempotency policy.
+Browser authentication is off by default. `web.conf` can set
+`authentication_required=true` for the existing launch-grant/session-cookie flow.
+Default console corrections are attributed to the local desktop console, not an
+identified authenticated person. Host and exact mutation Origin checks remain
+active in both modes. WebSocket access follows the same configuration and guards.
+`/health` exposes only minimal liveness, without paths, versions or user data.
 
-With `authentication_required = true`, browser bootstrapping uses a short-lived,
-single-use launch grant created by `hiero config` or `hiero admin` and exchanged
-over loopback for a SameSite=Strict, HttpOnly session cookie. The CLI may also
-provide this bootstrap when authentication is off, but direct browser access
-does not require it in that mode. Tokens and grants never appear in URL query
-strings. State-changing browser requests require exact `Host`/`Origin` checks
-in both modes; the separate CSRF token is waived. Default-mode corrections use
-local desktop console attribution, while authenticated mode uses its session.
+When authentication is required, `hiero config`/`admin` mint a short-lived single-use
+grant and open it in a URL fragment. The frontend removes the fragment before
+exchange for a SameSite=Strict, HttpOnly daemon-lifetime cookie. Grants/tokens never
+enter query strings or diagnostics. A read without Origin can be normal browser
+navigation; an explicit foreign Origin is refused. Mutations, exchange and WebSocket
+upgrade require the exact local Origin. No separate CSRF-token ceremony is required.
 
-Native HTTP MCP clients read the endpoint and credential location from generated
-host configuration. Where a host cannot supply authorization headers safely,
-its plugin uses `hiero mcp`; the stdio adapter reads the local token and proxies
-the authenticated MCP session. It starts the per-user daemon when absent and
-returns a bounded diagnostic if startup or protocol negotiation fails.
+Secret-bearing values cross logging/audit/DTO boundaries only through redacting
+projections. Explicit exposure is restricted to credential/config writers and outbound
+authentication. Token rotation uses atomic replacement; clients reread after 401.
+No extra credentials-rotated or authentication-specific idempotency ceremony is required.
+Domain decisions retain their own replay/revision policy.
 
-The discovery record contains the application discovery version and ADR 0015's
-exact MCP revision. Clients reject unsupported versions and report the
-remediation command instead of guessing routes or treating the private Python
-operation bridge as MCP.
-Port overrides are written into discovery/configuration; generated plugins must
-not hard-code `9768`.
+Generated MCP registration uses stable entry points and versioned discovery, with
+no fixed port or baked bearer token. `hiero mcp` authenticates to the same `/mcp`
+registry; [ADR 0015](0015-mcp-protocol-and-transport.md) owns protocol negotiation.
+Unsupported versions fail explicitly rather than guessing a private bridge route.
 
-## Consequences
+## Consequences and limits
 
-Authentication and discovery become cross-surface contracts rather than route
-implementation details. Integration tests must exercise cookie-free default
-access, authenticated launch-grant/cookie and WebSocket flows, Host/Origin
-rejections in both modes, and authenticated native/MCP access.
+Native, browser and authority routes share the underlying domain checks while
+retaining separate principals. [Authority ingress](../authority-ingress.md) owns
+exact origin/selection/revision contracts. [Hook context](../agent-hook-context.md)
+owns same-account lifecycle/prompt limitations. An event-shaped envelope or loaded
+plugin is not cryptographic native-host attestation.
+
+Verify cookie-free default access, optional authenticated launch/cookie/WebSocket,
+foreign Host/Origin refusal and authenticated MCP separately. Credentials and
+browser grants must remain absent from JSON/status/diagnostics on both success
+and failure. These safeguards do not imply cross-platform or host acceptance.

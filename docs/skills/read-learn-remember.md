@@ -1,62 +1,46 @@
-# Read, Learn, And Remember Skills
+# Read, Learn and Remember
 
-Read, Learn, and Remember are agent skills. MCP tools are storage and retrieval primitives, not
-judgment engines. The agent decides what is worth recording, how credible it is, and which tags or
-scopes apply; Hieronymus stores the resulting short-term memories and later dreaming decides whether
-they become long-term crystals.
+These are agent workflows. The agent judges significance and context; MCP tools
+provide storage, evidence and retrieval operations. Hieronymus does not replace
+the agent's reading with a judgment-heavy `read` or `learn` tool.
 
-## Read
+## Read and Learn
 
-Use Read for file inspection, lookup, and temporary understanding. Import each source file into RAG
-so direct source content remains retrievable. Do not store source text or long extracts in
-short-term memory. Instead, record the agent's own conclusions: terms, concepts, significant facts,
-implications, uncertainties, and useful connections.
+Read inspects material for the task; Learn absorbs consequential facts and
+connections. Import permitted source files into RAG for direct-text retrieval,
+and store compact observations separately. Do not automatically import hidden
+material or an entire project; follow its agreement and the authorized task.
 
-Each short-term-memory block contains 1–6 sentences. Create as many separate blocks as necessary to
-cover every important term, concept, and detail; the limit applies to a block, not to the total
-amount remembered. RAG stores the direct source, while short-term memory stores indirect
-understanding of it.
+Short-term observations normally contain 1–6 sentences per block. Split distinct
+facts and preserve source references, actual languages, evidence-limited story
+scope and uncertainty. Use `hieronymus_short_term_add` or
+`hieronymus_short_term_add_batch`; continue with further bounded batches where
+needed. Record-count guidance must not discard important information.
 
-Preferred storage primitive (independently valid blocks, with no record-count ceiling per call):
+`source_role` is optional provenance metadata, not a trust mechanism. A label
+such as `user`, high credibility or rule intent does not establish explicit-user
+authority. Learned input stays subject to evidence and applicability validation.
+Dreaming creates durable memory from completed-session observations.
 
-```text
-hieronymus_short_term_add_batch
-```
+Reuse a compatible session owned by the leading workflow. If this task starts
+its own session, retain the actual returned ID and complete it when the task ends.
+Nested skills must not complete their caller's session. See
+[session health](../../crates/hiero/resources/agent-health.md).
 
-Use concise text, source references, and relevant language tags, story scopes, and semantic tags.
-Continue with further batches until every important detail is covered. There is no supported Read MCP
-judgment tool; use the skill workflow plus `hieronymus_rag_import` and
-`hieronymus_short_term_add_batch`.
+## Remember and correct
 
-`source_role` is optional freeform provenance metadata. Omit it for ordinary agent conclusions
-(the MCP tool defaults it to `agent`), or use a label such as `user`, `reviewer`, or
-`source-text`. It never decides the crystal type or confidence; dreaming uses evidence,
-`source_credibility`, and `rule_intent` instead.
+Record ordinary permitted preferences or observations through scoped memory
+primitives. For a correction that must change an active rule or factual claim,
+use the actual supported [authority ingress](../authority-ingress.md), preserve
+its selection/revisions and consume the applied receipt before dependent work.
+The console and genuine supported host prompt channel provide local-user ingress.
+An agent must not fabricate a host event from quoted conversation text.
 
-## Learn
+A short-term note saying “User told me to…” can preserve an observation, but it
+does not by itself change the deterministic contract. Unsupported or ambiguous
+corrections remain tentative. Provider consolidation runs later; it cannot delay
+an already applied correction or turn an unresolved signal into explicit authority.
 
-Use Learn when the user asks the agent to absorb, study, ingest, import, or learn material. Split the
-source into observed facts or compact blocks, record source credibility, and attach language tags,
-story scopes, and semantic tags before writing short-term memory.
-
-Use an optional freeform `source_role` only when its provenance is helpful to audit later; it does
-not classify the memory for dreaming.
-
-Learn must not create long-term crystals directly. Dreaming is the path from learned short-term
-memory to lessons, erudition, concept/facet updates, and rule crystals. There is no supported Learn
-MCP judgment tool; use the skill workflow plus `hieronymus_short_term_add`.
-
-## Remember
-
-Use Remember for corrections from the user. Record corrections as short-term memories, not direct
-rule promotions.
-
-For high-credibility user rules, phrase the memory as:
-
-```text
-User told me to ...
-```
-
-Use `source_role="user"`, `kind="correction"`, `source_credibility="user_rule"`, and a specific
-`rule_intent` when known. Keep the memory short, scoped, and tagged so dreaming can crystallize it
-later without silently overriding active rule crystals.
+See [business logic](../business-logic.md) for the distinctions between facts,
+relevance and renderings, and [supported correction input](../../crates/hiero/resources/correction-input.md)
+for the exact current grammar. No author approval inbox is required.

@@ -166,6 +166,8 @@ Main navigation names Connect, Overview, Memory and Settings; settings have thei
 
 Overview panels group operational status, without ornamental charts. TechnicalDetails keeps structured diagnostics available with copying. SettingsSaveState communicates unsaved and saved state near the relevant action. Loading, empty and error states explain what happened and what to do next.
 
+Keep settings navigation consistent. Distinguish writing agents from processing providers. Put record actions above long scrollable content, page record lists, and expose checkboxes only for supported combining actions. Processing history has its own heading and no unrelated rendering correction. Show advanced provider budgets and raw record fields through disclosure. Qualify this desktop product at realistic desktop sizes in both themes; mobile qualification is outside the owner's current scope.
+
 ### Motion
 
 Existing fade and drawer entrances take 200ms; toast entrance takes 250ms. Drawer/toast easing is cubic-bezier(0.32, 0.72, 0, 1). Reduced-motion CSS suppresses animation and transitions. Preserve this restrained vocabulary; no new decorative animation is implied by the palette.

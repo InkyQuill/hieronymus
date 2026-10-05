@@ -23,8 +23,9 @@ instructions or release gates. Accepted Rust ADR amendments still govern behavio
 In particular, retained qualification evidence does not qualify a new native
 artifact or imply implementation of a deferred agent-host matrix.
 
-`compatibility` retains frozen data, including SQLite fixtures consumed by Rust
-migration tests. `qualification/harnesses`, records, schemas and projections are
+`compatibility` mixes production MCP schemas, active test fixtures and historical
+data; see [its dependency map](../../compatibility/README.md). The legacy SQLite
+fixtures are consumed by the isolated qualification harness. `qualification/harnesses`, records, schemas and projections are
 historical Rust-port evidence. The obsolete Python orchestration and its live CI
 workflow were removed rather than rebuilding a deferred qualification matrix.
 The pinned release assets are now acquired by `bun scripts/stage-release-assets.ts`.

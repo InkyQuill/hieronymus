@@ -4,7 +4,9 @@
 commit `d8ed8a2198b012af32dae2ace4feda196cb0560e`, at
 `plugins/creative-writing-skills/skills/project-maintenance/resources/compatibility/cws-project-v1.json`,
 and adds the local `expect.selections` entries described below.
-The public specification is the adjacent producer `external-project-contract.md`.
+The producer specification is `external-project-contract.md` at that pinned
+upstream revision; the local reading contract is
+[the embedded CWS resource](../../crates/hiero/resources/cws-project.md).
 Contract v1 supports project schemas 1 and 2. Tests use the portable
 `technical_failure` field, not optional producer diagnostic codes.
 
