@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## [0.13.2](https://github.com/InkyQuill/hieronymus/compare/v0.13.1...v0.13.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **release:** accept bundled decision library licenses ([7bd6af9](https://github.com/InkyQuill/hieronymus/commit/7bd6af9564644218f38e99fab8bbed4691f4704a))
+* **release:** accept bundled decision library licenses ([e35c928](https://github.com/InkyQuill/hieronymus/commit/e35c9281eeb736ea4e3e46d36eb5d22ea50c6261))
+
+## [0.13.1](https://github.com/InkyQuill/hieronymus/compare/v0.13.0...v0.13.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **jev:** replace unavailable SDK with local decision protocol ([514a4cb](https://github.com/InkyQuill/hieronymus/commit/514a4cbb21066d65389904c87261125f6cb63689)), closes [#151](https://github.com/InkyQuill/hieronymus/issues/151) [#152](https://github.com/InkyQuill/hieronymus/issues/152) [#153](https://github.com/InkyQuill/hieronymus/issues/153) [#154](https://github.com/InkyQuill/hieronymus/issues/154)
+* **jev:** replace unavailable SDK with local decision protocol ([887e075](https://github.com/InkyQuill/hieronymus/commit/887e0755acc0f3a7f276faf2f5780e473ced1df8))
+
 ## [0.13.0](https://github.com/InkyQuill/hieronymus/compare/v0.12.0...v0.13.0) (2026-10-04)
 
 

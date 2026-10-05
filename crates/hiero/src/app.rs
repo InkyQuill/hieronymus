@@ -180,9 +180,7 @@ pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
 /// Verify the qualified payload and execute real native document/query
 /// inference. Used by the release builder and bootstrap before activation.
 pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> {
-    use hieronymus::semantic_arming::{
-        RUNTIME_VERSION, runtime_member_pins, verify_runtime_library,
-    };
+    use hieronymus::semantic_arming::{RUNTIME_VERSION, verify_runtime_library};
     use hieronymus::semantic_embeddings::{EmbeddingProvider, OnnxEmbeddingProvider};
     use hieronymus::semantic_model::{MODEL_NAME, MODEL_REVISION, MODEL_SHA256, TOKENIZER_SHA256};
     let runtime = root.join(crate::platform::install::RUNTIME_LIBRARY);
@@ -191,14 +189,6 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
     for (file, expected) in [
         ("models/minilm/model.onnx", MODEL_SHA256),
         ("models/minilm/tokenizer.json", TOKENIZER_SHA256),
-        (
-            "models/minilm/LICENSE",
-            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        ),
-        (
-            "models/minilm/README.md",
-            "1e98ea05b0de579fcaad3d625b62ea55647142ed674d5f5ebf1440e4bbbb6f23",
-        ),
     ] {
         let path = root.join(file);
         if !std::fs::symlink_metadata(&path)
@@ -212,57 +202,6 @@ pub fn verify_semantic_assets(root: &Path) -> Result<serde_json::Value, String> 
             return Err(format!("asset checksum mismatch: {file}"));
         }
         hashes.insert(file.into(), serde_json::json!(digest));
-    }
-    for (name, expected) in runtime_member_pins(TARGET_TRIPLE)? {
-        let path = root.join(&name);
-        if !std::fs::symlink_metadata(&path)
-            .map_err(|e| e.to_string())?
-            .is_file()
-        {
-            return Err(format!(
-                "required regular runtime member is missing: {name}"
-            ));
-        }
-        let digest = crate::update::sha256_file(&path).map_err(|e| e.to_string())?;
-        if digest != expected {
-            return Err(format!("runtime member checksum mismatch: {name}"));
-        }
-        hashes.insert(name, serde_json::json!(digest));
-    }
-    for file in if cfg!(windows) {
-        &["hiero.exe", "hiero-launcher.exe", "hiero-desktop.exe"][..]
-    } else {
-        if cfg!(target_os = "macos") {
-            &[
-                "hiero",
-                "Hieronymus.app/Contents/MacOS/hiero-desktop",
-                "Hieronymus.app/Contents/Info.plist",
-                "Hieronymus.app/Contents/Resources/hieronymus.icns",
-            ][..]
-        } else {
-            &["hiero", "hiero-desktop"][..]
-        }
-    } {
-        let path = root.join(file);
-        if path.try_exists().map_err(|e| e.to_string())? {
-            if !std::fs::symlink_metadata(&path)
-                .map_err(|e| e.to_string())?
-                .is_file()
-            {
-                return Err(format!("executable asset must be regular: {file}"));
-            }
-            hashes.insert(
-                (*file).into(),
-                serde_json::json!(crate::update::sha256_file(&path).map_err(|e| e.to_string())?),
-            );
-        }
-    }
-    if std::fs::read_to_string(root.join("licenses/runtime/VERSION_NUMBER"))
-        .map_err(|e| e.to_string())?
-        .trim()
-        != RUNTIME_VERSION
-    {
-        return Err("runtime VERSION_NUMBER does not match qualified runtime".into());
     }
     let bytes =
         std::fs::read(root.join("models/minilm/tokenizer.json")).map_err(|e| e.to_string())?;

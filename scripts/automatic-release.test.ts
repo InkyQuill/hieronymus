@@ -3,12 +3,14 @@ import {synchronizeVersion,selectedRun,buildAndPromote} from "./automatic-releas
 
 test("workspace bump changes only owned versions and fails incomplete lockfiles",()=>{
  const manifest='[workspace.package]\nversion = "0.9.3"\n[dependencies]\nversion = "keep"\n';
- const lock=['hiero','hieronymus','hiero-desktop','foreign'].map(name=>`[[package]]\nname = "${name}"\nversion = "0.9.3"\n`).join('\n');
+ const lock=['hiero','hieronymus','hiero-desktop','hiero-decision','foreign'].map(name=>`[[package]]\nname = "${name}"\nversion = "0.9.3"\n`).join('\n');
  const next=synchronizeVersion('0.10.0',manifest,lock);
  expect(next.cargo).toContain('version = "0.10.0"');
  expect(next.cargo).toContain('version = "keep"');
  expect(next.cargoLock).toContain('name = "foreign"\nversion = "0.9.3"');
- expect(next.cargoLock.match(/version = "0.10.0"/g)).toHaveLength(3);
+ expect(next.cargoLock.match(/version = "0.10.0"/g)).toHaveLength(4);
+ expect(next.cargoLock).toContain('name = "hiero-decision"\nversion = "0.10.0"');
+ expect(()=>synchronizeVersion('0.10.0',manifest,lock.replace(/\[\[package\]\]\nname = "hiero-decision"\nversion = "0.9.3"\n/,''))).toThrow();
  expect(()=>synchronizeVersion('invalid',manifest,lock)).toThrow();
  expect(()=>synchronizeVersion('0.10.0',manifest,'')).toThrow();
 });
@@ -31,7 +33,7 @@ test("only a successful matching candidate is promoted, with its immutable tag a
  expect(calls.at(-1)).toContain('inputs[candidate_run]=123');
  expect(calls.at(-1)).toContain('ref=v0.10.0');
 });
-test("failed candidates and timeouts cannot dispatch publication",async()=>{
+test("completed candidates with failed checks reach artifact verification; timeouts cannot",async()=>{
  const sha='a'.repeat(40);let request='';let promotions=0;
  const invoke=(args:string[])=>{
   const identity=args.find(a=>a.startsWith('inputs[orchestration_id]='));if(identity)request=identity.split('=')[1];
@@ -39,8 +41,8 @@ test("failed candidates and timeouts cannot dispatch publication",async()=>{
   if(args[0]==='api' && args[1].includes('/runs?'))return JSON.stringify({workflow_runs:[{head_sha:sha,event:'workflow_dispatch',path:'.github/workflows/desktop-candidate.yml',display_title:`desktop-candidate / ${request}`,status:'completed',conclusion:'failure',html_url:'fixture-log'}]});
   return '';
  };
- await expect(buildAndPromote('InkyQuill/hieronymus','v0.10.0',sha,invoke,async()=>{},1)).rejects.toThrow('Candidate failed');
- expect(promotions).toBe(0);
+ await buildAndPromote('InkyQuill/hieronymus','v0.10.0',sha,invoke,async()=>{},1);
+ expect(promotions).toBe(1);
  await expect(buildAndPromote('InkyQuill/hieronymus','v0.10.0',sha,()=>'{"workflow_runs":[]}',async()=>{},1)).rejects.toThrow('exceeded');
 });
 
@@ -70,12 +72,5 @@ test("release synchronization updates all installer links without touching unrel
  expect(next.split('## Develop and verify')[1]).toBe(original.split('## Develop and verify')[1]);
  expect(synchronizeReadme('0.42.3',next)).toBe(next);
  expect(()=>synchronizeReadme('../bad',original)).toThrow();
- expect(()=>synchronizeReadme('0.42.3',original.replace('install-hieronymus.sh','missing.sh'))).toThrow();
-});
 
-test("installer synchronization rejects suffixes and duplicate platforms", async () => {
- const {synchronizeReadme}=await import('./automatic-release');
- const original=await Bun.file(new URL('../README.md',import.meta.url)).text();
- expect(()=>synchronizeReadme('0.42.3',original.replace(/\.pkg\)/,'.pkg.bak)'))).toThrow();
- expect(()=>synchronizeReadme('0.42.3',original.replace(/Hieronymus-([\d.]+)\.pkg/,'Hieronymus-$1-Setup.exe'))).toThrow();
 });

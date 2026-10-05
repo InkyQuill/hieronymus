@@ -72,3 +72,10 @@ Make sure that the committed documentation is not overly complex. It is useful f
 
 Make sure to not overengineer checks. All the harnesses should be simple, robust, and not covered by overengineered tests. Keep it simple, stupid. Tests should cover business logic and edge cases, not just tests for the sake of tests. TDD is useful, but do not use it for every simple thing unless you covering a bug / feature.
 
+## Simplicity and useful verification
+
+- Tests must verify product behavior, business logic, or a real edge case. Remove tests that merely mirror implementation details, private helper structure, or source spelling.
+- File-presence checks must serve startup, artifact integrity, data safety, or required distribution behavior. Do not gate runtime or publication on optional documentation, diagnostics, or a fixed inventory of licenses.
+- Avoid duplicate handwritten inventories. Discover ancillary package documents during packaging; authenticate downloaded archives and validate safe extraction and critical executable/model/runtime inputs.
+- Recoverable ancillary workflow failures must remain warnings and must not roll back working artifacts or user data. Preserve and report diagnostics; do not mark failed checks as passed.
+- Favor a simple author-facing tool and a small development/release workflow over additional qualification layers.
