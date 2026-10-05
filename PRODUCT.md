@@ -33,7 +33,7 @@ Keep the name Hieronymus and writer-oriented, concrete language. Preserve the es
 
 ## Evidence on Hand
 
-AGENTS.md records the product contract; README.md documents installation. The implemented console, semantic theme tokens and embedded fonts are the current interface evidence. User-provided screenshots show actual settings usage. Do not invent adoption, performance or qualification claims.
+This document records product purpose and principles; [business logic](docs/business-logic.md) explains their behavior and [ADRs](docs/README.md#why-these-rules-exist) record decisions. README.md documents installation; AGENTS.md owns contributor instructions. The implemented console, semantic theme tokens and embedded fonts are interface evidence. Do not invent adoption, performance or qualification claims.
 
 ## Product Principles
 

@@ -1,61 +1,54 @@
-# Hieronymus Roadmap
+# Roadmap
 
-Hieronymus is an alpha local-first memory system for writing and literary
-translation. The main mechanics are implemented in Rust. Current work focuses on
-optimization and fixes to runtime behavior, not a pending language rewrite.
-Historical Python and port-planning documents are available in Git history.
+Hieronymus is an alpha local memory service for writing and translation agents.
+The runtime is Rust; the language rewrite is complete. Current work improves
+behavior and operation against [the product principles](../PRODUCT.md).
+This page contains unresolved work, not a parallel implementation log.
 
-## Product Direction
+## Current priorities
 
-[ADR 0016](adr/0016-autonomous-story-memory-product-vision.md) supersedes
-ADR 0005 and the human-only terminology lifecycle in ADR 0011. The target is
-autonomous story memory, with user corrections instead of required review,
-and agent plugins with shared workflow skills; Pi has a native package using the installed MCP adapter, while zCode's shared-Claude evidence is paused/unqualified
-bundle. Its product principles and acceptance scenarios guide behavior fixes; older
-implementation-gap lists must be checked against current Rust code. Historical documents do not require preserving human approval gates.
+- Improve recall, correction propagation and Dreaming with representative story
+  work, preserving evidence, authority, uncertainty and user data.
+- Qualify generated bundles and session lifecycle in actual installed
+  Claude/Codex/Pi workflows. Keep zCode evidence separate and explicitly scoped;
+  active Pi trusted ingress remains deferred. See [host checks](agent-host-acceptance.md).
+- Complete native desktop observations where unavailable: login, real tray/panel,
+  manager behavior, active update/rollback and uninstall. Intel runtime acquisition
+  has reviewed pins; this does not qualify Intel desktop use. See [desktop checks](desktop-qualification.md).
+- Measure full serving-path/build/artifact costs before further optimization.
+  Exact SQLite vectors, static native icons and the local decision protocol are
+  already implemented. Keep PDF extraction: disabling its current defaults
+  removes no useful dependency. See [storage](adr/0013-semantic-index-and-platform-support.md)
+  and [provider/model decisions](adr/0007-provider-catalog-and-workflow-assignments.md).
+- Investigate inference/model/tokenizer footprint separately from storage.
+  Preserve current pinned inference inputs until a measured replacement is accepted.
 
-## Release backlog — 1.0
+## Known business-logic limits
 
-- [ ] **Retire LanceDB transition compatibility when preparing 1.0.** Deferred
-  until the explicitly approved 1.0 release; keep the transition behavior during
-  0.x. Audit and remove LanceDB-specific recovery assumptions, compatibility
-  tests and obsolete upgrade documentation after the SQLite vector-store
-  transition ([ADR 0013](adr/0013-semantic-index-and-platform-support.md)).
-  Define the supported upgrade path for installations that still contain old
-  LanceDB generations and document how their unused files can be cleaned up.
-  Preserve authoritative SQLite data and generic missing/corrupt-index rebuild
-  behavior; retiring compatibility must not silently delete user data or bring
-  back LanceDB dependencies. Historical research evidence may remain archived.
+- Natural-language trusted correction input uses a limited grammar; unsupported
+  phrasing stays tentative. A structured console route is available.
+- Conceptless factual correction can remain tentative with `AmbiguousIdentity`;
+  generic conceptless invalidation is not established behavior.
+- Terminology substring matching does not define Unicode token boundaries or
+  morphology. Define that policy before changing matching behavior; keep approved
+  terminology deterministic.
+- Small Jev pilots do not establish production calibration. Do not add automatic
+  reranking, entity alignment, source selection, layout repair or support enforcement
+  from those studies alone. The accepted limits are in ADR 0007.
+- Preserve safe internal storage causes at decision-error boundaries without
+  exposing private payloads or changing the public error contract.
 
-## Current Rust implementation
+These are follow-up scopes, not claims that historical failures still reproduce
+on the current revision. Use existing issues for execution and reproduction details.
 
-The core Rust implementation covers configuration and storage, series and memory
-lifecycle, deterministic terminology, recall and RAG, Dreaming, daemon and MCP
-transports, the Svelte console, migration tooling and distribution. Implemented
-mechanics still need behavioral fixes and optimization; implementation does not
-imply complete real-model or cross-platform qualification.
+## Before an explicitly approved 1.0
 
-Semantic retrieval currently uses LanceDB on main. [PR #119](https://github.com/InkyQuill/hieronymus/pull/119)
-implements its replacement with bundled SQLite and exact cosine ranking in Rust,
-preserving series prefiltering and generation switching. The model, ONNX Runtime
-and tokenizer remain unchanged. This documentation cleanup does not change the
-backend. See the [SQLite decision and validation](https://github.com/InkyQuill/hieronymus/blob/87a74f9029389ad670a950468aa66488554f7c47/docs/research/2026-10-02-sqlite-vector-decision.md) for that separate change.
+Retire LanceDB transition compatibility only with a documented upgrade path for
+older derived generations. Preserve authoritative SQLite data and generic
+missing/corrupt-index recovery. Define cleanup without silently deleting user files
+or restoring Lance dependencies. During 0.x, old derived artifacts remain intact.
 
-## Active work — optimization and behavior fixes
-
-- Fix memory, recall and Dreaming behavior against current product principles,
-  with focused regression tests and preservation of authoritative user data.
-- Reduce build dependencies and repeated compilation while preserving retrieval
-  accuracy and import quality. Measure actual build and artifact deltas rather
-  than treating overlapping dependency subtrees as removable package counts.
-- Use SVG icons from an existing icon package. Retire the custom icon generator;
-  choose assets and platform delivery that preserve tray states, themes and sizes
-  without introducing another heavy runtime rendering stack.
-- Investigate unnecessary PDF-import features with extraction-quality fixtures.
-- Keep TypeSafe SDK as a dependency; SDK replacement or reduction is not part of
-  the current optimization scope.
-- Investigate model, ONNX and tokenizer footprint separately after storage/build
-  simplification; keep the inference stack unchanged for this phase.
-
-The earlier Rust-port slice plan is historical. Follow current amended ADRs and
-verified runtime behavior instead of its obsolete pre-cutover gap list.
+Missing native evidence and other non-P0 findings are release warnings under
+[AGENTS.md](../AGENTS.md#release-checks-and-blockers); integrity and data-ownership
+safeguards remain runtime requirements. Completed investigations and old plans
+belong in local archives/Git history, not this backlog.

@@ -1,186 +1,83 @@
-# Hieronymus Service Toolkit
+# Service operations
 
-Hieronymus is alpha software: local-first, usable at your own risk. It is built
-for a single-user local data root and should not be treated as a stable
-networked service or multi-user database server.
+The Rust daemon owns normal live database mutations, background processing and
+MCP. The CLI and stdio adapter communicate with it. Exclusive migration/recovery
+runs only with the daemon stopped; export is read-only. See
+[ADR 0009](adr/0009-runtime-topology-and-daemon-lifecycle.md).
 
-Hieronymus installs two equivalent console commands:
+## Start and diagnose
 
-- `hieronymus`
-- `hiero`
-
-Every subcommand works through either command. For example, `hieronymus status`
-and `hiero status` call the same CLI entry point.
-
-Running `hiero` or `hieronymus` with no subcommand starts the local daemon if it
-is not already running, then prints the human status surface. The identity
-portion looks like this:
-
-```text
-🪶 Hieronymus v0.2.0α
-Remembers things for you.
-```
-
-## Data Root And Runtime Files
-
-The data root is selected in this order:
-
-- the global `--data-root <path>` CLI option;
-- `HIERONYMUS_DATA_ROOT`;
-- the default root, `~/.config/hieronymus`.
-
-`--data-root` must point to a directory when it already exists. The selected
-root contains the local SQLite store, configuration files, and daemon runtime
-files:
-
-- `hieronymus.sqlite`: the local SQLite database.
-- `provider.conf`: provider endpoint profile and local API key configuration.
-- `dream.conf`: dreaming workflow assignment, prompt, threshold, and cap
-  configuration.
-- `ingest.conf`: ingestion policy configuration.
-- `release.conf`: managed update configuration.
-- `server.json`: daemon discovery state, including host, port, token, PID,
-  version, data root, database path, and start time.
-- `server.pid`: daemon PID written with `server.json`.
-- `server.lock`: advisory lock used to serialize daemon startup.
-
-Service discovery should read runtime files and call JSON APIs. Components
-should not parse person-facing CLI output.
-
-## Service API
-
-The daemon is the normal lifecycle and status surface for the global SQLite
-store. It binds a local HTTP JSON API on `127.0.0.1` and requires the
-`X-Hieronymus-Token` from `server.json`.
-
-Current daemon endpoints are:
-
-- `GET /health`: health check.
-- `GET /status`: daemon, provider, dreaming, MCP adapter, and housekeeping
-  status.
-- `POST /shutdown`: graceful shutdown request.
-
-The daemon does not expose mutation endpoints yet. The direct-store boundaries
-below document the commands and adapters that still use Python domain stores
-directly.
-
-## Human And JSON Output
-
-Human CLI output is allowed to include the Hieronymus identity line, alpha risk
-language, icons, headings, and readable prose. Automation should request
-machine-readable output with `--json`.
-
-Examples:
-
-```bash
+```sh
+hiero daemon
+hiero service status --json
 hiero status --json
 hiero doctor --json
-hiero config --json
-hiero admin --json
-hiero session-start oso --task-type translation --json
-hiero recall 1 --series oso --query "style" --source-language ja --target-language en --task-type translation --json
-hiero dream --json
+hiero semantic status --json
 ```
 
-## Direct Store Boundaries
+`hiero daemon` runs the server directly. A managed installation can instead use
+`hiero service start`, `stop` and `status`. `hiero config` and `hiero admin` start
+or discover the local server and open its web console. The tray is managed by the
+server directly or through its helper; see [desktop registration](desktop-tray.md).
+`hiero` and `hieronymus` are equivalent command names.
 
-These commands intentionally access SQLite through Python domain stores. The
-reason strings are part of the current boundary catalog.
+Automation should consume JSON and discovery, not parse human status text.
+A configured provider or live process is not evidence that semantic retrieval
+is ready. Errors and background warnings remain available in readable diagnostics.
 
-- `hiero init-series`: bootstrap command that creates registry rows before a
-  service mutation API exists
-- `hiero propose-term`: legacy termbase helper retained for local debugging of
-  deterministic terminology storage
-- `hiero validate`: legacy termbase validator that reads files locally and
-  checks deterministic terminology rules
-- `hiero remember`: legacy long-memory helper retained until old memory
-  primitives are fully retired
-- `hiero session-start`: agent workflow primitive that starts local workspace
-  sessions through the domain store
-- `hiero session-complete`: agent workflow primitive that completes local
-  workspace sessions through the domain store
-- `hiero remember-short`: agent workflow primitive that writes short-term
-  observations through the domain store
-- `hiero recall`: agent workflow primitive that combines recall service output
-  without parsing human CLI text
-- `hiero feedback`: agent workflow primitive that records correction events
-  through the feedback store
-- `hiero dream`: maintenance command that invokes DreamService directly so
-  local dreaming works without a daemon
+## Files under the selected data root
 
-`hieronymus-mcp` is a stdio adapter for the authenticated local daemon. It
-starts or reuses the daemon for its data root and does not access SQLite stores
-directly.
+[Usage](usage.md#data-and-privacy) owns platform defaults and override precedence.
 
-MCP/storage primitives still use domain stores directly where the boundary
-catalog says they do. Agent hooks and the `hieronymus_status` MCP tool report
-local service discovery from configured runtime files instead of parsing human
-CLI output.
+| File/directory | Purpose |
+| --- | --- |
+| `hieronymus.sqlite` | Authoritative memory and domain data |
+| `provider.conf` | Provider profiles, timeouts, defaults and API keys |
+| `dream.conf` | Dream workflows, prompts, schedule and processing budgets |
+| `comparison.conf` | Optional memory comparison assignments and timeout |
+| `ingest.conf` / `relevance.conf` | Ingestion policy / optional Jev classification |
+| `release.conf` / `web.conf` | Update channel / optional browser authentication |
+| `llmcache.tmp` | Derived model-list hints, not configuration authority |
+| `daemon.json` | Discovery and process identity; no bearer credential |
+| `daemon.token`, `console.token`, `host-event.token` | Separate private local credentials |
+| `agent-plugins/` | Installation-owned generated skills and host bundles |
+| `backups/` / `logs/` | Recovery inputs / private readable diagnostics |
 
-## Commands
+Do not copy tokens into plugin JSON, URLs or reports. Browser Host/Origin checks
+remain active with authentication either on or off; MCP credentials remain required.
+See [authentication and discovery](adr/0012-mcp-transport-authentication-and-discovery.md).
 
-### Service
+## Call tools and inspect processing
 
-- `hiero`: starts or connects to the local daemon and prints human status.
-- `hiero status`: prints human daemon and provider status.
-- `hiero status --json`: emits daemon and provider status for scripts.
-- `hiero stop`: requests graceful daemon shutdown.
-- `hiero stop --json`: emits shutdown status for scripts.
-- `hiero restart`: restarts the local daemon.
-- `hiero restart --json`: emits restarted daemon status for scripts.
+With the daemon running, `hiero tool-call` invokes the advertised MCP registry:
 
-### Management
+```sh
+hiero tool-call hieronymus_series_list --args '{}' --json
+hiero tool-call hieronymus_dream --args '{}' --json
+```
 
-- `hiero config`: opens the configuration TUI for providers, dreaming
-  automation, service status, paths, and diagnostics.
-- `hiero config --json`: reports settings, provider status, ingest state,
-  release state, and dreaming automation state.
-- `hiero admin`: opens the management TUI.
-- `hiero admin --json`: emits management counts and available views.
-- `hiero doctor`: checks settings parseability, active provider enablement,
-  provider profile API key configuration, store health, and service health.
-- `hiero doctor --json`: emits configuration and service diagnostics.
+`--start-daemon` is an explicit opt-in for tool calls. Inspect installed help and
+MCP `tools/list` for current argument schemas. Do not guess record IDs or use
+historical Python fixture schemas as the current tool registry.
 
-### Agent and automation
+Dream runs use configured workflows. The MCP call waits for the finished drain;
+requests arriving during an active run share its result. Inspect phase results
+and pending counts rather than treating an accepted request as completion.
 
-- `hiero session-start <series> --task-type <type> --json`: starts a workspace
-  session and emits a machine-readable payload.
-- `hiero session-complete <session-id> --json`: completes a workspace session
-  and emits a machine-readable payload.
-- `hiero remember-short <session-id> --role user --kind correction --text <text> --json`:
-  records a short-term observation and emits a machine-readable payload.
-- `hiero recall <session-id> --series <series> --query <query> --source-language <src> --target-language <dst> --task-type <type> --json`:
-  emits recall output for automation without parsing human text.
-- `hiero feedback <crystal-id> --event confirmed_by_user --role user --json`:
-  records feedback and emits a machine-readable payload.
+## Export, upgrade and recovery
 
-### Maintenance
+```sh
+hiero export --output /absolute/path/memory.json --json
+hiero migrate --dry-run --data-root /absolute/disposable/copy
+```
 
-- `hiero init-series <slug> --title <title> --json`: bootstraps registry rows
-  for a series and emits a machine-readable payload.
-- `hiero propose-term ... --json`: records a deterministic terminology proposal
-  and emits a machine-readable payload.
-- `hiero validate ... --json`: validates deterministic terminology rules and
-  emits a machine-readable payload.
-- `hiero remember ... --json`: writes a legacy long-memory entry and emits a
-  machine-readable payload.
-- `hiero install <app> --dry-run`: shows the safe installer plan for an agent.
-- `hiero install <app>` writes plugin assets and patches supported agent host
-  config.
-- Automation components should call service and install commands with `--json`
-  and consume their machine-readable payloads, not parse human CLI text.
-- `hiero dream --json`: runs local dreaming and emits machine-readable status.
-- `hiero update --check --json`: checks managed update state for scripts.
-- `hiero update --json`: applies an available managed update and emits
-  machine-readable status.
+Export reads SQLite without copying a live database file and writes to an explicit
+destination. It is a content export, not a promise of full installation backup or
+an automatic import roundtrip. For migration testing, use a copied data root.
+Never run destructive recovery experiments on a working book's installation.
 
-## Agent Install Boundary
-
-This pass provides real Claude, Codex, OpenCode, OpenClaw, and Gemini CLI
-installer wiring. MiMo, Pi, and Hermes are reserved detectable targets until
-safe noninteractive host configuration protocols are implemented.
-
-See [Agent workflows](agent-workflows.md) for the host integration contract.
-
-`hiero doctor` also reports detected agent hosts where Hieronymus has not been
-installed yet.
+Migration classifies and validates the source, preserves an immutable backup,
+and refuses unsafe or unsupported schemas. Recovery uses the current Rust runtime
+and verified backup inputs; it does not reactivate Python. See
+[ADR 0010](adr/0010-data-locations-schema-ownership-and-upgrade.md) and
+[Distribution](distribution.md#install-update-and-recovery).

@@ -57,7 +57,7 @@ returned by MCP/status, placed in generated bundles, or used as receipt IDs.
   Host. The CLI already uses `DaemonClient::with_local_credential(Console)`.
 - Existing grant exchange, fragment bootstrap, single-use grants, exact mutation
   Origin checks and daemon-lifetime session cookies remain in force.
-- `POST /api/authority/correct`: authenticated browser session cookie and exact
+- `POST /api/authority/correct`: the configured browser authentication guard and exact
   Host/Origin; accepts `UserCorrectionV1` below.
 - `POST /authority/host-event`: `Authorization: Bearer <host-event credential>` and
   valid Host; accepts the same DTO, requires an existing matching session and prose
@@ -139,8 +139,8 @@ and compares these against the original text. Agent requests cannot mint either 
 origin kind. No provider extraction or implicit revision rebase participates.
 
 The HTTP/stdio/console bridge tests establish server enforcement only.
-Task6c adds actual UserPromptSubmit stdin delivery and the dedicated console form; installed
-Claude/Codex/zCode acceptance remains a separate qualification gate.
+The installed handlers support UserPromptSubmit stdin delivery and the console form.
+Actual native-host workflow acceptance remains separate evidence.
 
 ## Installed prompt delivery and console workflow
 
@@ -187,8 +187,8 @@ The common input fields follow the [Claude hook reference](https://code.claude.c
 and [Codex UserPromptSubmit input schema](https://github.com/openai/codex/blob/main/codex-rs/hooks/schema/generated/user-prompt-submit.command.input.schema.json).
 Output uses `hookSpecificOutput.hookEventName:"UserPromptSubmit"` and
 `additionalContext`, containing the actual result and accepted dependency ID when
-applied. Recognizing an envelope is not native-host qualification; Task7 owns
-supported installation, independently observed host delivery and S1–S7 transcripts.
+applied. Recognizing an envelope is not native-host qualification; use
+[host checks](agent-host-acceptance.md) for independently observed delivery and effects.
 zCode's claimed Claude-format compatibility still requires that actual acceptance.
 
 The console now has a dedicated “Correct a rendering” entry and “Correct this

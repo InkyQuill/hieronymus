@@ -1,127 +1,90 @@
-# Keep Semantic Retrieval Derived And Gate Platform Support Empirically
+# 0013 — Derived semantic indexes and native support
 
-## Status
-
-Accepted on 2026-08-31.
+Status: accepted 2026-08-31; amended for required semantics/Ollama (2026-09-10),
+split desktop artifacts (2026-09-11), exact SQLite vectors (2026-10-02) and
+background memory indexing (2026-10-05). Consolidated current policy 2026-10-05.
+The original LanceDB and FTS-only release baseline is superseded.
 
 ## Context
 
-Local embeddings and LanceDB can improve RAG recall, but ONNX Runtime, Arrow,
-and LanceDB add large native dependencies and platform-specific build risk. The
-proposal pins illustrative crate versions and assumes cross-platform behavior
-without a verified compatibility matrix.
+Semantic retrieval is necessary for useful multilingual memory, but its derived
+indexes must not become authority or risk source data. LanceDB/Arrow/DataFusion
+added substantial build complexity without a current need for ANN. The accepted
+priority is simple exact retrieval with fewer dependencies, retaining inference quality.
 
 ## Decision
 
-SQLite remains authoritative for RAG sources, chunks, metadata, and semantic
-index job state. Embeddings and LanceDB tables are disposable derived artifacts.
-FTS5-only retrieval is a supported degraded mode and must remain available when
-the model or vector index is absent, incompatible, corrupt, or rebuilding.
+SQLite owns sources, chunks, memory, manifests, corpus revisions and durable job
+state. Derived RAG vectors live in `semantic/sqlite-vectors/generation_<id>.sqlite3`.
+Rust performs exhaustive cosine ranking with F64 accumulation over stored F32
+vectors, stable chunk-ID ties and bound series filtering before ranking. Reject
+zero, nonfinite or mis-sized vectors. No ANN, quantization, sqlite-vec extension,
+Lance dependency or additional database runtime is required.
 
-Before selecting crate versions, run a dependency spike against current stable
-Rust and the intended release targets. Record exact versions and features in
-`Cargo.lock`; proposal version numbers are not normative.
+Generation identity includes provider/model/revision, dimensions, normalization,
+tokenizer/segmentation identity, corpus checksums, schema and generation. Activate
+only a complete verified generation matching the authoritative corpus revision.
+Never mix dimensions/generations. Batch writes are atomic; inference occurs outside
+write transactions. Jobs retain progress/leases and resume or recover after crashes.
 
-Semantic index identity includes provider, model, model revision, dimensions,
-normalization policy, chunk checksum, schema version, and generation id. A
-generation becomes active only after all expected chunks are indexed and its
-manifest verifies. Search never mixes generations or dimensions.
+Semantic retrieval is required. Lexical fallback is visible degraded behavior;
+it cannot satisfy strict RAG search or semantic readiness. Missing, acquiring,
+rebuilding, incompatible or corrupt indexes report their actual state. A ready
+lane over an empty corpus may return an empty success.
 
-Vector records carry `chunk_id`, `series_slug`, checksum, generation id, and
-embedding. Series isolation is correctness-critical: filtering occurs before
-ANN ranking. If the selected backend cannot pre-filter reliably, Hieronymus uses
-one physical vector table/index per series. Over-fetch followed by post-filtering
-is rejected because it can silently lose eligible results.
+ONNX with the pinned multilingual model is the default. Explicit Ollama `/api/embed`
+is an alternative, separate from chat/Dream profiles. It receives exact original
+text with `truncate:false`; no model is pulled implicitly. Arming needs the pinned
+segmentation tokenizer, not the ONNX model/runtime. Discovered model digest and
+inference identity are checked around requests; changes require reconfiguration
+and a new generation, not reuse of incompatible jobs. The local tokenizer does not
+claim to be Ollama's tokenizer.
 
-Durable jobs record kind, status, generation, cursor, total and completed
-counts, attempt count, last error, cancellation request, lease owner/expiry,
-created/started/completed timestamps, and model identity. Jobs resume safely
-after daemon crashes and never hold a SQLite write transaction during model
-inference or LanceDB writes.
+### Upgrade and diagnostics
 
-The first Rust cutover supports `x86_64-unknown-linux-gnu`. FTS5-only operation
-is the required baseline; semantic retrieval is enabled in the release only if
-the qualification record shows: clean native build, install/uninstall, checksum
-verified model load, 10,000-chunk filtered index build, zero cross-series hits
-across the contract corpus, crash/cancel recovery, FTS fallback, and a complete
-50-query run without panic or corruption. Failure of any item ships the same
-Linux release in FTS5-only mode.
+Old `lancedb` artifacts remain intact during 0.x and cannot satisfy SQLite readiness.
+Rebuild derived vectors from authoritative text with the unchanged inference model;
+do not import old Lance vectors or migrate authoritative memories for this change.
+An older binary likewise uses its own normal recovery on rollback. Cleanup requires
+a separately defined upgrade policy before 1.0.
 
-macOS and Windows are not supported by the initial cutover. Promoting another
-target requires a later ADR with the same measured qualification record plus its
-daemon-service lifecycle tests. The dependency spike selects versions and
-records measurements; it does not decide series-isolation semantics or weaken
-the promotion criteria above.
+Integrity diagnostics are read-only. Validate SQLite integrity, full identity and
+stored vectors; slow checking alone must not label a healthy index corrupt.
+Measure full serving-path performance before introducing validation caches or
+relaxing checks. Synthetic neighbor agreement does not measure literary relevance.
+
+### Memory indexing
+
+The supervised semantic worker also maintains `memory_vectors` in continuing
+batches independent of recall throughout the server lifetime, including after
+idle periods. Deleted or archived sources leave the derived index and progress
+totals reflect current memory. Authoritative rows define the missing/changed/model-
+incompatible backlog. Publish only after rechecking the source. Overview/status
+expose progress and failures; the tray indicates ordinary work. Recall reads the
+index and distinguishes unfinished indexing from its bounded candidate scan.
+
+### Native distribution
+
+Each target's format-2 metadata binds a platform archive and one canonical common
+model archive. Produce model bytes once, reverify cached acquisitions and assemble
+complete immutable versions before activation. Rollback never depends on mutable
+cache contents. Preserve legacy monolithic input compatibility; do not emit a
+misleading split `release.json` alias.
+
+Exact runtime/model pins live in acquisition metadata, not duplicated prose.
+Current targets are Linux x86_64, Windows x86_64 and Apple Silicon/Intel macOS.
+Intel uses reviewed source-built runtime pins. Runtime acquisition, native inference,
+interactive desktop acceptance and host workflows are separate claims. Missing
+optional evidence is advisory under AGENTS.md; corrupt artifacts and unsafe
+ownership remain runtime refusals. Unsigned/unnotarized status is disclosed.
 
 ## Consequences
 
-The first Rust release may ship fewer supported platforms than the aspirational
-proposal. It will have a reliable FTS-only mode and a reproducible path to
-enable semantic retrieval rather than silently depending on unverified native
-libraries.
-## Amendment — 2026-09-10: explicit Ollama embeddings
+Exact search favors straightforward validation and retrieval over ANN latency.
+Indexes remain disposable while source/memory data stays authoritative. Native
+inference/tokenizer assets still contribute to build and distribution size;
+this decision does not replace them or claim a full-app benchmark speedup.
 
-The current authority and semantic specifications require a working semantic
-lane. They supersede this ADR's original FTS-only release acceptance language:
-lexical fallback remains diagnostic degraded behavior and cannot satisfy semantic
-readiness or strict RAG requests.
-
-ONNX remains the default embedding provider. Explicitly configured Ollama
-`/api/embed` is an alternative that satisfies the semantic lane when its verified
-generation and query lane are ready. Chat/Dream profiles remain separate.
-Ollama receives exact original chunk/query text with `truncate:false`; the pinned
-MiniLM tokenizer remains the existing local segmentation policy, not a claim
-about Ollama's tokenizer. Ollama arming needs that tokenizer asset but no ONNX
-model or runtime library.
-
-Generations record provider, model, discovered immutable SHA-256 model digest,
-actual dimensions, client normalization, exact-text/truncation/input-bound policy
-and pinned segmentation identity. Discovery is checked when arming and before
-and after inference; an identity change requires reconfiguration and rebuilding.
-Provider/model switches cannot reuse incompatible generations or pending jobs.
-No model is pulled implicitly. Native Claude/Codex/Pi acceptance matrix testing
-remains a separate deferred qualification; a local Ollama smoke establishes
-integration, not model quality or host-matrix acceptance.
-
-### 2026-09-11 split desktop release packaging
-
-Version-2 exact-target metadata binds one platform archive and one canonical common model archive. The common model/tokenizer/notices are packaged once and are absent from every platform archive; their semantic pins are unchanged. A content-addressed acquisition cache is reverified on every reuse. Installation assembles both archives into a complete immutable per-version tree, including its own model files, before activation. Whole-version rollback therefore has no mutable dependency on the cache.
-
-New metadata is named `release-<triple>.json`; there is no split `release.json` alias. Legacy monolithic input remains supported, while 0.8.0 users bootstrap split-release support with the current standalone installer. Final receipts bind platform/model archive hashes, exact-target metadata and assembled asset hashes. Linux release symbol stripping changes only Hieronymus executables; pinned upstream runtime bytes remain unchanged. macOS bundle contents are bound by an outside manifest, avoiding sealed-resource self-reference. Current candidates are unsigned and unnotarized.
-
-Linux x86_64, Windows x86_64 and Apple Silicon retain their separately pinned native runtime contracts. Intel macOS fails packaging until the source-built runtime is promoted. Native Windows/macOS install/update/rollback and in-use-image acceptance remain external qualification; cross-compilation and portable transaction tests cannot replace it. See `docs/desktop-tray.md`, `docs/desktop-platforms.md`, and the final target qualification records.
-
-## Amendment — 2026-10-02: exact SQLite vectors instead of LanceDB
-
-Accepted direction: minimize build dependencies and conceptual complexity while
-preserving exact retrieval quality. Replace the runtime LanceDB/Arrow data plane
-with the already bundled SQLite and an exhaustive cosine calculation in Rust.
-No ANN, sqlite-vec extension, vector quantization, or additional runtime is needed.
-The pinned inference model, tokenizer and ONNX Runtime remain unchanged.
-
-Each generation owns `semantic/sqlite-vectors/generation_<id>.sqlite3` (under the
-configured semantic root). Its independent format marker and complete embedding
-identity are validated before use. Rows carry corpus fingerprints and F32 vectors;
-series filtering uses bound SQL parameters before ranking. Cosine accumulation
-uses F64, ties use chunk id, and zero/nonfinite/mis-sized vectors fail closed.
-Batch writes are atomic. The existing main-database manifests, corpus revision,
-activation and durable recovery protocol remain authoritative and unchanged.
-
-The old `lancedb` directory is retained, not converted or deleted. It cannot satisfy
-SQLite readiness. On upgrade, existing missing-index recovery rebuilds a new
-derived generation from authoritative text using the unchanged model. Previously
-computed Lance vectors are not imported, so this first rebuild requires inference.
-Old binaries do not understand the new derived namespace either; rolling back
-requires their normal index recovery. No authoritative memories are migrated.
-
-Integrity diagnostics are read-only and do not repair/create indexes. A healthy
-large index must not be marked corrupt merely because validation is slow. Current
-validation deliberately scans stored vectors as well as SQLite integrity and
-identity; serving-path performance should be measured separately from the raw
-search benchmark before introducing caching or relaxing these checks.
-
-Historical Lance qualification harnesses/records remain evidence for the old
-backend only. Current focused generation/recovery/recall tests qualify the new
-storage contract; native model/host qualification must be reported separately.
-Source builds no longer require system protoc for the application. Independently
-building the pinned ONNX runtime retains its own toolchain requirements.
+[Semantic validation](../semantic-validation.md) owns current checks;
+[platform artifacts](../desktop-platforms.md) owns packaging detail. Historical
+Lance harnesses qualify their old inputs only, not the current backend.

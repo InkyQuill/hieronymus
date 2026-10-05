@@ -1,26 +1,35 @@
-# Transition to Multilingual, Concept-Centered Memory Graph
+# 0003 — Multilingual concept identity
 
-> **Status note (2026-09-03):** this ADR describes the Python-era data-model
-> migration. It remains the historical definition of the concept/facet/crystal
-> data model the Rust database upgrade must preserve, but normative schema
-> ownership now sits with [ADR 0010](0010-data-locations-schema-ownership-and-upgrade.md)
-> (import/upgrade boundary) and [ADR 0011](0011-deterministic-terminology-and-graded-memory.md)
-> (structured `term_rules`/`term_rule_forms` authority). Decision 4
-> (rule-crystal-only terminology storage) is superseded by ADR 0011.
+Status: accepted; structured terminology storage superseded by ADR 0011.
+Consolidated 2026-10-05. ADR 0010 owns schema/import mechanics.
 
 ## Context
-The initial Hieronymus memory design carried rigid translation-direction boundaries (source-target language pairs), had no first-class representation of concepts, and treated deterministic terminology validation as a separate strict termbase system. Additionally, dreaming was restricted to a single crystallization pass.
+
+Rigid translation-direction columns cannot describe a multilingual work, and
+strings alone cannot distinguish one character's aliases from another character.
+A shared durable identity needs language- and context-specific descriptions.
 
 ## Decision
-We refactored the memory model to support an language-neutral, concept-centered, and multi-phase dreaming cycle:
-1. **Language-Neutral Series & Tags**: Series are language-neutral, associating language tags, story scopes (relevance boosts), and semantic tags via side-tables rather than hardcoded columns.
-2. **First-Class Concepts**: Concepts are represented as durable identity anchors with distinct lifecycles (`candidate`, `established`, `archived`, `merged`).
-3. **Concept Facets**: Multilingual renderings, names, descriptions, and notes are modeled as scoped facets linked to concepts.
-4. **Rule Crystals**: Separate strict-term validation is replaced by "rule" crystals linked to concepts, allowing contextual disambiguation and warnings for ambiguous occurrences.
-5. **Multi-Phase Dreaming**: Dreaming runs as a background process containing distinct phase workflows (crystallization, relation discovery, reinforcement/compaction) operating on a bounded affected memory set and generating immutable audit records.
-6. **English-First Memory**: Standard memory prose is written in English to keep recall searchable across translation directions. Non-English values are preserved specifically in facets, quotations, and metadata.
+
+Series are language-neutral containers with registered languages. Concepts are
+durable identity anchors; facets hold scoped names, renderings, descriptions and
+notes. Renaming preserves concept identity. Freeform semantic tags describe meaning
+and story labels can boost relevance; neither substitutes for resolved identity,
+chronology or applicability.
+
+Store compact searchable memory primarily in English while retaining exact source
+forms, renderings and quotations in their languages. Agent skills judge what to
+read/learn/remember; MCP supplies explicit storage/retrieval primitives. Dreaming
+consolidates evidence in bounded phases with immutable audit.
+
+Terminology authority lives in structured `term_rules`/`term_rule_forms` under
+[ADR 0011](0011-deterministic-terminology-and-graded-memory.md). Rule crystals are
+searchable projections, not a competing authority. The original crystal-only
+storage decision is historical.
 
 ## Consequences
-- The database schema is upgraded idempotently through a global SQLite migration mapping legacy pair columns and terms into concepts, facets, and rule crystals.
-- Recall queries search both short-term memory and long-term crystals, returning a unified ranked list.
-- MCP tools expose low-level storage primitives, while agent judgment workflows (Read/Learn/Remember) are moved to client-side agent skills.
+
+Languages and scoped forms can evolve without conflating identity or losing aliases.
+Migration preserves supported old records and provenance; current truth/viewpoint
+checks remain distinct from relevance. See [business logic](../business-logic.md)
+for the reader-facing vocabulary and workflow.

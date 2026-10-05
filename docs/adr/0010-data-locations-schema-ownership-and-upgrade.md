@@ -31,8 +31,13 @@ paths. Unchanged authoritative TOML files remain byte-identical. Files that
 require conversion use `toml_edit` so comments, ordering, and unknown supported
 keys survive; file ownership and user-only permissions for credentials are
 preserved. `llmcache.tmp` is derived and may be invalidated; it is never treated
-as configuration authority. Detailed file conversion is owned by the
-[data-root/config migration spec](../superpowers/specs/2026-08-31-rust-data-root-config-migration-design.md).
+as configuration authority. Current paths and configuration ownership are in
+[service operations](../service-toolkit.md#files-under-the-selected-data-root).
+Platform-standard defaults and override precedence are in [Usage](../usage.md#data-and-privacy).
+Legacy conversion is explicit, stages and validates files before promotion,
+and reports resumable `config_promotion_required` after a committed database
+conversion when configuration promotion is incomplete. Startup must refuse
+that mixed state; verified retry must not rerun committed conversion.
 
 Use an application-owned schema identity and monotonically increasing schema
 version independent of `_sqlx_migrations`. Database opening follows this state
