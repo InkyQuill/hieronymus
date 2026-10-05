@@ -1,0 +1,93 @@
+   Compiling typesafe-sdk v0.2.0 (/tmp/hiero-sdk-audit-20261005/codeitlikemiley)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.46s
+     Running unittests src/lib.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/typesafe_sdk-c1083aee7196939a)
+
+running 11 tests
+test error::tests::endpoint_drops_userinfo_and_query ... ok
+test logging::tests::redacts_authorization ... ok
+test question::tests::raw_score_without_criteria_fails ... ok
+test error::tests::extract_message_order ... ok
+test retry::tests::backoff_matches_python_table ... ok
+test config::tests::rejects_blank_and_non_http_base_url ... ok
+test question::tests::typed_questions_omit_default_fields ... ok
+test config::tests::strips_trailing_slashes_and_whitespace ... ok
+test retry::tests::default_statuses_match_python_set ... ok
+test retry::tests::custom_statuses_are_exact ... ok
+test retry::tests::zero_backoff_disables_delay ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/contract-a75bc0eb9c3c7f8d)
+
+running 16 tests
+test missing_api_key ... ok
+test empty_questions_never_hit_the_network ... ok
+test empty_score_criteria_never_hit_the_network ... ok
+test error_status_mapping ... ok
+test models_list ... ok
+test extra_body_overrides_model ... ok
+test custom_base_url_serves_system_one_and_models ... ok
+test same_origin_307_is_followed ... ok
+test zero_timeout_is_rejected ... ok
+test unknown_answer_type_is_skipped ... ok
+test retries_then_succeeds ... ok
+test malformed_response_names_the_field ... ok
+test system_one_round_trip ... ok
+test noul_criteria_and_rich_json ... ok
+test raw_question_passthrough ... ok
+test request_body_bytes_are_stable ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/examples_integration.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/examples_integration-6409580d60a633d4)
+
+running 10 tests
+test example_noul_uncertainty ... ok
+test example_confidence_routing ... ok
+test example_guardrails ... ok
+test example_fan_out ... ok
+test example_intent_routing ... ok
+test example_composite_scoring ... ok
+test example_citation_check ... ok
+test example_blocking_triage ... ok
+test example_structured_state ... ok
+test example_system_one ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/wire.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/wire-8df960682a02b174)
+
+running 21 tests
+test malformed_response_names_the_field ... ok
+test extra_keys_replace_fields_in_place ... ok
+test deserialize_rejects_what_the_client_refuses_to_send ... ok
+test every_answer_type_round_trips_alone ... ok
+test noul_criteria_uses_the_wire_keys ... ok
+test models_listing_round_trips_byte_for_byte ... ok
+test request_round_trips_put_the_known_keys_first ... ok
+test request_without_model_round_trips ... ok
+test reordered_questions_stay_raw ... ok
+test score_maps_keep_wire_order ... ok
+test response_round_trips_byte_for_byte ... ok
+test request_round_trips_byte_for_byte ... ok
+test response_round_trips_keep_only_what_the_client_decodes ... ok
+test usage_counts_are_optional ... ok
+test unknown_answer_type_is_skipped_like_the_client ... ok
+test server_built_models_decode_to_the_same_entries ... ok
+test gateway_forwards_a_request_byte_for_byte ... ok
+test server_built_response_decodes_to_the_same_answers ... ok
+test server_reads_exactly_what_the_client_sent ... ok
+test serde_reads_models_exactly_as_the_client_does ... ok
+test serde_reads_responses_exactly_as_the_client_does ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests typesafe_sdk
+
+running 2 tests
+test src/lib.rs - (line 14) ... ignored
+test src/wire.rs - wire (line 27) ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.18s; merged doctests compilation took 0.18s

@@ -1,0 +1,20 @@
+    Checking tokio v1.53.1
+   Compiling rustls v0.23.45
+   Compiling getrandom v0.3.4
+    Checking ahash v0.8.12
+    Checking sonic-rs v0.5.10
+    Checking tokio-util v0.7.19
+    Checking h2 v0.4.19
+    Checking tokio-rustls v0.26.5
+    Checking rustls-platform-verifier v0.7.0
+    Checking rcgen v0.14.10
+ Documenting decision-model-sdk-macros v0.1.0 (/tmp/hiero-sdk-audit-20261005/zchee/crates/macros)
+    Checking hyper v1.11.1
+    Checking hyper-util v0.1.20
+    Checking hyper-rustls v0.27.9
+ Documenting decision-model-sdk-test-support v0.1.0 (/tmp/hiero-sdk-audit-20261005/zchee/crates/test-support)
+    Checking decision-model-sdk v0.1.0 (/tmp/hiero-sdk-audit-20261005/zchee/crates/sdk)
+ Documenting decision-model-sdk v0.1.0 (/tmp/hiero-sdk-audit-20261005/zchee/crates/sdk)
+ Documenting decision-model-adapter v0.1.0 (/tmp/hiero-sdk-audit-20261005/zchee/crates/adapter)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.12s
+   Generated /tmp/hiero-sdk-audit-20261005/target/doc/decision_model_adapter/index.html and 3 other files

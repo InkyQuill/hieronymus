@@ -327,6 +327,11 @@ export async function packageDesktop(o: Options) {
     }
     if (target.runtime.origin === "source-build-required")
       throw new Error("unpromoted runtime");
+    for (const name of ["LICENSE", "LICENSE-THIRD-PARTY", "UPSTREAM.md"])
+      copy(
+        fileURLToPath(new URL(`../crates/hiero-decision/${name}`, import.meta.url)),
+        `licenses/hiero-decision/${name}`,
+      );
     for (const name of Object.keys(target.runtime.members))
       copy(
         join(o.runtime, name),

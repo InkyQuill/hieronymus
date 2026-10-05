@@ -1,27 +1,28 @@
 # Jev SDK and batching decision (#110)
 
-As of 2026-10-02, use `typesafe-sdk-rust` **0.2.0**, pinned in Cargo.lock,
-with default features disabled. Raise the workspace, development toolchain and
-CI pin to Rust **1.98.0**. Both the published 0.2.0 package metadata and the
-[0.1.1 manifest](https://github.com/zchee/typesafe-sdk-rust/blob/v0.1.1/Cargo.toml)
-require Rust 1.98; downgrading the SDK does not preserve the previous toolchain.
+As of 2026-10-05, use the unpublished workspace crate
+[`hiero-decision`](../crates/hiero-decision/UPSTREAM.md), a narrow derivative
+of zchee's decision-model-sdk at `c5d4459`. The four-project
+[audit](research/2026-10-05-decision-sdk-audit.md) motivated this replacement:
+the old registry package stopped resolving on clean release runners.
+Rust 1.98 remains the workspace baseline.
 
-The [SDK](https://github.com/zchee/typesafe-sdk-rust) provides prepared named
-questions, authentication, response decoding, response limits and explicit retry
-configuration. Its custom service interface fits the existing mockable
-`ProviderTransport`. Disable its Hyper, macro and tracing features: reuse our
-bounded blocking transport and avoid another TLS stack or body logging. The
-adapter runs a time-enabled Tokio runtime on a scoped thread, making synchronous
-Dream and prompt-delivery callers safe even inside an existing runtime.
+The local protocol prepares named questions, retains structured extension
+fields and validates independent answers. Authentication and synchronous
+bounded HTTP remain in `ProviderTransport`; no SDK HTTP/TLS client, Tower
+adapter, async runtime, retry machinery or macro dependency is needed.
 
 Configure the endpoint explicitly, cap responses at 64 KiB, disable retries and
 use the caller's timeout (remaining shared deadline for comparisons). Map errors
 to fixed diagnostic codes rather than SDK error bodies, which can contain input.
 Domain validation remains necessary: SDK parsing does not establish compatible
 story scope, authority, calibrated equivalence or transaction-time freshness.
-When SDK response decoding rejects one answer, bounded JSON remains available
-for independent domain validation of the other answers; no unvalidated field
-can authorize a merge. This avoids retrying already valid evidence.
+Invalid named answers are omitted while valid siblings remain available for
+independent domain validation. Duplicate response keys fail closed; Noul,
+confidence, distributions, Choice winners and Score rubrics receive protocol
+validation before domain thresholds. The production transport bounds wire
+overhead separately and enforces the 64 KiB decoded body limit. This avoids
+retrying already valid evidence.
 
 ## Batching behavior
 

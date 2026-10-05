@@ -1,0 +1,96 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/typesafe_sdk-09d8a903fa077a9e)
+
+running 2 tests
+test retry::tests::http_dates_use_the_supplied_clock_and_clamp_past_dates ... ok
+test retry::tests::exponential_backoff_caps_and_applies_subtractive_jitter ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/client.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/client-ed56f547a0cf3149)
+
+running 10 tests
+test configuration_fails_as_errors ... ok
+test server_retry_delay_is_exposed_without_disclosing_response_secrets ... ok
+test custom_response_respects_per_call_retries_and_preserves_http_errors ... ok
+test unrepresentable_ms_delay_does_not_fall_back_to_seconds ... ok
+test concurrent_calls_keep_retry_options_and_headers_independent ... ok
+test list_models_rejects_invalid_options_before_network_io ... ok
+test custom_response_rejects_invalid_options_before_io ... ok
+test timeout_is_structured_and_dropping_future_cancels_retry ... ok
+test cancelling_a_pending_retry_leaves_no_background_request ... ok
+test timeout_retry_recovers_and_can_be_disabled ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+
+     Running tests/request.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/request-fb889f64dd8193d1)
+
+running 11 tests
+test json_input_errors_identify_the_field_without_disclosing_it_in_logs ... ok
+test local_error_order_is_independent_of_object_insertion_order ... ok
+test json_shapes_have_stable_repair_diagnostics ... ok
+test typed_and_json_requests_share_semantic_errors_and_question_order ... ok
+test typed_boundaries_and_presence ... ok
+test raw_questions_validate_envelope_and_minimal_question_requirements ... ok
+test json_literals_keep_serde_duplicate_and_optional_value_semantics ... ok
+test preview_matches_execution_after_model_and_raw_overrides ... ok
+test raw_questions_preserve_extensions_and_share_preview_and_execution ... ok
+test json_presence_and_content_match_existing_typed_deserialization ... ok
+test json_requests_preserve_typed_questions_on_the_wire ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/response.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/response-8738d16b08816ef5)
+
+running 9 tests
+test serde_score_keys_are_exact_and_collisions_follow_input_order ... ok
+test list_models_validation_keeps_index_context_and_redacts_values ... ok
+test list_models_is_bodyless_and_preserves_metadata ... ok
+test custom_response_decodes_the_wire_schema_and_keeps_metadata ... ok
+test round_trip_and_metadata ... ok
+test validation_path_and_error_redaction ... ok
+test validation_error_formatting_does_not_disclose_server_values ... ok
+test numeric_limits_fail_explicitly_and_preserve_raw_response ... ok
+test custom_validation_preserves_paths_causes_and_http_context ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/tls.rs (/tmp/hiero-sdk-audit-20261005/target/debug/deps/tls-3722e19a1c8342bc)
+
+running 3 tests
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test rejects_trusted_certificate_for_wrong_host ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.02s
+
+test rejects_trusted_certificate_for_wrong_host ... ok
+test accepts_trusted_local_https ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.02s
+
+test accepts_trusted_local_https ... ok
+test rejects_untrusted_certificate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.04s
+
+test rejects_untrusted_certificate ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+   Doc-tests typesafe_sdk
+
+running 5 tests
+test src/client.rs - client::Client::system_one_as (line 208) - compile ... ok
+test src/lib.rs - (line 3) - compile ... ok
+test src/client.rs - client::Client::list_models (line 246) - compile ... ok
+test src/request.rs - request::SystemOneRequest::from_json (line 132) ... ok
+test src/request.rs - request::SystemOneRequest::from_raw_json (line 162) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.15s; merged doctests compilation took 0.15s

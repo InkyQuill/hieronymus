@@ -1,5 +1,13 @@
 version: 1
 skills:
+    - name: codebase-design
+      source:
+        type: archive
+      fingerprint: 92ae072ed0b6097983e8ac0956ab00c087f4ab1e41fdbbea64da679afe150020
+    - name: diagnosing-bugs
+      source:
+        type: archive
+      fingerprint: e68468efb2d5ebf68dd64e036fdf6775b471b8b8d7cd8b4dfc46032b32972396
     - name: good-rust-practices
       source:
         type: archive

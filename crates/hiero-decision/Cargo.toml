@@ -1,0 +1,17 @@
+[package]
+name = "hiero-decision"
+description = "Bounded System One protocol for Hieronymus."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0"
+authors = ["Pavel Obruchnikov <me@inkyquill.net>"]
+publish = false
+
+[dependencies]
+serde = "1"
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
