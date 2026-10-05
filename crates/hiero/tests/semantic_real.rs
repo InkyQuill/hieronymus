@@ -8,7 +8,7 @@
 //!
 //! - `HIERO_TEST_ONNX_RUNTIME`: the onnxruntime shared library
 //!   (`libonnxruntime.so`, qualified identity in
-//!   `qualification/prerequisites.json`).
+//!   `scripts/release-assets.ts`).
 //! - `HIERO_TEST_MODEL_DIR`: a directory holding the pinned
 //!   `model.onnx` and `tokenizer.json` (SHA-256 pins in
 //!   `hieronymus::semantic_model`).

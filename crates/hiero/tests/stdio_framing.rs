@@ -1,5 +1,5 @@
 //! Stdio framing contract tests: the frozen newline-delimited JSON-RPC
-//! exchanges from `compatibility/fixtures/mcp/protocol.json` (target.stdio),
+//! exchanges from `crates/hiero/tests/fixtures/mcp/protocol.json` (target.stdio),
 //! served through the registry, the `hiero mcp` adapter end-to-end, and the
 //! adapter's fail-closed behavior without discovery.
 

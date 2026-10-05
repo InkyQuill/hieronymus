@@ -382,11 +382,16 @@ test("installer-only fixes reuse binaries, runtime changes require a rebuild", a
       ".github/workflows/release-rust.yml",
       ".github/workflows/desktop-candidate.yml",
       "crates/hiero/tests/release_source.rs",
+      "crates/hiero/tests/fixtures/mcp/protocol.json",
+      "crates/hieronymus/tests/fixtures/cws-project-v1.json",
+      "evidence/desktop/kde-wayland.json",
       "docs/install.md",
     ]),
   ).toBe(false);
   for (const path of [
     "crates/hiero/src/main.rs",
+    "crates/hiero/resources/mcp/registry.json",
+    "crates/hiero/resources/mcp/authority-ingress-v1.json",
     "frontend/src/App.svelte",
     "Cargo.lock",
     "Cargo.toml",

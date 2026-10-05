@@ -1,5 +1,5 @@
 //! REST route contract tests against the frozen fixture targets
-//! (`compatibility/fixtures/http/route-cases.json`, `target` blocks). Per the
+//! (`crates/hiero/tests/fixtures/http/route-cases.json`, `target` blocks). Per the
 //! controller ruling on ADR 0012 (as amended 2026-09-03), the stale CSRF
 //! machinery in the frozen targets (`invalid-csrf`/`missing-csrf` failures,
 //! `403 csrf_failed`, csrf tokens) is NOT binding and is never implemented or
@@ -392,7 +392,7 @@ fn api_provider_routes_match_frozen_targets() {
     // instead of `{"source": "fixture", "models": ["synthetic-model"]}`. The
     // frozen auth/CSRF/host failure cases are unchanged and still asserted;
     // the frozen fixture bytes are untouched. The reconciled contract per
-    // ADR 0012 / Astra 12 is `compatibility/rust/provider-checks.json`.
+    // ADR 0012 / Astra 12 is the current provider route tests.
     for route_id in [
         "http.route.post.api.providers.id.check",
         "http.route.get.api.providers.id.models",

@@ -1,9 +1,0 @@
-{
-  "params": {
-    "arguments": {},
-    "name": "hieronymus_concept_proposals_list"
-  },
-  "setup": {
-    "data_root": "file"
-  }
-}

@@ -1364,7 +1364,7 @@ fn concurrent_queue_calls_dedup_onto_one_generation() {
 /// The accepted Rust delta for `hieronymus_rag_search` (review finding A5).
 /// Loaded, not restated: the fixture is the reviewed record of the envelope
 /// and the refusal, and this file proves the runtime matches it.
-const RAG_SEARCH_V2: &str = include_str!("../../../compatibility/rust/rag-search-v2.json");
+const RAG_SEARCH_V2: &str = include_str!("fixtures/rag-search-v2.json");
 
 fn rag_search_expectation(state: &str, corpus: &str) -> Value {
     let fixture: Value = serde_json::from_str(RAG_SEARCH_V2).unwrap();

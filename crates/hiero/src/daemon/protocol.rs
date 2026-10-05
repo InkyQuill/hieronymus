@@ -1,5 +1,5 @@
 //! The stateless MCP JSON-RPC layer (revision `2026-07-28`), ported from the
-//! qualified transport reference `qualification/harnesses/mcp-transport`:
+//! qualified transport reference the daemon transport tests:
 //! request validation, mirrored-header enforcement (`-32020`), unsupported
 //! protocol version (`-32022`), and the tools/list + tools/call dispatch.
 //! There is no session, no initialize, and no server-initiated state.

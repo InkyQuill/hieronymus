@@ -433,7 +433,7 @@ export async function stage(
     );
   root = realpathSync(root);
   const signal = AbortSignal.timeout(300_000);
-  const cache = join(root, "qualification/.artifacts/models");
+  const cache = join(root, "target/acquired-assets/models");
   trustedDirectory(cache);
   const model =
     inputs?.modelDirectory ??

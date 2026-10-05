@@ -1,7 +1,0 @@
-Usage: hieronymus config [OPTIONS]
-
-  Open the configuration web console.
-
-Options:
-  --json
-  --help  Show this message and exit.

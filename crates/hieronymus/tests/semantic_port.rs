@@ -1127,7 +1127,7 @@ fn live_onnx_provider_embeds_normalized_384_vectors() {
         .ancestors()
         .nth(2)
         .expect("crate lives two levels below the repository root")
-        .join("qualification/.artifacts/models");
+        .join("target/acquired-assets/models");
     let runtime = artifacts.join("onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so");
     let model = artifacts.join("paraphrase-multilingual-MiniLM-L12-v2/model.onnx");
     if !runtime.is_file() || !model.is_file() {

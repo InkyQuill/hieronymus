@@ -1,4 +1,0 @@
-Usage: hiero skills install [OPTIONS]
-Try 'hiero skills install --help' for help.
-
-Error: No such option: --compat-invalid-option

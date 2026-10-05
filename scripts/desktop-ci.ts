@@ -77,7 +77,7 @@ export function binarySourceChanged(paths: string[]): boolean {
         /^crates\/[^/]+\/tests\//.test(p) ||
         /\/(?:LICENSE|COPYING|NOTICE)(?:[.-][^/]*)?$/.test(p) ||
         p.startsWith("docs/") ||
-        p.startsWith("qualification/") ||
+        p.startsWith("evidence/") ||
         p.startsWith("scripts/setup/") ||
         p.endsWith(".test.ts") ||
         (!p.includes("/") && p.endsWith(".md")) ||

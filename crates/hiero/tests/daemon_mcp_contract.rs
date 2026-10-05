@@ -1,7 +1,7 @@
 //! Contract tests for the daemon's HTTP MCP surface, driven by the frozen
 //! fixtures:
-//! - `compatibility/fixtures/mcp/protocol.json` (target tools/list + tools/call)
-//! - `compatibility/fixtures/http/route-cases.json` (http.route.post.mcp and
+//! - `crates/hiero/tests/fixtures/mcp/protocol.json` (target tools/list + tools/call)
+//! - `crates/hiero/tests/fixtures/http/route-cases.json` (http.route.post.mcp and
 //!   http.route.get.health targets: host, bearer, mirrored headers, and error
 //!   mapping)
 //!
@@ -337,7 +337,7 @@ fn served_registry_preserves_frozen_names_and_active_rust_schemas() {
     let tools = response_body["result"]["tools"].as_array().unwrap();
     assert_eq!(tools, expected["result"]["tools"].as_array().unwrap());
     // Names and order must equal the manifest snapshot.
-    let snapshot = common::fixture("compatibility/snapshots/mcp.json");
+    let snapshot = common::fixture("crates/hiero/resources/mcp/registry.json");
     let mut snapshot_names: Vec<&str> = snapshot["tools"]
         .as_array()
         .unwrap()

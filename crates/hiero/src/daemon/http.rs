@@ -1,6 +1,6 @@
 //! Minimal HTTP/1.1 plumbing for the loopback daemon: bounded request reads
 //! and `Connection: close` responses. Behavior is ported from the qualified
-//! transport reference (`qualification/harnesses/mcp-transport`): strict
+//! transport reference (the daemon transport tests): strict
 //! request-line/header parsing, duplicate headers rejected, 1 MiB body cap.
 
 use std::collections::BTreeMap;

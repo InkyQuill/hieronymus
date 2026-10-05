@@ -23,12 +23,13 @@ instructions or release gates. Accepted Rust ADR amendments still govern behavio
 In particular, retained qualification evidence does not qualify a new native
 artifact or imply implementation of a deferred agent-host matrix.
 
-`compatibility` mixes production MCP schemas, active test fixtures and historical
-data; see [its dependency map](../../compatibility/README.md). The legacy SQLite
-fixtures are consumed by the isolated qualification harness. `qualification/harnesses`, records, schemas and projections are
-historical Rust-port evidence. The obsolete Python orchestration and its live CI
-workflow were removed rather than rebuilding a deferred qualification matrix.
-The pinned release assets are now acquired by `bun scripts/stage-release-assets.ts`.
-Ignored `qualification/.artifacts` directories remain local and are not removed by
-this cleanup. Old Python cache ignore rules remain so an existing local environment
-cannot accidentally enter the repository. Local `.env` files remain ignored.
+The former compatibility and qualification directories were consolidated after
+the port. Production MCP definitions now live in `crates/hiero/resources/mcp/`;
+active behavior fixtures live beside the owning crate's tests. Unused snapshots,
+legacy database examples and standalone rewrite harnesses are available in Git
+and the ignored local archive, not in the active build or test tree.
+
+Release assets are acquired by `bun scripts/stage-release-assets.ts` and cached
+under ignored `target/acquired-assets/models/`. Optional desktop evidence uses
+`evidence/desktop/` in a separately supplied evidence commit. Historical records
+do not qualify current artifacts. Local `.env` files remain ignored.

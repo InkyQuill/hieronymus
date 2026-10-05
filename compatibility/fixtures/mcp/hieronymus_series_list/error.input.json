@@ -1,9 +1,0 @@
-{
-  "params": {
-    "arguments": {},
-    "name": "hieronymus_series_list"
-  },
-  "setup": {
-    "data_root": "file"
-  }
-}

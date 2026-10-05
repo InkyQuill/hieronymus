@@ -75,8 +75,9 @@ tests require explicit disposable inputs and are ignored by default.
 
 The previous Python application is archived on
 [`stale/python-v0.7.0`](https://github.com/InkyQuill/hieronymus/tree/stale/python-v0.7.0).
-Later rewrite tooling and qualification records have separate provenance; see
-[the archive policy](docs/archive/python-v0.7.0.md).
+Later rewrite tooling, unused fixtures and qualification reports are historical
+records; see [the archive policy](docs/archive/python-v0.7.0.md). Active protocol
+definitions and behavior fixtures live beside their owning Rust crates.
 
 Configuration and memory use the standard per-user configuration directory:
 `$XDG_CONFIG_HOME/hieronymus` on Linux (default `~/.config/hieronymus`),

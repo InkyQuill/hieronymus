@@ -1,7 +1,7 @@
 //! Embedding provider surface for the semantic RAG lane: one identity type,
 //! one provider trait whose document and query requests share that identity, a
 //! deterministic fake provider for tests, and the real ONNX provider ported
-//! from the qualified harness (`qualification/harnesses/semantic-native`).
+//! from the qualified harness (the production semantic tests).
 //!
 //! Providers receive exact original text beside the local token sequence.
 //! ONNX retains the qualified token path; Ollama embeds only the original text.

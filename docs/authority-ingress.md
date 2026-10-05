@@ -6,7 +6,7 @@ transcripts, or claimed source roles. Unknown draft fields are rejected. Legacy
 origin, including for migration-protected global rules. Normal structural operations
 and correlated recall-outcome relevance feedback retain their separate behavior.
 
-The active Rust schemas are in `compatibility/rust/authority-ingress-v1.json` and
+The active Rust schemas are in `crates/hiero/resources/mcp/authority-ingress-v1.json` and
 `McpRegistry::embedded()`. The historical Python snapshot remains frozen.
 
 ## Ordinary MCP operations

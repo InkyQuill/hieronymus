@@ -1,7 +1,7 @@
 //! Plan M5 completeness regression: every tool the frozen registry advertises
 //! must have a concrete handler in the application layer, and every handler
 //! must actually execute. Registry name equality is supplementary — the
-//! behavioral matrix in this file (`compatibility/rust/tool-cases-v1.json`)
+//! behavioral matrix in this file (`crates/hiero/tests/fixtures/tool-cases-v1.json`)
 //! executes every advertised tool against seeded real domain state over both
 //! real transports (HTTP `POST /mcp` and the `hiero mcp` stdio adapter) and
 //! asserts persisted mutations through an independent read-only SQLite
@@ -130,7 +130,7 @@ fn implemented_tools_all_dispatch_without_not_implemented() {
 
 // ------------------------------------------------------------- the case file
 
-const TOOL_CASES: &str = include_str!("../../../compatibility/rust/tool-cases-v1.json");
+const TOOL_CASES: &str = include_str!("fixtures/tool-cases-v1.json");
 
 #[derive(Deserialize)]
 struct CaseFile {
