@@ -992,6 +992,16 @@ impl DreamService {
                 0,
             );
         }
+        // Rotation is attempt progress, not evidence disposition. Commit it
+        // before provider fitting/calls and independently of persistence.
+        self.audit.append(
+            run_id,
+            None,
+            "selection_attempted",
+            "info",
+            "selected observations for provider processing",
+            &json!({"cursor_memory_id": observation_order[0]}),
+        )?;
         let providers = selected
             .iter()
             .map(|choice| {
@@ -1343,7 +1353,7 @@ impl DreamService {
     }
 
     /// Select one project/language scope across sessions. Rotate by the first
-    /// observation of the last persisted batch so deferred inputs cannot starve
+    /// observation of the last attempted batch so failed or deferred inputs cannot starve
     /// newer work. Session-scoped working copies
     /// (`source_crystal_id` set) are the reconsolidator's input, never
     /// crystallization input.
@@ -1356,10 +1366,14 @@ impl DreamService {
         }
         let mut connection = open_migrated(&self.config.database_path())?;
         let connection = connection.transaction()?;
-        // The last committed persistence audit is a durable round-robin cursor.
-        // Deferred oldest inputs cannot monopolize all future provider runs.
+        // Attempts advance independently of provider success or persistence.
+        // Fall back to older persistence audits for installations with no attempts.
         let last_memory_id: i64 = connection.query_row(
             "select coalesce((
+               select json_extract(payload_json, '$.cursor_memory_id')
+               from dream_audit_entries where event_type='selection_attempted'
+               order by id desc limit 1
+             ), (
                select json_extract(payload_json, '$.request_summary.selected_memory_ids[0]')
                from dream_audit_entries
                where event_type='phase_completed'

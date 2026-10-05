@@ -881,10 +881,13 @@ fn evidence_dream_runs_all_passes_over_the_same_selection() {
     assert_eq!(phase_rows(&config), expected_phase_rows);
     assert_eq!(scalar(&config, "select count(*) from crystals"), json!(1));
 
-    // Audit: per-pass input/output summaries plus one persistence summary
+    // Audit: rotation progress, per-pass input/output summaries and persistence
     // carrying the mutation record.
     let summaries = audit_event_summaries(&config, run.id);
-    let mut expected_summaries: Vec<(String, String)> = Vec::new();
+    let mut expected_summaries: Vec<(String, String)> = vec![(
+        "selection_attempted".into(),
+        "selected observations for provider processing".into(),
+    )];
     for pass in expected_passes {
         expected_summaries.push((
             "provider_request".to_string(),
@@ -1842,4 +1845,64 @@ fn interleaved_sessions_keep_capture_order_before_model_budgeting() {
         ),
         vec![vec![json!(last)]]
     );
+}
+
+#[test]
+fn repeatedly_failing_observation_rotates_after_restart_without_consuming_evidence() {
+    struct PoisonedProvider;
+    impl DreamProvider for PoisonedProvider {
+        fn name(&self) -> &str {
+            "poisoned-input"
+        }
+        fn run_pass(
+            &self,
+            pass: &str,
+            context: &TranslationContext,
+            memories: &[ShortTermMemoryRecord],
+        ) -> Result<Value, DreamError> {
+            if memories.iter().any(|m| m.text == "Always fails.") {
+                return Err(DreamError::Provider("poisoned observation".into()));
+            }
+            DeterministicDreamProvider.run_pass(pass, context, memories)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(&root);
+    create_series(&config, "book");
+    let mut settings = default_dream_config();
+    settings.max_short_term_memories_per_run = 1;
+    save_dream_config(&config, &settings).unwrap();
+    let failed = completed_session(&config, "book", &["Always fails."])[0];
+    for text in ["Mira carries three keys.", "Mira carries four keys."] {
+        let service = DreamService::open(
+            &config,
+            WorkflowResolver::serving(|| Box::new(PoisonedProvider)),
+        )
+        .unwrap();
+        assert!(service.run_cycle("manual", true).is_err());
+        drop(service);
+        let newer = completed_session(&config, "book", &[text])[0];
+        let reopened = DreamService::open(
+            &config,
+            WorkflowResolver::serving(|| Box::new(PoisonedProvider)),
+        )
+        .unwrap();
+        reopened.run_cycle("manual", true).unwrap();
+        assert_eq!(
+            query(
+                &config,
+                "select id from short_term_memories where archived_at is null",
+                &[]
+            ),
+            vec![vec![json!(failed)]]
+        );
+        assert_eq!(
+            query(
+                &config,
+                "select count(*) from short_term_memories where id=?1 and archived_at is not null",
+                &[&newer]
+            ),
+            vec![vec![json!(1)]]
+        );
+    }
 }
