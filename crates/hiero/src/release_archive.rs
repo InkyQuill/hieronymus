@@ -6,6 +6,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+pub(crate) const DECISION_LICENSE_DIRECTORY: &str = "licenses/hiero-decision";
+pub(crate) const DECISION_LICENSE_MEMBERS: [&str; 2] = [
+    "licenses/hiero-decision/LICENSE",
+    "licenses/hiero-decision/LICENSE-THIRD-PARTY",
+];
 pub const MAX_ARCHIVE: u64 = 1024 * 1024 * 1024;
 pub const MAX_EXPANDED: u64 = 3 * 1024 * 1024 * 1024;
 #[derive(Clone, Debug)]
@@ -177,7 +182,13 @@ fn permitted(name: &str, directory: bool, policy: Policy, target: &str) -> Resul
         }
         Policy::Platform => {
             if directory {
-                ["lib", "licenses", "licenses/runtime"].contains(&name)
+                [
+                    "lib",
+                    "licenses",
+                    "licenses/runtime",
+                    DECISION_LICENSE_DIRECTORY,
+                ]
+                .contains(&name)
                     || (target.contains("apple")
                         && [
                             "Hieronymus.app",
@@ -188,6 +199,7 @@ fn permitted(name: &str, directory: bool, policy: Policy, target: &str) -> Resul
                         .contains(&name))
             } else {
                 name == "assets.json"
+                    || DECISION_LICENSE_MEMBERS.contains(&name)
                     || executable_names(target).contains(&name)
                     || (target.contains("apple")
                         && [
@@ -586,6 +598,45 @@ mod tests {
         let mut gzip = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
         gzip.write_all(&bytes).unwrap();
         gzip.finish().unwrap()
+    }
+    #[test]
+    fn accepts_packaged_decision_licenses_on_all_platforms() {
+        for target in [
+            "x86_64-unknown-linux-gnu",
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "x86_64-pc-windows-msvc",
+        ] {
+            let mut state = Inspection::default();
+            for (name, directory) in [
+                ("licenses/hiero-decision", true),
+                ("licenses/hiero-decision/LICENSE", false),
+                ("licenses/hiero-decision/LICENSE-THIRD-PARTY", false),
+            ] {
+                record(
+                    Member {
+                        name,
+                        directory,
+                        size: 0,
+                    },
+                    &mut std::io::empty(),
+                    Policy::Platform,
+                    target,
+                    &mut state,
+                    None,
+                )
+                .unwrap();
+            }
+            assert!(
+                !permitted(
+                    "licenses/hiero-decision/unexpected",
+                    false,
+                    Policy::Platform,
+                    target
+                )
+                .unwrap()
+            );
+        }
     }
     #[test]
     fn rejects_duplicate_model_members_and_cross_archive_smuggling() {
