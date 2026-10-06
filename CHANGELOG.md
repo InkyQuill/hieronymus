@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## [0.14.0](https://github.com/InkyQuill/hieronymus/compare/v0.13.4...v0.14.0) (2026-10-06)
+
+
+### Features
+
+* **memory:** consolidate across sessions and propose merged memories ([1a6db62](https://github.com/InkyQuill/hieronymus/commit/1a6db623ee4c2cfec2b0c0d59389f27c21cacfa6))
+* **recall:** filter durable memory categories before retrieval budgets ([4d8539b](https://github.com/InkyQuill/hieronymus/commit/4d8539b5e0ed4c9ef52080dbce2e9270b077f111))
+
+
+### Bug Fixes
+
+* **dreaming:** rotate failed batches without consuming observations ([b89b241](https://github.com/InkyQuill/hieronymus/commit/b89b241c9a75c9a56cd0c89c826a221c47f1b040))
+
 ## [0.13.4](https://github.com/InkyQuill/hieronymus/compare/v0.13.3...v0.13.4) (2026-10-05)
 
 
