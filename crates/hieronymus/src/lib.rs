@@ -42,6 +42,7 @@ pub mod provider_http;
 pub mod rag;
 pub mod rag_models;
 pub mod recall;
+pub mod recall_selection;
 pub mod registry;
 pub mod release_config;
 pub mod relevance_config;

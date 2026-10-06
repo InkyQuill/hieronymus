@@ -547,6 +547,8 @@ fn feedback(application: &Application, arguments: &Value) -> Result<Value, AppEr
 
 #[derive(Deserialize)]
 struct RecallArgs {
+    #[serde(default)]
+    memory_types: Option<Vec<hieronymus::recall_selection::MemoryType>>,
     #[serde(flatten)]
     story: super::StoryReadArgs,
     session_id: i64,
@@ -584,6 +586,11 @@ fn default_recall_limit() -> i64 {
 /// semantic service reports it cannot serve yet.
 fn recall(application: &Application, arguments: &Value) -> Result<Value, AppError> {
     let mut args = decode::<RecallArgs>(arguments)?;
+    if args.memory_types.as_ref().is_some_and(Vec::is_empty) {
+        return Err(AppError::Invalid(
+            "memory_types must contain at least one category; omit it for mixed recall".into(),
+        ));
+    }
     if arguments.get("story_query_mode").is_none() {
         args.story.story_query_mode =
             hieronymus::story_applicability::QueryMode::OmniscientResearch;
@@ -631,12 +638,15 @@ fn recall(application: &Application, arguments: &Value) -> Result<Value, AppErro
     }
     let response = application
         .recall()
-        .recall_required(
+        .recall_selected(
             args.session_id,
             context,
             &args.query,
-            args.limit as usize,
-            args.story.required_decision_id.as_deref(),
+            hieronymus::recall_selection::RecallOptions {
+                limit: args.limit as usize,
+                required_decision_id: args.story.required_decision_id.as_deref(),
+                memory_types: args.memory_types.as_deref(),
+            },
         )
         .map_err(super::recall_error)?;
     Ok(recall_payload(&response))

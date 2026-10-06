@@ -976,7 +976,7 @@
       "name": "hieronymus_rag_search"
     },
     {
-      "description": "Recall long-term crystals and active short-term memories for a stored session.",
+      "description": "Recall memory for a stored session. Select terms, concepts, lessons or knowledge with memory_types; omit it for mixed recall including observations and source passages. Category selection does not change applicability or authority. The deterministic terminology contract is always separate.",
       "input_schema": {
         "properties": {
           "chapter": {
@@ -1055,6 +1055,20 @@
             ],
             "default": null,
             "title": "Volume"
+          },
+          "memory_types": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "terms",
+                "concepts",
+                "lessons",
+                "knowledge"
+              ]
+            },
+            "description": "Optional durable-memory categories; omit for mixed recall with observations and source chunks. Terms uses deterministic_contract; concepts selects concept/concept_note; lessons selects lesson; knowledge selects rule/thought/observation/erudition. Categories do not change authority or story applicability; the terminology contract is always returned."
           }
         },
         "required": [

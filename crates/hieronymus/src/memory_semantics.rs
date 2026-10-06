@@ -164,11 +164,23 @@ pub fn search(
     tokenizer: &mut dyn ChunkTokenizer,
     limit: usize,
 ) -> Result<Candidates, String> {
+    search_selected(db, context, query, provider, tokenizer, limit, None)
+}
+
+pub(crate) fn search_selected(
+    db: &Connection,
+    context: &TranslationContext,
+    query: &str,
+    provider: &mut dyn EmbeddingProvider,
+    tokenizer: &mut dyn ChunkTokenizer,
+    limit: usize,
+    crystal_types: Option<&str>,
+) -> Result<Candidates, String> {
     provider.verify_identity().map_err(|e| e.to_string())?;
     let model = identity(provider);
     let query = encode(provider, tokenizer, &context.series_slug, query, true)
         .map_err(|e| e.to_string())?;
-    let filter = "s.series_slug=?1 and (s.source_language='' or s.source_language=?2) and (s.target_language='' or s.target_language=?3)";
+    let filter = "s.series_slug=?1 and (s.source_language='' or s.source_language=?2) and (s.target_language='' or s.target_language=?3) and (?5 is null or (s.kind='crystal' and exists(select 1 from crystals c where c.id=s.id and c.crystal_type in (select value from json_each(?5)))))";
     let mut stmt=db.prepare(&format!("select s.kind,s.id,v.vector_json from ({SOURCES}) s join memory_vectors v on v.kind=s.kind and v.id=s.id and v.source_text=s.text and v.identity=?4 where {filter} order by s.kind,s.id")).map_err(|e|e.to_string())?;
     let rows = stmt
         .query_map(
@@ -176,7 +188,8 @@ pub fn search(
                 context.series_slug,
                 context.source_language,
                 context.target_language,
-                model
+                model,
+                crystal_types
             ],
             |r| {
                 Ok((
@@ -187,7 +200,7 @@ pub fn search(
             },
         )
         .map_err(|e| e.to_string())?;
-    let pending:bool=db.query_row(&format!("select exists(select 1 from ({SOURCES}) s left join memory_vectors v on v.kind=s.kind and v.id=s.id and v.source_text=s.text and v.identity=?4 where {filter} and v.id is null)"),params![context.series_slug,context.source_language,context.target_language,model],|r|r.get(0)).map_err(|e|e.to_string())?;
+    let pending:bool=db.query_row(&format!("select exists(select 1 from ({SOURCES}) s left join memory_vectors v on v.kind=s.kind and v.id=s.id and v.source_text=s.text and v.identity=?4 where {filter} and v.id is null)"),params![context.series_slug,context.source_language,context.target_language,model,crystal_types],|r|r.get(0)).map_err(|e|e.to_string())?;
 
     let story = crate::story_applicability::StoryApplicability::resolve_context(db, context)
         .map_err(|e| e.to_string())?;
