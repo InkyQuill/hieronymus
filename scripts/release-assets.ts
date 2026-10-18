@@ -424,7 +424,11 @@ export async function unpackRuntime(
 export async function stage(
   root: string,
   target: DesktopTarget = "x86_64-unknown-linux-gnu",
-  inputs?: { runtimeArchive?: string; modelDirectory?: string },
+  inputs?: {
+    runtimeArchive?: string;
+    modelDirectory?: string;
+    skipModel?: boolean;
+  },
 ): Promise<Record<string, string>> {
   const descriptor = desktopTarget(target).runtime;
   if (descriptor.origin === "source-build-required")
@@ -438,41 +442,43 @@ export async function stage(
   const model =
     inputs?.modelDirectory ??
     join(cache, "paraphrase-multilingual-MiniLM-L12-v2");
-  if (inputs?.modelDirectory) {
-    for (const [name, pin] of Object.entries(MODEL_PINS))
-      await verify(join(model, name), pin);
-  } else {
-    await acquireFile(
-      join(model, "model.onnx"),
-      MODEL_PINS["model.onnx"],
-      `${MODEL_BASE}onnx/model.onnx`,
-      MODEL_HOSTS,
-      MAX_BYTES,
-      signal,
-    );
-    for (const [asset, source] of Object.entries({
-      "tokenizer.json": "multilingual-minilm-tokenizer.json",
-      LICENSE: "multilingual-minilm-tokenizer.LICENSE",
-    })) {
-      const pin = MODEL_PINS[asset as keyof typeof MODEL_PINS];
-      const fixture = join(root, "crates/hieronymus/tests/fixtures", source);
-      await verify(fixture, pin);
-      const destination = join(model, asset);
-      if (!existsSync(destination))
-        writeFileSync(destination, readFileSync(fixture), {
-          flag: "wx",
-          mode: 0o600,
-        });
-      await verify(destination, pin);
+  if (!inputs?.skipModel) {
+    if (inputs?.modelDirectory) {
+      for (const [name, pin] of Object.entries(MODEL_PINS))
+        await verify(join(model, name), pin);
+    } else {
+      await acquireFile(
+        join(model, "model.onnx"),
+        MODEL_PINS["model.onnx"],
+        `${MODEL_BASE}onnx/model.onnx`,
+        MODEL_HOSTS,
+        MAX_BYTES,
+        signal,
+      );
+      for (const [asset, source] of Object.entries({
+        "tokenizer.json": "multilingual-minilm-tokenizer.json",
+        LICENSE: "multilingual-minilm-tokenizer.LICENSE",
+      })) {
+        const pin = MODEL_PINS[asset as keyof typeof MODEL_PINS];
+        const fixture = join(root, "crates/hieronymus/tests/fixtures", source);
+        await verify(fixture, pin);
+        const destination = join(model, asset);
+        if (!existsSync(destination))
+          writeFileSync(destination, readFileSync(fixture), {
+            flag: "wx",
+            mode: 0o600,
+          });
+        await verify(destination, pin);
+      }
+      await acquireFile(
+        join(model, "README.md"),
+        MODEL_PINS["README.md"],
+        `${MODEL_BASE}README.md`,
+        MODEL_HOSTS,
+        65536,
+        signal,
+      );
     }
-    await acquireFile(
-      join(model, "README.md"),
-      MODEL_PINS["README.md"],
-      `${MODEL_BASE}README.md`,
-      MODEL_HOSTS,
-      65536,
-      signal,
-    );
   }
   const archive = inputs?.runtimeArchive ?? join(cache, descriptor.archive);
   if (inputs?.runtimeArchive)
@@ -514,7 +520,7 @@ export async function stage(
       HIERO_RELEASE_ONNX_SHA256: descriptor.members[descriptor.member].sha256,
       HIERO_RELEASE_RUNTIME_DIR: runtime,
       HIERO_RELEASE_TARGET: target,
-      HIERO_RELEASE_MODEL_DIR: model,
+      ...(inputs?.skipModel ? {} : { HIERO_RELEASE_MODEL_DIR: model }),
     };
   } catch (error) {
     rmSync(extraction, { recursive: true, force: true });

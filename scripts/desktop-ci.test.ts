@@ -338,18 +338,10 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
         copyFileSync(join(directory, name), join(merged, name));
     }
     expect((await verify()).length).toBeGreaterThan(20);
-    const { restoreCandidateModels } = await import("./desktop-ci");
     rmSync(join(merged, modelArtifactName()));
-    let acquisitions = 0;
-    await restoreCandidateModels(merged, async (directory, model) => {
-      acquisitions++;
-      expect(model!.sha256).toBe(hash("shared model"));
-      writeFileSync(join(directory, model!.archive), "shared model");
-    });
-    expect(acquisitions).toBe(1);
     expect((await verify()).length).toBeGreaterThan(20);
     writeFileSync(join(merged, modelArtifactName()), "corrupt model");
-    await expect(verify()).rejects.toThrow("digest mismatch");
+    await expect(verify()).rejects.toThrow("checksum");
     writeFileSync(join(merged, modelArtifactName()), "shared model");
     const partial = join(root, "partial");
     mkdirSync(partial);
@@ -499,7 +491,7 @@ test("cleanup removes only published candidates after digest verification, inclu
   const { modelArtifactName, platformArtifactName } = await import("./desktop-targets");
   const target = "x86_64-unknown-linux-gnu";
   const expected = Object.fromEntries([
-    `release-${target}.json`, modelArtifactName(), platformArtifactName("1.0.0", target),
+    `release-${target}.json`, platformArtifactName("1.0.0", target),
   ].map((name) => [name, "a".repeat(64)]));
   const release = { draft: false, assets: Object.keys(expected).map((name) => ({ name, state: "uploaded", digest: `sha256:${expected[name]}` })) };
   const deletes: string[] = [];

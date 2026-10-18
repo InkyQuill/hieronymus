@@ -88,8 +88,6 @@ jobs:
       - run: bun run --cwd frontend build
       # Source lint, unit tests and rustdoc run in pr.yml. This job builds
       # each native binary once and checks the actual packaged payload below.
-      - name: Acquire pinned shared model
-        run: bun scripts/published-model.ts
       - name: Read compiled Intel runtime authority
         if: matrix.target == 'x86_64-apple-darwin'
         id: intel-runtime-mode

@@ -66,10 +66,13 @@ index and distinguishes unfinished indexing from its bounded candidate scan.
 ### Native distribution
 
 Each target's format-2 metadata binds a platform archive and one canonical common
-model archive. CI reuses the hash-pinned model from a published release and omits
-it from Actions candidate uploads. Successful publication removes the published
+model archive. A single source manifest pins its permanent URL and SHA-256.
+Compilation, packaging and publication use only metadata; integration tests and
+installation/update acquire the model. Actions candidates and application releases
+omit the model archive. Successful publication removes the published
 candidate payloads after remote digest verification; unpublished platforms remain
-retained. Release assets remain self-contained for installer compatibility.
+retained. Existing release assets stay available. Older updaters can reuse their
+model cache; a missing cache requires upgrading with the new standalone installer.
 Produce model bytes once, reverify cached acquisitions and assemble
 complete immutable versions before activation. Rollback never depends on mutable
 cache contents. Preserve legacy monolithic input compatibility; do not emit a

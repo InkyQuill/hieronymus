@@ -43,7 +43,7 @@ jobs:
             bun scripts/desktop-ci.ts download "$CANDIDATE_RUN" desktop-candidate target/published
           else
             [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            gh release download "$RELEASE_TAG" --pattern 'release-*.json' --pattern 'hieronymus-*.tar.gz' --pattern 'hieronymus-*.zip' --dir target/published
+            gh release download "$RELEASE_TAG" --pattern 'release-*.json' --pattern 'hieronymus-[0-9]*.tar.gz' --pattern 'hieronymus-*.zip' --dir target/published
           fi
       - id: generate
         run: |
@@ -59,7 +59,9 @@ jobs:
         if: inputs.candidate_run != ''
         with:
           name: installer-test-payloads
-          path: target/published/
+          path: |
+            target/published/
+            !target/published/hieronymus-model-*.tar.gz
           retention-days: 7
       - name: File release warnings as issues
         if: ${{ !cancelled() }}

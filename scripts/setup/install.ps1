@@ -9,7 +9,7 @@ $AppDir=[IO.Path]::GetFullPath($AppDir);$DataRoot=[IO.Path]::GetFullPath($DataRo
 @@PAYLOAD@@
 function Download([string]$name,[string]$hash,[string]$destination,[string]$sourceUrl){
   $cached=$null
-  if($ReleaseDir -and -not $sourceUrl){$cached=Join-Path $ReleaseDir $name}
+  if($ReleaseDir -and (-not $sourceUrl -or ($name -eq $modelName -and ($null -ne (Get-Item -LiteralPath (Join-Path $ReleaseDir $name) -Force -ErrorAction SilentlyContinue))))){$cached=Join-Path $ReleaseDir $name}
   elseif([IO.File]::Exists((Join-Path $AppDir "cache/downloads/$name"))){$cached=Join-Path $AppDir "cache/downloads/$name"}
   elseif($name -eq $modelName -and [IO.File]::Exists((Join-Path $AppDir "cache/models/$hash.tar.gz"))){$cached=Join-Path $AppDir "cache/models/$hash.tar.gz"}
   if($cached){
@@ -82,7 +82,7 @@ try{
   Write-Host 'Downloading the app...'
   $platform=Join-Path $work $platformName;Download $platformName $platformHash $platform
   Write-Host 'Downloading the memory model (this can take a few minutes)...'
-  Download $modelName $modelHash (Join-Path $work $modelName)
+  Download $modelName $modelHash (Join-Path $work $modelName) '@@MODEL_URL@@'
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $zip=[IO.Compression.ZipFile]::OpenRead($platform)
   try{

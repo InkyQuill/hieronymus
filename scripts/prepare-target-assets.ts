@@ -1,48 +1,13 @@
 #!/usr/bin/env bun
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { resolve, join } from "node:path";
-import { stage, verify, extractTar } from "./release-assets";
-import { gunzipSync } from "node:zlib";
+import { appendFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { stage } from "./release-assets";
 import { acquireReviewedRuntime } from "./reviewed-runtime";
-import {
-  desktopTarget,
-  parseReleaseV2,
-  platformArtifactName,
-} from "./desktop-targets";
+import { desktopTarget } from "./desktop-targets";
 const target = desktopTarget(Bun.argv[2] ?? "").target;
-const common = resolve("target/common-model");
-const model = JSON.parse(
-  readFileSync(join(common, "common-model.json"), "utf8"),
-);
-parseReleaseV2(
-  JSON.stringify({
-    format_version: 2,
-    version: "0.0.0",
-    target,
-    channel: "dev",
-    platform: {
-      archive: platformArtifactName("0.0.0", target),
-      sha256: "0".repeat(64),
-    },
-    model,
-    signature: null,
-  }),
-  target,
-);
-await verify(join(common, model.archive), model.sha256);
-const extracted = resolve("target/common-expanded");
-mkdirSync(extracted, { recursive: true });
-extractTar(
-  gunzipSync(readFileSync(join(common, model.archive)), {
-    maxOutputLength: 1024 * 1024 * 1024,
-  }),
-  extracted,
-  "models",
-  1024 * 1024 * 1024,
-);
 const reviewed = await acquireReviewedRuntime(resolve("."), target);
 const env = await stage(resolve("."), target, {
-  modelDirectory: join(extracted, "models/minilm"),
+  skipModel: true,
   ...(reviewed ? { runtimeArchive: reviewed.archive } : {}),
 });
 if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV required");
@@ -50,7 +15,6 @@ appendFileSync(
   process.env.GITHUB_ENV,
   Object.entries({
     ...env,
-    HIERO_COMMON_MODEL_DIR: common,
     ...(reviewed
       ? {
           HIERO_REVIEWED_RUNTIME_ARCHIVE: reviewed.archive,

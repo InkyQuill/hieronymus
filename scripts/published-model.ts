@@ -1,3 +1,5 @@
+import modelSource from "../assets/model-source.json";
+export { modelSource };
 /** Reuse the canonical archive already published with v0.13.4, bound to its bytes. */
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
@@ -14,7 +16,7 @@ export const publishedModel: ModelArtifact = {
   name: MODEL_NAME,
   revision: MODEL_REVISION,
   archive: modelArtifactName(),
-  sha256: "4a23a216615c6224b1dba9fcd067e2da0d0be2b460b39dbb468b185f152911c0",
+  sha256: modelSource.sha256,
   members: modelMembers(),
 };
 export async function acquirePublishedModel(
@@ -39,7 +41,7 @@ export async function acquirePublishedModel(
   await acquireFile(
     join(directory, model.archive),
     model.sha256,
-    `https://github.com/InkyQuill/hieronymus/releases/download/v0.13.4/${model.archive}`,
+    modelSource.url,
     RUNTIME_HOSTS,
     MAX_BYTES,
     AbortSignal.timeout(300_000),

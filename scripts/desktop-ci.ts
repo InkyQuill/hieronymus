@@ -17,7 +17,6 @@ import { reviewedSource, validateSourceReceipt } from "./reviewed-runtime";
 import { dirname, join, resolve } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
 import { TARGETS, desktopTarget, readReleaseV2, platformArtifactName, modelArtifactName } from "./desktop-targets";
-import { acquirePublishedModel } from "./published-model";
 import { localFile, verifyFile } from "./check-desktop-evidence";
 
 /** Select the exact release-please section; never substitute another version. */
@@ -261,7 +260,7 @@ export async function inventory(
     throw new Error("exact source commit required");
   const files: Record<string, string> = {};
   for (const name of readdirSync(directory).sort()) {
-    if (name.startsWith("candidate-")) continue;
+    if (name.startsWith("candidate-") || name === modelArtifactName()) continue;
     files[name] = await digest(localFile(directory, name));
   }
   writeFileSync(
@@ -308,7 +307,7 @@ export async function verifyCandidate(
     if (modelHash && modelHash !== metadata.model.sha256)
       throw new Error("common model differs");
     modelHash = metadata.model.sha256;
-    const required = [desktopTarget(target).metadata, metadata.platform.archive, metadata.model.archive];
+    const required = [desktopTarget(target).metadata, metadata.platform.archive];
     const expected = Object.keys(record.files).filter((file) =>
       lstatSync(join(directory, file), { throwIfNoEntry: false }),
     );
@@ -339,21 +338,11 @@ export async function verifyCandidate(
       await verifyFile(directory, file, record.files[file]);
       all.add(file);
     }
-    await checkMetadata(directory, sourceVersion, "stable", target);
+    await checkMetadata(directory, sourceVersion, "stable", target, false);
     all.add(name);
   }
 
   return [...all].sort();
-}
-/** Restore the omitted archive before applying the unchanged candidate inventory checks. */
-export async function restoreCandidateModels(directory: string, acquire = acquirePublishedModel) {
-  for (const target of TARGETS) {
-    const metadataPath = join(directory, desktopTarget(target).metadata);
-    if (!lstatSync(metadataPath, { throwIfNoEntry: false })) continue;
-    const { model } = readReleaseV2(metadataPath, target);
-    if (!lstatSync(join(directory, model.archive), { throwIfNoEntry: false }))
-      await acquire(directory, model);
-  }
 }
 /** Delete only published platform payloads from this completed candidate run. */
 export function cleanupPublishedCandidate(
@@ -381,8 +370,8 @@ export function cleanupPublishedCandidate(
   const disposable = new Set(["common-model"]);
   for (const target of targets) {
     const platform = desktopTarget(target);
-    if (!expectedAssets[platform.metadata] || !expectedAssets[platformArtifactName(tag.slice(1), platform.target)] || !expectedAssets[modelArtifactName()])
-      throw new Error("Platform metadata, binary and shared model must be published before cleanup");
+    if (!expectedAssets[platform.metadata] || !expectedAssets[platformArtifactName(tag.slice(1), platform.target)])
+      throw new Error("Platform metadata and binary must be published before cleanup");
     disposable.add(`candidate-${target}`);
   }
   const pages = JSON.parse(invoke(["api", "--paginate", "--slurp", `repos/${repository}/actions/runs/${id}/artifacts?per_page=100`])) as { artifacts: { id: number; name: string; expired: boolean }[] }[];
@@ -468,10 +457,9 @@ if (import.meta.main) {
     }
     const acquire = artifactAcquirer(id, repo);
     if (kind === "desktop-candidate")
-      await downloadCandidates(names, out, acquire, async (directory) => {
-        await restoreCandidateModels(directory);
-        return verifyCandidate(directory, source);
-      });
+      await downloadCandidates(names, out, acquire, (directory) =>
+        verifyCandidate(directory, source),
+      );
     else acquire(names[0], out);
     if (process.env.GITHUB_OUTPUT) {
       const { appendFileSync } = await import("node:fs");

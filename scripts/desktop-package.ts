@@ -1,4 +1,5 @@
-/** Native packaging of exact-target prebuilt binaries. Shared model bytes are never recompressed. */
+/** Package prebuilt binaries with model metadata; integration tests acquire model bytes. */
+import { publishedModel } from "./published-model";
 import {
   constants,
   createReadStream,
@@ -34,7 +35,6 @@ export interface Options {
   target: DesktopTarget;
   input: string;
   runtime: string;
-  common: string;
   out: string;
 }
 const exeNames = (target: DesktopTarget) =>
@@ -54,26 +54,7 @@ export async function validateInputs(o: Options): Promise<ModelArtifact> {
   for (const name of exeNames(o.target)) regular(join(o.input, name));
   for (const name of Object.keys(target.runtime.members))
     regular(join(o.runtime, name));
-  regular(join(o.common, "common-model.json"));
-  const model = JSON.parse(
-    readFileSync(join(o.common, "common-model.json"), "utf8"),
-  );
-  parseReleaseV2(
-    JSON.stringify({
-      format_version: 2,
-      version: "0.0.0",
-      target: o.target,
-      channel: "dev",
-      platform: {
-        archive: platformArtifactName("0.0.0", o.target),
-        sha256: "0".repeat(64),
-      },
-      model,
-      signature: null,
-    }),
-    o.target,
-  );
-  await verify(join(o.common, model.archive), model.sha256);
+  const model = publishedModel;
   for (const [name, pin] of Object.entries(target.runtime.members))
     await verify(join(o.runtime, name), pin.sha256);
   return model;
@@ -331,9 +312,17 @@ export async function packageDesktop(o: Options) {
     const crates = fileURLToPath(new URL("../crates/", import.meta.url));
     for (const crate of readdirSync(crates, { withFileTypes: true })) {
       if (!crate.isDirectory()) continue;
-      for (const entry of readdirSync(join(crates, crate.name), { withFileTypes: true })) {
-        if (entry.isFile() && /^(LICENSE|COPYING|NOTICE)(?:[.-].*)?$/.test(entry.name))
-          copy(join(crates, crate.name, entry.name), `licenses/${crate.name}/${entry.name}`);
+      for (const entry of readdirSync(join(crates, crate.name), {
+        withFileTypes: true,
+      })) {
+        if (
+          entry.isFile() &&
+          /^(LICENSE|COPYING|NOTICE)(?:[.-].*)?$/.test(entry.name)
+        )
+          copy(
+            join(crates, crate.name, entry.name),
+            `licenses/${crate.name}/${entry.name}`,
+          );
       }
     }
     for (const name of Object.keys(target.runtime.members))
@@ -353,7 +342,12 @@ export async function packageDesktop(o: Options) {
       names.push("Hieronymus.app/Contents/Info.plist");
       const iconset = resolve(
         process.env.HIERO_RELEASE_ICONSET ??
-          fileURLToPath(new URL("../assets/icons/native/hieronymus.iconset", import.meta.url)),
+          fileURLToPath(
+            new URL(
+              "../assets/icons/native/hieronymus.iconset",
+              import.meta.url,
+            ),
+          ),
       );
       mkdirSync(join(payload, "Hieronymus.app/Contents/Resources"), {
         recursive: true,
@@ -411,26 +405,11 @@ export async function packageDesktop(o: Options) {
       }),
       o.target,
     );
-    // Verify complete pair with the exact native CLI before publishing success metadata.
-    copyFileSync(join(o.common, model.archive), join(work, model.archive));
+    // Real model assembly/inference belongs to native integration qualification.
     writeFileSync(
       join(work, target.metadata),
       JSON.stringify(metadata, null, 2) + "\n",
     );
-    command([
-      join(o.input, target.executable),
-      "release-verify",
-      "--release-dir",
-      work,
-    ]);
-    const shared = join(o.out, model.archive);
-    if (existsSync(shared)) await verify(shared, model.sha256);
-    else
-      copyFileSync(
-        join(o.common, model.archive),
-        shared,
-        constants.COPYFILE_EXCL,
-      );
     if (!o.target.includes("windows")) {
       for (const name of ["desktop-metadata.awk", "install.sh"]) {
         const destination = join(o.out, name),
@@ -512,18 +491,12 @@ if (import.meta.main) {
     const key = process.argv[i],
       value = process.argv[i + 1];
     if (
-      ![
-        "--target",
-        "--out",
-        "--input",
-        "--runtime-dir",
-        "--common-model-dir",
-      ].includes(key) ||
+      !["--target", "--out", "--input", "--runtime-dir"].includes(key) ||
       !value ||
       args.has(key)
     )
       throw new Error(
-        "usage: desktop-package.ts --target TRIPLE --out DIR [--input DIR --runtime-dir DIR --common-model-dir DIR]",
+        "usage: desktop-package.ts --target TRIPLE --out DIR [--input DIR --runtime-dir DIR]",
       );
     args.set(key, value);
   }
@@ -541,11 +514,6 @@ if (import.meta.main) {
       args.get("--runtime-dir") ??
         process.env.HIERO_RELEASE_RUNTIME_DIR ??
         "target/release-runtime",
-    ),
-    common: resolve(
-      args.get("--common-model-dir") ??
-        process.env.HIERO_COMMON_MODEL_DIR ??
-        "target/common-model",
     ),
   });
 }
