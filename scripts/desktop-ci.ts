@@ -16,7 +16,8 @@ import { tmpdir } from "node:os";
 import { reviewedSource, validateSourceReceipt } from "./reviewed-runtime";
 import { dirname, join, resolve } from "node:path";
 import { digest, checkMetadata, checkSource } from "./check-rust-release";
-import { TARGETS, desktopTarget, readReleaseV2 } from "./desktop-targets";
+import { TARGETS, desktopTarget, readReleaseV2, platformArtifactName, modelArtifactName } from "./desktop-targets";
+import { acquirePublishedModel } from "./published-model";
 import { localFile, verifyFile } from "./check-desktop-evidence";
 
 /** Select the exact release-please section; never substitute another version. */
@@ -59,6 +60,7 @@ export function binarySourceChanged(paths: string[]): boolean {
     ".github/workflows/desktop-evidence.yml",
     ".github/workflows/pr.yml",
     "scripts/desktop-ci.ts",
+    "scripts/published-model.ts",
     "scripts/report-release-warnings.sh",
     "scripts/build-installers.ts",
     "scripts/build-native-installer.ts",
@@ -343,6 +345,54 @@ export async function verifyCandidate(
 
   return [...all].sort();
 }
+/** Restore the omitted archive before applying the unchanged candidate inventory checks. */
+export async function restoreCandidateModels(directory: string, acquire = acquirePublishedModel) {
+  for (const target of TARGETS) {
+    const metadataPath = join(directory, desktopTarget(target).metadata);
+    if (!lstatSync(metadataPath, { throwIfNoEntry: false })) continue;
+    const { model } = readReleaseV2(metadataPath, target);
+    if (!lstatSync(join(directory, model.archive), { throwIfNoEntry: false }))
+      await acquire(directory, model);
+  }
+}
+/** Delete only published platform payloads from this completed candidate run. */
+export function cleanupPublishedCandidate(
+  repository: string,
+  id: string,
+  tag: string,
+  commit: string,
+  expectedAssets: Record<string, string>,
+  targets: readonly string[],
+  invoke = gh,
+) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !/^v\d+\.\d+\.\d+$/.test(tag))
+    throw new Error("Invalid repository or release tag");
+  numericRun(id);
+  validateRun(JSON.parse(invoke(["api", `repos/${repository}/actions/runs/${id}`])), repository, "desktop-candidate", commit, true);
+  const release = JSON.parse(invoke(["api", `repos/${repository}/releases/tags/${tag}`])) as {
+    draft: boolean; assets: { name: string; state: string; digest: string | null }[];
+  };
+  if (release.draft || !targets.length || !Object.keys(expectedAssets).length)
+    throw new Error("Published release payloads required before cleanup");
+  for (const [name, hash] of Object.entries(expectedAssets)) {
+    if (!release.assets.some((asset) => asset.name === name && asset.state === "uploaded" && asset.digest === `sha256:${hash}`))
+      throw new Error(`Published asset is missing or differs: ${name}`);
+  }
+  const disposable = new Set(["common-model"]);
+  for (const target of targets) {
+    const platform = desktopTarget(target);
+    if (!expectedAssets[platform.metadata] || !expectedAssets[platformArtifactName(tag.slice(1), platform.target)] || !expectedAssets[modelArtifactName()])
+      throw new Error("Platform metadata, binary and shared model must be published before cleanup");
+    disposable.add(`candidate-${target}`);
+  }
+  const pages = JSON.parse(invoke(["api", "--paginate", "--slurp", `repos/${repository}/actions/runs/${id}/artifacts?per_page=100`])) as { artifacts: { id: number; name: string; expired: boolean }[] }[];
+  for (const artifact of pages.flatMap((page) => page.artifacts)) {
+    if (!artifact.expired && disposable.has(artifact.name)) {
+      if (!Number.isSafeInteger(artifact.id) || artifact.id <= 0) throw new Error("Invalid artifact ID");
+      invoke(["api", "--method", "DELETE", `repos/${repository}/actions/artifacts/${artifact.id}`]);
+    }
+  }
+}
 if (import.meta.main) {
   const [mode, ...args] = Bun.argv.slice(2);
   if (mode === "select-evidence") {
@@ -418,9 +468,10 @@ if (import.meta.main) {
     }
     const acquire = artifactAcquirer(id, repo);
     if (kind === "desktop-candidate")
-      await downloadCandidates(names, out, acquire, (directory) =>
-        verifyCandidate(directory, source),
-      );
+      await downloadCandidates(names, out, acquire, async (directory) => {
+        await restoreCandidateModels(directory);
+        return verifyCandidate(directory, source);
+      });
     else acquire(names[0], out);
     if (process.env.GITHUB_OUTPUT) {
       const { appendFileSync } = await import("node:fs");
@@ -530,6 +581,16 @@ if (import.meta.main) {
         ...availableSetup.map((n) => join(installers, n)),
         ...names.map((n) => join(directory, n)),
       ]);
+      try {
+        const publishedHashes: Record<string, string> = {};
+        for (const name of names) publishedHashes[name] = await digest(join(directory, name));
+        for (const name of availableSetup) publishedHashes[name] = await digest(join(installers, name));
+        cleanupPublishedCandidate(process.env.GITHUB_REPOSITORY!, candidateRun,
+          ref.replace("refs/tags/", ""), retainedCommit, publishedHashes, releases.map((r) => r.target));
+      } catch (error) {
+        // Publication already succeeded. Retain payloads and report the cleanup failure.
+        console.warn(`::warning::Published release retained candidate artifacts: ${error}`);
+      }
     } finally {
       rmSync(summaryDirectory, { recursive: true, force: true });
     }

@@ -31,9 +31,13 @@ inputs and returns staging paths. Exact hashes and provenance live in
 those inventories in prose. Transfers/extraction are bounded and unsafe paths,
 wrong hashes or incompatible native inputs fail before activation.
 
-Produce the common model archive once with `scripts/shared-model.ts`, retain its
-`common-model.json`, and distribute identical bytes to every native target. Do not
-recompress per platform. The build uses `HIERO_RELEASE_RUNTIME_DIR` and
+CI acquires the canonical model from the pinned published release in
+`scripts/published-model.ts`, checking its archive hash on every acquisition.
+Native jobs download those same bytes directly; neither a per-run `common-model`
+artifact nor a copy inside each platform candidate is uploaded. Candidate inventories
+still bind the model hash, and promotion restores and verifies the shared archive.
+To change the model, produce it once with `scripts/prepare-common-model.ts`, publish
+it and update the acquisition pin; do not recompress per platform. The build uses `HIERO_RELEASE_RUNTIME_DIR` and
 `HIERO_COMMON_MODEL_DIR`:
 
 ```sh
@@ -73,7 +77,11 @@ The release environment declaration does not prove its remote reviewer configura
 Validate a local candidate with `bun scripts/check-rust-release.ts --allow-untagged`.
 Publication binds an immutable `refs/tags/v<workspace-version>`; never move a published
 tag. Recovery reuses retained candidate artifacts and reruns the affected packaging
-or check job. See [desktop checks](desktop-qualification.md).
+or check job. After publication, cleanup verifies uploaded asset digests and deletes
+only the published platform candidates and the legacy common-model artifact from
+that completed run. Unpublished platforms and diagnostic evidence remain available;
+cleanup failures are warnings and do not undo publication. Published release assets
+remain self-contained for existing installers and updates. See [desktop checks](desktop-qualification.md).
 
 ## Install, update and recovery
 

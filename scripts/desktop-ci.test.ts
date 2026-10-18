@@ -338,6 +338,19 @@ test("candidate inventory binds all four exact payloads and rejects extra or cha
         copyFileSync(join(directory, name), join(merged, name));
     }
     expect((await verify()).length).toBeGreaterThan(20);
+    const { restoreCandidateModels } = await import("./desktop-ci");
+    rmSync(join(merged, modelArtifactName()));
+    let acquisitions = 0;
+    await restoreCandidateModels(merged, async (directory, model) => {
+      acquisitions++;
+      expect(model!.sha256).toBe(hash("shared model"));
+      writeFileSync(join(directory, model!.archive), "shared model");
+    });
+    expect(acquisitions).toBe(1);
+    expect((await verify()).length).toBeGreaterThan(20);
+    writeFileSync(join(merged, modelArtifactName()), "corrupt model");
+    await expect(verify()).rejects.toThrow("digest mismatch");
+    writeFileSync(join(merged, modelArtifactName()), "shared model");
     const partial = join(root, "partial");
     mkdirSync(partial);
     const recordName = "candidate-x86_64-unknown-linux-gnu.json";
@@ -479,4 +492,37 @@ test("release notes select exactly the requested changelog version", () => {
   expect(releaseChangelog(changelog, "0.10.0")).toContain("Older");
   expect(releaseChangelog(changelog, "0.9.3")).toContain("Detailed changelog unavailable");
   expect(releaseChangelog(changelog + "## [0.10.1]\nDuplicate", "0.10.1")).toContain("Detailed changelog unavailable");
+});
+
+test("cleanup removes only published candidates after digest verification, including paginated artifacts", async () => {
+  const { cleanupPublishedCandidate } = await import("./desktop-ci");
+  const { modelArtifactName, platformArtifactName } = await import("./desktop-targets");
+  const target = "x86_64-unknown-linux-gnu";
+  const expected = Object.fromEntries([
+    `release-${target}.json`, modelArtifactName(), platformArtifactName("1.0.0", target),
+  ].map((name) => [name, "a".repeat(64)]));
+  const release = { draft: false, assets: Object.keys(expected).map((name) => ({ name, state: "uploaded", digest: `sha256:${expected[name]}` })) };
+  const deletes: string[] = [];
+  let run = { ...good };
+  const invoke = (args: string[]) => {
+    if (args.includes("DELETE")) { deletes.push(args.at(-1)!); return ""; }
+    if (args.includes("--paginate")) return JSON.stringify([
+      { artifacts: [{ id: 1, name: "common-model", expired: false }, { id: 2, name: `candidate-${target}`, expired: false }] },
+      { artifacts: [{ id: 3, name: "candidate-x86_64-apple-darwin", expired: false }, { id: 4, name: "native-log-linux", expired: false }] },
+    ]);
+    return JSON.stringify(args.at(-1)!.includes("/releases/") ? release : run);
+  };
+  const clean = () => cleanupPublishedCandidate("owner/repo", "123", "v1.0.0", good.head_sha, expected, [target], invoke);
+  clean();
+  expect(deletes).toEqual(["repos/owner/repo/actions/artifacts/1", "repos/owner/repo/actions/artifacts/2"]);
+  deletes.length = 0;
+  release.draft = true;
+  expect(clean).toThrow("Published release");
+  release.draft = false;
+  release.assets[0].digest = "sha256:wrong";
+  expect(clean).toThrow("missing or differs");
+  release.assets[0].digest = `sha256:${"a".repeat(64)}`;
+  run = { ...good, status: "in_progress" };
+  expect(clean).toThrow("unexpected workflow");
+  expect(deletes).toEqual([]);
 });

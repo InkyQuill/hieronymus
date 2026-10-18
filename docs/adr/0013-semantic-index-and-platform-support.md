@@ -66,7 +66,11 @@ index and distinguishes unfinished indexing from its bounded candidate scan.
 ### Native distribution
 
 Each target's format-2 metadata binds a platform archive and one canonical common
-model archive. Produce model bytes once, reverify cached acquisitions and assemble
+model archive. CI reuses the hash-pinned model from a published release and omits
+it from Actions candidate uploads. Successful publication removes the published
+candidate payloads after remote digest verification; unpublished platforms remain
+retained. Release assets remain self-contained for installer compatibility.
+Produce model bytes once, reverify cached acquisitions and assemble
 complete immutable versions before activation. Rollback never depends on mutable
 cache contents. Preserve legacy monolithic input compatibility; do not emit a
 misleading split `release.json` alias.
