@@ -36,7 +36,6 @@ main() {
     command -v "$command" >/dev/null || { printf 'Please install %s and try again.\n' "$command" >&2; return 2; }
   done
   if ! command -v sha256sum >/dev/null && ! command -v shasum >/dev/null; then printf 'A SHA-256 checksum tool is required.\n' >&2; return 2; fi
-  if [ -z "$source" ]; then command -v curl >/dev/null || { printf 'Please install curl and try again.\n' >&2; return 2; }; fi
   # Keep work in the enclosing subshell so the EXIT trap can see it after return.
   work="$(mktemp -d)"
   # Run cleanup in this subshell, including when a download or install fails.
@@ -57,6 +56,7 @@ main() {
       [ -f "$cached" ] && [ ! -L "$cached" ] || { printf 'Invalid cached download: %s\n' "$name" >&2; return 1; }
       head -c 1073741825 "$cached" > "$work/$name"
     else
+      command -v curl >/dev/null || { printf 'Please install curl and try again.\n' >&2; return 2; }
       url="@@RELEASE_URL@@/$name"
       if [ "$name" = "$model" ]; then url="@@MODEL_URL@@"; fi
       curl --proto '=https' --proto-redir '=https' --location --fail --silent --show-error --retry 3 --connect-timeout 20 --max-time 900 --max-filesize 1073741824 "$url" --output "$work/$name" || { printf 'Download failed. Please check your connection and run the installer again.\n' >&2; return 1; }

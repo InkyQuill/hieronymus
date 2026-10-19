@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   copyFileSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -496,4 +497,28 @@ unix("a local platform-only release downloads only the shared model and rejects 
   expect(corrupt.exitCode).not.toBe(0);
   expect(corrupt.stderr.toString()).toContain("could not be verified");
   expect(readdirSync(f.root)).not.toContain("calls");
+});
+
+
+unix("missing curl is diagnosed only when a model download is needed", () => {
+  const f = fixture();
+  const tools = join(f.root, "without-curl");
+  mkdirSync(tools);
+  for (const name of ["bash", "awk", "tar", "gzip", "head", "wc", "mktemp", "uname", "cat", "rm", "dirname", "chmod", "mkdir", "cp", "ln", "readlink"]) {
+    symlinkSync(Bun.which(name)!, join(tools, name));
+  }
+  const checksum = Bun.which("sha256sum") ? "sha256sum" : "shasum";
+  symlinkSync(Bun.which(checksum)!, join(tools, checksum));
+  const env = { ...f.env, PATH: tools };
+  const args = [Bun.which("bash")!, f.script, "--release-dir", f.release, "--app-dir", f.app, "--data-root", f.data, "--no-activate", "--no-open"];
+  const offline = Bun.spawnSync(args, { env });
+  expect(offline.stderr.toString()).toBe("");
+  expect(offline.exitCode).toBe(0);
+  rmSync(f.calls);
+  rmSync(join(f.release, modelArtifactName()));
+  const missing = Bun.spawnSync(args, { env });
+  expect(missing.exitCode).toBe(2);
+  expect(missing.stderr.toString()).toBe("Please install curl and try again.\n");
+  expect(readdirSync(f.root)).not.toContain("calls");
+  expect(readdirSync(f.scratch)).toEqual([]);
 });
