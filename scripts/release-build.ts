@@ -24,7 +24,7 @@ const { values } = parseArgs({
 const target = desktopTarget(values.target!).target;
 if (values["dry-run"]) {
   console.log(
-    `Build frontend, embedded CLI and desktop helper for ${target}; package strict release-${target}.json plus existing canonical common-model archive; no publication`,
+    `Build frontend, embedded CLI and desktop helper for ${target}; package strict release-${target}.json plus pinned model metadata; no publication`,
   );
 } else {
   if (Bun.version !== "1.4.0") throw new Error("release requires Bun 1.4.0");
@@ -42,11 +42,10 @@ if (values["dry-run"]) {
     ]);
   else {
     if (
-      !process.env.HIERO_COMMON_MODEL_DIR ||
       !process.env.HIERO_RELEASE_RUNTIME_DIR
     )
       throw new Error(
-        "HIERO_COMMON_MODEL_DIR and HIERO_RELEASE_RUNTIME_DIR required; produce shared archive once and stage exact pinned runtime first",
+        "HIERO_RELEASE_RUNTIME_DIR required; stage exact pinned runtime first",
       );
     // Embedded-console tests run in PR CI; do not rebuild a debug CLI here.
     run([
@@ -86,7 +85,6 @@ if (values["dry-run"]) {
         `${process.env.CARGO_TARGET_DIR ?? "target"}/${target}/release`,
       ),
       runtime: resolve(process.env.HIERO_RELEASE_RUNTIME_DIR),
-      common: resolve(process.env.HIERO_COMMON_MODEL_DIR),
       out: resolve(values.out!),
     });
 

@@ -36,7 +36,6 @@ main() {
     command -v "$command" >/dev/null || { printf 'Please install %s and try again.\n' "$command" >&2; return 2; }
   done
   if ! command -v sha256sum >/dev/null && ! command -v shasum >/dev/null; then printf 'A SHA-256 checksum tool is required.\n' >&2; return 2; fi
-  if [ -z "$source" ]; then command -v curl >/dev/null || { printf 'Please install curl and try again.\n' >&2; return 2; }; fi
   # Keep work in the enclosing subshell so the EXIT trap can see it after return.
   work="$(mktemp -d)"
   # Run cleanup in this subshell, including when a download or install fails.
@@ -45,11 +44,11 @@ main() {
 @@PAYLOAD@@
   printf 'Installing Hieronymus @@VERSION@@…\n'
   if [ "$target" = x86_64-apple-darwin ]; then printf 'Intel Mac build: desktop testing is incomplete.\n'; fi
-  local name expected actual cached
+  local name expected actual cached url
   for name in "$platform" "$model"; do
     if [ "$name" = "$platform" ]; then expected="$platform_hash"; printf 'Downloading the app…\n'; else expected="$model_hash"; printf 'Downloading the memory model (this can take a few minutes)…\n'; fi
     cached=''
-    if [ -n "$source" ]; then cached="$source/$name"
+    if [ -n "$source" ] && { [ "$name" = "$platform" ] || [ -e "$source/$name" ] || [ -L "$source/$name" ]; }; then cached="$source/$name"
     elif [ -f "$app/cache/downloads/$name" ]; then cached="$app/cache/downloads/$name"
     elif [ "$name" = "$model" ] && [ -f "$app/cache/models/$model_hash.tar.gz" ]; then cached="$app/cache/models/$model_hash.tar.gz"
     fi
@@ -57,7 +56,10 @@ main() {
       [ -f "$cached" ] && [ ! -L "$cached" ] || { printf 'Invalid cached download: %s\n' "$name" >&2; return 1; }
       head -c 1073741825 "$cached" > "$work/$name"
     else
-      curl --proto '=https' --proto-redir '=https' --location --fail --silent --show-error --retry 3 --connect-timeout 20 --max-time 900 --max-filesize 1073741824 "@@RELEASE_URL@@/$name" --output "$work/$name" || { printf 'Download failed. Please check your connection and run the installer again.\n' >&2; return 1; }
+      command -v curl >/dev/null || { printf 'Please install curl and try again.\n' >&2; return 2; }
+      url="@@RELEASE_URL@@/$name"
+      if [ "$name" = "$model" ]; then url="@@MODEL_URL@@"; fi
+      curl --proto '=https' --proto-redir '=https' --location --fail --silent --show-error --retry 3 --connect-timeout 20 --max-time 900 --max-filesize 1073741824 "$url" --output "$work/$name" || { printf 'Download failed. Please check your connection and run the installer again.\n' >&2; return 1; }
     fi
     [ "$(wc -c < "$work/$name")" -le 1073741824 ] || { printf 'Download is larger than expected.\n' >&2; return 1; }
     if command -v sha256sum >/dev/null; then actual="$(sha256sum "$work/$name" | awk '{print $1}')"; else actual="$(shasum -a 256 "$work/$name" | awk '{print $1}')"; fi

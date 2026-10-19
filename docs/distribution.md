@@ -31,14 +31,20 @@ inputs and returns staging paths. Exact hashes and provenance live in
 those inventories in prose. Transfers/extraction are bounded and unsafe paths,
 wrong hashes or incompatible native inputs fail before activation.
 
-Produce the common model archive once with `scripts/shared-model.ts`, retain its
-`common-model.json`, and distribute identical bytes to every native target. Do not
-recompress per platform. The build uses `HIERO_RELEASE_RUNTIME_DIR` and
-`HIERO_COMMON_MODEL_DIR`:
+Compilation, packaging and publication use only pinned model metadata. The permanent
+archive URL and SHA-256 live in [`assets/model-source.json`](../assets/model-source.json),
+shared by installer generation, the Rust updater and integration-test acquisition.
+Only native integration tests and installation/update download model bytes; verified
+cached copies are reused. Neither Actions candidates nor new application releases
+contain the model archive. The original source asset must remain available.
+
+To change the model, produce it once with `scripts/prepare-common-model.ts`, publish
+it at a versioned URL, update the source manifest and model member/revision pins,
+and qualify inference on each supported platform. Do not overwrite the old source.
+The native build needs only the runtime directory:
 
 ```sh
 HIERO_RELEASE_RUNTIME_DIR=/absolute/verified/runtime \
-HIERO_COMMON_MODEL_DIR=/absolute/canonical/common-model \
 CARGO_BUILD_JOBS=2 scripts/release-build.sh --target x86_64-unknown-linux-gnu
 ```
 
@@ -47,7 +53,7 @@ inputs; `--out` selects distribution output. `CARGO_TARGET_DIR` locates compiled
 files, not the distribution directory. Keep binaries when their inputs are unchanged;
 installer/documentation-only fixes do not justify another native matrix build.
 
-Each target emits `release-<triple>.json`, a platform archive, the shared model archive
+Each target emits `release-<triple>.json`, a platform archive
 and available installers/diagnostics. Format 2 binds both archives and assembled
 assets. Platform archives contain no model payload. Installers assemble a complete
 immutable version tree before selecting it. Legacy monolithic `release.json` remains
@@ -73,7 +79,11 @@ The release environment declaration does not prove its remote reviewer configura
 Validate a local candidate with `bun scripts/check-rust-release.ts --allow-untagged`.
 Publication binds an immutable `refs/tags/v<workspace-version>`; never move a published
 tag. Recovery reuses retained candidate artifacts and reruns the affected packaging
-or check job. See [desktop checks](desktop-qualification.md).
+or check job. After publication, cleanup verifies uploaded asset digests and deletes
+only the published platform candidates and the legacy common-model artifact from
+that completed run. Unpublished platforms and diagnostic evidence remain available;
+cleanup failures are warnings and do not undo publication. Model bytes remain only
+at their permanent source. See [desktop checks](desktop-qualification.md).
 
 ## Install, update and recovery
 
@@ -82,6 +92,13 @@ under `<app>/bin`. Linux user PATH links point there. Windows launchers select t
 verified version record; macOS app layout is bound by external manifests.
 Every installed version carries its own model/runtime files, so rollback does not
 rely on a mutable acquisition cache.
+
+Bootstrap downloads the model from the permanent source and checks its SHA-256.
+A standalone installer given `--release-dir` uses a supplied model or verified cache
+when present, otherwise downloads it. Low-level offline bootstrap and
+`hiero update --release-dir` still require the model or an existing verified cache.
+Older installed updaters can use their model cache; if it was removed, use the new
+standalone installer to upgrade to a release without a bundled model.
 
 Bootstrap selects target metadata from official GitHub releases or an explicit
 `--release-dir`, verifies bytes and safe extraction, installs atomically and runs

@@ -8,8 +8,9 @@ publication gate or a substitute for runtime integrity checks.
 ## Retain and reuse candidates
 
 `desktop-candidate.yml` builds native packages with the production console,
-verified runtime and identical common-model archive. Retain these artifacts and
-their provenance. Installer/packaging-only fixes reuse unchanged binaries; rebuild
+verified runtime and pinned common-model metadata. Native integration tests download
+the model from its permanent source to exercise real inference; the model is excluded
+from retained candidate uploads. Retain the platform artifacts and their provenance. Installer/packaging-only fixes reuse unchanged binaries; rebuild
 only when binary inputs change or an artifact is missing.
 
 [Automatic releases](automatic-releases.md) owns tag/version dispatch. Promotion

@@ -26,9 +26,11 @@ Acquisition verification is not installed inference or interactive acceptance.
 ## Common model and target metadata
 
 [`scripts/shared-model.ts`](../scripts/shared-model.ts) produces canonical regular
-ustar members in fixed order/metadata with pinned Bun. Produce once and distribute
-identical archive bytes plus `ModelArtifact` metadata to all target jobs. Existing
-output must match its digest; never overwrite an immutable artifact.
+ustar members in fixed order/metadata with pinned Bun. Publish a model once and pin
+its permanent URL and SHA-256 in `assets/model-source.json`. Builds carry only
+`ModelArtifact` metadata. Integration tests and installers acquire the archive;
+application candidates and releases omit it. Existing output must match its digest;
+never overwrite an immutable artifact.
 
 Format-2 `release-<triple>.json` binds application version, exact target/channel,
 platform archive/digest and common model name/revision/archive/digest/member map,

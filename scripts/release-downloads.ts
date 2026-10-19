@@ -10,7 +10,6 @@ export function publicPayloads(directory: string): string[] {
     const release = readReleaseV2(join(directory, metadata), target);
     names.add(metadata);
     names.add(release.platform.archive);
-    names.add(release.model.archive);
   }
   return [...names].sort();
 }

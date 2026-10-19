@@ -232,7 +232,8 @@ export async function validateMatrix(
       metadata.platform.archive,
       metadata.platform.sha256,
     );
-    await verifyFile(release, metadata.model.archive, metadata.model.sha256);
+    if (lstatSync(join(release, metadata.model.archive), { throwIfNoEntry: false }))
+      await verifyFile(release, metadata.model.archive, metadata.model.sha256);
     if (common && common !== metadata.model.sha256)
       throw new Error("common model digest differs across targets");
     common = metadata.model.sha256;

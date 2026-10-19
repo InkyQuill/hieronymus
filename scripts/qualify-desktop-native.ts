@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { acquirePublishedModel } from "./published-model";
 import { resolve, join } from "node:path";
 import { desktopTarget } from "./desktop-targets";
 const target = desktopTarget(process.env.DESKTOP_TARGET ?? "");
@@ -20,6 +21,7 @@ if (native !== target.target) throw new Error("native target mismatch");
 const cli = resolve(
   `${process.env.CARGO_TARGET_DIR ?? "target"}/${target.target}/release/${target.executable}`,
 );
+await acquirePublishedModel(resolve("target/release-dist"));
 const payload = resolve("target/native-disposable-payload");
 const verify = Bun.spawnSync(
   [

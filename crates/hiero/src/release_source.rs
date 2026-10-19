@@ -13,6 +13,23 @@ use crate::app::{LINK_NAMES, TARGET_TRIPLE};
 const MAX_ARCHIVE: u64 = 1024 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 3 * 1024 * 1024 * 1024;
 
+/// The model has one versioned source, independent of the application release.
+fn canonical_model_url(model: &crate::release_manifest::ModelArtifact) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Source {
+        url: String,
+        sha256: String,
+    }
+    let source: Source = serde_json::from_str(include_str!("../../../assets/model-source.json"))
+        .map_err(|e| format!("invalid embedded model source: {e}"))?;
+    validate_base_url(&source.url)?;
+    if model.sha256 != source.sha256 || !source.url.ends_with(&format!("/{}", model.archive)) {
+        return Err("model metadata differs from the pinned source".into());
+    }
+    Ok(source.url)
+}
+
 pub fn validate_base_url(value: &str) -> Result<(), String> {
     let parsed = parse_outbound_url(value)?;
     if !parsed.secure {
@@ -233,7 +250,11 @@ fn stage_remote_layout(
                 let download = temporary.path().join("model-download");
                 download_release(
                     &transport,
-                    &format!("{base}/{}", manifest.model.archive),
+                    &if flat {
+                        canonical_model_url(&manifest.model)?
+                    } else {
+                        format!("{base}/{}", manifest.model.archive)
+                    },
                     &download,
                     MAX_ARCHIVE,
                 )
@@ -611,6 +632,28 @@ pub fn stage_local_pair(directory: &Path, cache: &Path) -> Result<tempfile::Temp
 #[cfg(test)]
 mod github_tests {
     use super::*;
+    #[test]
+    fn shared_model_source_is_pinned_independently_of_application_releases() {
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../../../assets/model-source.json")).unwrap();
+        let mut model = crate::release_manifest::ModelArtifact {
+            name: hieronymus::semantic_model::MODEL_NAME.into(),
+            revision: hieronymus::semantic_model::MODEL_REVISION.into(),
+            archive: crate::release_manifest::model_name(),
+            sha256: source["sha256"].as_str().unwrap().into(),
+            members: crate::release_manifest::model_members(),
+        };
+        assert_eq!(
+            canonical_model_url(&model).unwrap(),
+            source["url"].as_str().unwrap()
+        );
+        model.sha256 = "0".repeat(64);
+        assert!(
+            canonical_model_url(&model)
+                .unwrap_err()
+                .contains("pinned source")
+        );
+    }
     fn release(tag: &str, draft: bool, prerelease: bool) -> serde_json::Value {
         let name = crate::release_manifest::metadata_name(TARGET_TRIPLE);
         serde_json::json!({"tag_name":tag,"draft":draft,"prerelease":prerelease,"assets":[{"name":name,"browser_download_url":format!("{GITHUB_REPOSITORY}/releases/download/{tag}/{name}")}]})

@@ -15,7 +15,7 @@ const [source, app] = Bun.argv.slice(2);
 const metadata = readReleaseV2(join(source, `release-${target}.json`), target);
 const cache = join(resolve(app), "cache/downloads");
 mkdirSync(cache, { recursive: true, mode: 0o700 });
-for (const file of [metadata.platform, metadata.model]) {
+for (const file of [metadata.platform]) {
   if ((await digest(join(source, file.archive))) !== file.sha256)
     throw Error("cache input checksum mismatch");
   copyFileSync(join(source, file.archive), join(cache, file.archive));

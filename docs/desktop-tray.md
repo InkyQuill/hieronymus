@@ -79,7 +79,8 @@ and the limits of existing native evidence. This guide makes no fresh native acc
 ## Packaging and replacement
 
 Native packaging consumes matching prebuilt binaries, verified runtime inputs and
-the once-produced common-model archive. Format-2 metadata binds final archives
+pinned common-model metadata. Integration tests and installation download the model
+separately from its permanent source. Format-2 metadata binds final archives
 and assembled assets. See [Distribution](distribution.md) and
 [platform artifacts](desktop-platforms.md); this guide keeps no second inventory.
 Intel uses reviewed source-built runtime pins.

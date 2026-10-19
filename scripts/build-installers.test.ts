@@ -1,3 +1,4 @@
+import { modelSource } from "./published-model";
 import { afterEach, expect, test } from "bun:test";
 import {
   mkdtempSync,
@@ -8,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   copyFileSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,9 +96,9 @@ test("public downloads exclude maintainer evidence and old multi-file installers
   for (const r of releases())
     writeFileSync(join(root, `release-${r.target}.json`), JSON.stringify(r));
   const names = publicPayloads(root);
-  expect(names).toHaveLength(9);
+  expect(names).toHaveLength(8);
   expect(names).not.toContain("onnxruntime-source-build-receipt.json");
-  expect(names).toContain(modelArtifactName());
+  expect(names).not.toContain(modelArtifactName());
   for (const r of releases()) {
     expect(names).toContain(r.platform.archive);
     expect(names).toContain(`release-${r.target}.json`);
@@ -196,7 +198,10 @@ unix(
     expect(readFileSync(f.calls, "utf8")).toContain(
       `admin --data-root ${f.data}`,
     );
-    expect(readFileSync(f.requests, "utf8").trim().split("\n")).toHaveLength(2);
+    const requests = readFileSync(f.requests, "utf8").trim().split("\n");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toContain("/v0.9.0/");
+    expect(requests[1]).toBe(modelSource.url);
     expect(readdirSync(f.scratch)).toEqual([]);
   },
 );
@@ -465,4 +470,55 @@ unix("successful no-open installer preserves migration-pending diagnostics", () 
   expect(run.stdout.toString()).toContain(warning);
   expect(run.stdout.toString()).toContain("Hieronymus is installed.");
   expect(readFileSync(f.calls,"utf8")).not.toContain("admin --data-root");
+});
+
+test("installer generation needs platform bytes and metadata, never the model payload", async () => {
+  const root = temp();
+  for (const r of releases()) {
+    writeFileSync(join(root, `release-${r.target}.json`), JSON.stringify(r));
+    writeFileSync(join(root, r.platform.archive), "platform");
+  }
+  expect(await buildInstallers(root, join(root, "setup"))).toContain("install-hieronymus.sh");
+  expect(readdirSync(root)).not.toContain(modelArtifactName());
+});
+
+unix("a local platform-only release downloads only the shared model and rejects corrupt bytes", () => {
+  const f = fixture();
+  const local = join(f.root, "platform-only");
+  mkdirSync(local);
+  for (const r of f.records) copyFileSync(join(f.release, r.platform.archive), join(local, r.platform.archive));
+  const args = ["bash", f.script, "--release-dir", local, "--app-dir", f.app, "--data-root", f.data, "--no-activate"];
+  const run = Bun.spawnSync(args, {env: f.env});
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(f.requests, "utf8").trim()).toBe(modelSource.url);
+  rmSync(f.calls);
+  writeFileSync(join(f.release, modelArtifactName()), "corrupt");
+  const corrupt = Bun.spawnSync(args, {env: f.env});
+  expect(corrupt.exitCode).not.toBe(0);
+  expect(corrupt.stderr.toString()).toContain("could not be verified");
+  expect(readdirSync(f.root)).not.toContain("calls");
+});
+
+
+unix("missing curl is diagnosed only when a model download is needed", () => {
+  const f = fixture();
+  const tools = join(f.root, "without-curl");
+  mkdirSync(tools);
+  for (const name of ["bash", "awk", "tar", "gzip", "head", "wc", "mktemp", "uname", "cat", "rm", "dirname", "chmod", "mkdir", "cp", "ln", "readlink"]) {
+    symlinkSync(Bun.which(name)!, join(tools, name));
+  }
+  const checksum = Bun.which("sha256sum") ? "sha256sum" : "shasum";
+  symlinkSync(Bun.which(checksum)!, join(tools, checksum));
+  const env = { ...f.env, PATH: tools };
+  const args = [Bun.which("bash")!, f.script, "--release-dir", f.release, "--app-dir", f.app, "--data-root", f.data, "--no-activate", "--no-open"];
+  const offline = Bun.spawnSync(args, { env });
+  expect(offline.stderr.toString()).toBe("");
+  expect(offline.exitCode).toBe(0);
+  rmSync(f.calls);
+  rmSync(join(f.release, modelArtifactName()));
+  const missing = Bun.spawnSync(args, { env });
+  expect(missing.exitCode).toBe(2);
+  expect(missing.stderr.toString()).toBe("Please install curl and try again.\n");
+  expect(readdirSync(f.root)).not.toContain("calls");
+  expect(readdirSync(f.scratch)).toEqual([]);
 });

@@ -30,7 +30,7 @@ jobs:
     environment: release
     permissions:
       contents: write
-      actions: read
+      actions: write
       issues: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

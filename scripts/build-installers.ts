@@ -1,3 +1,4 @@
+import { modelSource } from "./published-model";
 /** Render small, standalone launchers around checksum-bound released binaries. */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -40,6 +41,7 @@ export function renderInstallers(releases: readonly ReleaseV2[]) {
     text
       .replaceAll("@@VERSION@@", version)
       .replaceAll("@@RELEASE_URL@@", url)
+      .replaceAll("@@MODEL_URL@@", modelSource.url)
       .replace("@@PAYLOAD@@", payload);
   let payload = 'case "$target" in\n';
   for (const r of releases.filter((r) => !r.target.includes("windows"))) {
@@ -79,7 +81,7 @@ export async function buildInstallers(directory: string, output: string) {
     readReleaseV2(join(directory, `release-${target}.json`), target),
   );
   for (const r of releases)
-    for (const artifact of [r.platform, r.model]) {
+    for (const artifact of [r.platform]) {
       if ((await digest(join(directory, artifact.archive))) !== artifact.sha256)
         throw new Error(`release bytes mismatch: ${artifact.archive}`);
     }

@@ -49,14 +49,13 @@ test("stale executable version is refused", () => {
     ),
   ).toThrow("version");
 });
-test("missing helper, Windows DLL and model fail without success metadata", async () => {
+test("missing native executables and Windows DLL fail without success metadata", async () => {
   const root = mkdtempSync(join(tmpdir(), "desktop-package-"));
   try {
     const options = {
       target: "x86_64-pc-windows-msvc" as const,
       input: root,
       runtime: root,
-      common: root,
       out: join(root, "out"),
     };
     await expect(validateInputs(options)).rejects.toThrow("hiero.exe");
@@ -84,46 +83,6 @@ test("ZIP32 producer has matching headers without descriptors or extras", () => 
   expect(data.readUInt32LE(18)).toBe(data.readUInt32LE(central + 20));
 });
 
-test("missing model and mismatched archive digest fail before metadata", async () => {
-  const { modelArtifactName, modelMembers, MODEL_NAME, MODEL_REVISION } =
-    await import("./desktop-targets");
-  const root = mkdtempSync(join(tmpdir(), "desktop-model-"));
-  try {
-    const target = "x86_64-unknown-linux-gnu" as const,
-      descriptor = desktopTarget(target);
-    for (const name of [
-      "hiero",
-      "hiero-desktop",
-      ...Object.keys((descriptor.runtime as any).members),
-    ]) {
-      mkdirSync(join(root, name, ".."), { recursive: true });
-      writeFileSync(join(root, name), "unqualified bytes");
-    }
-    const options = {
-      target,
-      input: root,
-      runtime: root,
-      common: root,
-      out: join(root, "out"),
-    };
-    await expect(validateInputs(options)).rejects.toThrow("common-model.json");
-    writeFileSync(
-      join(root, "common-model.json"),
-      JSON.stringify({
-        archive: modelArtifactName(),
-        sha256: "a".repeat(64),
-        name: MODEL_NAME,
-        revision: MODEL_REVISION,
-        members: modelMembers(),
-      }),
-    );
-    writeFileSync(join(root, modelArtifactName()), "corrupt model archive");
-    await expect(validateInputs(options)).rejects.toThrow();
-    expect(existsSync(join(options.out, descriptor.metadata))).toBe(false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 test("bootstrap strict parser accepts canonical metadata and rejects duplicate/path/unknown keys", async () => {
   const {

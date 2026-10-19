@@ -65,6 +65,7 @@ export async function checkMetadata(
   version: string,
   channel: string,
   target: DesktopTarget = TARGET,
+  requireModel = true,
 ): Promise<string> {
   if (!["stable", "dev"].includes(channel))
     throw new Error("unsupported release channel");
@@ -78,11 +79,12 @@ export async function checkMetadata(
       metadata.platform.sha256,
       1024 * 1024 * 1024,
     );
-    await verify(
-      resolve(directory, metadata.model.archive),
-      metadata.model.sha256,
-      1024 * 1024 * 1024,
-    );
+    if (requireModel || existsSync(resolve(directory, metadata.model.archive)))
+      await verify(
+        resolve(directory, metadata.model.archive),
+        metadata.model.sha256,
+        1024 * 1024 * 1024,
+      );
     return metadata.platform.archive;
   }
   if (target !== TARGET)
