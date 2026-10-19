@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## [0.14.0](https://github.com/InkyQuill/hieronymus/compare/v0.13.4...v0.14.0) (2026-10-19)
+
+
+### Features
+
+* **memory:** consolidate across sessions and propose merged memories ([1a6db62](https://github.com/InkyQuill/hieronymus/commit/1a6db623ee4c2cfec2b0c0d59389f27c21cacfa6))
+* **recall:** filter durable memory categories before retrieval budgets ([4d8539b](https://github.com/InkyQuill/hieronymus/commit/4d8539b5e0ed4c9ef52080dbce2e9270b077f111))
+
+
+### Bug Fixes
+
+* **ci:** reuse published model and clean promoted candidates ([9bafbd4](https://github.com/InkyQuill/hieronymus/commit/9bafbd488aa98f912df972770bc8e86be9e81051))
+* **dreaming:** rotate failed batches without consuming observations ([b89b241](https://github.com/InkyQuill/hieronymus/commit/b89b241c9a75c9a56cd0c89c826a221c47f1b040))
+* **installer:** check curl only when downloading payloads ([4de234c](https://github.com/InkyQuill/hieronymus/commit/4de234cc0b43630f14cc3131f1a341cacdc1d302))
+* **release:** acquire shared model only for installation and tests ([c25352f](https://github.com/InkyQuill/hieronymus/commit/c25352f556d0cbaf17c7ac29a46447f5e1f470d0))
+* **release:** keep the shared model out of candidates and releases ([cf77b98](https://github.com/InkyQuill/hieronymus/commit/cf77b987b6aa2390868c1479275fbb681166f855))
+
 ## [0.13.4](https://github.com/InkyQuill/hieronymus/compare/v0.13.3...v0.13.4) (2026-10-05)
 
 
